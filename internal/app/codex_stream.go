@@ -2,26 +2,21 @@ package app
 
 import (
 	"encoding/json"
-	"strings"
 
 	"control/internal/types"
 )
 
 type CodexStreamController struct {
-	events            <-chan types.CodexEvent
-	cancel            func()
-	lines             []string
-	maxLines          int
-	maxEventsPerTick  int
-	activeAgentLine   int
-	pendingAgentBlock bool
+	events           <-chan types.CodexEvent
+	cancel           func()
+	maxEventsPerTick int
+	transcript       *ChatTranscript
 }
 
 func NewCodexStreamController(maxLines, maxEventsPerTick int) *CodexStreamController {
 	return &CodexStreamController{
-		maxLines:         maxLines,
 		maxEventsPerTick: maxEventsPerTick,
-		activeAgentLine:  -1,
+		transcript:       NewChatTranscript(maxLines),
 	}
 }
 
@@ -34,9 +29,9 @@ func (c *CodexStreamController) Reset() {
 	}
 	c.cancel = nil
 	c.events = nil
-	c.lines = nil
-	c.activeAgentLine = -1
-	c.pendingAgentBlock = false
+	if c.transcript != nil {
+		c.transcript.Reset()
+	}
 }
 
 func (c *CodexStreamController) SetStream(ch <-chan types.CodexEvent, cancel func()) {
@@ -51,25 +46,26 @@ func (c *CodexStreamController) SetSnapshot(lines []string) {
 	if c == nil {
 		return
 	}
-	c.lines = trimLines(lines, c.maxLines)
-	c.activeAgentLine = -1
-	c.pendingAgentBlock = false
+	if c.transcript != nil {
+		c.transcript.SetLines(lines)
+	}
 }
 
 func (c *CodexStreamController) AppendUserMessage(text string) {
-	if c == nil || strings.TrimSpace(text) == "" {
+	if c == nil || c.transcript == nil {
 		return
 	}
-	c.lines = append(c.lines, "### User", "")
-	c.lines = append(c.lines, text, "")
-	c.trim()
+	c.transcript.AppendUserMessage(text)
 }
 
 func (c *CodexStreamController) Lines() []string {
 	if c == nil {
 		return nil
 	}
-	return c.lines
+	if c.transcript == nil {
+		return nil
+	}
+	return c.transcript.Lines()
 }
 
 func (c *CodexStreamController) ConsumeTick() (lines []string, changed bool, closed bool) {
@@ -83,16 +79,16 @@ func (c *CodexStreamController) ConsumeTick() (lines []string, changed bool, clo
 				c.events = nil
 				c.cancel = nil
 				closed = true
-				return c.lines, changed, closed
+				return c.Lines(), changed, closed
 			}
 			if c.applyEvent(event) {
 				changed = true
 			}
 		default:
-			return c.lines, changed, closed
+			return c.Lines(), changed, closed
 		}
 	}
-	return c.lines, changed, closed
+	return c.Lines(), changed, closed
 }
 
 func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
@@ -108,7 +104,9 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			return false
 		}
 		if typ, _ := payload.Item["type"].(string); typ == "agentMessage" {
-			c.startAgentBlock()
+			if c.transcript != nil {
+				c.transcript.StartAgentBlock()
+			}
 			return true
 		}
 	case "item/agentMessage/delta":
@@ -116,7 +114,9 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 		if delta == "" {
 			return false
 		}
-		c.appendAgentDelta(delta)
+		if c.transcript != nil {
+			c.transcript.AppendAgentDelta(delta)
+		}
 		return true
 	case "item/completed":
 		var payload struct {
@@ -129,60 +129,13 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			return false
 		}
 		if typ, _ := payload.Item["type"].(string); typ == "agentMessage" {
-			c.finishAgentBlock()
+			if c.transcript != nil {
+				c.transcript.FinishAgentBlock()
+			}
 			return true
 		}
 	}
 	return false
-}
-
-func (c *CodexStreamController) startAgentBlock() {
-	c.lines = append(c.lines, "### Agent", "")
-	c.lines = append(c.lines, "")
-	c.activeAgentLine = len(c.lines) - 1
-	c.pendingAgentBlock = true
-	c.trim()
-}
-
-func (c *CodexStreamController) finishAgentBlock() {
-	c.activeAgentLine = -1
-	c.pendingAgentBlock = false
-	c.trim()
-}
-
-func (c *CodexStreamController) appendAgentDelta(delta string) {
-	if c.activeAgentLine < 0 || c.activeAgentLine >= len(c.lines) {
-		if !c.pendingAgentBlock {
-			c.startAgentBlock()
-		}
-	}
-	if c.activeAgentLine < 0 || c.activeAgentLine >= len(c.lines) {
-		return
-	}
-	parts := strings.Split(delta, "\n")
-	if len(parts) == 0 {
-		return
-	}
-	c.lines[c.activeAgentLine] += parts[0]
-	for _, part := range parts[1:] {
-		c.lines = append(c.lines, part)
-		c.activeAgentLine = len(c.lines) - 1
-	}
-	c.trim()
-}
-
-func (c *CodexStreamController) trim() {
-	if c.maxLines <= 0 || len(c.lines) <= c.maxLines {
-		return
-	}
-	drop := len(c.lines) - c.maxLines
-	c.lines = c.lines[drop:]
-	if c.activeAgentLine >= 0 {
-		c.activeAgentLine -= drop
-		if c.activeAgentLine < 0 {
-			c.activeAgentLine = len(c.lines) - 1
-		}
-	}
 }
 
 func extractDelta(raw json.RawMessage) string {

@@ -92,27 +92,27 @@ func addWorktreeCmd(api WorkspaceAPI, workspaceID string, worktree *types.Worktr
 	}
 }
 
-func fetchTailCmd(api SessionAPI, id string) tea.Cmd {
+func fetchTailCmd(api SessionAPI, id, key string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 		resp, err := api.TailItems(ctx, id, defaultTailLines)
 		if err != nil {
-			return tailMsg{id: id, err: err}
+			return tailMsg{id: id, err: err, key: key}
 		}
-		return tailMsg{id: id, items: resp.Items}
+		return tailMsg{id: id, items: resp.Items, key: key}
 	}
 }
 
-func fetchHistoryCmd(api SessionAPI, id string, lines int) tea.Cmd {
+func fetchHistoryCmd(api SessionAPI, id, key string, lines int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		resp, err := api.History(ctx, id, lines)
 		if err != nil {
-			return historyMsg{id: id, err: err}
+			return historyMsg{id: id, err: err, key: key}
 		}
-		return historyMsg{id: id, items: resp.Items}
+		return historyMsg{id: id, items: resp.Items, key: key}
 	}
 }
 

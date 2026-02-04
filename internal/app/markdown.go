@@ -5,7 +5,10 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/x/ansi"
+	glamouransi "github.com/charmbracelet/glamour/ansi"
+	"github.com/charmbracelet/glamour/styles"
+	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -31,7 +34,7 @@ func renderMarkdown(input string, width int) string {
 		return input
 	}
 	out = strings.TrimRight(out, "\n")
-	out = ansi.Hardwrap(out, width, true)
+	out = xansi.Hardwrap(out, width, true)
 	return strings.TrimRight(out, "\n")
 }
 
@@ -41,8 +44,9 @@ func getRenderer(width int) *glamour.TermRenderer {
 	if renderer != nil && rendererWidth == width {
 		return renderer
 	}
+	style := buildStyleConfig()
 	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
+		glamour.WithStyles(style),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
@@ -51,6 +55,20 @@ func getRenderer(width int) *glamour.TermRenderer {
 	renderer = r
 	rendererWidth = width
 	return renderer
+}
+
+func buildStyleConfig() glamouransi.StyleConfig {
+	var base glamouransi.StyleConfig
+	if lipgloss.HasDarkBackground() {
+		base = styles.DarkStyleConfig
+	} else {
+		base = styles.LightStyleConfig
+	}
+	faint := true
+	color := "245"
+	base.BlockQuote.StylePrimitive.Faint = &faint
+	base.BlockQuote.StylePrimitive.Color = &color
+	return base
 }
 
 func escapeMarkdown(text string) string {

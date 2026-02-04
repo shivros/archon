@@ -171,8 +171,20 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if entry.session != nil && isActiveStatus(entry.session.Status) {
 			indicator = activeDot
 		}
-		line := fmt.Sprintf(" %s %s • %s", indicator, title, since)
-		line = truncateToWidth(line, maxWidth)
+		prefix := fmt.Sprintf(" %s ", indicator)
+		suffix := ""
+		if strings.TrimSpace(since) != "" {
+			suffix = fmt.Sprintf(" • %s", since)
+		}
+		available := maxWidth - ansi.StringWidth(prefix) - ansi.StringWidth(suffix)
+		if available < 0 {
+			available = 0
+		}
+		title = truncateToWidth(title, available)
+		line := prefix + title + suffix
+		if ansi.StringWidth(line) > maxWidth {
+			line = truncateToWidth(line, maxWidth)
+		}
 		style := sessionStyle
 		if indicator == activeDot {
 			style = activeSessionStyle

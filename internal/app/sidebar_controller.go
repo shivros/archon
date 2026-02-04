@@ -56,6 +56,25 @@ func (c *SidebarController) Select(idx int) {
 	c.list.Select(idx)
 }
 
+func (c *SidebarController) SelectByRow(row int) {
+	if row < 0 {
+		return
+	}
+	headerRows := 1
+	idx := row - headerRows
+	if idx < 0 {
+		idx = 0
+	}
+	items := c.list.Items()
+	if len(items) == 0 {
+		return
+	}
+	if idx >= len(items) {
+		idx = len(items) - 1
+	}
+	c.list.Select(idx)
+}
+
 func (c *SidebarController) Index() int {
 	return c.list.Index()
 }

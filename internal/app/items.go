@@ -1,78 +1,16 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 func itemsToLines(items []map[string]any) []string {
-	lines := make([]string, 0, len(items))
+	transcript := NewChatTranscript(0)
 	for _, item := range items {
-		lines = append(lines, formatItem(item)...)
+		transcript.AppendItem(item)
 	}
-	return lines
-}
-
-func formatItem(item map[string]any) []string {
-	if item == nil {
-		return nil
-	}
-	typ, _ := item["type"].(string)
-	switch typ {
-	case "log":
-		if text := asString(item["text"]); text != "" {
-			return []string{escapeMarkdown(text)}
-		}
-	case "userMessage":
-		if text := extractContentText(item["content"]); text != "" {
-			return []string{"### User", "", text, ""}
-		}
-		if text := asString(item["text"]); text != "" {
-			return []string{"### User", "", text, ""}
-		}
-	case "agentMessage":
-		if text := asString(item["text"]); text != "" {
-			return []string{"### Agent", "", text, ""}
-		}
-		if text := extractContentText(item["content"]); text != "" {
-			return []string{"### Agent", "", text, ""}
-		}
-	case "commandExecution":
-		cmd := extractCommand(item["command"])
-		status := asString(item["status"])
-		lines := []string{"### Command"}
-		if cmd != "" {
-			lines = append(lines, "", escapeMarkdown(cmd))
-		}
-		if status != "" {
-			lines = append(lines, "", "Status: "+escapeMarkdown(status))
-		}
-		lines = append(lines, "")
-		return lines
-	case "fileChange":
-		paths := extractChangePaths(item["changes"])
-		if len(paths) > 0 {
-			return []string{"### File change", "", escapeMarkdown(strings.Join(paths, ", ")), ""}
-		}
-	case "enteredReviewMode":
-		if text := asString(item["review"]); text != "" {
-			return []string{"### Review started", "", text, ""}
-		}
-	case "exitedReviewMode":
-		if text := asString(item["review"]); text != "" {
-			return []string{"### Review completed", "", text, ""}
-		}
-	}
-	if typ != "" {
-		if data, err := json.Marshal(item); err == nil {
-			return []string{escapeMarkdown(fmt.Sprintf("%s: %s", typ, string(data)))}
-		}
-	}
-	if data, err := json.Marshal(item); err == nil {
-		return []string{escapeMarkdown(string(data))}
-	}
-	return nil
+	return transcript.Lines()
 }
 
 func extractContentText(raw any) string {
@@ -110,6 +48,20 @@ func extractCommand(raw any) string {
 	default:
 		return ""
 	}
+}
+
+func extractStringList(raw any) []string {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, entry := range items {
+		if text := asString(entry); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 func extractChangePaths(raw any) []string {

@@ -49,12 +49,14 @@ type tailMsg struct {
 	id    string
 	items []map[string]any
 	err   error
+	key   string
 }
 
 type historyMsg struct {
 	id    string
 	items []map[string]any
 	err   error
+	key   string
 }
 
 type killMsg struct {

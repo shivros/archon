@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -36,32 +37,38 @@ const (
 )
 
 type Model struct {
-	workspaceAPI WorkspaceAPI
-	sessionAPI   SessionAPI
-	stateAPI     StateAPI
-	sidebar      *SidebarController
-	viewport     viewport.Model
-	mode         uiMode
-	addWorkspace *AddWorkspaceController
-	addWorktree  *AddWorktreeController
-	compose      *ComposeController
-	chatInput    *ChatInput
-	status       string
-	width        int
-	height       int
-	follow       bool
-	workspaces   []*types.Workspace
-	worktrees    map[string][]*types.Worktree
-	sessions     []*types.Session
-	sessionMeta  map[string]*types.SessionMeta
-	appState     types.AppState
-	hasAppState  bool
-	stream       *StreamController
-	codexStream  *CodexStreamController
-	input        *InputController
-	chat         *SessionChatController
-	contentRaw   string
-	contentEsc   bool
+	workspaceAPI      WorkspaceAPI
+	sessionAPI        SessionAPI
+	stateAPI          StateAPI
+	sidebar           *SidebarController
+	viewport          viewport.Model
+	mode              uiMode
+	addWorkspace      *AddWorkspaceController
+	addWorktree       *AddWorktreeController
+	compose           *ComposeController
+	chatInput         *ChatInput
+	status            string
+	width             int
+	height            int
+	follow            bool
+	workspaces        []*types.Workspace
+	worktrees         map[string][]*types.Worktree
+	sessions          []*types.Session
+	sessionMeta       map[string]*types.SessionMeta
+	appState          types.AppState
+	hasAppState       bool
+	stream            *StreamController
+	codexStream       *CodexStreamController
+	input             *InputController
+	chat              *SessionChatController
+	contentRaw        string
+	contentEsc        bool
+	transcriptCache   map[string][]string
+	pendingSessionKey string
+	loading           bool
+	loadingKey        string
+	loader            spinner.Model
+	pendingMouseCmd   tea.Cmd
 }
 
 func NewModel(client *client.Client) Model {
@@ -71,34 +78,39 @@ func NewModel(client *client.Client) Model {
 	api := NewClientAPI(client)
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
 	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
+	loader := spinner.New()
+	loader.Spinner = spinner.Line
+	loader.Style = lipgloss.NewStyle()
 
 	return Model{
-		workspaceAPI: api,
-		sessionAPI:   api,
-		stateAPI:     api,
-		sidebar:      NewSidebarController(),
-		viewport:     vp,
-		stream:       stream,
-		codexStream:  codexStream,
-		input:        NewInputController(),
-		chat:         NewSessionChatController(api, codexStream),
-		mode:         uiModeNormal,
-		addWorkspace: NewAddWorkspaceController(minViewportWidth),
-		addWorktree:  NewAddWorktreeController(minViewportWidth),
-		compose:      NewComposeController(minViewportWidth),
-		chatInput:    NewChatInput(minViewportWidth),
-		status:       "",
-		follow:       true,
-		worktrees:    map[string][]*types.Worktree{},
-		sessionMeta:  map[string]*types.SessionMeta{},
-		contentRaw:   "No sessions.",
-		contentEsc:   false,
+		workspaceAPI:    api,
+		sessionAPI:      api,
+		stateAPI:        api,
+		sidebar:         NewSidebarController(),
+		viewport:        vp,
+		stream:          stream,
+		codexStream:     codexStream,
+		input:           NewInputController(),
+		chat:            NewSessionChatController(api, codexStream),
+		mode:            uiModeNormal,
+		addWorkspace:    NewAddWorkspaceController(minViewportWidth),
+		addWorktree:     NewAddWorktreeController(minViewportWidth),
+		compose:         NewComposeController(minViewportWidth),
+		chatInput:       NewChatInput(minViewportWidth),
+		status:          "",
+		follow:          true,
+		worktrees:       map[string][]*types.Worktree{},
+		sessionMeta:     map[string]*types.SessionMeta{},
+		contentRaw:      "No sessions.",
+		contentEsc:      false,
+		transcriptCache: map[string][]string{},
+		loader:          loader,
 	}
 }
 
 func Run(client *client.Client) error {
 	model := NewModel(client)
-	p := tea.NewProgram(&model, tea.WithAltScreen())
+	p := tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
@@ -206,6 +218,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status = "streaming"
 			return m, nil
+		case tea.MouseMsg:
+			if m.handleMouse(msg) {
+				return m, nil
+			}
 		}
 		if m.addWorktree == nil {
 			return m, nil
@@ -271,7 +287,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.sidebar != nil {
+			if msg.String() == "up" {
+				m.sidebar.CursorUp()
+				return m, m.onSelectionChanged()
+			}
+			if msg.String() == "down" {
+				m.sidebar.CursorDown()
+				return m, m.onSelectionChanged()
+			}
+		}
+		if m.handleViewportScroll(msg) {
+			return m, nil
+		}
 		switch msg.String() {
+		case "esc":
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "ctrl+b":
@@ -355,6 +386,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sidebar.CursorUp()
 			return m, m.onSelectionChanged()
 		}
+	case tea.MouseMsg:
+		if m.handleMouse(msg) {
+			if m.pendingMouseCmd != nil {
+				cmd := m.pendingMouseCmd
+				m.pendingMouseCmd = nil
+				return m, cmd
+			}
+			return m, nil
+		}
 	}
 
 	prevKey := m.selectedKey()
@@ -417,7 +457,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tailMsg:
 		if msg.err != nil {
 			m.status = "tail error: " + msg.err.Error()
+			if msg.key != "" && msg.key == m.loadingKey {
+				m.loading = false
+				m.setContentText("Error loading history.")
+			}
 			return m, nil
+		}
+		if msg.key != "" && msg.key != m.pendingSessionKey {
+			return m, nil
+		}
+		if msg.key != "" && msg.key == m.loadingKey {
+			m.loading = false
 		}
 		m.setSnapshot(itemsToLines(msg.items), false)
 		m.status = "tail updated"
@@ -425,9 +475,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case historyMsg:
 		if msg.err != nil {
 			m.status = "history error: " + msg.err.Error()
+			if msg.key != "" && msg.key == m.loadingKey {
+				m.loading = false
+				m.setContentText("Error loading history.")
+			}
 			return m, nil
 		}
+		if msg.key != "" && msg.key != m.pendingSessionKey {
+			return m, nil
+		}
+		if msg.key != "" && msg.key == m.loadingKey {
+			m.loading = false
+		}
 		m.setSnapshot(itemsToLines(msg.items), false)
+		if msg.key != "" {
+			m.transcriptCache[msg.key] = m.currentLines()
+		}
 		m.status = "history updated"
 		return m, nil
 	case sendMsg:
@@ -443,6 +506,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.codexStream != nil {
 				m.codexStream.SetSnapshot(m.currentLines())
 				m.codexStream.AppendUserMessage(msg.text)
+			}
+			if key := m.selectedKey(); key != "" {
+				m.transcriptCache[key] = m.currentLines()
 			}
 			if m.chat != nil {
 				return m, m.chat.OpenEventStream(msg.id)
@@ -512,6 +578,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.consumeStreamTick()
 		m.consumeCodexTick()
+		if m.loading {
+			m.loader, _ = m.loader.Update(spinner.TickMsg{Time: time.Time(msg), ID: m.loader.ID()})
+			m.setLoadingContent()
+			return m, tickCmd()
+		}
 		return m, tickCmd()
 	}
 
@@ -594,6 +665,7 @@ func (m *Model) resize(width, height int) {
 	}
 	if m.addWorktree != nil {
 		m.addWorktree.Resize(viewportWidth)
+		m.addWorktree.SetListHeight(max(3, contentHeight-4))
 	}
 	if m.compose != nil {
 		m.compose.Resize(viewportWidth)
@@ -678,8 +750,18 @@ func (m *Model) onSelectionChanged() tea.Cmd {
 	}
 	id := item.session.ID
 	m.resetStream()
+	m.pendingSessionKey = item.key()
 	m.status = "loading " + id
-	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, maxViewportLines)}
+	if cached, ok := m.transcriptCache[item.key()]; ok {
+		m.setSnapshot(cached, false)
+		m.loading = false
+		m.loadingKey = ""
+	} else {
+		m.loading = true
+		m.loadingKey = item.key()
+		m.setLoadingContent()
+	}
+	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, item.key(), maxViewportLines)}
 	if isActiveStatus(item.session.Status) {
 		cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
 	}
@@ -743,6 +825,9 @@ func (m *Model) resetStream() {
 	} else if m.codexStream != nil {
 		m.codexStream.Reset()
 	}
+	m.pendingSessionKey = ""
+	m.loading = false
+	m.loadingKey = ""
 }
 
 func (m *Model) consumeStreamTick() {
@@ -857,6 +942,126 @@ func (m *Model) renderViewport() {
 	if m.follow {
 		m.viewport.GotoBottom()
 	}
+}
+
+func (m *Model) setLoadingContent() {
+	m.setContentText(m.loader.View() + " Loading...")
+}
+
+func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+		return false
+	}
+	switch msg.String() {
+	case "up":
+		m.viewport.LineUp(1)
+	case "down":
+		m.viewport.LineDown(1)
+	case "pgup":
+		m.viewport.PageUp()
+	case "pgdown":
+		m.viewport.PageDown()
+	case "ctrl+u":
+		m.viewport.HalfPageUp()
+	case "ctrl+d":
+		m.viewport.HalfPageDown()
+	case "home":
+		m.viewport.GotoTop()
+	case "end":
+		m.viewport.GotoBottom()
+		m.follow = true
+		m.status = "follow: on"
+		return true
+	default:
+		return false
+	}
+	if m.follow {
+		m.follow = false
+		m.status = "follow: paused"
+	}
+	return true
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) bool {
+	if m.width <= 0 || m.height <= 0 {
+		return false
+	}
+	if msg.Action == tea.MouseActionPress {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
+				if m.addWorktree.Scroll(-1) {
+					return true
+				}
+			}
+			m.viewport.LineUp(3)
+		case tea.MouseButtonWheelDown:
+			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
+				if m.addWorktree.Scroll(1) {
+					return true
+				}
+			}
+			m.viewport.LineDown(3)
+		case tea.MouseButtonLeft:
+			break
+		default:
+			return false
+		}
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			if m.follow {
+				m.follow = false
+				m.status = "follow: paused"
+			}
+			return true
+		}
+	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return false
+	}
+	listWidth := 0
+	if !m.appState.SidebarCollapsed {
+		listWidth = clamp(m.width/3, minListWidth, maxListWidth)
+		if m.width-listWidth-1 < minViewportWidth {
+			listWidth = max(minListWidth, m.width/2)
+		}
+	}
+	contentHeight := max(minContentHeight, m.height-2)
+	extraLines := 0
+	if m.mode == uiModeCompose {
+		extraLines = 2
+	}
+	chatRow := contentHeight - 1 + extraLines
+	if m.mode == uiModeCompose && m.chatInput != nil {
+		if msg.Y == chatRow {
+			m.chatInput.Focus()
+			if m.input != nil {
+				m.input.FocusChatInput()
+			}
+			return true
+		}
+	}
+	if m.mode == uiModeAddWorktree && m.addWorktree != nil {
+		rightStart := 0
+		if listWidth > 0 {
+			rightStart = listWidth + 1
+		}
+		if msg.X >= rightStart {
+			row := msg.Y
+			if row >= 0 {
+				if handled, cmd := m.addWorktree.HandleClick(row, m); handled {
+					m.pendingMouseCmd = cmd
+					return true
+				}
+			}
+		}
+	}
+	if listWidth > 0 && msg.X < listWidth {
+		if m.sidebar != nil {
+			m.sidebar.SelectByRow(msg.Y)
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) currentLines() []string {
