@@ -56,6 +56,23 @@ func (c *SidebarController) Select(idx int) {
 	c.list.Select(idx)
 }
 
+func (c *SidebarController) SelectBySessionID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.session == nil {
+			continue
+		}
+		if entry.session.ID == id {
+			c.list.Select(i)
+			return true
+		}
+	}
+	return false
+}
+
 func (c *SidebarController) SelectByRow(row int) {
 	if row < 0 {
 		return

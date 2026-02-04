@@ -81,6 +81,9 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	if s.manager == nil {
 		return nil, unavailableError("session manager not available", nil)
 	}
+	if len(req.Args) == 0 && strings.TrimSpace(req.Text) != "" {
+		req.Args = []string{strings.TrimSpace(req.Text)}
+	}
 	if strings.TrimSpace(req.Provider) == "" {
 		return nil, invalidError("provider is required", nil)
 	}

@@ -166,6 +166,63 @@ func TestWorktreeEndpoints(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSessionsEndpoint(t *testing.T) {
+	stores := newTestStores(t)
+	manager := newTestManager(t)
+	api := &API{Version: "test", Manager: manager, Stores: stores}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/workspaces", api.Workspaces)
+	mux.HandleFunc("/v1/workspaces/", api.WorkspaceByID)
+	mux.HandleFunc("/v1/sessions", api.Sessions)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+
+	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir, Provider: "custom"})
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	defer createResp.Body.Close()
+	var created types.Workspace
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	startReq := StartSessionRequest{
+		Cmd:  os.Args[0],
+		Args: helperArgs("stdout=api", "stderr=err", "sleep_ms=20", "exit=0"),
+		Env:  []string{"GO_WANT_HELPER_PROCESS=1"},
+	}
+	body, _ := json.Marshal(startReq)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces/"+created.ID+"/sessions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(data))
+	}
+	var session types.Session
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	if session.ID == "" {
+		t.Fatalf("expected session id")
+	}
+}
+
 func newTestStores(t *testing.T) *Stores {
 	t.Helper()
 	base := t.TempDir()

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -272,6 +273,7 @@ type StartSessionRequest struct {
 	Tags        []string `json:"tags,omitempty"`
 	WorkspaceID string   `json:"workspace_id,omitempty"`
 	WorktreeID  string   `json:"worktree_id,omitempty"`
+	Text        string   `json:"text,omitempty"`
 }
 
 type UpdateSessionRequest struct {
@@ -380,6 +382,10 @@ func (a *API) WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 		a.Worktrees(w, r, id, parts)
 		return
 	}
+	if parts[1] == "sessions" {
+		a.startSessionForWorkspace(w, r, id, "")
+		return
+	}
 
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 }
@@ -459,8 +465,44 @@ func (a *API) Worktrees(w http.ResponseWriter, r *http.Request, workspaceID stri
 			}
 		}
 	}
+	if len(parts) == 4 && parts[3] == "sessions" {
+		a.startSessionForWorkspace(w, r, workspaceID, parts[2])
+		return
+	}
 
 	writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+}
+
+func (a *API) startSessionForWorkspace(w http.ResponseWriter, r *http.Request, workspaceID, worktreeID string) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex)
+	var req StartSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+		return
+	}
+	provider := strings.TrimSpace(req.Provider)
+	if provider == "" && a.Stores != nil && a.Stores.Workspaces != nil && workspaceID != "" {
+		if ws, ok, err := a.Stores.Workspaces.Get(r.Context(), workspaceID); err == nil && ok && ws != nil {
+			provider = ws.Provider
+		}
+	}
+	if provider == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider is required"})
+		return
+	}
+	req.Provider = provider
+	req.WorkspaceID = workspaceID
+	req.WorktreeID = worktreeID
+	session, err := service.Start(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, session)
 }
 
 func (a *API) AppState(w http.ResponseWriter, r *http.Request) {

@@ -69,6 +69,15 @@ type Model struct {
 	loadingKey        string
 	loader            spinner.Model
 	pendingMouseCmd   tea.Cmd
+	hotkeys           *HotkeyRenderer
+	newSession        *newSessionTarget
+	pendingSelectID   string
+}
+
+type newSessionTarget struct {
+	workspaceID string
+	worktreeID  string
+	provider    string
 }
 
 func NewModel(client *client.Client) Model {
@@ -81,6 +90,7 @@ func NewModel(client *client.Client) Model {
 	loader := spinner.New()
 	loader.Spinner = spinner.Line
 	loader.Style = lipgloss.NewStyle()
+	hotkeyRenderer := NewHotkeyRenderer(DefaultHotkeys(), DefaultHotkeyResolver{})
 
 	return Model{
 		workspaceAPI:    api,
@@ -105,6 +115,7 @@ func NewModel(client *client.Client) Model {
 		contentEsc:      false,
 		transcriptCache: map[string][]string{},
 		loader:          loader,
+		hotkeys:         hotkeyRenderer,
 	}
 }
 
@@ -270,6 +281,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.status = "message is required"
 						return m, nil
 					}
+					if m.newSession != nil {
+						m.status = "starting session"
+						target := m.newSession
+						m.chatInput.Clear()
+						return m, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text)
+					}
 					sessionID := m.composeSessionID()
 					if sessionID == "" {
 						m.status = "select a session to chat"
@@ -308,6 +325,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			m.toggleSidebar()
 			return m, m.saveAppStateCmd()
+		case "n":
+			if m.enterNewSession() {
+				return m, nil
+			}
+			return m, nil
 		case "a":
 			m.enterAddWorkspace()
 			return m, nil
@@ -414,6 +436,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionMeta = normalizeSessionMeta(msg.meta)
 		m.pruneSelection()
 		m.applySidebarItems()
+		if m.pendingSelectID != "" && m.sidebar != nil {
+			if m.sidebar.SelectBySessionID(m.pendingSelectID) {
+				m.pendingSelectID = ""
+			}
+		}
 		m.status = fmt.Sprintf("%d sessions", len(msg.sessions))
 		return m, m.onSelectionChanged()
 	case workspacesMsg:
@@ -516,6 +543,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, openEventsCmd(m.sessionAPI, msg.id)
 		}
 		return m, nil
+	case startSessionMsg:
+		if msg.err != nil {
+			m.status = "start session error: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.session == nil || msg.session.ID == "" {
+			m.status = "start session error: no session returned"
+			return m, nil
+		}
+		m.newSession = nil
+		m.pendingSelectID = msg.session.ID
+		label := msg.session.Title
+		if strings.TrimSpace(label) == "" {
+			label = msg.session.ID
+		}
+		if m.compose != nil {
+			m.compose.Enter(msg.session.ID, label)
+		}
+		m.status = "session started"
+		return m, fetchSessionsWithMetaCmd(m.sessionAPI)
 	case killMsg:
 		if msg.err != nil {
 			m.status = "kill error: " + msg.err.Error()
@@ -625,6 +672,13 @@ func (m *Model) View() string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, listView, lipgloss.NewStyle().PaddingLeft(1).Render(rightView))
 	}
 
+	helpText := ""
+	if m.hotkeys != nil {
+		helpText = m.hotkeys.Render(m)
+	}
+	if helpText == "" {
+		helpText = "q quit"
+	}
 	help := helpStyle.Render(helpText)
 	status := statusStyle.Render(m.status)
 	statusLine := renderStatusLine(m.width, help, status)
@@ -1172,6 +1226,7 @@ func (m *Model) exitCompose(status string) {
 		m.chatInput.Blur()
 		m.chatInput.Clear()
 	}
+	m.newSession = nil
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
@@ -1179,6 +1234,63 @@ func (m *Model) exitCompose(status string) {
 		m.status = status
 	}
 	m.resize(m.width, m.height)
+}
+
+func (m *Model) enterNewSession() bool {
+	item := m.selectedItem()
+	workspaceID := ""
+	worktreeID := ""
+	if item != nil {
+		workspaceID = item.workspaceID()
+		if item.worktree != nil {
+			worktreeID = item.worktree.ID
+		} else if item.meta != nil {
+			worktreeID = item.meta.WorktreeID
+		}
+	}
+	if workspaceID == "" {
+		workspaceID = m.appState.ActiveWorkspaceID
+		worktreeID = m.appState.ActiveWorktreeID
+	}
+	if workspaceID == "" {
+		m.status = "select a workspace or worktree"
+		return false
+	}
+	provider := m.workspaceProvider(workspaceID)
+	if provider == "" {
+		provider = "codex"
+	}
+	m.newSession = &newSessionTarget{
+		workspaceID: workspaceID,
+		worktreeID:  worktreeID,
+		provider:    provider,
+	}
+	m.mode = uiModeCompose
+	if m.compose != nil {
+		m.compose.Enter("", "New session")
+	}
+	if m.chatInput != nil {
+		m.chatInput.SetPlaceholder("new session message")
+		m.chatInput.Focus()
+	}
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
+	m.status = "new session: enter message"
+	m.resize(m.width, m.height)
+	return true
+}
+
+func (m *Model) workspaceProvider(id string) string {
+	if id == "" {
+		return ""
+	}
+	for _, ws := range m.workspaces {
+		if ws != nil && ws.ID == id {
+			return ws.Provider
+		}
+	}
+	return ""
 }
 
 func (m *Model) selectedSessionLabel() string {

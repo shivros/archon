@@ -158,6 +158,21 @@ func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*ty
 	return &session, nil
 }
 
+func (c *Client) StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req StartSessionRequest) (*types.Session, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, errors.New("workspace id is required")
+	}
+	path := "/v1/workspaces/" + strings.TrimSpace(workspaceID) + "/sessions"
+	if strings.TrimSpace(worktreeID) != "" {
+		path = "/v1/workspaces/" + strings.TrimSpace(workspaceID) + "/worktrees/" + strings.TrimSpace(worktreeID) + "/sessions"
+	}
+	var session types.Session
+	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &session); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
 func (c *Client) GetSession(ctx context.Context, id string) (*types.Session, error) {
 	var session types.Session
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sessions/"+id, nil, true, &session); err != nil {

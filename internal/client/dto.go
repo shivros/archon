@@ -39,6 +39,7 @@ type StartSessionRequest struct {
 	Tags        []string `json:"tags,omitempty"`
 	WorkspaceID string   `json:"workspace_id,omitempty"`
 	WorktreeID  string   `json:"worktree_id,omitempty"`
+	Text        string   `json:"text,omitempty"`
 }
 
 type TailItemsResponse struct {

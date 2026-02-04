@@ -25,6 +25,7 @@ type SessionAPI interface {
 	KillSession(ctx context.Context, id string) error
 	MarkSessionExited(ctx context.Context, id string) error
 	SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error)
+	StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error)
 }
 
 type StateAPI interface {
@@ -94,6 +95,10 @@ func (a *ClientAPI) MarkSessionExited(ctx context.Context, id string) error {
 
 func (a *ClientAPI) SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error) {
 	return a.client.SendMessage(ctx, id, req)
+}
+
+func (a *ClientAPI) StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error) {
+	return a.client.StartWorkspaceSession(ctx, workspaceID, worktreeID, req)
 }
 
 func (a *ClientAPI) GetAppState(ctx context.Context) (*types.AppState, error) {

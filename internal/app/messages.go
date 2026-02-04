@@ -93,6 +93,11 @@ type sendMsg struct {
 	err    error
 }
 
+type startSessionMsg struct {
+	session *types.Session
+	err     error
+}
+
 type streamMsg struct {
 	id     string
 	ch     <-chan types.LogEvent

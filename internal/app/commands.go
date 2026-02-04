@@ -179,3 +179,16 @@ func sendSessionCmd(api SessionAPI, id, text string) tea.Cmd {
 		return sendMsg{id: id, turnID: turnID, text: text, err: err}
 	}
 }
+
+func startSessionCmd(api SessionAPI, workspaceID, worktreeID, provider, text string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		req := client.StartSessionRequest{
+			Provider: provider,
+			Text:     text,
+		}
+		session, err := api.StartWorkspaceSession(ctx, workspaceID, worktreeID, req)
+		return startSessionMsg{session: session, err: err}
+	}
+}
