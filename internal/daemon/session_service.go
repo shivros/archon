@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -13,10 +14,11 @@ import (
 type SessionService struct {
 	manager *SessionManager
 	stores  *Stores
+	live    *CodexLiveManager
 }
 
-func NewSessionService(manager *SessionManager, stores *Stores) *SessionService {
-	return &SessionService{manager: manager, stores: stores}
+func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager) *SessionService {
+	return &SessionService{manager: manager, stores: stores, live: live}
 }
 
 func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
@@ -133,6 +135,88 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	return session, nil
 }
 
+func (s *SessionService) History(ctx context.Context, id string, lines int) ([]map[string]any, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, invalidError("session id is required", nil)
+	}
+	session, source, err := s.getSessionRecord(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, notFoundError("session not found", ErrSessionNotFound)
+	}
+	meta := s.getSessionMeta(ctx, id)
+	threadID := resolveThreadID(session, meta)
+	if source == sessionSourceCodex || (session.Provider == "codex" && threadID != "") {
+		return s.tailCodexThread(ctx, session, threadID, lines)
+	}
+	if s.manager != nil {
+		if _, ok := s.manager.GetSession(id); ok {
+			out, _, _, err := s.manager.TailSession(id, "combined", lines)
+			if err == nil {
+				return logLinesToItems(out), nil
+			}
+		}
+	}
+	out, _, _, err := s.readSessionLogs(session.ID, lines)
+	if err != nil {
+		return nil, invalidError(err.Error(), err)
+	}
+	return logLinesToItems(out), nil
+}
+
+func (s *SessionService) SendMessage(ctx context.Context, id string, input []map[string]any) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", invalidError("session id is required", nil)
+	}
+	if len(input) == 0 {
+		return "", invalidError("input is required", nil)
+	}
+	log.Printf("send: lookup session id=%s", id)
+	session, _, err := s.getSessionRecord(ctx, id)
+	if session == nil {
+		log.Printf("send: session not found id=%s err=%v", id, err)
+		return "", notFoundError("session not found", ErrSessionNotFound)
+	}
+	if session.Provider != "codex" {
+		return "", invalidError("provider does not support messaging", nil)
+	}
+	meta := s.getSessionMeta(ctx, session.ID)
+	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
+		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
+			session.Cwd = cwd
+		}
+	}
+	threadID := resolveThreadID(session, meta)
+	log.Printf("send: resolved session id=%s provider=%s thread=%s cwd=%s", session.ID, session.Provider, threadID, session.Cwd)
+	if threadID == "" {
+		return "", invalidError("thread id not available", nil)
+	}
+	if strings.TrimSpace(session.Cwd) == "" {
+		return "", invalidError("session cwd is required", nil)
+	}
+	if s.live == nil {
+		return "", unavailableError("live codex manager not available", nil)
+	}
+	workspacePath := s.resolveWorkspacePath(ctx, meta)
+	codexHome := resolveCodexHome(session.Cwd, workspacePath)
+	turnID, err := s.live.StartTurn(ctx, session, meta, codexHome, input)
+	if err != nil {
+		return "", invalidError(err.Error(), err)
+	}
+	now := time.Now().UTC()
+	if s.stores != nil && s.stores.SessionMeta != nil {
+		_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+			SessionID:    id,
+			ThreadID:     threadID,
+			LastTurnID:   turnID,
+			LastActiveAt: &now,
+		})
+	}
+	return turnID, nil
+}
+
 func (s *SessionService) Get(ctx context.Context, id string) (*types.Session, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, invalidError("session id is required", nil)
@@ -246,7 +330,9 @@ func (s *SessionService) TailItems(ctx context.Context, id string, lines int) ([
 			return nil, unavailableError(err.Error(), err)
 		}
 		if ok && record != nil && record.Source == sessionSourceCodex {
-			return s.tailCodexThread(ctx, record.Session, lines)
+			meta := s.getSessionMeta(ctx, id)
+			threadID := resolveThreadID(record.Session, meta)
+			return s.tailCodexThread(ctx, record.Session, threadID, lines)
 		}
 		if ok && record != nil && record.Session != nil {
 			out, _, _, err := s.readSessionLogs(record.Session.ID, lines)
@@ -271,6 +357,41 @@ func (s *SessionService) Subscribe(ctx context.Context, id, stream string) (<-ch
 		if errors.Is(err, ErrSessionNotFound) {
 			return nil, nil, notFoundError("session not found", err)
 		}
+		return nil, nil, invalidError(err.Error(), err)
+	}
+	return ch, cancel, nil
+}
+
+func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {
+	if s.live == nil {
+		return nil, nil, unavailableError("live codex manager not available", nil)
+	}
+	if strings.TrimSpace(id) == "" {
+		return nil, nil, invalidError("session id is required", nil)
+	}
+	session, _, err := s.getSessionRecord(ctx, id)
+	if session == nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, nil, notFoundError("session not found", err)
+		}
+		if err != nil {
+			return nil, nil, invalidError(err.Error(), err)
+		}
+		return nil, nil, notFoundError("session not found", ErrSessionNotFound)
+	}
+	if session.Provider != "codex" {
+		return nil, nil, invalidError("provider does not support events", nil)
+	}
+	meta := s.getSessionMeta(ctx, session.ID)
+	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
+		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
+			session.Cwd = cwd
+		}
+	}
+	workspacePath := s.resolveWorkspacePath(ctx, meta)
+	codexHome := resolveCodexHome(session.Cwd, workspacePath)
+	ch, cancel, err := s.live.Subscribe(session, meta, codexHome)
+	if err != nil {
 		return nil, nil, invalidError(err.Error(), err)
 	}
 	return ch, cancel, nil
@@ -306,6 +427,58 @@ func (s *SessionService) resolveWorktreePath(ctx context.Context, workspaceID, w
 		}
 	}
 	return "", ws.RepoPath, notFoundError("worktree not found", store.ErrWorktreeNotFound)
+}
+
+func (s *SessionService) getSessionRecord(ctx context.Context, id string) (*types.Session, string, error) {
+	if s.manager != nil {
+		if session, ok := s.manager.GetSession(id); ok && session != nil {
+			return session, sessionSourceInternal, nil
+		}
+	}
+	if s.stores != nil && s.stores.Sessions != nil {
+		record, ok, err := s.stores.Sessions.GetRecord(ctx, id)
+		if err != nil {
+			return nil, "", unavailableError(err.Error(), err)
+		}
+		if ok && record != nil {
+			return record.Session, record.Source, nil
+		}
+	}
+	return nil, "", notFoundError("session not found", ErrSessionNotFound)
+}
+
+func (s *SessionService) resolveWorkspacePath(ctx context.Context, meta *types.SessionMeta) string {
+	if meta == nil || strings.TrimSpace(meta.WorkspaceID) == "" {
+		return ""
+	}
+	if s.stores == nil || s.stores.Workspaces == nil {
+		return ""
+	}
+	if ws, ok, err := s.stores.Workspaces.Get(ctx, meta.WorkspaceID); err == nil && ok && ws != nil {
+		return ws.RepoPath
+	}
+	return ""
+}
+
+func (s *SessionService) getSessionMeta(ctx context.Context, sessionID string) *types.SessionMeta {
+	if s.stores == nil || s.stores.SessionMeta == nil {
+		return nil
+	}
+	meta, ok, err := s.stores.SessionMeta.Get(ctx, sessionID)
+	if err != nil || !ok {
+		return nil
+	}
+	return meta
+}
+
+func resolveThreadID(session *types.Session, meta *types.SessionMeta) string {
+	if meta != nil && strings.TrimSpace(meta.ThreadID) != "" {
+		return meta.ThreadID
+	}
+	if session != nil && session.Provider == "codex" && session.ID != "" {
+		return session.ID
+	}
+	return ""
 }
 
 func trimTitle(input string) string {

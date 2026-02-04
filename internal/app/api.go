@@ -19,9 +19,12 @@ type WorkspaceAPI interface {
 type SessionAPI interface {
 	ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 	TailItems(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
+	History(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
 	TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
+	EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error)
 	KillSession(ctx context.Context, id string) error
 	MarkSessionExited(ctx context.Context, id string) error
+	SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error)
 }
 
 type StateAPI interface {
@@ -69,8 +72,16 @@ func (a *ClientAPI) TailItems(ctx context.Context, id string, lines int) (*clien
 	return a.client.TailItems(ctx, id, lines)
 }
 
+func (a *ClientAPI) History(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error) {
+	return a.client.History(ctx, id, lines)
+}
+
 func (a *ClientAPI) TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error) {
 	return a.client.TailStream(ctx, id, stream)
+}
+
+func (a *ClientAPI) EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {
+	return a.client.EventStream(ctx, id)
 }
 
 func (a *ClientAPI) KillSession(ctx context.Context, id string) error {
@@ -79,6 +90,10 @@ func (a *ClientAPI) KillSession(ctx context.Context, id string) error {
 
 func (a *ClientAPI) MarkSessionExited(ctx context.Context, id string) error {
 	return a.client.MarkSessionExited(ctx, id)
+}
+
+func (a *ClientAPI) SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error) {
+	return a.client.SendMessage(ctx, id, req)
 }
 
 func (a *ClientAPI) GetAppState(ctx context.Context) (*types.AppState, error) {

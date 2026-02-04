@@ -45,6 +45,16 @@ type TailItemsResponse struct {
 	Items []map[string]any `json:"items"`
 }
 
+type SendSessionRequest struct {
+	Text  string           `json:"text,omitempty"`
+	Input []map[string]any `json:"input,omitempty"`
+}
+
+type SendSessionResponse struct {
+	OK     bool   `json:"ok"`
+	TurnID string `json:"turn_id,omitempty"`
+}
+
 type HealthResponse struct {
 	OK      bool   `json:"ok"`
 	Version string `json:"version"`

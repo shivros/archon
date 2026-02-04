@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"control/internal/client"
@@ -103,11 +104,31 @@ func fetchTailCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
+func fetchHistoryCmd(api SessionAPI, id string, lines int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		resp, err := api.History(ctx, id, lines)
+		if err != nil {
+			return historyMsg{id: id, err: err}
+		}
+		return historyMsg{id: id, items: resp.Items}
+	}
+}
+
 func openStreamCmd(api SessionAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		ch, cancel, err := api.TailStream(ctx, id, "combined")
 		return streamMsg{id: id, ch: ch, cancel: cancel, err: err}
+	}
+}
+
+func openEventsCmd(api SessionAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		ch, cancel, err := api.EventStream(ctx, id)
+		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
@@ -142,5 +163,19 @@ func markExitedManyCmd(api SessionAPI, ids []string) tea.Cmd {
 			}
 		}
 		return bulkExitMsg{ids: ids}
+	}
+}
+
+func sendSessionCmd(api SessionAPI, id, text string) tea.Cmd {
+	return func() tea.Msg {
+		log.Printf("ui send: id=%s text_len=%d", id, len(text))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		resp, err := api.SendMessage(ctx, id, client.SendSessionRequest{Text: text})
+		turnID := ""
+		if resp != nil {
+			turnID = resp.TurnID
+		}
+		return sendMsg{id: id, turnID: turnID, text: text, err: err}
 	}
 }

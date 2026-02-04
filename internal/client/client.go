@@ -183,6 +183,24 @@ func (c *Client) TailItems(ctx context.Context, id string, lines int) (*TailItem
 	return &resp, nil
 }
 
+func (c *Client) History(ctx context.Context, id string, lines int) (*TailItemsResponse, error) {
+	path := fmt.Sprintf("/v1/sessions/%s/history?lines=%d", id, lines)
+	var resp TailItemsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) SendMessage(ctx context.Context, id string, req SendSessionRequest) (*SendSessionResponse, error) {
+	path := fmt.Sprintf("/v1/sessions/%s/send", strings.TrimSpace(id))
+	var resp SendSessionResponse
+	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) EnsureDaemon(ctx context.Context) error {
 	return c.ensureDaemon(ctx, "", false)
 }
@@ -251,6 +269,21 @@ func (c *Client) ensureDaemon(ctx context.Context, expectedVersion string, resta
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, requireAuth bool, out any) error {
+	return c.doJSONWithClient(ctx, method, path, body, requireAuth, out, c.http)
+}
+
+func (c *Client) doJSONWithTimeout(ctx context.Context, method, path string, body any, requireAuth bool, out any, timeout time.Duration) error {
+	client := c.http
+	if timeout > 0 {
+		client = &http.Client{
+			Timeout:   timeout,
+			Transport: c.http.Transport,
+		}
+	}
+	return c.doJSONWithClient(ctx, method, path, body, requireAuth, out, client)
+}
+
+func (c *Client) doJSONWithClient(ctx context.Context, method, path string, body any, requireAuth bool, out any, httpClient *http.Client) error {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -274,7 +307,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, requ
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	resp, err := c.http.Do(req)
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}

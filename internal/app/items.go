@@ -22,54 +22,55 @@ func formatItem(item map[string]any) []string {
 	switch typ {
 	case "log":
 		if text := asString(item["text"]); text != "" {
-			return []string{text}
+			return []string{escapeMarkdown(text)}
 		}
 	case "userMessage":
 		if text := extractContentText(item["content"]); text != "" {
-			return []string{"User: " + text}
+			return []string{"### User", "", text, ""}
 		}
 		if text := asString(item["text"]); text != "" {
-			return []string{"User: " + text}
+			return []string{"### User", "", text, ""}
 		}
 	case "agentMessage":
 		if text := asString(item["text"]); text != "" {
-			return []string{"Agent: " + text}
+			return []string{"### Agent", "", text, ""}
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			return []string{"Agent: " + text}
+			return []string{"### Agent", "", text, ""}
 		}
 	case "commandExecution":
 		cmd := extractCommand(item["command"])
 		status := asString(item["status"])
-		line := "Command"
+		lines := []string{"### Command"}
 		if cmd != "" {
-			line += ": " + cmd
+			lines = append(lines, "", escapeMarkdown(cmd))
 		}
 		if status != "" {
-			line += " (" + status + ")"
+			lines = append(lines, "", "Status: "+escapeMarkdown(status))
 		}
-		return []string{line}
+		lines = append(lines, "")
+		return lines
 	case "fileChange":
 		paths := extractChangePaths(item["changes"])
 		if len(paths) > 0 {
-			return []string{"File change: " + strings.Join(paths, ", ")}
+			return []string{"### File change", "", escapeMarkdown(strings.Join(paths, ", ")), ""}
 		}
 	case "enteredReviewMode":
 		if text := asString(item["review"]); text != "" {
-			return []string{"Review started: " + text}
+			return []string{"### Review started", "", text, ""}
 		}
 	case "exitedReviewMode":
 		if text := asString(item["review"]); text != "" {
-			return []string{"Review completed: " + text}
+			return []string{"### Review completed", "", text, ""}
 		}
 	}
 	if typ != "" {
 		if data, err := json.Marshal(item); err == nil {
-			return []string{fmt.Sprintf("%s: %s", typ, string(data))}
+			return []string{escapeMarkdown(fmt.Sprintf("%s: %s", typ, string(data)))}
 		}
 	}
 	if data, err := json.Marshal(item); err == nil {
-		return []string{string(data)}
+		return []string{escapeMarkdown(string(data))}
 	}
 	return nil
 }

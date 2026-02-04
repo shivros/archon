@@ -94,6 +94,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	syncer := NewCodexSyncer(d.stores)
 	api.Syncer = syncer
+	api.LiveCodex = NewCodexLiveManager()
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)

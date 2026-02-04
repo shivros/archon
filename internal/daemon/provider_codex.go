@@ -118,6 +118,7 @@ func (p *codexProvider) Start(cfg StartSessionConfig, sink *logSink) (*providerP
 		Interrupt: func() error {
 			return controller.interrupt(context.Background())
 		},
+		ThreadID: threadID,
 	}, nil
 }
 

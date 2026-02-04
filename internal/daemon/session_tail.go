@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"control/internal/config"
 	"control/internal/types"
@@ -53,12 +54,15 @@ func (s *SessionService) readSessionLogs(id string, lines int) ([]string, bool, 
 	return combined, stdoutTrunc || stderrTrunc, "stdout_then_stderr", nil
 }
 
-func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Session, lines int) ([]map[string]any, error) {
+func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Session, threadID string, lines int) ([]map[string]any, error) {
 	if session == nil {
 		return nil, invalidError("session is required", nil)
 	}
 	if session.Cwd == "" {
 		return nil, invalidError("session cwd is required", nil)
+	}
+	if strings.TrimSpace(threadID) == "" {
+		threadID = session.ID
 	}
 	workspacePath := ""
 	if s.stores != nil && s.stores.SessionMeta != nil && s.stores.Workspaces != nil {
@@ -75,7 +79,7 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 	}
 	defer client.Close()
 
-	thread, err := client.ReadThread(ctx, session.ID)
+	thread, err := client.ReadThread(ctx, threadID)
 	if err != nil {
 		return nil, err
 	}

@@ -51,6 +51,12 @@ type tailMsg struct {
 	err   error
 }
 
+type historyMsg struct {
+	id    string
+	items []map[string]any
+	err   error
+}
+
 type killMsg struct {
 	id  string
 	err error
@@ -78,9 +84,23 @@ type addWorktreeMsg struct {
 	err         error
 }
 
+type sendMsg struct {
+	id     string
+	turnID string
+	text   string
+	err    error
+}
+
 type streamMsg struct {
 	id     string
 	ch     <-chan types.LogEvent
+	cancel func()
+	err    error
+}
+
+type eventsMsg struct {
+	id     string
+	ch     <-chan types.CodexEvent
 	cancel func()
 	err    error
 }

@@ -179,6 +179,12 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		if normalized.WorktreeID == "" {
 			normalized.WorktreeID = existing.WorktreeID
 		}
+		if normalized.ThreadID == "" {
+			normalized.ThreadID = existing.ThreadID
+		}
+		if normalized.LastTurnID == "" {
+			normalized.LastTurnID = existing.LastTurnID
+		}
 	}
 	if normalized.LastActiveAt == nil {
 		now := time.Now().UTC()

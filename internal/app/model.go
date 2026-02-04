@@ -32,6 +32,7 @@ const (
 	uiModeNormal uiMode = iota
 	uiModeAddWorkspace
 	uiModeAddWorktree
+	uiModeCompose
 )
 
 type Model struct {
@@ -43,6 +44,7 @@ type Model struct {
 	mode         uiMode
 	addWorkspace *AddWorkspaceController
 	addWorktree  *AddWorktreeController
+	compose      *ComposeController
 	status       string
 	width        int
 	height       int
@@ -54,6 +56,9 @@ type Model struct {
 	appState     types.AppState
 	hasAppState  bool
 	stream       *StreamController
+	codexStream  *CodexStreamController
+	contentRaw   string
+	contentEsc   bool
 }
 
 func NewModel(client *client.Client) Model {
@@ -69,13 +74,17 @@ func NewModel(client *client.Client) Model {
 		sidebar:      NewSidebarController(),
 		viewport:     vp,
 		stream:       NewStreamController(maxViewportLines, maxEventsPerTick),
+		codexStream:  NewCodexStreamController(maxViewportLines, maxEventsPerTick),
 		mode:         uiModeNormal,
 		addWorkspace: NewAddWorkspaceController(minViewportWidth),
 		addWorktree:  NewAddWorktreeController(minViewportWidth),
+		compose:      NewComposeController(minViewportWidth),
 		status:       "",
 		follow:       true,
 		worktrees:    map[string][]*types.Worktree{},
 		sessionMeta:  map[string]*types.SessionMeta{},
+		contentRaw:   "No sessions.",
+		contentEsc:   false,
 	}
 }
 
@@ -196,6 +205,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, cmd := m.addWorktree.Update(msg, m)
 		return m, cmd
 	}
+	if m.mode == uiModeCompose {
+		switch msg := msg.(type) {
+		case tickMsg:
+			m.consumeStreamTick()
+			return m, tickCmd()
+		case streamMsg:
+			if msg.err != nil {
+				m.status = "stream error: " + msg.err.Error()
+				return m, nil
+			}
+			if msg.id != m.selectedSessionID() {
+				if msg.cancel != nil {
+					msg.cancel()
+				}
+				return m, nil
+			}
+			if m.stream != nil {
+				m.stream.SetStream(msg.ch, msg.cancel)
+			}
+			m.status = "streaming"
+			return m, nil
+		}
+		if m.compose == nil {
+			return m, nil
+		}
+		_, cmd := m.compose.Update(msg, m)
+		return m, cmd
+	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -218,6 +255,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.enterAddWorktree(item.workspace.ID)
+			return m, nil
+		case "c":
+			id := m.selectedSessionID()
+			if id == "" {
+				m.status = "select a session to send"
+				return m, nil
+			}
+			m.enterCompose(id)
 			return m, nil
 		case "r":
 			m.status = "refreshing"
@@ -334,8 +379,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "tail error: " + msg.err.Error()
 			return m, nil
 		}
-		m.setSnapshot(itemsToLines(msg.items))
+		m.setSnapshot(itemsToLines(msg.items), false)
 		m.status = "tail updated"
+		return m, nil
+	case historyMsg:
+		if msg.err != nil {
+			m.status = "history error: " + msg.err.Error()
+			return m, nil
+		}
+		m.setSnapshot(itemsToLines(msg.items), false)
+		m.status = "history updated"
+		return m, nil
+	case sendMsg:
+		if msg.err != nil {
+			m.status = "send error: " + msg.err.Error()
+			return m, nil
+		}
+		m.status = "message sent"
+		if msg.id != "" {
+			if m.stream != nil {
+				m.stream.Reset()
+			}
+			if m.codexStream != nil {
+				m.codexStream.SetSnapshot(m.currentLines())
+				m.codexStream.AppendUserMessage(msg.text)
+			}
+			return m, openEventsCmd(m.sessionAPI, msg.id)
+		}
 		return m, nil
 	case killMsg:
 		if msg.err != nil {
@@ -380,8 +450,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "streaming"
 		return m, nil
+	case eventsMsg:
+		if msg.err != nil {
+			m.status = "events error: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.id != m.selectedSessionID() {
+			if msg.cancel != nil {
+				msg.cancel()
+			}
+			return m, nil
+		}
+		if m.codexStream != nil {
+			m.codexStream.SetStream(msg.ch, msg.cancel)
+		}
+		m.status = "streaming events"
+		return m, nil
 	case tickMsg:
 		m.consumeStreamTick()
+		m.consumeCodexTick()
 		return m, tickCmd()
 	}
 
@@ -400,6 +487,11 @@ func (m *Model) View() string {
 		headerText = "Add Worktree"
 		if m.addWorktree != nil {
 			bodyText = m.addWorktree.View()
+		}
+	} else if m.mode == uiModeCompose {
+		headerText = "Compose"
+		if m.compose != nil {
+			bodyText = m.compose.View()
 		}
 	}
 	rightHeader := headerStyle.Render(headerText)
@@ -451,13 +543,17 @@ func (m *Model) resize(width, height int) {
 	if m.addWorktree != nil {
 		m.addWorktree.Resize(viewportWidth)
 	}
+	if m.compose != nil {
+		m.compose.Resize(viewportWidth)
+	}
+	m.renderViewport()
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {
 	item := m.selectedItem()
 	if item == nil {
 		m.resetStream()
-		m.viewport.SetContent("No sessions.")
+		m.setContentText("No sessions.")
 		return nil
 	}
 	if item.kind == sidebarWorkspace {
@@ -528,7 +624,7 @@ func (m *Model) onSelectionChanged() tea.Cmd {
 	id := item.session.ID
 	m.resetStream()
 	m.status = "loading " + id
-	cmds := []tea.Cmd{fetchTailCmd(m.sessionAPI, id)}
+	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, maxViewportLines)}
 	if isActiveStatus(item.session.Status) {
 		cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
 	}
@@ -562,18 +658,18 @@ func (m *Model) selectedKey() string {
 func (m *Model) applySidebarItems() {
 	if m.sidebar == nil {
 		m.resetStream()
-		m.viewport.SetContent("No sessions.")
+		m.setContentText("No sessions.")
 		return
 	}
 	item := m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID)
 	if item == nil {
 		m.resetStream()
-		m.viewport.SetContent("No sessions.")
+		m.setContentText("No sessions.")
 		return
 	}
 	if !item.isSession() {
 		m.resetStream()
-		m.viewport.SetContent("Select a session.")
+		m.setContentText("Select a session.")
 	}
 }
 
@@ -587,6 +683,9 @@ func (m *Model) resetStream() {
 	if m.stream != nil {
 		m.stream.Reset()
 	}
+	if m.codexStream != nil {
+		m.codexStream.Reset()
+	}
 }
 
 func (m *Model) consumeStreamTick() {
@@ -598,7 +697,20 @@ func (m *Model) consumeStreamTick() {
 		m.status = "stream closed"
 	}
 	if changed {
-		m.applyLines(lines)
+		m.applyLines(lines, true)
+	}
+}
+
+func (m *Model) consumeCodexTick() {
+	if m.codexStream == nil {
+		return
+	}
+	lines, changed, closed := m.codexStream.ConsumeTick()
+	if closed {
+		m.status = "events closed"
+	}
+	if changed {
+		m.applyLines(lines, false)
 	}
 }
 
@@ -653,18 +765,48 @@ func (m *Model) advanceToNextSession() bool {
 	return m.sidebar.AdvanceToNextSession()
 }
 
-func (m *Model) setSnapshot(lines []string) {
+func (m *Model) setSnapshot(lines []string, escape bool) {
 	if m.stream != nil {
 		m.stream.SetSnapshot(lines)
 	}
-	m.applyLines(lines)
+	m.applyLines(lines, escape)
 }
 
-func (m *Model) applyLines(lines []string) {
-	m.viewport.SetContent(strings.Join(lines, "\n"))
+func (m *Model) applyLines(lines []string, escape bool) {
+	m.contentRaw = strings.Join(lines, "\n")
+	m.contentEsc = escape
+	m.renderViewport()
+}
+
+func (m *Model) setContentText(text string) {
+	m.contentRaw = text
+	m.contentEsc = false
+	m.renderViewport()
+}
+
+func (m *Model) renderViewport() {
+	if m.viewport.Width <= 0 {
+		return
+	}
+	renderWidth := m.viewport.Width
+	if !m.appState.SidebarCollapsed && renderWidth > 1 {
+		renderWidth--
+	}
+	content := m.contentRaw
+	if m.contentEsc {
+		content = escapeMarkdown(content)
+	}
+	m.viewport.SetContent(renderMarkdown(content, renderWidth))
 	if m.follow {
 		m.viewport.GotoBottom()
 	}
+}
+
+func (m *Model) currentLines() []string {
+	if strings.TrimSpace(m.contentRaw) == "" {
+		return nil
+	}
+	return strings.Split(m.contentRaw, "\n")
 }
 
 func (m *Model) toggleSidebar() {
@@ -740,6 +882,33 @@ func (m *Model) exitAddWorktree(status string) {
 	if status != "" {
 		m.status = status
 	}
+}
+
+func (m *Model) enterCompose(sessionID string) {
+	m.mode = uiModeCompose
+	label := m.selectedSessionLabel()
+	if m.compose != nil {
+		m.compose.Enter(sessionID, label)
+	}
+	m.status = "compose message"
+}
+
+func (m *Model) exitCompose(status string) {
+	m.mode = uiModeNormal
+	if m.compose != nil {
+		m.compose.Exit()
+	}
+	if status != "" {
+		m.status = status
+	}
+}
+
+func (m *Model) selectedSessionLabel() string {
+	item := m.selectedItem()
+	if item == nil || item.session == nil {
+		return ""
+	}
+	return sessionTitle(item.session, item.meta)
 }
 
 func renderStatusLine(width int, help, status string) string {

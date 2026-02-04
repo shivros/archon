@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
 )
@@ -132,12 +133,14 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		return
 	}
 	isSelected := index == m.Index()
+	maxWidth := m.Width()
 	switch entry.kind {
 	case sidebarWorkspace:
 		label := entry.Title()
 		if entry.sessionCount > 0 {
 			label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
 		}
+		label = truncateToWidth(label, maxWidth)
 		style := workspaceStyle
 		if entry.workspace != nil && entry.workspace.ID == d.activeWorkspaceID {
 			style = workspaceActiveStyle
@@ -152,6 +155,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 			label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
 		}
 		line := "  ↳ " + label
+		line = truncateToWidth(line, maxWidth)
 		style := worktreeStyle
 		if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
 			style = worktreeActiveStyle
@@ -168,6 +172,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 			indicator = activeDot
 		}
 		line := fmt.Sprintf(" %s %s • %s", indicator, title, since)
+		line = truncateToWidth(line, maxWidth)
 		style := sessionStyle
 		if indicator == activeDot {
 			style = activeSessionStyle
@@ -421,6 +426,19 @@ func truncateText(text string, maxLen int) string {
 		return text
 	}
 	return strings.TrimSpace(text[:maxLen]) + "…"
+}
+
+func truncateToWidth(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	if ansi.StringWidth(text) <= width {
+		return text
+	}
+	if width == 1 {
+		return "…"
+	}
+	return ansi.Cut(text, 0, width-1) + "…"
 }
 
 func normalizeSessionMeta(meta []*types.SessionMeta) map[string]*types.SessionMeta {

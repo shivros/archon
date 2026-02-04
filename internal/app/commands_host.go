@@ -26,3 +26,7 @@ func (m *Model) createWorktreeCmd(workspaceID string, req client.CreateWorktreeR
 func (m *Model) addWorktreeCmd(workspaceID string, worktree *types.Worktree) tea.Cmd {
 	return addWorktreeCmd(m.workspaceAPI, workspaceID, worktree)
 }
+
+func (m *Model) sendMessageCmd(sessionID, text string) tea.Cmd {
+	return sendSessionCmd(m.sessionAPI, sessionID, text)
+}

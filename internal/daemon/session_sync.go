@@ -165,6 +165,7 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 				WorkspaceID:  workspaceID,
 				WorktreeID:   worktreeID,
 				Title:        title,
+				ThreadID:     thread.ID,
 				LastActiveAt: &lastActive,
 			}
 			if _, err := s.meta.Upsert(ctx, meta); err != nil {

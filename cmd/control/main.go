@@ -385,6 +385,8 @@ func runUI(args []string) error {
 		return err
 	}
 
+	configureUILogging()
+
 	ctx := context.Background()
 	client, err := controlclient.New()
 	if err != nil {
@@ -394,6 +396,23 @@ func runUI(args []string) error {
 		return err
 	}
 	return app.Run(client)
+}
+
+func configureUILogging() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	dataDir, err := config.DataDir()
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return
+	}
+	logPath := filepath.Join(dataDir, "ui.log")
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	log.SetOutput(file)
 }
 
 func printSessions(sessions []*types.Session) {

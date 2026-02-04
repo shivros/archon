@@ -19,6 +19,10 @@ type sessionsResponse struct {
 	Sessions []*types.Session `json:"sessions"`
 }
 
+type itemsResponse struct {
+	Items []map[string]any `json:"items"`
+}
+
 func TestAPISessionEndpoints(t *testing.T) {
 	manager := newTestManager(t)
 	server := newTestServer(t, manager)
@@ -55,7 +59,36 @@ func TestAPISessionEndpoints(t *testing.T) {
 		t.Fatalf("expected tail items")
 	}
 
+	history := historySession(t, server, session.ID)
+	if len(history.Items) == 0 {
+		t.Fatalf("expected history items")
+	}
+
 	killSession(t, server, session.ID)
+}
+
+func TestAPISessionSendUnsupported(t *testing.T) {
+	manager := newTestManager(t)
+	server := newTestServer(t, manager)
+	defer server.Close()
+
+	startReq := StartSessionRequest{
+		Provider: "custom",
+		Cmd:      os.Args[0],
+		Args:     helperArgs("stdout=api", "stderr=err", "sleep_ms=50", "exit=0"),
+		Env:      []string{"GO_WANT_HELPER_PROCESS=1"},
+		Title:    "api-test",
+	}
+
+	session := startSession(t, server, startReq)
+	if session.ID == "" {
+		t.Fatalf("expected session id")
+	}
+
+	code := sendMessageStatus(t, server, session.ID, "hello")
+	if code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsupported provider, got %d", code)
+	}
 }
 
 func TestAPISessionExitHidesFromList(t *testing.T) {
@@ -245,6 +278,43 @@ func tailSession(t *testing.T, server *httptest.Server, id string) tailResponse 
 		t.Fatalf("decode tail: %v", err)
 	}
 	return payload
+}
+
+func historySession(t *testing.T, server *httptest.Server, id string) itemsResponse {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions/"+id+"/history?lines=50", nil)
+	req.Header.Set("Authorization", "Bearer token")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("history session: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var payload itemsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	return payload
+}
+
+func sendMessageStatus(t *testing.T, server *httptest.Server, id, text string) int {
+	t.Helper()
+	body := bytes.NewBufferString(`{"text":"` + text + `"}`)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/sessions/"+id+"/send", body)
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("send session: %v", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
 }
 
 func killSession(t *testing.T, server *httptest.Server, id string) {

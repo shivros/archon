@@ -156,6 +156,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	m.mu.Unlock()
 
 	m.upsertSessionMeta(cfg, sessionID, session.Status)
+	m.upsertSessionThreadID(sessionID, proc.ThreadID)
 	m.upsertSessionRecord(session, sessionSourceInternal)
 
 	go m.flushLoop(runtimeState)
@@ -472,6 +473,23 @@ func (m *SessionManager) upsertSessionMeta(cfg StartSessionConfig, sessionID str
 		Title:        sanitizeTitle(cfg.Title),
 		InitialInput: sanitizeTitle(cfg.InitialInput),
 		LastActiveAt: &now,
+	}
+	_, _ = store.Upsert(context.Background(), meta)
+}
+
+func (m *SessionManager) upsertSessionThreadID(sessionID, threadID string) {
+	if strings.TrimSpace(threadID) == "" {
+		return
+	}
+	m.mu.Lock()
+	store := m.metaStore
+	m.mu.Unlock()
+	if store == nil {
+		return
+	}
+	meta := &types.SessionMeta{
+		SessionID: sessionID,
+		ThreadID:  threadID,
 	}
 	_, _ = store.Upsert(context.Background(), meta)
 }

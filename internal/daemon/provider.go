@@ -17,6 +17,7 @@ type providerProcess struct {
 	Process   *os.Process
 	Wait      func() error
 	Interrupt func() error
+	ThreadID  string
 }
 
 func ResolveProvider(provider, customCmd string) (Provider, error) {

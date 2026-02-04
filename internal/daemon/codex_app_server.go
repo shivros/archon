@@ -21,6 +21,7 @@ type codexAppServer struct {
 	mu     sync.Mutex
 	nextID int
 	msgs   chan rpcMessage
+	notes  chan rpcMessage
 	errs   chan error
 }
 
@@ -102,6 +103,7 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string) (*codexAppS
 		reader: bufio.NewReader(stdout),
 		nextID: 1,
 		msgs:   make(chan rpcMessage, 32),
+		notes:  make(chan rpcMessage, 64),
 		errs:   make(chan error, 1),
 	}
 	go client.readLoop()
@@ -125,6 +127,20 @@ func (c *codexAppServer) Close() {
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
+}
+
+func (c *codexAppServer) Notifications() <-chan rpcMessage {
+	if c == nil {
+		return nil
+	}
+	return c.notes
+}
+
+func (c *codexAppServer) Errors() <-chan error {
+	if c == nil {
+		return nil
+	}
+	return c.errs
 }
 
 func (c *codexAppServer) initialize(ctx context.Context) error {
@@ -166,6 +182,63 @@ func (c *codexAppServer) ReadThread(ctx context.Context, threadID string) (*code
 		return nil, errors.New("thread not found")
 	}
 	return result.Thread, nil
+}
+
+func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) error {
+	params := map[string]any{
+		"threadId": threadID,
+	}
+	return c.request(ctx, "thread/resume", params, nil)
+}
+
+func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input []map[string]any) (string, error) {
+	params := map[string]any{
+		"threadId": threadID,
+		"input":    input,
+	}
+	var result struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if err := c.request(ctx, "turn/start", params, &result); err != nil {
+		return "", err
+	}
+	if result.Turn.ID == "" {
+		return "", errors.New("turn id missing")
+	}
+	return result.Turn.ID, nil
+}
+
+func (c *codexAppServer) WaitForTurnCompleted(ctx context.Context, turnID string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-c.errs:
+			if err != nil {
+				return err
+			}
+		case msg := <-c.notes:
+			if msg.Method != "turn/completed" {
+				continue
+			}
+			if len(msg.Params) == 0 {
+				return nil
+			}
+			var payload struct {
+				Turn struct {
+					ID string `json:"id"`
+				} `json:"turn"`
+			}
+			if err := json.Unmarshal(msg.Params, &payload); err != nil {
+				return nil
+			}
+			if turnID == "" || payload.Turn.ID == turnID {
+				return nil
+			}
+		}
+	}
 }
 
 func (c *codexAppServer) request(ctx context.Context, method string, params any, out any) error {
@@ -239,6 +312,10 @@ func (c *codexAppServer) readLoop() {
 		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
-		c.msgs <- msg
+		if msg.ID == nil {
+			c.notes <- msg
+		} else {
+			c.msgs <- msg
+		}
 	}
 }
