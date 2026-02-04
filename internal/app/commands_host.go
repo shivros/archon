@@ -28,5 +28,8 @@ func (m *Model) addWorktreeCmd(workspaceID string, worktree *types.Worktree) tea
 }
 
 func (m *Model) sendMessageCmd(sessionID, text string) tea.Cmd {
+	if m.chat != nil {
+		return m.chat.SendMessage(sessionID, text)
+	}
 	return sendSessionCmd(m.sessionAPI, sessionID, text)
 }

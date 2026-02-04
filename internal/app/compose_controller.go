@@ -60,9 +60,6 @@ func (c *ComposeController) Update(msg tea.Msg, host composeHost) (bool, tea.Cmd
 			host.setStatus("sending message")
 			host.exitCompose("")
 			return true, host.sendMessageCmd(sessionID, text)
-		case "ctrl+b":
-			// Swallow global hotkey while typing.
-			return true, nil
 		}
 	}
 	var cmd tea.Cmd

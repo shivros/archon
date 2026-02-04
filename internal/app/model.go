@@ -45,6 +45,7 @@ type Model struct {
 	addWorkspace *AddWorkspaceController
 	addWorktree  *AddWorktreeController
 	compose      *ComposeController
+	chatInput    *ChatInput
 	status       string
 	width        int
 	height       int
@@ -57,6 +58,8 @@ type Model struct {
 	hasAppState  bool
 	stream       *StreamController
 	codexStream  *CodexStreamController
+	input        *InputController
+	chat         *SessionChatController
 	contentRaw   string
 	contentEsc   bool
 }
@@ -66,6 +69,8 @@ func NewModel(client *client.Client) Model {
 	vp.SetContent("No sessions.")
 
 	api := NewClientAPI(client)
+	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
+	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
 
 	return Model{
 		workspaceAPI: api,
@@ -73,12 +78,15 @@ func NewModel(client *client.Client) Model {
 		stateAPI:     api,
 		sidebar:      NewSidebarController(),
 		viewport:     vp,
-		stream:       NewStreamController(maxViewportLines, maxEventsPerTick),
-		codexStream:  NewCodexStreamController(maxViewportLines, maxEventsPerTick),
+		stream:       stream,
+		codexStream:  codexStream,
+		input:        NewInputController(),
+		chat:         NewSessionChatController(api, codexStream),
 		mode:         uiModeNormal,
 		addWorkspace: NewAddWorkspaceController(minViewportWidth),
 		addWorktree:  NewAddWorktreeController(minViewportWidth),
 		compose:      NewComposeController(minViewportWidth),
+		chatInput:    NewChatInput(minViewportWidth),
 		status:       "",
 		follow:       true,
 		worktrees:    map[string][]*types.Worktree{},
@@ -227,11 +235,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "streaming"
 			return m, nil
 		}
-		if m.compose == nil {
-			return m, nil
-		}
-		_, cmd := m.compose.Update(msg, m)
-		return m, cmd
 	}
 
 	switch msg := msg.(type) {
@@ -239,6 +242,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 	case tea.KeyMsg:
+		if m.input != nil && m.input.IsChatFocused() {
+			switch msg.String() {
+			case "esc":
+				m.exitCompose("compose canceled")
+				return m, nil
+			case "enter":
+				if m.chatInput != nil {
+					text := strings.TrimSpace(m.chatInput.Value())
+					if text == "" {
+						m.status = "message is required"
+						return m, nil
+					}
+					sessionID := m.composeSessionID()
+					if sessionID == "" {
+						m.status = "select a session to chat"
+						return m, nil
+					}
+					m.status = "sending message"
+					m.chatInput.Clear()
+					return m, m.sendMessageCmd(sessionID, text)
+				}
+				return m, nil
+			}
+			if m.chatInput != nil {
+				cmd := m.chatInput.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -260,6 +292,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			id := m.selectedSessionID()
 			if id == "" {
 				m.status = "select a session to send"
+				return m, nil
+			}
+			m.enterCompose(id)
+			return m, nil
+		case "enter":
+			id := m.selectedSessionID()
+			if id == "" {
+				m.status = "select a session to chat"
 				return m, nil
 			}
 			m.enterCompose(id)
@@ -404,6 +444,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.codexStream.SetSnapshot(m.currentLines())
 				m.codexStream.AppendUserMessage(msg.text)
 			}
+			if m.chat != nil {
+				return m, m.chat.OpenEventStream(msg.id)
+			}
 			return m, openEventsCmd(m.sessionAPI, msg.id)
 		}
 		return m, nil
@@ -489,14 +532,19 @@ func (m *Model) View() string {
 			bodyText = m.addWorktree.View()
 		}
 	} else if m.mode == uiModeCompose {
-		headerText = "Compose"
-		if m.compose != nil {
-			bodyText = m.compose.View()
-		}
+		headerText = "Chat"
 	}
 	rightHeader := headerStyle.Render(headerText)
 	rightBody := bodyText
-	rightView := lipgloss.JoinVertical(lipgloss.Left, rightHeader, rightBody)
+	chatLine := ""
+	if m.mode == uiModeCompose && m.chatInput != nil {
+		chatLine = m.chatInput.View()
+	}
+	rightLines := []string{rightHeader, rightBody}
+	if chatLine != "" {
+		rightLines = append(rightLines, "", chatLine)
+	}
+	rightView := lipgloss.JoinVertical(lipgloss.Left, rightLines...)
 	body := rightView
 	if !m.appState.SidebarCollapsed {
 		listView := ""
@@ -534,7 +582,11 @@ func (m *Model) resize(width, height int) {
 	if m.sidebar != nil {
 		m.sidebar.SetSize(listWidth, contentHeight)
 	}
-	vpHeight := max(1, contentHeight-1)
+	extraLines := 0
+	if m.mode == uiModeCompose {
+		extraLines = 2
+	}
+	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.Width = viewportWidth
 	m.viewport.Height = vpHeight
 	if m.addWorkspace != nil {
@@ -545,6 +597,9 @@ func (m *Model) resize(width, height int) {
 	}
 	if m.compose != nil {
 		m.compose.Resize(viewportWidth)
+	}
+	if m.chatInput != nil {
+		m.chatInput.Resize(viewportWidth)
 	}
 	m.renderViewport()
 }
@@ -683,7 +738,9 @@ func (m *Model) resetStream() {
 	if m.stream != nil {
 		m.stream.Reset()
 	}
-	if m.codexStream != nil {
+	if m.chat != nil {
+		m.chat.CloseEventStream()
+	} else if m.codexStream != nil {
 		m.codexStream.Reset()
 	}
 }
@@ -890,7 +947,15 @@ func (m *Model) enterCompose(sessionID string) {
 	if m.compose != nil {
 		m.compose.Enter(sessionID, label)
 	}
+	if m.chatInput != nil {
+		m.chatInput.SetPlaceholder("message")
+		m.chatInput.Focus()
+	}
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
 	m.status = "compose message"
+	m.resize(m.width, m.height)
 }
 
 func (m *Model) exitCompose(status string) {
@@ -898,9 +963,17 @@ func (m *Model) exitCompose(status string) {
 	if m.compose != nil {
 		m.compose.Exit()
 	}
+	if m.chatInput != nil {
+		m.chatInput.Blur()
+		m.chatInput.Clear()
+	}
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
 	if status != "" {
 		m.status = status
 	}
+	m.resize(m.width, m.height)
 }
 
 func (m *Model) selectedSessionLabel() string {
@@ -909,6 +982,13 @@ func (m *Model) selectedSessionLabel() string {
 		return ""
 	}
 	return sessionTitle(item.session, item.meta)
+}
+
+func (m *Model) composeSessionID() string {
+	if m.compose == nil {
+		return ""
+	}
+	return m.compose.sessionID
 }
 
 func renderStatusLine(width int, help, status string) string {
