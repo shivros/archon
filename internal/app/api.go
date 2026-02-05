@@ -25,6 +25,9 @@ type SessionAPI interface {
 	KillSession(ctx context.Context, id string) error
 	MarkSessionExited(ctx context.Context, id string) error
 	SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error)
+	ApproveSession(ctx context.Context, id string, req client.ApproveSessionRequest) error
+	ListApprovals(ctx context.Context, id string) ([]*types.Approval, error)
+	InterruptSession(ctx context.Context, id string) error
 	StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error)
 }
 
@@ -95,6 +98,18 @@ func (a *ClientAPI) MarkSessionExited(ctx context.Context, id string) error {
 
 func (a *ClientAPI) SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error) {
 	return a.client.SendMessage(ctx, id, req)
+}
+
+func (a *ClientAPI) ApproveSession(ctx context.Context, id string, req client.ApproveSessionRequest) error {
+	return a.client.ApproveSession(ctx, id, req)
+}
+
+func (a *ClientAPI) ListApprovals(ctx context.Context, id string) ([]*types.Approval, error) {
+	return a.client.ListApprovals(ctx, id)
+}
+
+func (a *ClientAPI) InterruptSession(ctx context.Context, id string) error {
+	return a.client.InterruptSession(ctx, id)
 }
 
 func (a *ClientAPI) StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error) {

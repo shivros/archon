@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,7 +202,8 @@ func startSession(t *testing.T, server *httptest.Server, req StartSessionRequest
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status: %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var session types.Session
@@ -222,7 +225,8 @@ func listSessions(t *testing.T, server *httptest.Server) sessionsResponse {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status: %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var payload sessionsResponse
@@ -244,7 +248,8 @@ func getSession(t *testing.T, server *httptest.Server, id string) *types.Session
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status: %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var session types.Session
@@ -270,7 +275,8 @@ func tailSession(t *testing.T, server *httptest.Server, id string) tailResponse 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status: %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var payload tailResponse
@@ -292,7 +298,8 @@ func historySession(t *testing.T, server *httptest.Server, id string) itemsRespo
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected status: %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var payload itemsResponse

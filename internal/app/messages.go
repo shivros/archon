@@ -91,11 +91,30 @@ type sendMsg struct {
 	turnID string
 	text   string
 	err    error
+	token  int
 }
 
 type startSessionMsg struct {
 	session *types.Session
 	err     error
+}
+
+type approvalMsg struct {
+	id        string
+	requestID int
+	decision  string
+	err       error
+}
+
+type approvalsMsg struct {
+	id        string
+	approvals []*types.Approval
+	err       error
+}
+
+type interruptMsg struct {
+	id  string
+	err error
 }
 
 type streamMsg struct {
@@ -110,6 +129,11 @@ type eventsMsg struct {
 	ch     <-chan types.CodexEvent
 	cancel func()
 	err    error
+}
+
+type selectDebounceMsg struct {
+	id  string
+	seq int
 }
 
 type tickMsg time.Time

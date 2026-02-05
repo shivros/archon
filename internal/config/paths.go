@@ -78,3 +78,12 @@ func SessionsIndexPath() (string, error) {
 	}
 	return filepath.Join(dataDir, "sessions_index.json"), nil
 }
+
+// ApprovalsPath returns the path to the approvals file.
+func ApprovalsPath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "approvals.json"), nil
+}

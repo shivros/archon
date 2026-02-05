@@ -216,6 +216,25 @@ func (c *Client) SendMessage(ctx context.Context, id string, req SendSessionRequ
 	return &resp, nil
 }
 
+func (c *Client) ListApprovals(ctx context.Context, id string) ([]*types.Approval, error) {
+	path := fmt.Sprintf("/v1/sessions/%s/approvals", strings.TrimSpace(id))
+	var resp ApprovalsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Approvals, nil
+}
+
+func (c *Client) ApproveSession(ctx context.Context, id string, req ApproveSessionRequest) error {
+	path := fmt.Sprintf("/v1/sessions/%s/approval", strings.TrimSpace(id))
+	return c.doJSON(ctx, http.MethodPost, path, req, true, nil)
+}
+
+func (c *Client) InterruptSession(ctx context.Context, id string) error {
+	path := fmt.Sprintf("/v1/sessions/%s/interrupt", strings.TrimSpace(id))
+	return c.doJSON(ctx, http.MethodPost, path, nil, true, nil)
+}
+
 func (c *Client) EnsureDaemon(ctx context.Context) error {
 	return c.ensureDaemon(ctx, "", false)
 }

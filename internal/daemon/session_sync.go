@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/store"
 	"control/internal/types"
 )
@@ -21,17 +22,22 @@ type CodexSyncer struct {
 	worktrees  WorktreeStore
 	sessions   SessionIndexStore
 	meta       SessionMetaStore
+	logger     logging.Logger
 }
 
-func NewCodexSyncer(stores *Stores) *CodexSyncer {
+func NewCodexSyncer(stores *Stores, logger logging.Logger) *CodexSyncer {
+	if logger == nil {
+		logger = logging.Nop()
+	}
 	if stores == nil {
-		return &CodexSyncer{}
+		return &CodexSyncer{logger: logger}
 	}
 	return &CodexSyncer{
 		workspaces: stores.Workspaces,
 		worktrees:  stores.Worktrees,
 		sessions:   stores.Sessions,
 		meta:       stores.SessionMeta,
+		logger:     logger,
 	}
 }
 
@@ -105,7 +111,7 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 	syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	codexHome := resolveCodexHome(cwd, workspacePath)
-	client, err := startCodexAppServer(syncCtx, cwd, codexHome)
+	client, err := startCodexAppServer(syncCtx, cwd, codexHome, s.logger)
 	if err != nil {
 		return err
 	}

@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/client"
 	"control/internal/types"
@@ -20,6 +22,7 @@ const (
 	maxViewportLines  = 2000
 	maxEventsPerTick  = 64
 	tickInterval      = 100 * time.Millisecond
+	selectionDebounce = 500 * time.Millisecond
 	minListWidth      = 24
 	maxListWidth      = 40
 	minViewportWidth  = 20
@@ -34,6 +37,7 @@ const (
 	uiModeAddWorkspace
 	uiModeAddWorktree
 	uiModeCompose
+	uiModeSearch
 )
 
 type Model struct {
@@ -47,6 +51,7 @@ type Model struct {
 	addWorktree       *AddWorktreeController
 	compose           *ComposeController
 	chatInput         *ChatInput
+	searchInput       *ChatInput
 	status            string
 	width             int
 	height            int
@@ -61,8 +66,20 @@ type Model struct {
 	codexStream       *CodexStreamController
 	input             *InputController
 	chat              *SessionChatController
+	pendingApproval   *ApprovalRequest
 	contentRaw        string
 	contentEsc        bool
+	renderedText      string
+	renderedLines     []string
+	renderedPlain     []string
+	contentVersion    int
+	renderVersion     int
+	searchQuery       string
+	searchMatches     []int
+	searchIndex       int
+	searchVersion     int
+	sectionOffsets    []int
+	sectionVersion    int
 	transcriptCache   map[string][]string
 	pendingSessionKey string
 	loading           bool
@@ -72,12 +89,21 @@ type Model struct {
 	hotkeys           *HotkeyRenderer
 	newSession        *newSessionTarget
 	pendingSelectID   string
+	selectSeq         int
+	sendSeq           int
+	pendingSends      map[int]pendingSend
 }
 
 type newSessionTarget struct {
 	workspaceID string
 	worktreeID  string
 	provider    string
+}
+
+type pendingSend struct {
+	key        string
+	sessionID  string
+	headerLine int
 }
 
 func NewModel(client *client.Client) Model {
@@ -106,16 +132,21 @@ func NewModel(client *client.Client) Model {
 		addWorkspace:    NewAddWorkspaceController(minViewportWidth),
 		addWorktree:     NewAddWorktreeController(minViewportWidth),
 		compose:         NewComposeController(minViewportWidth),
-		chatInput:       NewChatInput(minViewportWidth),
+		chatInput:       NewChatInput(minViewportWidth, DefaultChatInputConfig()),
+		searchInput:     NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
 		status:          "",
 		follow:          true,
 		worktrees:       map[string][]*types.Worktree{},
 		sessionMeta:     map[string]*types.SessionMeta{},
 		contentRaw:      "No sessions.",
 		contentEsc:      false,
+		searchIndex:     -1,
+		searchVersion:   -1,
+		sectionVersion:  -1,
 		transcriptCache: map[string][]string{},
 		loader:          loader,
 		hotkeys:         hotkeyRenderer,
+		pendingSends:    map[int]pendingSend{},
 	}
 }
 
@@ -269,6 +300,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 	case tea.KeyMsg:
+		if m.mode == uiModeSearch {
+			switch msg.String() {
+			case "esc":
+				m.exitSearch("search canceled")
+				return m, nil
+			case "enter":
+				if m.searchInput != nil {
+					query := m.searchInput.Value()
+					m.applySearch(query)
+				}
+				m.exitSearch("")
+				return m, nil
+			}
+			if m.searchInput != nil {
+				cmd := m.searchInput.Update(msg)
+				return m, cmd
+			}
+			return m, nil
+		}
+		if m.pendingApproval != nil && (m.mode == uiModeNormal || (m.input != nil && m.input.IsSidebarFocused())) {
+			switch msg.String() {
+			case "y":
+				return m, m.approvePending("accept")
+			case "x":
+				return m, m.approvePending("decline")
+			}
+		}
 		if m.input != nil && m.input.IsChatFocused() {
 			switch msg.String() {
 			case "esc":
@@ -292,10 +350,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.status = "select a session to chat"
 						return m, nil
 					}
+					headerIndex := m.appendUserMessageLocal(text)
 					m.status = "sending message"
 					m.chatInput.Clear()
+					if headerIndex >= 0 {
+						m.registerPendingSendHeader(sessionID, headerIndex)
+					}
 					return m, m.sendMessageCmd(sessionID, text)
 				}
+				return m, nil
+			case "ctrl+y":
+				id := m.selectedSessionID()
+				if id == "" {
+					m.status = "no session selected"
+					return m, nil
+				}
+				if err := clipboard.WriteAll(id); err != nil {
+					m.status = "copy failed: " + err.Error()
+					return m, nil
+				}
+				m.status = "copied session id"
 				return m, nil
 			}
 			if m.chatInput != nil {
@@ -325,7 +399,46 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			m.toggleSidebar()
 			return m, m.saveAppStateCmd()
+		case "ctrl+y":
+			id := m.selectedSessionID()
+			if id == "" {
+				m.status = "no session selected"
+				return m, nil
+			}
+			if err := clipboard.WriteAll(id); err != nil {
+				m.status = "copy failed: " + err.Error()
+				return m, nil
+			}
+			m.status = "copied session id"
+			return m, nil
+		case "/":
+			m.enterSearch()
+			return m, nil
+		case "g":
+			m.viewport.GotoTop()
+			if m.follow {
+				m.follow = false
+				m.status = "follow: paused"
+			}
+			return m, nil
+		case "G":
+			m.viewport.GotoBottom()
+			m.follow = true
+			m.status = "follow: on"
+			return m, nil
+		case "{":
+			m.jumpSection(-1)
+			return m, nil
+		case "}":
+			m.jumpSection(1)
+			return m, nil
+		case "N":
+			m.moveSearch(-1)
+			return m, nil
 		case "n":
+			m.moveSearch(1)
+			return m, nil
+		case "ctrl+n":
 			if m.enterNewSession() {
 				return m, nil
 			}
@@ -368,6 +481,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status = "killing " + id
 			return m, killSessionCmd(m.sessionAPI, id)
+		case "i":
+			id := m.selectedSessionID()
+			if id == "" {
+				m.status = "no session selected"
+				return m, nil
+			}
+			m.status = "interrupting " + id
+			return m, interruptSessionCmd(m.sessionAPI, id)
 		case "d":
 			ids := m.selectedSessionIDs()
 			if len(ids) == 0 {
@@ -523,9 +644,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sendMsg:
 		if msg.err != nil {
 			m.status = "send error: " + msg.err.Error()
+			m.markPendingSendFailed(msg.token, msg.err)
 			return m, nil
 		}
 		m.status = "message sent"
+		m.clearPendingSend(msg.token)
 		if msg.id != "" {
 			if m.stream != nil {
 				m.stream.Reset()
@@ -543,6 +666,54 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, openEventsCmd(m.sessionAPI, msg.id)
 		}
 		return m, nil
+	case approvalMsg:
+		if msg.err != nil {
+			m.status = "approval error: " + msg.err.Error()
+			return m, nil
+		}
+		m.status = "approval sent"
+		if m.pendingApproval != nil && m.pendingApproval.RequestID == msg.requestID {
+			m.pendingApproval = nil
+		}
+		if m.codexStream != nil {
+			m.codexStream.ClearApproval()
+		}
+		return m, nil
+	case approvalsMsg:
+		if msg.err != nil {
+			m.status = "approvals error: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.id != m.selectedSessionID() {
+			return m, nil
+		}
+		m.pendingApproval = selectApprovalRequest(msg.approvals)
+		if m.pendingApproval != nil {
+			if m.pendingApproval.Detail != "" {
+				m.status = fmt.Sprintf("approval required: %s (%s)", m.pendingApproval.Summary, m.pendingApproval.Detail)
+			} else if m.pendingApproval.Summary != "" {
+				m.status = "approval required: " + m.pendingApproval.Summary
+			} else {
+				m.status = "approval required"
+			}
+		}
+		return m, nil
+	case interruptMsg:
+		if msg.err != nil {
+			m.status = "interrupt error: " + msg.err.Error()
+			return m, nil
+		}
+		m.status = "interrupt sent"
+		return m, nil
+	case selectDebounceMsg:
+		if msg.seq != m.selectSeq {
+			return m, nil
+		}
+		item := m.selectedItem()
+		if item == nil || !item.isSession() || item.session == nil || item.session.ID != msg.id {
+			return m, nil
+		}
+		return m, m.loadSelectedSession(item)
 	case startSessionMsg:
 		if msg.err != nil {
 			m.status = "start session error: " + msg.err.Error()
@@ -651,16 +822,32 @@ func (m *Model) View() string {
 		}
 	} else if m.mode == uiModeCompose {
 		headerText = "Chat"
+	} else if m.mode == uiModeSearch {
+		headerText = "Search"
 	}
 	rightHeader := headerStyle.Render(headerText)
 	rightBody := bodyText
-	chatLine := ""
+	inputLine := ""
+	inputScrollable := false
 	if m.mode == uiModeCompose && m.chatInput != nil {
-		chatLine = m.chatInput.View()
+		inputLine = m.chatInput.View()
+		inputScrollable = m.chatInput.CanScroll()
+	}
+	if m.mode == uiModeSearch && m.searchInput != nil {
+		inputLine = m.searchInput.View()
+		inputScrollable = m.searchInput.CanScroll()
 	}
 	rightLines := []string{rightHeader, rightBody}
-	if chatLine != "" {
-		rightLines = append(rightLines, "", chatLine)
+	if inputLine != "" {
+		dividerWidth := m.viewport.Width
+		if dividerWidth <= 0 {
+			dividerWidth = max(1, m.width)
+		}
+		dividerLine := renderInputDivider(dividerWidth, inputScrollable)
+		if dividerLine != "" {
+			rightLines = append(rightLines, dividerLine)
+		}
+		rightLines = append(rightLines, inputLine)
 	}
 	rightView := lipgloss.JoinVertical(lipgloss.Left, rightLines...)
 	body := rightView
@@ -669,7 +856,12 @@ func (m *Model) View() string {
 		if m.sidebar != nil {
 			listView = m.sidebar.View()
 		}
-		body = lipgloss.JoinHorizontal(lipgloss.Top, listView, lipgloss.NewStyle().PaddingLeft(1).Render(rightView))
+		height := max(lipgloss.Height(listView), lipgloss.Height(rightView))
+		if height < 1 {
+			height = 1
+		}
+		divider := strings.Repeat("│\n", height-1) + "│"
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listView, dividerStyle.Render(divider), rightView)
 	}
 
 	helpText := ""
@@ -709,6 +901,12 @@ func (m *Model) resize(width, height int) {
 	}
 	extraLines := 0
 	if m.mode == uiModeCompose {
+		if m.chatInput != nil {
+			extraLines = m.chatInput.Height() + 1
+		} else {
+			extraLines = 2
+		}
+	} else if m.mode == uiModeSearch {
 		extraLines = 2
 	}
 	vpHeight := max(1, contentHeight-1-extraLines)
@@ -726,6 +924,9 @@ func (m *Model) resize(width, height int) {
 	}
 	if m.chatInput != nil {
 		m.chatInput.Resize(viewportWidth)
+	}
+	if m.searchInput != nil {
+		m.searchInput.Resize(viewportWidth)
 	}
 	m.renderViewport()
 }
@@ -802,8 +1003,28 @@ func (m *Model) onSelectionChanged() tea.Cmd {
 		m.updateDelegate()
 		stateChanged = true
 	}
+	cmd := m.scheduleSessionLoad(item)
+	if stateChanged {
+		return tea.Batch(cmd, m.saveAppStateCmd())
+	}
+	return cmd
+}
+
+func (m *Model) scheduleSessionLoad(item *sidebarItem) tea.Cmd {
+	if item == nil || item.session == nil {
+		return nil
+	}
+	m.selectSeq++
+	return debounceSelectCmd(item.session.ID, m.selectSeq, selectionDebounce)
+}
+
+func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
+	if item == nil || item.session == nil {
+		return nil
+	}
 	id := item.session.ID
 	m.resetStream()
+	m.pendingApproval = nil
 	m.pendingSessionKey = item.key()
 	m.status = "loading " + id
 	if cached, ok := m.transcriptCache[item.key()]; ok {
@@ -815,12 +1036,12 @@ func (m *Model) onSelectionChanged() tea.Cmd {
 		m.loadingKey = item.key()
 		m.setLoadingContent()
 	}
-	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, item.key(), maxViewportLines)}
+	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, item.key(), maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
 	if isActiveStatus(item.session.Status) {
 		cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
 	}
-	if stateChanged {
-		cmds = append(cmds, m.saveAppStateCmd())
+	if item.session.Provider == "codex" {
+		cmds = append(cmds, openEventsCmd(m.sessionAPI, id))
 	}
 	return tea.Batch(cmds...)
 }
@@ -879,6 +1100,7 @@ func (m *Model) resetStream() {
 	} else if m.codexStream != nil {
 		m.codexStream.Reset()
 	}
+	m.pendingApproval = nil
 	m.pendingSessionKey = ""
 	m.loading = false
 	m.loadingKey = ""
@@ -907,6 +1129,18 @@ func (m *Model) consumeCodexTick() {
 	}
 	if changed {
 		m.applyLines(lines, false)
+	}
+	if approval := m.codexStream.PendingApproval(); approval != nil {
+		m.pendingApproval = approval
+		if approval.Summary != "" {
+			if approval.Detail != "" {
+				m.status = fmt.Sprintf("approval required: %s (%s)", approval.Summary, approval.Detail)
+			} else {
+				m.status = "approval required: " + approval.Summary
+			}
+		} else {
+			m.status = "approval required"
+		}
 	}
 }
 
@@ -971,12 +1205,18 @@ func (m *Model) setSnapshot(lines []string, escape bool) {
 func (m *Model) applyLines(lines []string, escape bool) {
 	m.contentRaw = strings.Join(lines, "\n")
 	m.contentEsc = escape
+	m.contentVersion++
+	m.searchVersion = -1
+	m.sectionVersion = -1
 	m.renderViewport()
 }
 
 func (m *Model) setContentText(text string) {
 	m.contentRaw = text
 	m.contentEsc = false
+	m.contentVersion++
+	m.searchVersion = -1
+	m.sectionVersion = -1
 	m.renderViewport()
 }
 
@@ -992,7 +1232,21 @@ func (m *Model) renderViewport() {
 	if m.contentEsc {
 		content = escapeMarkdown(content)
 	}
-	m.viewport.SetContent(renderMarkdown(content, renderWidth))
+	rendered := renderMarkdown(content, renderWidth)
+	m.renderedText = rendered
+	m.renderedLines = nil
+	m.renderedPlain = nil
+	if rendered != "" {
+		lines := strings.Split(rendered, "\n")
+		m.renderedLines = lines
+		plain := make([]string, len(lines))
+		for i, line := range lines {
+			plain[i] = xansi.Strip(line)
+		}
+		m.renderedPlain = plain
+	}
+	m.renderVersion++
+	m.viewport.SetContent(rendered)
 	if m.follow {
 		m.viewport.GotoBottom()
 	}
@@ -1000,6 +1254,99 @@ func (m *Model) renderViewport() {
 
 func (m *Model) setLoadingContent() {
 	m.setContentText(m.loader.View() + " Loading...")
+}
+
+func (m *Model) appendUserMessageLocal(text string) int {
+	if m.codexStream == nil {
+		return -1
+	}
+	m.codexStream.SetSnapshot(m.currentLines())
+	headerIndex := m.codexStream.AppendUserMessage(text)
+	if headerIndex >= 0 {
+		_ = m.codexStream.MarkUserMessageSending(headerIndex)
+	}
+	lines := m.codexStream.Lines()
+	m.applyLines(lines, false)
+	if key := m.selectedKey(); key != "" {
+		m.transcriptCache[key] = lines
+	}
+	return headerIndex
+}
+
+func (m *Model) nextSendToken() int {
+	m.sendSeq++
+	return m.sendSeq
+}
+
+func (m *Model) registerPendingSend(token int, sessionID string) {
+	key := m.selectedKey()
+	m.pendingSends[token] = pendingSend{
+		key:        key,
+		sessionID:  sessionID,
+		headerLine: -1,
+	}
+}
+
+func (m *Model) registerPendingSendHeader(sessionID string, headerIndex int) {
+	if len(m.pendingSends) == 0 {
+		return
+	}
+	// Attach to most recent pending token.
+	token := m.sendSeq
+	entry := m.pendingSends[token]
+	entry.sessionID = sessionID
+	entry.key = m.selectedKey()
+	entry.headerLine = headerIndex
+	m.pendingSends[token] = entry
+}
+
+func (m *Model) clearPendingSend(token int) {
+	entry, ok := m.pendingSends[token]
+	if ok {
+		delete(m.pendingSends, token)
+		if entry.key == "" {
+			return
+		}
+		if entry.key == m.selectedKey() && m.codexStream != nil {
+			if m.codexStream.MarkUserMessageSent(entry.headerLine) {
+				lines := m.codexStream.Lines()
+				m.applyLines(lines, false)
+				m.transcriptCache[entry.key] = lines
+				return
+			}
+		}
+		if cached, ok := m.transcriptCache[entry.key]; ok {
+			if entry.headerLine >= 0 && entry.headerLine < len(cached) {
+				cached[entry.headerLine] = "### User"
+				m.transcriptCache[entry.key] = cached
+			}
+		}
+	}
+}
+
+func (m *Model) markPendingSendFailed(token int, err error) {
+	entry, ok := m.pendingSends[token]
+	if !ok {
+		return
+	}
+	delete(m.pendingSends, token)
+	if entry.key == "" {
+		return
+	}
+	if entry.key == m.selectedKey() && m.codexStream != nil {
+		if m.codexStream.MarkUserMessageFailed(entry.headerLine) {
+			lines := m.codexStream.Lines()
+			m.applyLines(lines, false)
+			m.transcriptCache[entry.key] = lines
+			return
+		}
+	}
+	if cached, ok := m.transcriptCache[entry.key]; ok {
+		if entry.headerLine >= 0 && entry.headerLine < len(cached) {
+			cached[entry.headerLine] = "### User (failed)"
+			m.transcriptCache[entry.key] = cached
+		}
+	}
 }
 
 func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
@@ -1014,6 +1361,8 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	case "pgup":
 		m.viewport.PageUp()
 	case "pgdown":
+		m.viewport.PageDown()
+	case "ctrl+f":
 		m.viewport.PageDown()
 	case "ctrl+u":
 		m.viewport.HalfPageUp()
@@ -1040,38 +1389,6 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.width <= 0 || m.height <= 0 {
 		return false
 	}
-	if msg.Action == tea.MouseActionPress {
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-				if m.addWorktree.Scroll(-1) {
-					return true
-				}
-			}
-			m.viewport.LineUp(3)
-		case tea.MouseButtonWheelDown:
-			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-				if m.addWorktree.Scroll(1) {
-					return true
-				}
-			}
-			m.viewport.LineDown(3)
-		case tea.MouseButtonLeft:
-			break
-		default:
-			return false
-		}
-		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-			if m.follow {
-				m.follow = false
-				m.status = "follow: paused"
-			}
-			return true
-		}
-	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
-		return false
-	}
 	listWidth := 0
 	if !m.appState.SidebarCollapsed {
 		listWidth = clamp(m.width/3, minListWidth, maxListWidth)
@@ -1079,15 +1396,108 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 			listWidth = max(minListWidth, m.width/2)
 		}
 	}
-	contentHeight := max(minContentHeight, m.height-2)
-	extraLines := 0
-	if m.mode == uiModeCompose {
-		extraLines = 2
+	rightStart := 0
+	if listWidth > 0 {
+		rightStart = listWidth + 1
 	}
-	chatRow := contentHeight - 1 + extraLines
-	if m.mode == uiModeCompose && m.chatInput != nil {
-		if msg.Y == chatRow {
+	inputBounds := func() (int, int, bool) {
+		if m.mode == uiModeCompose && m.chatInput != nil {
+			start := m.viewport.Height + 2
+			end := start + m.chatInput.Height() - 1
+			return start, end, true
+		}
+		if m.mode == uiModeSearch && m.searchInput != nil {
+			start := m.viewport.Height + 2
+			end := start + m.searchInput.Height() - 1
+			return start, end, true
+		}
+		return 0, 0, false
+	}
+	isOverInput := func(y int) bool {
+		start, end, ok := inputBounds()
+		if !ok {
+			return false
+		}
+		return y >= start && y <= end
+	}
+
+	if msg.Action == tea.MouseActionPress {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if listWidth > 0 && msg.X < listWidth {
+				if m.sidebar != nil && m.sidebar.Scroll(-1) {
+					m.pendingMouseCmd = m.onSelectionChanged()
+					return true
+				}
+			}
+			if msg.X >= rightStart && isOverInput(msg.Y) {
+				if m.mode == uiModeCompose && m.chatInput != nil {
+					m.pendingMouseCmd = m.chatInput.Scroll(-1)
+					return true
+				}
+				if m.mode == uiModeSearch && m.searchInput != nil {
+					m.pendingMouseCmd = m.searchInput.Scroll(-1)
+					return true
+				}
+			}
+			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
+				if m.addWorktree.Scroll(-1) {
+					return true
+				}
+			}
+			m.viewport.LineUp(3)
+			if m.follow {
+				m.follow = false
+				m.status = "follow: paused"
+			}
+			return true
+		case tea.MouseButtonWheelDown:
+			if listWidth > 0 && msg.X < listWidth {
+				if m.sidebar != nil && m.sidebar.Scroll(1) {
+					m.pendingMouseCmd = m.onSelectionChanged()
+					return true
+				}
+			}
+			if msg.X >= rightStart && isOverInput(msg.Y) {
+				if m.mode == uiModeCompose && m.chatInput != nil {
+					m.pendingMouseCmd = m.chatInput.Scroll(1)
+					return true
+				}
+				if m.mode == uiModeSearch && m.searchInput != nil {
+					m.pendingMouseCmd = m.searchInput.Scroll(1)
+					return true
+				}
+			}
+			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
+				if m.addWorktree.Scroll(1) {
+					return true
+				}
+			}
+			m.viewport.LineDown(3)
+			if m.follow {
+				m.follow = false
+				m.status = "follow: paused"
+			}
+			return true
+		case tea.MouseButtonLeft:
+			break
+		default:
+			return false
+		}
+	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return false
+	}
+	if msg.X >= rightStart && isOverInput(msg.Y) {
+		if m.mode == uiModeCompose && m.chatInput != nil {
 			m.chatInput.Focus()
+			if m.input != nil {
+				m.input.FocusChatInput()
+			}
+			return true
+		}
+		if m.mode == uiModeSearch && m.searchInput != nil {
+			m.searchInput.Focus()
 			if m.input != nil {
 				m.input.FocusChatInput()
 			}
@@ -1095,12 +1505,8 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		}
 	}
 	if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-		rightStart := 0
-		if listWidth > 0 {
-			rightStart = listWidth + 1
-		}
 		if msg.X >= rightStart {
-			row := msg.Y
+			row := msg.Y - 1
 			if row >= 0 {
 				if handled, cmd := m.addWorktree.HandleClick(row, m); handled {
 					m.pendingMouseCmd = cmd
@@ -1112,6 +1518,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if listWidth > 0 && msg.X < listWidth {
 		if m.sidebar != nil {
 			m.sidebar.SelectByRow(msg.Y)
+			m.pendingMouseCmd = m.onSelectionChanged()
 			return true
 		}
 	}
@@ -1236,6 +1643,259 @@ func (m *Model) exitCompose(status string) {
 	m.resize(m.width, m.height)
 }
 
+func (m *Model) enterSearch() {
+	m.mode = uiModeSearch
+	if m.searchInput != nil {
+		m.searchInput.SetPlaceholder("search")
+		m.searchInput.SetValue(m.searchQuery)
+		m.searchInput.Focus()
+	}
+	m.status = "search"
+	m.resize(m.width, m.height)
+}
+
+func (m *Model) exitSearch(status string) {
+	m.mode = uiModeNormal
+	if m.searchInput != nil {
+		m.searchInput.Blur()
+		m.searchInput.Clear()
+	}
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	if status != "" {
+		m.status = status
+	}
+	m.resize(m.width, m.height)
+}
+
+func (m *Model) applySearch(query string) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		m.searchQuery = ""
+		m.searchMatches = nil
+		m.searchIndex = -1
+		m.status = "search cleared"
+		return
+	}
+	m.searchQuery = query
+	m.searchMatches = m.findSearchMatches(query)
+	m.searchVersion = m.renderVersion
+	if len(m.searchMatches) == 0 {
+		m.searchIndex = -1
+		m.status = "no matches"
+		return
+	}
+	m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset, 1)
+	if m.searchIndex < 0 {
+		m.searchIndex = 0
+	}
+	m.jumpToLine(m.searchMatches[m.searchIndex])
+	m.status = fmt.Sprintf("match %d/%d", m.searchIndex+1, len(m.searchMatches))
+}
+
+func (m *Model) moveSearch(delta int) {
+	if m.searchQuery == "" {
+		m.status = "no search"
+		return
+	}
+	if m.searchVersion != m.renderVersion {
+		m.searchMatches = m.findSearchMatches(m.searchQuery)
+		m.searchVersion = m.renderVersion
+		m.searchIndex = -1
+	}
+	if len(m.searchMatches) == 0 {
+		m.searchIndex = -1
+		m.status = "no matches"
+		return
+	}
+	if m.searchIndex < 0 {
+		m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset, delta)
+		if m.searchIndex < 0 {
+			m.searchIndex = 0
+		}
+	} else {
+		m.searchIndex = (m.searchIndex + delta + len(m.searchMatches)) % len(m.searchMatches)
+	}
+	m.jumpToLine(m.searchMatches[m.searchIndex])
+	m.status = fmt.Sprintf("match %d/%d", m.searchIndex+1, len(m.searchMatches))
+}
+
+func (m *Model) approvePending(decision string) tea.Cmd {
+	if m.pendingApproval == nil {
+		return nil
+	}
+	sessionID := m.selectedSessionID()
+	if sessionID == "" {
+		m.status = "select a session to approve"
+		return nil
+	}
+	reqID := m.pendingApproval.RequestID
+	if reqID <= 0 {
+		m.status = "invalid approval request"
+		return nil
+	}
+	m.status = "sending approval"
+	return approveSessionCmd(m.sessionAPI, sessionID, reqID, decision)
+}
+
+func selectApprovalRequest(records []*types.Approval) *ApprovalRequest {
+	if len(records) == 0 {
+		return nil
+	}
+	var latest *types.Approval
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		if latest == nil {
+			latest = record
+			continue
+		}
+		if record.CreatedAt.After(latest.CreatedAt) {
+			latest = record
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	return approvalFromRecord(latest)
+}
+
+func (m *Model) findSearchMatches(query string) []int {
+	lines := m.renderedPlain
+	if len(lines) == 0 && m.renderedText != "" {
+		lines = strings.Split(xansi.Strip(m.renderedText), "\n")
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	q := strings.ToLower(query)
+	matches := make([]int, 0, 8)
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), q) {
+			matches = append(matches, i)
+		}
+	}
+	return matches
+}
+
+func selectSearchIndex(matches []int, offset int, delta int) int {
+	if len(matches) == 0 {
+		return -1
+	}
+	if delta < 0 {
+		for i := len(matches) - 1; i >= 0; i-- {
+			if matches[i] < offset {
+				return i
+			}
+		}
+		return len(matches) - 1
+	}
+	for i, line := range matches {
+		if line >= offset {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *Model) jumpToLine(offset int) {
+	m.viewport.SetYOffset(offset)
+	if m.follow {
+		m.follow = false
+	}
+}
+
+func (m *Model) jumpSection(delta int) {
+	offsets := m.sectionOffsetsCached()
+	if len(offsets) == 0 {
+		m.status = "no sections"
+		return
+	}
+	current := m.viewport.YOffset
+	index := -1
+	if delta < 0 {
+		for i := len(offsets) - 1; i >= 0; i-- {
+			if offsets[i] < current {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			index = 0
+		}
+	} else {
+		for i, off := range offsets {
+			if off > current {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			index = len(offsets) - 1
+		}
+	}
+	m.jumpToLine(offsets[index])
+}
+
+func (m *Model) sectionOffsetsCached() []int {
+	if m.sectionVersion == m.renderVersion {
+		return m.sectionOffsets
+	}
+	lines := m.currentLines()
+	if len(lines) == 0 {
+		m.sectionOffsets = nil
+		m.sectionVersion = m.renderVersion
+		return nil
+	}
+	headings := make([]string, 0, 8)
+	for _, line := range lines {
+		if strings.HasPrefix(line, "### ") {
+			headings = append(headings, strings.TrimSpace(strings.TrimPrefix(line, "### ")))
+		}
+	}
+	if len(headings) == 0 {
+		m.sectionOffsets = nil
+		m.sectionVersion = m.renderVersion
+		return nil
+	}
+	rendered := m.renderedPlain
+	if len(rendered) == 0 && m.renderedText != "" {
+		rendered = strings.Split(xansi.Strip(m.renderedText), "\n")
+	}
+	offsets := make([]int, 0, len(headings))
+	start := 0
+	for _, heading := range headings {
+		found := -1
+		needle := strings.ToLower(strings.TrimSpace(heading))
+		for i := start; i < len(rendered); i++ {
+			candidate := strings.ToLower(strings.TrimSpace(rendered[i]))
+			if candidate == needle {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			for i := start; i < len(rendered); i++ {
+				candidate := strings.ToLower(strings.TrimSpace(rendered[i]))
+				if strings.Contains(candidate, needle) {
+					found = i
+					break
+				}
+			}
+		}
+		if found < 0 {
+			continue
+		}
+		offsets = append(offsets, found)
+		start = found + 1
+	}
+	m.sectionOffsets = offsets
+	m.sectionVersion = m.renderVersion
+	return offsets
+}
+
 func (m *Model) enterNewSession() bool {
 	item := m.selectedItem()
 	workspaceID := ""
@@ -1319,6 +1979,25 @@ func renderStatusLine(width int, help, status string) string {
 		padding = statusLinePadding
 	}
 	return help + strings.Repeat(" ", padding) + status
+}
+
+func renderInputDivider(width int, scrollable bool) string {
+	if width <= 0 {
+		return ""
+	}
+	indicator := ""
+	if scrollable {
+		indicator = " ^v"
+	}
+	lineWidth := width
+	if indicator != "" && width > len(indicator) {
+		lineWidth = width - len(indicator)
+	}
+	line := strings.Repeat("─", max(1, lineWidth)) + indicator
+	if lipgloss.Width(line) > width {
+		line = strings.Repeat("─", width)
+	}
+	return dividerStyle.Render(line)
 }
 
 func clamp(value, minValue, maxValue int) int {

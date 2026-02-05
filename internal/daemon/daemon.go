@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/types"
 )
 
@@ -17,6 +18,7 @@ type Daemon struct {
 	server  *http.Server
 	manager *SessionManager
 	stores  *Stores
+	logger  logging.Logger
 }
 
 type Stores struct {
@@ -26,6 +28,7 @@ type Stores struct {
 	Keymap      KeymapStore
 	SessionMeta SessionMetaStore
 	Sessions    SessionIndexStore
+	Approvals   ApprovalStore
 }
 
 type WorkspaceStore interface {
@@ -70,6 +73,14 @@ type SessionIndexStore interface {
 	DeleteRecord(ctx context.Context, sessionID string) error
 }
 
+type ApprovalStore interface {
+	ListBySession(ctx context.Context, sessionID string) ([]*types.Approval, error)
+	Get(ctx context.Context, sessionID string, requestID int) (*types.Approval, bool, error)
+	Upsert(ctx context.Context, approval *types.Approval) (*types.Approval, error)
+	Delete(ctx context.Context, sessionID string, requestID int) error
+	DeleteSession(ctx context.Context, sessionID string) error
+}
+
 func New(addr, token, version string, manager *SessionManager, stores *Stores) *Daemon {
 	if manager != nil && stores != nil && stores.SessionMeta != nil {
 		manager.SetMetaStore(stores.SessionMeta)
@@ -87,19 +98,24 @@ func New(addr, token, version string, manager *SessionManager, stores *Stores) *
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	if d.logger == nil {
+		d.logger = logging.New(log.Writer(), logging.LevelFromEnv())
+	}
 	api := &API{
 		Version: d.version,
 		Manager: d.manager,
 		Stores:  d.stores,
+		Logger:  d.logger,
 	}
-	syncer := NewCodexSyncer(d.stores)
+	syncer := NewCodexSyncer(d.stores, d.logger)
 	api.Syncer = syncer
-	api.LiveCodex = NewCodexLiveManager()
+	api.LiveCodex = NewCodexLiveManager(d.stores, d.logger)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
 
 	handler := TokenAuthMiddleware(d.token, mux)
+	handler = LoggingMiddleware(d.logger, handler)
 	d.server = &http.Server{
 		Addr:    d.addr,
 		Handler: handler,
@@ -112,7 +128,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("daemon listening on http://%s", d.addr)
+		d.logger.Info("daemon_listening", logging.F("addr", d.addr))
 		errCh <- d.server.ListenAndServe()
 	}()
 

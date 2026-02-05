@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/types"
 )
 
@@ -21,6 +21,7 @@ type API struct {
 	Shutdown  func(context.Context) error
 	Syncer    SessionSyncer
 	LiveCodex *CodexLiveManager
+	Logger    logging.Logger
 }
 
 func (a *API) Health(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +33,7 @@ func (a *API) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex)
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
 
 	switch r.Method {
 	case http.MethodGet:
@@ -69,7 +70,7 @@ func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex)
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
 
 	path := strings.TrimPrefix(r.URL.Path, "/v1/sessions/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -173,6 +174,20 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, TailItemsResponse{Items: items})
 		return
+	case "approvals":
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		approvals, err := service.ListApprovals(r.Context(), id)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"approvals": approvals})
+		return
 	case "send":
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
@@ -193,17 +208,40 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 				input = []map[string]any{{"type": "text", "text": req.Text}}
 			}
 		}
-		log.Printf("send request: id=%s input_items=%d text_len=%d", id, len(input), len(req.Text))
+		if a.Logger != nil {
+			a.Logger.Info("send_request",
+				logging.F("session_id", id),
+				logging.F("input_items", len(input)),
+				logging.F("text_len", len(req.Text)),
+			)
+		}
 		turnID, err := service.SendMessage(r.Context(), id, input)
 		if err != nil {
 			if err != nil {
-				log.Printf("send error: id=%s err=%v", id, err)
+				if a.Logger != nil {
+					a.Logger.Error("send_error", logging.F("session_id", id), logging.F("error", err))
+				}
 				writeServiceError(w, err)
 				return
 			}
 		}
-		log.Printf("send ok: id=%s turn=%s", id, turnID)
+		if a.Logger != nil {
+			a.Logger.Info("send_ok", logging.F("session_id", id), logging.F("turn_id", turnID))
+		}
 		writeJSON(w, http.StatusOK, SendSessionResponse{OK: true, TurnID: turnID})
+		return
+	case "interrupt":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		if err := service.InterruptTurn(r.Context(), id); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	case "events":
 		if r.Method != http.MethodGet {
@@ -219,6 +257,26 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.streamEvents(w, r, id)
+		return
+	case "approval":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		var req ApproveSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "invalid json body",
+			})
+			return
+		}
+		if err := service.Approve(r.Context(), id, req.RequestID, req.Decision, req.Responses, req.AcceptSettings); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
@@ -244,7 +302,7 @@ func (a *API) CodexThreadDiagnostics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	codexHome := resolveCodexHome(cwd, workspacePath)
-	client, err := startCodexAppServer(r.Context(), cwd, codexHome)
+	client, err := startCodexAppServer(r.Context(), cwd, codexHome, a.Logger)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -292,6 +350,13 @@ type SendSessionRequest struct {
 type SendSessionResponse struct {
 	OK     bool   `json:"ok"`
 	TurnID string `json:"turn_id,omitempty"`
+}
+
+type ApproveSessionRequest struct {
+	RequestID      int            `json:"request_id"`
+	Decision       string         `json:"decision"`
+	Responses      []string       `json:"responses,omitempty"`
+	AcceptSettings map[string]any `json:"accept_settings,omitempty"`
 }
 
 func parseLines(raw string) int {
@@ -478,7 +543,7 @@ func (a *API) startSessionForWorkspace(w http.ResponseWriter, r *http.Request, w
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex)
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
 	var req StartSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
@@ -581,7 +646,7 @@ func (a *API) ShutdownDaemon(w http.ResponseWriter, r *http.Request) {
 // Keep existing streamTail after this block.
 func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 	stream := r.URL.Query().Get("stream")
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex)
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
 	ch, cancel, err := service.Subscribe(r.Context(), id, stream)
 	if err != nil {
 		writeServiceError(w, err)
@@ -622,7 +687,7 @@ func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex)
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
 	ch, cancel, err := service.SubscribeEvents(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err)

@@ -56,6 +56,17 @@ type SendSessionResponse struct {
 	TurnID string `json:"turn_id,omitempty"`
 }
 
+type ApproveSessionRequest struct {
+	RequestID      int            `json:"request_id"`
+	Decision       string         `json:"decision"`
+	Responses      []string       `json:"responses,omitempty"`
+	AcceptSettings map[string]any `json:"accept_settings,omitempty"`
+}
+
+type ApprovalsResponse struct {
+	Approvals []*types.Approval `json:"approvals"`
+}
+
 type HealthResponse struct {
 	OK      bool   `json:"ok"`
 	Version string `json:"version"`

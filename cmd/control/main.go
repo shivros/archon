@@ -162,11 +162,16 @@ func runDaemon(background bool) error {
 	if err != nil {
 		return err
 	}
+	approvalsPath, err := config.ApprovalsPath()
+	if err != nil {
+		return err
+	}
 	workspaceStore := store.NewFileWorkspaceStore(workspacesPath)
 	appStateStore := store.NewFileAppStateStore(statePath)
 	keymapStore := store.NewFileKeymapStore(keymapPath)
 	sessionMetaStore := store.NewFileSessionMetaStore(sessionsMetaPath)
 	sessionIndexStore := store.NewFileSessionIndexStore(sessionsIndexPath)
+	approvalStore := store.NewFileApprovalStore(approvalsPath)
 	stores := &daemon.Stores{
 		Workspaces:  workspaceStore,
 		Worktrees:   workspaceStore,
@@ -174,6 +179,7 @@ func runDaemon(background bool) error {
 		Keymap:      keymapStore,
 		SessionMeta: sessionMetaStore,
 		Sessions:    sessionIndexStore,
+		Approvals:   approvalStore,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

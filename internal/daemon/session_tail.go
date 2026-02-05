@@ -73,7 +73,7 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 		}
 	}
 	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	client, err := startCodexAppServer(ctx, session.Cwd, codexHome)
+	client, err := startCodexAppServer(ctx, session.Cwd, codexHome, s.logger)
 	if err != nil {
 		return nil, err
 	}

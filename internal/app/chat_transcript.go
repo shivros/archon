@@ -45,13 +45,15 @@ func (t *ChatTranscript) Lines() []string {
 	return t.lines
 }
 
-func (t *ChatTranscript) AppendUserMessage(text string) {
+func (t *ChatTranscript) AppendUserMessage(text string) int {
 	if t == nil || strings.TrimSpace(text) == "" {
-		return
+		return -1
 	}
+	headerIndex := len(t.lines)
 	t.lines = append(t.lines, "### User", "")
 	t.lines = append(t.lines, text, "")
 	t.trim()
+	return headerIndex
 }
 
 func (t *ChatTranscript) StartAgentBlock() {
@@ -96,6 +98,48 @@ func (t *ChatTranscript) FinishAgentBlock() {
 	t.activeAgentLine = -1
 	t.pendingAgentBlock = false
 	t.trim()
+}
+
+func (t *ChatTranscript) MarkUserMessageFailed(headerIndex int) bool {
+	if t == nil {
+		return false
+	}
+	if headerIndex < 0 || headerIndex >= len(t.lines) {
+		return false
+	}
+	if !strings.HasPrefix(t.lines[headerIndex], "### User") {
+		return false
+	}
+	t.lines[headerIndex] = "### User (failed)"
+	return true
+}
+
+func (t *ChatTranscript) MarkUserMessageSending(headerIndex int) bool {
+	if t == nil {
+		return false
+	}
+	if headerIndex < 0 || headerIndex >= len(t.lines) {
+		return false
+	}
+	if !strings.HasPrefix(t.lines[headerIndex], "### User") {
+		return false
+	}
+	t.lines[headerIndex] = "### User (sending…)"
+	return true
+}
+
+func (t *ChatTranscript) MarkUserMessageSent(headerIndex int) bool {
+	if t == nil {
+		return false
+	}
+	if headerIndex < 0 || headerIndex >= len(t.lines) {
+		return false
+	}
+	if !strings.HasPrefix(t.lines[headerIndex], "### User") {
+		return false
+	}
+	t.lines[headerIndex] = "### User"
+	return true
 }
 
 func (t *ChatTranscript) AppendItem(item map[string]any) {

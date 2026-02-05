@@ -15,7 +15,7 @@ func (c *SessionChatController) SendMessage(sessionID, text string) tea.Cmd {
 	if c == nil || c.api == nil {
 		return nil
 	}
-	return sendSessionCmd(c.api, sessionID, text)
+	return sendSessionCmd(c.api, sessionID, text, 0)
 }
 
 func (c *SessionChatController) OpenEventStream(sessionID string) tea.Cmd {

@@ -294,6 +294,11 @@ func (c *codexController) startThread(ctx context.Context, model, cwd string) (s
 	if cwd != "" {
 		params["cwd"] = cwd
 	}
+	if opts := codexThreadOptionsFromEnv(); len(opts) > 0 {
+		for key, value := range opts {
+			params[key] = value
+		}
+	}
 	resp, err := c.request(ctx, "thread/start", params)
 	if err != nil {
 		return "", err
@@ -322,10 +327,16 @@ func (c *codexController) startTurn(ctx context.Context, threadID, inputText str
 			"text": inputText,
 		},
 	}
-	resp, err := c.request(ctx, "turn/start", map[string]any{
+	params := map[string]any{
 		"threadId": threadID,
 		"input":    input,
-	})
+	}
+	if opts := codexTurnOptionsFromEnv(); len(opts) > 0 {
+		for key, value := range opts {
+			params[key] = value
+		}
+	}
+	resp, err := c.request(ctx, "turn/start", params)
 	if err != nil {
 		return "", err
 	}

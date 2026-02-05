@@ -52,6 +52,24 @@ func (c *SidebarController) CursorUp() {
 	c.list.CursorUp()
 }
 
+func (c *SidebarController) Scroll(lines int) bool {
+	if lines == 0 {
+		return false
+	}
+	steps := lines
+	if steps < 0 {
+		steps = -steps
+	}
+	for i := 0; i < steps; i++ {
+		if lines < 0 {
+			c.list.CursorUp()
+		} else {
+			c.list.CursorDown()
+		}
+	}
+	return true
+}
+
 func (c *SidebarController) Select(idx int) {
 	c.list.Select(idx)
 }
@@ -77,7 +95,7 @@ func (c *SidebarController) SelectByRow(row int) {
 	if row < 0 {
 		return
 	}
-	headerRows := 1
+	headerRows := c.headerRows()
 	idx := row - headerRows
 	if idx < 0 {
 		idx = 0
@@ -90,6 +108,26 @@ func (c *SidebarController) SelectByRow(row int) {
 		idx = len(items) - 1
 	}
 	c.list.Select(idx)
+}
+
+func (c *SidebarController) headerRows() int {
+	if c == nil {
+		return 0
+	}
+	rows := 0
+	if c.list.ShowTitle() {
+		rows += 1 + c.list.Styles.TitleBar.GetPaddingTop() + c.list.Styles.TitleBar.GetPaddingBottom()
+	}
+	if c.list.ShowStatusBar() {
+		rows += 1 + c.list.Styles.StatusBar.GetPaddingTop() + c.list.Styles.StatusBar.GetPaddingBottom()
+	}
+	if c.list.ShowPagination() {
+		rows++
+	}
+	if c.list.ShowHelp() {
+		rows += 1 + c.list.Styles.HelpStyle.GetPaddingTop() + c.list.Styles.HelpStyle.GetPaddingBottom()
+	}
+	return rows
 }
 
 func (c *SidebarController) Index() int {

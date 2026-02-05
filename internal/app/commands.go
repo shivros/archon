@@ -132,6 +132,15 @@ func openEventsCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
+func fetchApprovalsCmd(api SessionAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		approvals, err := api.ListApprovals(ctx, id)
+		return approvalsMsg{id: id, approvals: approvals, err: err}
+	}
+}
+
 func killSessionCmd(api SessionAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -166,7 +175,7 @@ func markExitedManyCmd(api SessionAPI, ids []string) tea.Cmd {
 	}
 }
 
-func sendSessionCmd(api SessionAPI, id, text string) tea.Cmd {
+func sendSessionCmd(api SessionAPI, id, text string, token int) tea.Cmd {
 	return func() tea.Msg {
 		log.Printf("ui send: id=%s text_len=%d", id, len(text))
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -176,7 +185,35 @@ func sendSessionCmd(api SessionAPI, id, text string) tea.Cmd {
 		if resp != nil {
 			turnID = resp.TurnID
 		}
-		return sendMsg{id: id, turnID: turnID, text: text, err: err}
+		return sendMsg{id: id, turnID: turnID, text: text, err: err, token: token}
+	}
+}
+
+func interruptSessionCmd(api SessionAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		err := api.InterruptSession(ctx, id)
+		return interruptMsg{id: id, err: err}
+	}
+}
+
+func debounceSelectCmd(id string, seq int, delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return selectDebounceMsg{id: id, seq: seq}
+	})
+}
+
+func approveSessionCmd(api SessionAPI, id string, requestID int, decision string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		req := client.ApproveSessionRequest{
+			RequestID: requestID,
+			Decision:  decision,
+		}
+		err := api.ApproveSession(ctx, id, req)
+		return approvalMsg{id: id, requestID: requestID, decision: decision, err: err}
 	}
 }
 

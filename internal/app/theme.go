@@ -14,4 +14,5 @@ var (
 	activeSessionStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("70"))
 	sessionSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("238"))
 	selectedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("236"))
+	dividerStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 )

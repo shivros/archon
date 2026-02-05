@@ -11,6 +11,7 @@ type CodexStreamController struct {
 	cancel           func()
 	maxEventsPerTick int
 	transcript       *ChatTranscript
+	pendingApproval  *ApprovalRequest
 }
 
 func NewCodexStreamController(maxLines, maxEventsPerTick int) *CodexStreamController {
@@ -32,11 +33,15 @@ func (c *CodexStreamController) Reset() {
 	if c.transcript != nil {
 		c.transcript.Reset()
 	}
+	c.pendingApproval = nil
 }
 
 func (c *CodexStreamController) SetStream(ch <-chan types.CodexEvent, cancel func()) {
 	if c == nil {
 		return
+	}
+	if c.cancel != nil {
+		c.cancel()
 	}
 	c.events = ch
 	c.cancel = cancel
@@ -51,11 +56,11 @@ func (c *CodexStreamController) SetSnapshot(lines []string) {
 	}
 }
 
-func (c *CodexStreamController) AppendUserMessage(text string) {
+func (c *CodexStreamController) AppendUserMessage(text string) int {
 	if c == nil || c.transcript == nil {
-		return
+		return -1
 	}
-	c.transcript.AppendUserMessage(text)
+	return c.transcript.AppendUserMessage(text)
 }
 
 func (c *CodexStreamController) Lines() []string {
@@ -66,6 +71,41 @@ func (c *CodexStreamController) Lines() []string {
 		return nil
 	}
 	return c.transcript.Lines()
+}
+
+func (c *CodexStreamController) PendingApproval() *ApprovalRequest {
+	if c == nil {
+		return nil
+	}
+	return c.pendingApproval
+}
+
+func (c *CodexStreamController) ClearApproval() {
+	if c == nil {
+		return
+	}
+	c.pendingApproval = nil
+}
+
+func (c *CodexStreamController) MarkUserMessageFailed(headerIndex int) bool {
+	if c == nil || c.transcript == nil {
+		return false
+	}
+	return c.transcript.MarkUserMessageFailed(headerIndex)
+}
+
+func (c *CodexStreamController) MarkUserMessageSending(headerIndex int) bool {
+	if c == nil || c.transcript == nil {
+		return false
+	}
+	return c.transcript.MarkUserMessageSending(headerIndex)
+}
+
+func (c *CodexStreamController) MarkUserMessageSent(headerIndex int) bool {
+	if c == nil || c.transcript == nil {
+		return false
+	}
+	return c.transcript.MarkUserMessageSent(headerIndex)
 }
 
 func (c *CodexStreamController) ConsumeTick() (lines []string, changed bool, closed bool) {
@@ -134,8 +174,32 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			}
 			return true
 		}
+	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "tool/requestUserInput":
+		req := parseApprovalRequest(event)
+		if req != nil {
+			c.pendingApproval = req
+		}
 	}
 	return false
+}
+
+func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
+	if event.ID == nil || *event.ID <= 0 {
+		return nil
+	}
+	params := map[string]any{}
+	if len(event.Params) > 0 {
+		if err := json.Unmarshal(event.Params, &params); err != nil {
+			params = map[string]any{}
+		}
+	}
+	summary, detail := approvalSummary(event.Method, params)
+	return &ApprovalRequest{
+		RequestID: *event.ID,
+		Method:    event.Method,
+		Summary:   summary,
+		Detail:    detail,
+	}
 }
 
 func extractDelta(raw json.RawMessage) string {

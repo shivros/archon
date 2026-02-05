@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"control/internal/logging"
 )
 
 type codexAppServer struct {
@@ -22,7 +24,11 @@ type codexAppServer struct {
 	nextID int
 	msgs   chan rpcMessage
 	notes  chan rpcMessage
+	reqs   chan rpcMessage
 	errs   chan error
+	logger logging.Logger
+	reqMu  sync.Mutex
+	reqMap map[int]requestInfo
 }
 
 type rpcMessage struct {
@@ -36,6 +42,11 @@ type rpcMessage struct {
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type requestInfo struct {
+	method string
+	start  time.Time
 }
 
 type codexThread struct {
@@ -67,7 +78,10 @@ type codexThreadReadResult struct {
 	Thread *codexThread `json:"thread"`
 }
 
-func startCodexAppServer(ctx context.Context, cwd, codexHome string) (*codexAppServer, error) {
+func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logging.Logger) (*codexAppServer, error) {
+	if logger == nil {
+		logger = logging.Nop()
+	}
 	cmdName, err := findCommand("CONTROL_CODEX_CMD", "codex")
 	if err != nil {
 		return nil, err
@@ -97,6 +111,8 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string) (*codexAppS
 	}
 	go io.Copy(io.Discard, stderr)
 
+	logger.Info("codex_start", logging.F("cmd", cmdName), logging.F("cwd", cwd), logging.F("codex_home", codexHome))
+
 	client := &codexAppServer{
 		cmd:    cmd,
 		stdin:  stdin,
@@ -104,7 +120,10 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string) (*codexAppS
 		nextID: 1,
 		msgs:   make(chan rpcMessage, 32),
 		notes:  make(chan rpcMessage, 64),
+		reqs:   make(chan rpcMessage, 16),
 		errs:   make(chan error, 1),
+		logger: logger,
+		reqMap: make(map[int]requestInfo),
 	}
 	go client.readLoop()
 
@@ -141,6 +160,13 @@ func (c *codexAppServer) Errors() <-chan error {
 		return nil
 	}
 	return c.errs
+}
+
+func (c *codexAppServer) Requests() <-chan rpcMessage {
+	if c == nil {
+		return nil
+	}
+	return c.reqs
 }
 
 func (c *codexAppServer) initialize(ctx context.Context) error {
@@ -196,6 +222,11 @@ func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input [
 		"threadId": threadID,
 		"input":    input,
 	}
+	if opts := codexTurnOptionsFromEnv(); len(opts) > 0 {
+		for key, value := range opts {
+			params[key] = value
+		}
+	}
 	var result struct {
 		Turn struct {
 			ID string `json:"id"`
@@ -208,6 +239,14 @@ func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input [
 		return "", errors.New("turn id missing")
 	}
 	return result.Turn.ID, nil
+}
+
+func (c *codexAppServer) InterruptTurn(ctx context.Context, threadID, turnID string) error {
+	params := map[string]any{
+		"threadId": threadID,
+		"turnId":   turnID,
+	}
+	return c.request(ctx, "turn/interrupt", params, nil)
 }
 
 func (c *codexAppServer) WaitForTurnCompleted(ctx context.Context, turnID string) error {
@@ -248,26 +287,59 @@ func (c *codexAppServer) request(ctx context.Context, method string, params any,
 		"id":     id,
 		"params": params,
 	}
+	c.trackRequest(id, method)
+	if c.logger != nil && c.logger.Enabled(logging.Debug) {
+		c.logger.Debug("codex_send",
+			logging.F("request_id", id),
+			logging.F("method", method),
+			logging.F("params_bytes", paramsSize(params)),
+		)
+	}
 	if err := c.send(req); err != nil {
+		if c.logger != nil {
+			c.logger.Error("codex_send_error", logging.F("request_id", id), logging.F("method", method), logging.F("error", err))
+		}
 		return err
 	}
 	for {
 		select {
 		case <-ctx.Done():
+			if c.logger != nil {
+				c.logger.Warn("codex_timeout", logging.F("request_id", id), logging.F("method", method))
+			}
 			return ctx.Err()
 		case err := <-c.errs:
 			if err != nil {
+				if c.logger != nil {
+					c.logger.Error("codex_error", logging.F("error", err))
+				}
 				return err
 			}
 		case msg := <-c.msgs:
 			if msg.ID == nil || *msg.ID != id {
 				continue
 			}
+			c.finishRequest(id, msg.Error)
 			if msg.Error != nil {
+				if c.logger != nil {
+					c.logger.Warn("codex_rpc_error",
+						logging.F("request_id", id),
+						logging.F("method", method),
+						logging.F("code", msg.Error.Code),
+						logging.F("message", msg.Error.Message),
+					)
+				}
 				return fmt.Errorf("rpc error %d: %s", msg.Error.Code, msg.Error.Message)
 			}
 			if out != nil && len(msg.Result) > 0 {
 				if err := json.Unmarshal(msg.Result, out); err != nil {
+					if c.logger != nil {
+						c.logger.Error("codex_unmarshal_error",
+							logging.F("request_id", id),
+							logging.F("method", method),
+							logging.F("error", err),
+						)
+					}
 					return err
 				}
 			}
@@ -277,9 +349,47 @@ func (c *codexAppServer) request(ctx context.Context, method string, params any,
 }
 
 func (c *codexAppServer) notify(method string, params any) error {
+	if c.logger != nil && c.logger.Enabled(logging.Debug) {
+		c.logger.Debug("codex_notify",
+			logging.F("method", method),
+			logging.F("params_bytes", paramsSize(params)),
+		)
+	}
 	payload := map[string]any{
 		"method": method,
 		"params": params,
+	}
+	return c.send(payload)
+}
+
+func (c *codexAppServer) respond(id int, result any) error {
+	if c.logger != nil {
+		c.logger.Info("codex_respond",
+			logging.F("request_id", id),
+			logging.F("result_bytes", paramsSize(result)),
+		)
+	}
+	payload := map[string]any{
+		"id":     id,
+		"result": result,
+	}
+	return c.send(payload)
+}
+
+func (c *codexAppServer) respondError(id int, code int, message string) error {
+	if c.logger != nil {
+		c.logger.Warn("codex_respond_error",
+			logging.F("request_id", id),
+			logging.F("code", code),
+			logging.F("message", message),
+		)
+	}
+	payload := map[string]any{
+		"id": id,
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
 	}
 	return c.send(payload)
 }
@@ -305,17 +415,69 @@ func (c *codexAppServer) readLoop() {
 	for {
 		line, err := c.reader.ReadBytes('\n')
 		if err != nil {
+			if c.logger != nil {
+				c.logger.Error("codex_read_error", logging.F("error", err))
+			}
 			c.errs <- err
 			return
 		}
 		var msg rpcMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
+			if c.logger != nil {
+				c.logger.Warn("codex_parse_error", logging.F("error", err))
+			}
 			continue
 		}
 		if msg.ID == nil {
+			if c.logger != nil && c.logger.Enabled(logging.Debug) {
+				c.logger.Debug("codex_event", logging.F("method", msg.Method), logging.F("params_bytes", len(msg.Params)))
+			}
 			c.notes <- msg
+		} else if msg.Method != "" {
+			if c.logger != nil && c.logger.Enabled(logging.Debug) {
+				c.logger.Debug("codex_request", logging.F("request_id", *msg.ID), logging.F("method", msg.Method), logging.F("params_bytes", len(msg.Params)))
+			}
+			c.reqs <- msg
 		} else {
 			c.msgs <- msg
 		}
 	}
+}
+
+func (c *codexAppServer) trackRequest(id int, method string) {
+	c.reqMu.Lock()
+	defer c.reqMu.Unlock()
+	c.reqMap[id] = requestInfo{method: method, start: time.Now()}
+}
+
+func (c *codexAppServer) finishRequest(id int, rpcErr *rpcError) {
+	c.reqMu.Lock()
+	info, ok := c.reqMap[id]
+	if ok {
+		delete(c.reqMap, id)
+	}
+	c.reqMu.Unlock()
+	if !ok || c.logger == nil || !c.logger.Enabled(logging.Debug) {
+		return
+	}
+	fields := []logging.Field{
+		logging.F("request_id", id),
+		logging.F("method", info.method),
+		logging.F("latency_ms", time.Since(info.start).Milliseconds()),
+	}
+	if rpcErr != nil {
+		fields = append(fields, logging.F("rpc_error", rpcErr.Message))
+	}
+	c.logger.Debug("codex_response", fields...)
+}
+
+func paramsSize(params any) int {
+	if params == nil {
+		return 0
+	}
+	data, err := json.Marshal(params)
+	if err != nil {
+		return 0
+	}
+	return len(data)
 }

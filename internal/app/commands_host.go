@@ -28,10 +28,13 @@ func (m *Model) addWorktreeCmd(workspaceID string, worktree *types.Worktree) tea
 }
 
 func (m *Model) sendMessageCmd(sessionID, text string) tea.Cmd {
+	token := m.nextSendToken()
 	if m.chat != nil {
-		return m.chat.SendMessage(sessionID, text)
+		m.registerPendingSend(token, sessionID)
+		return sendSessionCmd(m.sessionAPI, sessionID, text, token)
 	}
-	return sendSessionCmd(m.sessionAPI, sessionID, text)
+	m.registerPendingSend(token, sessionID)
+	return sendSessionCmd(m.sessionAPI, sessionID, text, token)
 }
 
 func (m *Model) startWorkspaceSessionCmd(workspaceID, worktreeID, provider, text string) tea.Cmd {
