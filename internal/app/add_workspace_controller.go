@@ -9,26 +9,22 @@ import (
 )
 
 type addWorkspaceHost interface {
-	createWorkspaceCmd(path, name, provider string) tea.Cmd
+	createWorkspaceCmd(path, name string) tea.Cmd
 	exitAddWorkspace(status string)
 	setStatus(status string)
 }
 
 type AddWorkspaceController struct {
-	input    textinput.Model
-	step     int
-	path     string
-	name     string
-	provider string
+	input textinput.Model
+	step  int
+	path  string
+	name  string
 }
 
 func NewAddWorkspaceController(width int) *AddWorkspaceController {
 	input := newAddInput(width)
 	input.Placeholder = "/path/to/repo"
-	return &AddWorkspaceController{
-		input:    input,
-		provider: "codex",
-	}
+	return &AddWorkspaceController{input: input}
 }
 
 func (c *AddWorkspaceController) Resize(width int) {
@@ -39,7 +35,6 @@ func (c *AddWorkspaceController) Enter() {
 	c.step = 0
 	c.path = ""
 	c.name = ""
-	c.provider = "codex"
 	c.prepareInput()
 	c.input.Focus()
 }
@@ -48,7 +43,6 @@ func (c *AddWorkspaceController) Exit() {
 	c.step = 0
 	c.path = ""
 	c.name = ""
-	c.provider = ""
 	c.input.SetValue("")
 	c.input.Blur()
 }
@@ -75,7 +69,6 @@ func (c *AddWorkspaceController) View() string {
 	lines := []string{
 		renderAddField(&c.input, c.step, "Path", c.path, 0),
 		renderAddField(&c.input, c.step, "Name", c.name, 1),
-		renderAddField(&c.input, c.step, "Provider", c.provider, 2),
 		"",
 		"Enter to continue • Esc to cancel",
 	}
@@ -97,18 +90,8 @@ func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 		return nil
 	case 1:
 		c.name = strings.TrimSpace(c.input.Value())
-		c.step = 2
-		c.prepareInput()
-		host.setStatus("add workspace: provider (default codex)")
-		return nil
-	case 2:
-		provider := strings.TrimSpace(c.input.Value())
-		if provider == "" {
-			provider = "codex"
-		}
-		c.provider = provider
 		host.setStatus("creating workspace")
-		return host.createWorkspaceCmd(c.path, c.name, c.provider)
+		return host.createWorkspaceCmd(c.path, c.name)
 	default:
 		return nil
 	}
@@ -122,9 +105,6 @@ func (c *AddWorkspaceController) prepareInput() {
 	case 1:
 		c.input.Placeholder = "optional name"
 		c.input.SetValue(c.name)
-	case 2:
-		c.input.Placeholder = "codex"
-		c.input.SetValue(c.provider)
 	}
 }
 

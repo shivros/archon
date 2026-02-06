@@ -152,6 +152,12 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		if text := asString(item["text"]); text != "" {
 			t.appendLines(escapeMarkdown(text))
 		}
+	case "agentMessageDelta":
+		if delta := asString(item["delta"]); delta != "" {
+			t.AppendAgentDelta(delta)
+		}
+	case "agentMessageEnd":
+		t.FinishAgentBlock()
 	case "userMessage":
 		if text := extractContentText(item["content"]); text != "" {
 			t.AppendUserMessage(text)

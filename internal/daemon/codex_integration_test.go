@@ -449,7 +449,6 @@ func tryCopyAuthFile(t *testing.T, codexHome string) bool {
 	return true
 }
 
-
 func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager, *Stores) {
 	t.Helper()
 	base := t.TempDir()
@@ -498,7 +497,6 @@ func createWorkspace(t *testing.T, server *httptest.Server, repoDir string) *typ
 	body, _ := json.Marshal(types.Workspace{
 		Name:     "codex-test",
 		RepoPath: repoDir,
-		Provider: "codex",
 	})
 	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token")

@@ -319,7 +319,6 @@ func normalizeWorkspace(workspace *types.Workspace) (*types.Workspace, error) {
 		ID:        workspace.ID,
 		Name:      name,
 		RepoPath:  path,
-		Provider:  strings.TrimSpace(workspace.Provider),
 		CreatedAt: workspace.CreatedAt,
 		UpdatedAt: workspace.UpdatedAt,
 	}

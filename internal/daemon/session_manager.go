@@ -20,17 +20,21 @@ import (
 var ErrSessionNotFound = errors.New("session not found")
 
 type StartSessionConfig struct {
-	Provider     string
-	Cmd          string
-	Cwd          string
-	Args         []string
-	Env          []string
-	CodexHome    string
-	Title        string
-	Tags         []string
-	WorkspaceID  string
-	WorktreeID   string
-	InitialInput string
+	Provider            string
+	Cmd                 string
+	Cwd                 string
+	Args                []string
+	Env                 []string
+	CodexHome           string
+	Title               string
+	Tags                []string
+	WorkspaceID         string
+	WorktreeID          string
+	InitialInput        string
+	InitialText         string
+	Resume              bool
+	ProviderSessionID   string
+	OnProviderSessionID func(string)
 }
 
 type SessionManager struct {
@@ -50,6 +54,9 @@ type sessionRuntime struct {
 	stderr    *logBuffer
 	hub       *subscriberHub
 	sink      *logSink
+	items     *itemSink
+	itemsHub  *itemHub
+	send      func([]byte) error
 	interrupt func() error
 }
 
@@ -76,6 +83,15 @@ func (m *SessionManager) SetSessionStore(store SessionIndexStore) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessionStore = store
+}
+
+func (m *SessionManager) SessionsBaseDir() string {
+	if m == nil {
+		return ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.baseDir
 }
 
 func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, error) {
@@ -105,6 +121,18 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		_ = stdoutFile.Close()
 		return nil, err
 	}
+	var items *itemSink
+	var itemsHub *itemHub
+	if providerUsesItems(cfg.Provider) {
+		itemsPath := filepath.Join(sessionDir, "items.jsonl")
+		itemsHub = newItemHub()
+		items, err = newItemSink(itemsPath, itemsHub)
+		if err != nil {
+			_ = stdoutFile.Close()
+			_ = stderrFile.Close()
+			return nil, err
+		}
+	}
 
 	now := time.Now().UTC()
 	session := &types.Session{
@@ -121,11 +149,13 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	}
 
 	runtimeState := &sessionRuntime{
-		session: session,
-		done:    make(chan struct{}),
-		stdout:  newLogBuffer(logBufferMaxBytes),
-		stderr:  newLogBuffer(logBufferMaxBytes),
-		hub:     newSubscriberHub(),
+		session:  session,
+		done:     make(chan struct{}),
+		stdout:   newLogBuffer(logBufferMaxBytes),
+		stderr:   newLogBuffer(logBufferMaxBytes),
+		hub:      newSubscriberHub(),
+		items:    items,
+		itemsHub: itemsHub,
 	}
 	runtimeState.sink = newLogSink(stdoutFile, stderrFile, runtimeState.stdout, runtimeState.stderr)
 
@@ -134,13 +164,22 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	session.Status = types.SessionStatusStarting
 	m.mu.Unlock()
 
-	proc, err := provider.Start(cfg, runtimeState.sink)
+	cfg.OnProviderSessionID = func(providerID string) {
+		m.upsertSessionProviderID(cfg.Provider, sessionID, providerID)
+	}
+	cfg.OnProviderSessionID = func(providerID string) {
+		m.upsertSessionProviderID(cfg.Provider, session.ID, providerID)
+	}
+	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
 		m.mu.Lock()
 		session.Status = types.SessionStatusFailed
 		session.ExitedAt = ptrTime(time.Now().UTC())
 		m.mu.Unlock()
 		runtimeState.sink.Close()
+		if runtimeState.items != nil {
+			runtimeState.items.Close()
+		}
 		return nil, err
 	}
 
@@ -148,6 +187,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	m.mu.Lock()
 	runtimeState.process = proc.Process
 	runtimeState.interrupt = proc.Interrupt
+	runtimeState.send = proc.Send
 	if proc.Process != nil {
 		session.PID = proc.Process.Pid
 	}
@@ -157,6 +197,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 
 	m.upsertSessionMeta(cfg, sessionID, session.Status)
 	m.upsertSessionThreadID(sessionID, proc.ThreadID)
+	m.upsertSessionProviderID(cfg.Provider, sessionID, proc.ThreadID)
 	m.upsertSessionRecord(session, sessionSourceInternal)
 
 	go m.flushLoop(runtimeState)
@@ -186,6 +227,158 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		m.upsertSessionMeta(cfg, sessionID, finalStatus)
 		m.upsertSessionRecord(session, sessionSourceInternal)
 		runtimeState.sink.Close()
+		if runtimeState.items != nil {
+			runtimeState.items.Close()
+		}
+		close(runtimeState.done)
+	}()
+
+	return cloneSession(session), nil
+}
+
+func providerUsesItems(provider string) bool {
+	return types.Capabilities(provider).UsesItems
+}
+
+func (m *SessionManager) SendInput(id string, payload []byte) error {
+	if len(payload) == 0 {
+		return errors.New("payload is required")
+	}
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	send := (*sessionRuntime)(nil)
+	if ok {
+		send = state
+	}
+	m.mu.Unlock()
+	if send == nil || send.send == nil {
+		return ErrSessionNotFound
+	}
+	return send.send(payload)
+}
+
+func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Session) (*types.Session, error) {
+	if session == nil || strings.TrimSpace(session.ID) == "" {
+		return nil, errors.New("session is required")
+	}
+	m.mu.Lock()
+	if _, ok := m.sessions[session.ID]; ok {
+		m.mu.Unlock()
+		return cloneSession(session), nil
+	}
+	m.mu.Unlock()
+
+	provider, err := ResolveProvider(cfg.Provider, cfg.Cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	sessionDir := filepath.Join(m.baseDir, session.ID)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return nil, err
+	}
+
+	stdoutPath := filepath.Join(sessionDir, "stdout.log")
+	stderrPath := filepath.Join(sessionDir, "stderr.log")
+	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		_ = stdoutFile.Close()
+		return nil, err
+	}
+	var items *itemSink
+	var itemsHub *itemHub
+	if providerUsesItems(cfg.Provider) {
+		itemsPath := filepath.Join(sessionDir, "items.jsonl")
+		itemsHub = newItemHub()
+		items, err = newItemSink(itemsPath, itemsHub)
+		if err != nil {
+			_ = stdoutFile.Close()
+			_ = stderrFile.Close()
+			return nil, err
+		}
+	}
+
+	runtimeState := &sessionRuntime{
+		session:  session,
+		done:     make(chan struct{}),
+		stdout:   newLogBuffer(logBufferMaxBytes),
+		stderr:   newLogBuffer(logBufferMaxBytes),
+		hub:      newSubscriberHub(),
+		items:    items,
+		itemsHub: itemsHub,
+	}
+	runtimeState.sink = newLogSink(stdoutFile, stderrFile, runtimeState.stdout, runtimeState.stderr)
+
+	m.mu.Lock()
+	m.sessions[session.ID] = runtimeState
+	session.Status = types.SessionStatusStarting
+	m.mu.Unlock()
+
+	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
+	if err != nil {
+		m.mu.Lock()
+		session.Status = types.SessionStatusFailed
+		session.ExitedAt = ptrTime(time.Now().UTC())
+		m.mu.Unlock()
+		runtimeState.sink.Close()
+		if runtimeState.items != nil {
+			runtimeState.items.Close()
+		}
+		return nil, err
+	}
+
+	startedAt := time.Now().UTC()
+	m.mu.Lock()
+	runtimeState.process = proc.Process
+	runtimeState.interrupt = proc.Interrupt
+	runtimeState.send = proc.Send
+	if proc.Process != nil {
+		session.PID = proc.Process.Pid
+	}
+	session.Status = types.SessionStatusRunning
+	session.StartedAt = &startedAt
+	session.ExitedAt = nil
+	m.mu.Unlock()
+
+	m.upsertSessionMeta(cfg, session.ID, session.Status)
+	m.upsertSessionThreadID(session.ID, proc.ThreadID)
+	m.upsertSessionProviderID(cfg.Provider, session.ID, proc.ThreadID)
+	m.upsertSessionRecord(session, sessionSourceInternal)
+
+	go m.flushLoop(runtimeState)
+
+	go func() {
+		err := proc.Wait()
+		exitCode := exitCodeFromError(err)
+
+		var finalStatus types.SessionStatus
+		m.mu.Lock()
+		if runtimeState.killed {
+			session.Status = types.SessionStatusKilled
+		} else if err == nil {
+			session.Status = types.SessionStatusExited
+		} else if isExitSignal(err) {
+			session.Status = types.SessionStatusExited
+		} else {
+			session.Status = types.SessionStatusFailed
+		}
+		finalStatus = session.Status
+		if exitCode != nil {
+			session.ExitCode = exitCode
+		}
+		session.ExitedAt = ptrTime(time.Now().UTC())
+		m.mu.Unlock()
+
+		m.upsertSessionMeta(cfg, session.ID, finalStatus)
+		m.upsertSessionRecord(session, sessionSourceInternal)
+		runtimeState.sink.Close()
+		if runtimeState.items != nil {
+			runtimeState.items.Close()
+		}
 		close(runtimeState.done)
 	}()
 
@@ -223,6 +416,17 @@ func (m *SessionManager) Subscribe(id, stream string) (<-chan types.LogEvent, fu
 		})
 	}
 	return ch, wrappedCancel, nil
+}
+
+func (m *SessionManager) SubscribeItems(id string) (<-chan map[string]any, func(), error) {
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok || state == nil || state.itemsHub == nil {
+		return nil, nil, ErrSessionNotFound
+	}
+	ch, cancel := state.itemsHub.Add()
+	return ch, cancel, nil
 }
 
 func (m *SessionManager) KillSession(id string) error {
@@ -490,6 +694,27 @@ func (m *SessionManager) upsertSessionThreadID(sessionID, threadID string) {
 	meta := &types.SessionMeta{
 		SessionID: sessionID,
 		ThreadID:  threadID,
+	}
+	_, _ = store.Upsert(context.Background(), meta)
+}
+
+func (m *SessionManager) upsertSessionProviderID(provider, sessionID, providerID string) {
+	if strings.TrimSpace(providerID) == "" {
+		return
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || provider == "codex" {
+		return
+	}
+	m.mu.Lock()
+	store := m.metaStore
+	m.mu.Unlock()
+	if store == nil {
+		return
+	}
+	meta := &types.SessionMeta{
+		SessionID:         sessionID,
+		ProviderSessionID: providerID,
 	}
 	_, _ = store.Upsert(context.Background(), meta)
 }

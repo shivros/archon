@@ -24,7 +24,6 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 
 	ws, err := store.Add(ctx, &types.Workspace{
 		RepoPath: repoDir,
-		Provider: "codex",
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -89,7 +88,6 @@ func TestWorkspaceStoreNormalizesPath(t *testing.T) {
 
 	ws, err := store.Add(ctx, &types.Workspace{
 		RepoPath: rel,
-		Provider: "codex",
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -112,7 +110,6 @@ func TestWorktreeStoreCRUD(t *testing.T) {
 
 	ws, err := store.Add(ctx, &types.Workspace{
 		RepoPath: repoDir,
-		Provider: "codex",
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -166,7 +163,7 @@ func TestWorkspaceUpdatedAt(t *testing.T) {
 	store := NewFileWorkspaceStore(filepath.Join(t.TempDir(), "workspaces.json"))
 
 	repoDir := t.TempDir()
-	ws, err := store.Add(ctx, &types.Workspace{RepoPath: repoDir, Provider: "codex"})
+	ws, err := store.Add(ctx, &types.Workspace{RepoPath: repoDir})
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}

@@ -28,7 +28,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 
-	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir, Provider: "codex"})
+	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir})
 	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
 	createReq.Header.Set("Authorization", "Bearer token")
 	createReq.Header.Set("Content-Type", "application/json")
@@ -106,7 +106,7 @@ func TestWorktreeEndpoints(t *testing.T) {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 
-	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir, Provider: "codex"})
+	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir})
 	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
 	createReq.Header.Set("Authorization", "Bearer token")
 	createReq.Header.Set("Content-Type", "application/json")
@@ -182,7 +182,7 @@ func TestWorkspaceSessionsEndpoint(t *testing.T) {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 
-	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir, Provider: "custom"})
+	createBody, _ := json.Marshal(types.Workspace{RepoPath: repoDir})
 	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
 	createReq.Header.Set("Authorization", "Bearer token")
 	createReq.Header.Set("Content-Type", "application/json")
@@ -197,9 +197,10 @@ func TestWorkspaceSessionsEndpoint(t *testing.T) {
 	}
 
 	startReq := StartSessionRequest{
-		Cmd:  os.Args[0],
-		Args: helperArgs("stdout=api", "stderr=err", "sleep_ms=20", "exit=0"),
-		Env:  []string{"GO_WANT_HELPER_PROCESS=1"},
+		Provider: "custom",
+		Cmd:      os.Args[0],
+		Args:     helperArgs("stdout=api", "stderr=err", "sleep_ms=20", "exit=0"),
+		Env:      []string{"GO_WANT_HELPER_PROCESS=1"},
 	}
 	body, _ := json.Marshal(startReq)
 	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces/"+created.ID+"/sessions", bytes.NewReader(body))

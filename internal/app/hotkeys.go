@@ -8,6 +8,7 @@ const (
 	HotkeyChatInput
 	HotkeyAddWorkspace
 	HotkeyAddWorktree
+	HotkeyPickProvider
 	HotkeySearch
 	HotkeyApproval
 )
@@ -56,6 +57,9 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "esc", Label: "cancel", Context: HotkeyAddWorktree, Priority: 10},
 		{Key: "enter", Label: "continue", Context: HotkeyAddWorktree, Priority: 11},
 		{Key: "j/k/↑/↓", Label: "move", Context: HotkeyAddWorktree, Priority: 12},
+		{Key: "esc", Label: "cancel", Context: HotkeyPickProvider, Priority: 10},
+		{Key: "enter", Label: "select", Context: HotkeyPickProvider, Priority: 11},
+		{Key: "j/k/↑/↓", Label: "move", Context: HotkeyPickProvider, Priority: 12},
 		{Key: "esc", Label: "cancel", Context: HotkeyChatInput, Priority: 10},
 		{Key: "enter", Label: "send", Context: HotkeyChatInput, Priority: 11},
 		{Key: "ctrl+y", Label: "copy id", Context: HotkeyChatInput, Priority: 12},
@@ -77,6 +81,8 @@ func (r DefaultHotkeyResolver) ActiveContexts(m *Model) []HotkeyContext {
 		contexts = append(contexts, HotkeyAddWorkspace)
 	case uiModeAddWorktree:
 		contexts = append(contexts, HotkeyAddWorktree)
+	case uiModePickProvider:
+		contexts = append(contexts, HotkeyPickProvider)
 	case uiModeCompose:
 		if m.input != nil && m.input.IsChatFocused() {
 			contexts = append(contexts, HotkeyChatInput)

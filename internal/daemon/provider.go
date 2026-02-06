@@ -10,7 +10,7 @@ import (
 type Provider interface {
 	Name() string
 	Command() string
-	Start(cfg StartSessionConfig, sink *logSink) (*providerProcess, error)
+	Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error)
 }
 
 type providerProcess struct {
@@ -18,6 +18,7 @@ type providerProcess struct {
 	Wait      func() error
 	Interrupt func() error
 	ThreadID  string
+	Send      func([]byte) error
 }
 
 func ResolveProvider(provider, customCmd string) (Provider, error) {
@@ -29,8 +30,7 @@ func ResolveProvider(provider, customCmd string) (Provider, error) {
 	case "codex":
 		return newCodexProvider()
 	case "claude":
-		cmd, err := findCommand("CONTROL_CLAUDE_CMD", "claude")
-		return newExecProvider("claude", cmd, err)
+		return newClaudeProvider()
 	case "opencode":
 		cmd, err := findOpenCodeCommand()
 		return newExecProvider("opencode", cmd, err)

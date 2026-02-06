@@ -11,3 +11,8 @@ repos:
         entry: gofmt -w
         language: system
         types: [go]
+      - id: go-test
+        name: go test (unit)
+        entry: bash -lc 'CONTROL_CODEX_SKIP=1 go test ./...'
+        language: system
+        pass_filenames: false

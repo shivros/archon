@@ -131,6 +131,13 @@ type eventsMsg struct {
 	err    error
 }
 
+type itemsStreamMsg struct {
+	id     string
+	ch     <-chan map[string]any
+	cancel func()
+	err    error
+}
+
 type selectDebounceMsg struct {
 	id  string
 	seq int

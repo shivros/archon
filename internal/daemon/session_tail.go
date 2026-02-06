@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -34,7 +36,7 @@ func logLinesToItems(lines []string) []map[string]any {
 }
 
 func (s *SessionService) readSessionLogs(id string, lines int) ([]string, bool, string, error) {
-	baseDir, err := config.SessionsDir()
+	baseDir, err := s.sessionsBaseDir()
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -52,6 +54,49 @@ func (s *SessionService) readSessionLogs(id string, lines int) ([]string, bool, 
 	}
 	combined := append(stdoutLines, stderrLines...)
 	return combined, stdoutTrunc || stderrTrunc, "stdout_then_stderr", nil
+}
+
+func (s *SessionService) readSessionItems(id string, lines int) ([]map[string]any, bool, error) {
+	baseDir, err := s.sessionsBaseDir()
+	if err != nil {
+		return nil, false, err
+	}
+	sessionDir := filepath.Join(baseDir, id)
+	itemsPath := filepath.Join(sessionDir, "items.jsonl")
+	if _, err := os.Stat(itemsPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	rawLines, truncated, err := tailLines(itemsPath, lines)
+	if err != nil {
+		return nil, false, err
+	}
+	items := make([]map[string]any, 0, len(rawLines))
+	for _, line := range rawLines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			continue
+		}
+		if payload != nil {
+			items = append(items, payload)
+		}
+	}
+	return items, truncated, nil
+}
+
+func (s *SessionService) sessionsBaseDir() (string, error) {
+	if s != nil && s.manager != nil {
+		if baseDir := s.manager.SessionsBaseDir(); baseDir != "" {
+			return baseDir, nil
+		}
+	}
+	return config.SessionsDir()
 }
 
 func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Session, threadID string, lines int) ([]map[string]any, error) {

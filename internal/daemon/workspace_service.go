@@ -79,14 +79,10 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *types.Wor
 	merged := &types.Workspace{
 		ID:       id,
 		Name:     strings.TrimSpace(req.Name),
-		Provider: strings.TrimSpace(req.Provider),
 		RepoPath: providedRepoPath,
 	}
 	if merged.Name == "" {
 		merged.Name = existing.Name
-	}
-	if merged.Provider == "" {
-		merged.Provider = existing.Provider
 	}
 	if merged.RepoPath == "" {
 		merged.RepoPath = existing.RepoPath

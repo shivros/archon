@@ -47,7 +47,7 @@ func (p *codexProvider) Command() string {
 	return fmt.Sprintf("%s app-server", p.cmdName)
 }
 
-func (p *codexProvider) Start(cfg StartSessionConfig, sink *logSink) (*providerProcess, error) {
+func (p *codexProvider) Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error) {
 	cmd := exec.Command(p.cmdName, "app-server")
 	if cfg.Cwd != "" {
 		cmd.Dir = cfg.Cwd

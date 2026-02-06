@@ -71,9 +71,6 @@ func (s *CodexSyncer) SyncWorkspace(ctx context.Context, workspaceID string) err
 	if !ok {
 		return store.ErrWorkspaceNotFound
 	}
-	if ws.Provider != "codex" {
-		return nil
-	}
 	worktrees := []*types.Worktree{}
 	if s.worktrees != nil {
 		entries, err := s.worktrees.ListWorktrees(ctx, ws.ID)

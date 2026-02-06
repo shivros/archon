@@ -36,6 +36,7 @@ const (
 	uiModeNormal uiMode = iota
 	uiModeAddWorkspace
 	uiModeAddWorktree
+	uiModePickProvider
 	uiModeCompose
 	uiModeSearch
 )
@@ -49,6 +50,7 @@ type Model struct {
 	mode              uiMode
 	addWorkspace      *AddWorkspaceController
 	addWorktree       *AddWorktreeController
+	providerPicker    *ProviderPicker
 	compose           *ComposeController
 	chatInput         *ChatInput
 	searchInput       *ChatInput
@@ -64,6 +66,7 @@ type Model struct {
 	hasAppState       bool
 	stream            *StreamController
 	codexStream       *CodexStreamController
+	itemStream        *ItemStreamController
 	input             *InputController
 	chat              *SessionChatController
 	pendingApproval   *ApprovalRequest
@@ -113,6 +116,7 @@ func NewModel(client *client.Client) Model {
 	api := NewClientAPI(client)
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
 	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
+	itemStream := NewItemStreamController(maxViewportLines, maxEventsPerTick)
 	loader := spinner.New()
 	loader.Spinner = spinner.Line
 	loader.Style = lipgloss.NewStyle()
@@ -126,11 +130,13 @@ func NewModel(client *client.Client) Model {
 		viewport:        vp,
 		stream:          stream,
 		codexStream:     codexStream,
+		itemStream:      itemStream,
 		input:           NewInputController(),
 		chat:            NewSessionChatController(api, codexStream),
 		mode:            uiModeNormal,
 		addWorkspace:    NewAddWorkspaceController(minViewportWidth),
 		addWorktree:     NewAddWorktreeController(minViewportWidth),
+		providerPicker:  NewProviderPicker(minViewportWidth, minContentHeight-1),
 		compose:         NewComposeController(minViewportWidth),
 		chatInput:       NewChatInput(minViewportWidth, DefaultChatInputConfig()),
 		searchInput:     NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
@@ -271,6 +277,57 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, cmd := m.addWorktree.Update(msg, m)
 		return m, cmd
 	}
+	if m.mode == uiModePickProvider {
+		switch msg := msg.(type) {
+		case tickMsg:
+			m.consumeStreamTick()
+			return m, tickCmd()
+		case streamMsg:
+			if msg.err != nil {
+				m.status = "stream error: " + msg.err.Error()
+				return m, nil
+			}
+			if msg.id != m.selectedSessionID() {
+				if msg.cancel != nil {
+					msg.cancel()
+				}
+				return m, nil
+			}
+			if m.stream != nil {
+				m.stream.SetStream(msg.ch, msg.cancel)
+			}
+			m.status = "streaming"
+			return m, nil
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				m.exitProviderPick("new session canceled")
+				return m, nil
+			case "enter":
+				return m, m.selectProvider()
+			case "j", "down":
+				if m.providerPicker != nil {
+					m.providerPicker.Move(1)
+				}
+				return m, nil
+			case "k", "up":
+				if m.providerPicker != nil {
+					m.providerPicker.Move(-1)
+				}
+				return m, nil
+			}
+		case tea.MouseMsg:
+			if m.handleMouse(msg) {
+				if m.pendingMouseCmd != nil {
+					cmd := m.pendingMouseCmd
+					m.pendingMouseCmd = nil
+					return m, cmd
+				}
+				return m, nil
+			}
+		}
+		return m, nil
+	}
 	if m.mode == uiModeCompose {
 		switch msg := msg.(type) {
 		case tickMsg:
@@ -340,8 +397,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					if m.newSession != nil {
-						m.status = "starting session"
 						target := m.newSession
+						if strings.TrimSpace(target.provider) == "" {
+							m.status = "provider is required"
+							return m, nil
+						}
+						m.status = "starting session"
 						m.chatInput.Clear()
 						return m, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text)
 					}
@@ -350,13 +411,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.status = "select a session to chat"
 						return m, nil
 					}
+					token := m.nextSendToken()
+					m.registerPendingSend(token, sessionID)
 					headerIndex := m.appendUserMessageLocal(text)
 					m.status = "sending message"
 					m.chatInput.Clear()
 					if headerIndex >= 0 {
-						m.registerPendingSendHeader(sessionID, headerIndex)
+						m.registerPendingSendHeader(token, sessionID, headerIndex)
 					}
-					return m, m.sendMessageCmd(sessionID, text)
+					return m, sendSessionCmd(m.sessionAPI, sessionID, text, token)
 				}
 				return m, nil
 			case "ctrl+y":
@@ -617,7 +680,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.key != "" && msg.key == m.loadingKey {
 			m.loading = false
 		}
-		m.setSnapshot(itemsToLines(msg.items), false)
+		lines := itemsToLines(msg.items)
+		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+			m.itemStream.SetSnapshot(lines)
+			lines = m.itemStream.Lines()
+		}
+		m.setSnapshot(lines, false)
 		m.status = "tail updated"
 		return m, nil
 	case historyMsg:
@@ -635,7 +703,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.key != "" && msg.key == m.loadingKey {
 			m.loading = false
 		}
-		m.setSnapshot(itemsToLines(msg.items), false)
+		lines := itemsToLines(msg.items)
+		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+			m.itemStream.SetSnapshot(lines)
+			lines = m.itemStream.Lines()
+		}
+		m.setSnapshot(lines, false)
 		if msg.key != "" {
 			m.transcriptCache[msg.key] = m.currentLines()
 		}
@@ -650,20 +723,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "message sent"
 		m.clearPendingSend(msg.token)
 		if msg.id != "" {
-			if m.stream != nil {
-				m.stream.Reset()
+			provider := m.selectedSessionProvider()
+			if shouldStreamItems(provider) {
+				return m, openItemsCmd(m.sessionAPI, msg.id)
 			}
-			if m.codexStream != nil {
-				m.codexStream.SetSnapshot(m.currentLines())
-				m.codexStream.AppendUserMessage(msg.text)
+			if provider == "codex" {
+				if m.chat != nil {
+					return m, m.chat.OpenEventStream(msg.id)
+				}
+				return m, openEventsCmd(m.sessionAPI, msg.id)
 			}
-			if key := m.selectedKey(); key != "" {
-				m.transcriptCache[key] = m.currentLines()
-			}
-			if m.chat != nil {
-				return m, m.chat.OpenEventStream(msg.id)
-			}
-			return m, openEventsCmd(m.sessionAPI, msg.id)
 		}
 		return m, nil
 	case approvalMsg:
@@ -793,9 +862,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "streaming events"
 		return m, nil
+	case itemsStreamMsg:
+		if msg.err != nil {
+			m.status = "items stream error: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.id != m.selectedSessionID() {
+			if msg.cancel != nil {
+				msg.cancel()
+			}
+			return m, nil
+		}
+		if m.itemStream != nil {
+			m.itemStream.SetSnapshot(m.currentLines())
+			m.itemStream.SetStream(msg.ch, msg.cancel)
+		}
+		m.status = "streaming items"
+		return m, nil
 	case tickMsg:
 		m.consumeStreamTick()
 		m.consumeCodexTick()
+		m.consumeItemTick()
 		if m.loading {
 			m.loader, _ = m.loader.Update(spinner.TickMsg{Time: time.Time(msg), ID: m.loader.ID()})
 			m.setLoadingContent()
@@ -819,6 +906,11 @@ func (m *Model) View() string {
 		headerText = "Add Worktree"
 		if m.addWorktree != nil {
 			bodyText = m.addWorktree.View()
+		}
+	} else if m.mode == uiModePickProvider {
+		headerText = "Provider"
+		if m.providerPicker != nil {
+			bodyText = m.providerPicker.View()
 		}
 	} else if m.mode == uiModeCompose {
 		headerText = "Chat"
@@ -918,6 +1010,9 @@ func (m *Model) resize(width, height int) {
 	if m.addWorktree != nil {
 		m.addWorktree.Resize(viewportWidth)
 		m.addWorktree.SetListHeight(max(3, contentHeight-4))
+	}
+	if m.providerPicker != nil {
+		m.providerPicker.SetSize(viewportWidth, max(3, contentHeight-2))
 	}
 	if m.compose != nil {
 		m.compose.Resize(viewportWidth)
@@ -1038,7 +1133,11 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	}
 	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, item.key(), maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
 	if isActiveStatus(item.session.Status) {
-		cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
+		if shouldStreamItems(item.session.Provider) {
+			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
+		} else {
+			cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
+		}
 	}
 	if item.session.Provider == "codex" {
 		cmds = append(cmds, openEventsCmd(m.sessionAPI, id))
@@ -1100,6 +1199,9 @@ func (m *Model) resetStream() {
 	} else if m.codexStream != nil {
 		m.codexStream.Reset()
 	}
+	if m.itemStream != nil {
+		m.itemStream.Reset()
+	}
 	m.pendingApproval = nil
 	m.pendingSessionKey = ""
 	m.loading = false
@@ -1141,6 +1243,19 @@ func (m *Model) consumeCodexTick() {
 		} else {
 			m.status = "approval required"
 		}
+	}
+}
+
+func (m *Model) consumeItemTick() {
+	if m.itemStream == nil {
+		return
+	}
+	lines, changed, closed := m.itemStream.ConsumeTick()
+	if closed {
+		m.status = "items stream closed"
+	}
+	if changed {
+		m.applyLines(lines, false)
 	}
 }
 
@@ -1257,6 +1372,20 @@ func (m *Model) setLoadingContent() {
 }
 
 func (m *Model) appendUserMessageLocal(text string) int {
+	provider := m.selectedSessionProvider()
+	if shouldStreamItems(provider) && m.itemStream != nil {
+		m.itemStream.SetSnapshot(m.currentLines())
+		headerIndex := m.itemStream.AppendUserMessage(text)
+		if headerIndex >= 0 {
+			_ = m.itemStream.MarkUserMessageSending(headerIndex)
+		}
+		lines := m.itemStream.Lines()
+		m.applyLines(lines, false)
+		if key := m.selectedKey(); key != "" {
+			m.transcriptCache[key] = lines
+		}
+		return headerIndex
+	}
 	if m.codexStream == nil {
 		return -1
 	}
@@ -1287,13 +1416,11 @@ func (m *Model) registerPendingSend(token int, sessionID string) {
 	}
 }
 
-func (m *Model) registerPendingSendHeader(sessionID string, headerIndex int) {
-	if len(m.pendingSends) == 0 {
+func (m *Model) registerPendingSendHeader(token int, sessionID string, headerIndex int) {
+	entry, ok := m.pendingSends[token]
+	if !ok {
 		return
 	}
-	// Attach to most recent pending token.
-	token := m.sendSeq
-	entry := m.pendingSends[token]
 	entry.sessionID = sessionID
 	entry.key = m.selectedKey()
 	entry.headerLine = headerIndex
@@ -1307,12 +1434,22 @@ func (m *Model) clearPendingSend(token int) {
 		if entry.key == "" {
 			return
 		}
-		if entry.key == m.selectedKey() && m.codexStream != nil {
-			if m.codexStream.MarkUserMessageSent(entry.headerLine) {
-				lines := m.codexStream.Lines()
-				m.applyLines(lines, false)
-				m.transcriptCache[entry.key] = lines
-				return
+		if entry.key == m.selectedKey() {
+			if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+				if m.itemStream.MarkUserMessageSent(entry.headerLine) {
+					lines := m.itemStream.Lines()
+					m.applyLines(lines, false)
+					m.transcriptCache[entry.key] = lines
+					return
+				}
+			}
+			if m.codexStream != nil {
+				if m.codexStream.MarkUserMessageSent(entry.headerLine) {
+					lines := m.codexStream.Lines()
+					m.applyLines(lines, false)
+					m.transcriptCache[entry.key] = lines
+					return
+				}
 			}
 		}
 		if cached, ok := m.transcriptCache[entry.key]; ok {
@@ -1333,12 +1470,22 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 	if entry.key == "" {
 		return
 	}
-	if entry.key == m.selectedKey() && m.codexStream != nil {
-		if m.codexStream.MarkUserMessageFailed(entry.headerLine) {
-			lines := m.codexStream.Lines()
-			m.applyLines(lines, false)
-			m.transcriptCache[entry.key] = lines
-			return
+	if entry.key == m.selectedKey() {
+		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+			if m.itemStream.MarkUserMessageFailed(entry.headerLine) {
+				lines := m.itemStream.Lines()
+				m.applyLines(lines, false)
+				m.transcriptCache[entry.key] = lines
+				return
+			}
+		}
+		if m.codexStream != nil {
+			if m.codexStream.MarkUserMessageFailed(entry.headerLine) {
+				lines := m.codexStream.Lines()
+				m.applyLines(lines, false)
+				m.transcriptCache[entry.key] = lines
+				return
+			}
 		}
 	}
 	if cached, ok := m.transcriptCache[entry.key]; ok {
@@ -1430,6 +1577,11 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 					return true
 				}
 			}
+			if m.mode == uiModePickProvider && msg.X >= rightStart {
+				if m.providerPicker != nil && m.providerPicker.Scroll(-1) {
+					return true
+				}
+			}
 			if msg.X >= rightStart && isOverInput(msg.Y) {
 				if m.mode == uiModeCompose && m.chatInput != nil {
 					m.pendingMouseCmd = m.chatInput.Scroll(-1)
@@ -1455,6 +1607,11 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 			if listWidth > 0 && msg.X < listWidth {
 				if m.sidebar != nil && m.sidebar.Scroll(1) {
 					m.pendingMouseCmd = m.onSelectionChanged()
+					return true
+				}
+			}
+			if m.mode == uiModePickProvider && msg.X >= rightStart {
+				if m.providerPicker != nil && m.providerPicker.Scroll(1) {
 					return true
 				}
 			}
@@ -1502,6 +1659,15 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 				m.input.FocusChatInput()
 			}
 			return true
+		}
+	}
+	if m.mode == uiModePickProvider && m.providerPicker != nil {
+		if msg.X >= rightStart {
+			row := msg.Y - 1
+			if row >= 0 && m.providerPicker.SelectByRow(row) {
+				m.pendingMouseCmd = m.selectProvider()
+				return true
+			}
 		}
 	}
 	if m.mode == uiModeAddWorktree && m.addWorktree != nil {
@@ -1641,6 +1807,69 @@ func (m *Model) exitCompose(status string) {
 		m.status = status
 	}
 	m.resize(m.width, m.height)
+}
+
+func (m *Model) enterProviderPick() {
+	m.mode = uiModePickProvider
+	if m.providerPicker != nil {
+		m.providerPicker.Enter("")
+	}
+	if m.chatInput != nil {
+		m.chatInput.Blur()
+	}
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	m.status = "choose provider"
+	m.resize(m.width, m.height)
+}
+
+func (m *Model) exitProviderPick(status string) {
+	m.mode = uiModeNormal
+	if m.providerPicker != nil {
+		m.providerPicker.Enter("")
+	}
+	m.newSession = nil
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	if status != "" {
+		m.status = status
+	}
+	m.resize(m.width, m.height)
+}
+
+func (m *Model) selectProvider() tea.Cmd {
+	if m.providerPicker == nil {
+		return nil
+	}
+	provider := m.providerPicker.Selected()
+	if provider == "" {
+		m.status = "provider is required"
+		return nil
+	}
+	return m.applyProviderSelection(provider)
+}
+
+func (m *Model) applyProviderSelection(provider string) tea.Cmd {
+	if m.newSession == nil {
+		return nil
+	}
+	m.newSession.provider = provider
+	m.mode = uiModeCompose
+	if m.compose != nil {
+		m.compose.Enter("", "New session")
+	}
+	if m.chatInput != nil {
+		m.chatInput.SetPlaceholder("new session message")
+		m.chatInput.Focus()
+	}
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
+	m.status = "provider set: " + provider
+	m.resize(m.width, m.height)
+	return nil
 }
 
 func (m *Model) enterSearch() {
@@ -1916,41 +2145,12 @@ func (m *Model) enterNewSession() bool {
 		m.status = "select a workspace or worktree"
 		return false
 	}
-	provider := m.workspaceProvider(workspaceID)
-	if provider == "" {
-		provider = "codex"
-	}
 	m.newSession = &newSessionTarget{
 		workspaceID: workspaceID,
 		worktreeID:  worktreeID,
-		provider:    provider,
 	}
-	m.mode = uiModeCompose
-	if m.compose != nil {
-		m.compose.Enter("", "New session")
-	}
-	if m.chatInput != nil {
-		m.chatInput.SetPlaceholder("new session message")
-		m.chatInput.Focus()
-	}
-	if m.input != nil {
-		m.input.FocusChatInput()
-	}
-	m.status = "new session: enter message"
-	m.resize(m.width, m.height)
+	m.enterProviderPick()
 	return true
-}
-
-func (m *Model) workspaceProvider(id string) string {
-	if id == "" {
-		return ""
-	}
-	for _, ws := range m.workspaces {
-		if ws != nil && ws.ID == id {
-			return ws.Provider
-		}
-	}
-	return ""
 }
 
 func (m *Model) selectedSessionLabel() string {
@@ -1959,6 +2159,18 @@ func (m *Model) selectedSessionLabel() string {
 		return ""
 	}
 	return sessionTitle(item.session, item.meta)
+}
+
+func (m *Model) selectedSessionProvider() string {
+	item := m.selectedItem()
+	if item == nil || item.session == nil {
+		return ""
+	}
+	return item.session.Provider
+}
+
+func shouldStreamItems(provider string) bool {
+	return types.Capabilities(provider).UsesItems
 }
 
 func (m *Model) composeSessionID() string {

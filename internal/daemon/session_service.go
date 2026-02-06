@@ -111,6 +111,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 
 	rawInput := strings.Join(req.Args, " ")
 	initialInput := sanitizeTitle(rawInput)
+	initialText := strings.TrimSpace(rawInput)
 	title := sanitizeTitle(req.Title)
 	if title == "" && strings.TrimSpace(req.Title) != "" {
 		return nil, invalidError("title must contain displayable characters", nil)
@@ -135,6 +136,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		WorkspaceID:  req.WorkspaceID,
 		WorktreeID:   req.WorktreeID,
 		InitialInput: initialInput,
+		InitialText:  initialText,
 	})
 	if err != nil {
 		return nil, invalidError(err.Error(), err)
@@ -157,6 +159,11 @@ func (s *SessionService) History(ctx context.Context, id string, lines int) ([]m
 	threadID := resolveThreadID(session, meta)
 	if source == sessionSourceCodex || (session.Provider == "codex" && threadID != "") {
 		return s.tailCodexThread(ctx, session, threadID, lines)
+	}
+	if providerUsesItems(session.Provider) {
+		if items, _, err := s.readSessionItems(session.ID, lines); err == nil && items != nil {
+			return items, nil
+		}
 	}
 	if s.manager != nil {
 		if _, ok := s.manager.GetSession(id); ok {
@@ -186,47 +193,95 @@ func (s *SessionService) SendMessage(ctx context.Context, id string, input []map
 		s.logger.Warn("send_not_found", logging.F("session_id", id), logging.F("error", err))
 		return "", notFoundError("session not found", ErrSessionNotFound)
 	}
-	if session.Provider != "codex" {
-		return "", invalidError("provider does not support messaging", nil)
-	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
 		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
 			session.Cwd = cwd
 		}
 	}
-	threadID := resolveThreadID(session, meta)
-	s.logger.Info("send_resolved",
-		logging.F("session_id", session.ID),
-		logging.F("provider", session.Provider),
-		logging.F("thread_id", threadID),
-		logging.F("cwd", session.Cwd),
-	)
-	if threadID == "" {
-		return "", invalidError("thread id not available", nil)
+	switch session.Provider {
+	case "claude":
+		if s.manager == nil {
+			return "", unavailableError("session manager not available", nil)
+		}
+		text := extractTextInput(input)
+		if text == "" {
+			return "", invalidError("text input is required", nil)
+		}
+		payload := buildClaudeUserPayload(text)
+		if err := s.manager.SendInput(id, payload); err != nil {
+			if errors.Is(err, ErrSessionNotFound) {
+				providerSessionID := ""
+				if meta != nil {
+					providerSessionID = meta.ProviderSessionID
+				}
+				if strings.TrimSpace(providerSessionID) == "" {
+					return "", invalidError("provider session id not available", nil)
+				}
+				if strings.TrimSpace(session.Cwd) == "" {
+					return "", invalidError("session cwd is required", nil)
+				}
+				_, resumeErr := s.manager.ResumeSession(StartSessionConfig{
+					Provider:          session.Provider,
+					Cwd:               session.Cwd,
+					Env:               session.Env,
+					Resume:            true,
+					ProviderSessionID: providerSessionID,
+				}, session)
+				if resumeErr != nil {
+					return "", invalidError(resumeErr.Error(), resumeErr)
+				}
+				if err := s.manager.SendInput(id, payload); err != nil {
+					return "", invalidError(err.Error(), err)
+				}
+			} else {
+				return "", invalidError(err.Error(), err)
+			}
+		}
+		now := time.Now().UTC()
+		if s.stores != nil && s.stores.SessionMeta != nil {
+			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+				SessionID:    id,
+				LastActiveAt: &now,
+			})
+		}
+		return "", nil
+	case "codex":
+		threadID := resolveThreadID(session, meta)
+		s.logger.Info("send_resolved",
+			logging.F("session_id", session.ID),
+			logging.F("provider", session.Provider),
+			logging.F("thread_id", threadID),
+			logging.F("cwd", session.Cwd),
+		)
+		if threadID == "" {
+			return "", invalidError("thread id not available", nil)
+		}
+		if strings.TrimSpace(session.Cwd) == "" {
+			return "", invalidError("session cwd is required", nil)
+		}
+		if s.live == nil {
+			return "", unavailableError("live codex manager not available", nil)
+		}
+		workspacePath := s.resolveWorkspacePath(ctx, meta)
+		codexHome := resolveCodexHome(session.Cwd, workspacePath)
+		turnID, err := s.live.StartTurn(ctx, session, meta, codexHome, input)
+		if err != nil {
+			return "", invalidError(err.Error(), err)
+		}
+		now := time.Now().UTC()
+		if s.stores != nil && s.stores.SessionMeta != nil {
+			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+				SessionID:    id,
+				ThreadID:     threadID,
+				LastTurnID:   turnID,
+				LastActiveAt: &now,
+			})
+		}
+		return turnID, nil
+	default:
+		return "", invalidError("provider does not support messaging", nil)
 	}
-	if strings.TrimSpace(session.Cwd) == "" {
-		return "", invalidError("session cwd is required", nil)
-	}
-	if s.live == nil {
-		return "", unavailableError("live codex manager not available", nil)
-	}
-	workspacePath := s.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	turnID, err := s.live.StartTurn(ctx, session, meta, codexHome, input)
-	if err != nil {
-		return "", invalidError(err.Error(), err)
-	}
-	now := time.Now().UTC()
-	if s.stores != nil && s.stores.SessionMeta != nil {
-		_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-			SessionID:    id,
-			ThreadID:     threadID,
-			LastTurnID:   turnID,
-			LastActiveAt: &now,
-		})
-	}
-	return turnID, nil
 }
 
 func (s *SessionService) Approve(ctx context.Context, id string, requestID int, decision string, responses []string, acceptSettings map[string]any) error {
@@ -430,6 +485,11 @@ func (s *SessionService) TailItems(ctx context.Context, id string, lines int) ([
 	}
 	if s.manager != nil {
 		if session, ok := s.manager.GetSession(id); ok && session != nil {
+			if providerUsesItems(session.Provider) {
+				if items, _, err := s.readSessionItems(session.ID, lines); err == nil && items != nil {
+					return items, nil
+				}
+			}
 			out, _, _, err := s.manager.TailSession(id, "combined", lines)
 			if err != nil {
 				if errors.Is(err, ErrSessionNotFound) {
@@ -451,6 +511,11 @@ func (s *SessionService) TailItems(ctx context.Context, id string, lines int) ([
 			return s.tailCodexThread(ctx, record.Session, threadID, lines)
 		}
 		if ok && record != nil && record.Session != nil {
+			if providerUsesItems(record.Session.Provider) {
+				if items, _, err := s.readSessionItems(record.Session.ID, lines); err == nil && items != nil {
+					return items, nil
+				}
+			}
 			out, _, _, err := s.readSessionLogs(record.Session.ID, lines)
 			if err != nil {
 				return nil, invalidError(err.Error(), err)
@@ -495,7 +560,7 @@ func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan
 		}
 		return nil, nil, notFoundError("session not found", ErrSessionNotFound)
 	}
-	if session.Provider != "codex" {
+	if !types.Capabilities(session.Provider).SupportsEvents {
 		return nil, nil, invalidError("provider does not support events", nil)
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
@@ -508,6 +573,36 @@ func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan
 	codexHome := resolveCodexHome(session.Cwd, workspacePath)
 	ch, cancel, err := s.live.Subscribe(session, meta, codexHome)
 	if err != nil {
+		return nil, nil, invalidError(err.Error(), err)
+	}
+	return ch, cancel, nil
+}
+
+func (s *SessionService) SubscribeItems(ctx context.Context, id string) (<-chan map[string]any, func(), error) {
+	if s.manager == nil {
+		return nil, nil, unavailableError("session manager not available", nil)
+	}
+	if strings.TrimSpace(id) == "" {
+		return nil, nil, invalidError("session id is required", nil)
+	}
+	session, _, err := s.getSessionRecord(ctx, id)
+	if session == nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, nil, notFoundError("session not found", err)
+		}
+		if err != nil {
+			return nil, nil, invalidError(err.Error(), err)
+		}
+		return nil, nil, notFoundError("session not found", ErrSessionNotFound)
+	}
+	if !providerUsesItems(session.Provider) {
+		return nil, nil, invalidError("provider does not support item streaming", nil)
+	}
+	ch, cancel, err := s.manager.SubscribeItems(id)
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, nil, notFoundError("session not found", err)
+		}
 		return nil, nil, invalidError(err.Error(), err)
 	}
 	return ch, cancel, nil
@@ -607,6 +702,29 @@ func trimTitle(input string) string {
 		return input
 	}
 	return strings.TrimSpace(input[:maxLen]) + "…"
+}
+
+func extractTextInput(input []map[string]any) string {
+	if len(input) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(input))
+	for _, item := range input {
+		if item == nil {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		if typ != "" && typ != "text" {
+			continue
+		}
+		text, _ := item["text"].(string)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		parts = append(parts, text)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func isListableStatus(status types.SessionStatus) bool {

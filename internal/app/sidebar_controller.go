@@ -98,16 +98,45 @@ func (c *SidebarController) SelectByRow(row int) {
 	headerRows := c.headerRows()
 	idx := row - headerRows
 	if idx < 0 {
-		idx = 0
+		return
 	}
-	items := c.list.Items()
+	items := c.list.VisibleItems()
 	if len(items) == 0 {
 		return
 	}
-	if idx >= len(items) {
-		idx = len(items) - 1
+	itemHeight := 1
+	itemSpacing := 0
+	if c.delegate != nil {
+		if h := c.delegate.Height(); h > 0 {
+			itemHeight = h
+		}
+		itemSpacing = c.delegate.Spacing()
 	}
-	c.list.Select(idx)
+	step := itemHeight + itemSpacing
+	if step <= 0 {
+		step = 1
+	}
+	pageIndex := idx / step
+	perPage := c.list.Paginator.PerPage
+	if perPage <= 0 {
+		perPage = len(items)
+	}
+	start := c.list.Paginator.Page * perPage
+	if start >= len(items) {
+		start = 0
+	}
+	end := start + perPage - 1
+	if end >= len(items) {
+		end = len(items) - 1
+	}
+	target := start + pageIndex
+	if target > end {
+		target = end
+	}
+	if target < 0 {
+		target = 0
+	}
+	c.list.Select(target)
 }
 
 func (c *SidebarController) headerRows() int {

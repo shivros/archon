@@ -258,6 +258,21 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		a.streamEvents(w, r, id)
 		return
+	case "items":
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		if !isFollowRequest(r) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "follow=1 is required",
+			})
+			return
+		}
+		a.streamItems(w, r, id)
+		return
 	case "approval":
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
@@ -550,11 +565,6 @@ func (a *API) startSessionForWorkspace(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 	provider := strings.TrimSpace(req.Provider)
-	if provider == "" && a.Stores != nil && a.Stores.Workspaces != nil && workspaceID != "" {
-		if ws, ok, err := a.Stores.Workspaces.Get(r.Context(), workspaceID); err == nil && ok && ws != nil {
-			provider = ws.Provider
-		}
-	}
 	if provider == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider is required"})
 		return
@@ -726,6 +736,65 @@ func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
 			if event.Method == "turn/completed" {
 				return
 			}
+		}
+	}
+}
+
+func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
+	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	lines := parseLines(r.URL.Query().Get("lines"))
+	snapshot, _, snapErr := service.readSessionItems(id, lines)
+	ch, cancel, err := service.SubscribeItems(r.Context(), id)
+	if err != nil && (snapErr != nil || len(snapshot) == 0) {
+		writeServiceError(w, err)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	if len(snapshot) > 0 {
+		for _, item := range snapshot {
+			data, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			_, _ = w.Write([]byte("data: "))
+			_, _ = w.Write(data)
+			_, _ = w.Write([]byte("\n\n"))
+		}
+		flusher.Flush()
+	}
+	if err != nil {
+		return
+	}
+	defer cancel()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case item, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			_, _ = w.Write([]byte("data: "))
+			_, _ = w.Write(data)
+			_, _ = w.Write([]byte("\n\n"))
+			flusher.Flush()
 		}
 	}
 }

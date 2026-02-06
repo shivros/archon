@@ -182,6 +182,9 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		if normalized.ThreadID == "" {
 			normalized.ThreadID = existing.ThreadID
 		}
+		if normalized.ProviderSessionID == "" {
+			normalized.ProviderSessionID = existing.ProviderSessionID
+		}
 		if normalized.LastTurnID == "" {
 			normalized.LastTurnID = existing.LastTurnID
 		}

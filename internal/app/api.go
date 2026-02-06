@@ -22,6 +22,7 @@ type SessionAPI interface {
 	History(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
 	TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
 	EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error)
+	ItemsStream(ctx context.Context, id string) (<-chan map[string]any, func(), error)
 	KillSession(ctx context.Context, id string) error
 	MarkSessionExited(ctx context.Context, id string) error
 	SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error)
@@ -86,6 +87,10 @@ func (a *ClientAPI) TailStream(ctx context.Context, id, stream string) (<-chan t
 
 func (a *ClientAPI) EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {
 	return a.client.EventStream(ctx, id)
+}
+
+func (a *ClientAPI) ItemsStream(ctx context.Context, id string) (<-chan map[string]any, func(), error) {
+	return a.client.ItemsStream(ctx, id)
 }
 
 func (a *ClientAPI) KillSession(ctx context.Context, id string) error {

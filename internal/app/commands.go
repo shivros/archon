@@ -61,14 +61,13 @@ func fetchAppStateCmd(api StateAPI) tea.Cmd {
 	}
 }
 
-func createWorkspaceCmd(api WorkspaceAPI, path, name, provider string) tea.Cmd {
+func createWorkspaceCmd(api WorkspaceAPI, path, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
 		workspace, err := api.CreateWorkspace(ctx, &types.Workspace{
 			Name:     name,
 			RepoPath: path,
-			Provider: provider,
 		})
 		return createWorkspaceMsg{workspace: workspace, err: err}
 	}
@@ -129,6 +128,14 @@ func openEventsCmd(api SessionAPI, id string) tea.Cmd {
 		ctx := context.Background()
 		ch, cancel, err := api.EventStream(ctx, id)
 		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
+	}
+}
+
+func openItemsCmd(api SessionAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		ch, cancel, err := api.ItemsStream(ctx, id)
+		return itemsStreamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
