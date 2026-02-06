@@ -107,6 +107,7 @@ type pendingSend struct {
 	key        string
 	sessionID  string
 	headerLine int
+	provider   string
 }
 
 func NewModel(client *client.Client) Model {
@@ -411,15 +412,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.status = "select a session to chat"
 						return m, nil
 					}
+					provider := m.providerForSessionID(sessionID)
 					token := m.nextSendToken()
-					m.registerPendingSend(token, sessionID)
-					headerIndex := m.appendUserMessageLocal(text)
+					m.registerPendingSend(token, sessionID, provider)
+					headerIndex := m.appendUserMessageLocal(provider, text)
 					m.status = "sending message"
 					m.chatInput.Clear()
 					if headerIndex >= 0 {
-						m.registerPendingSendHeader(token, sessionID, headerIndex)
+						m.registerPendingSendHeader(token, sessionID, provider, headerIndex)
 					}
-					return m, sendSessionCmd(m.sessionAPI, sessionID, text, token)
+					send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
+					if shouldStreamItems(provider) {
+						return m, tea.Sequence(openItemsCmd(m.sessionAPI, sessionID), send)
+					}
+					if provider == "codex" {
+						return m, tea.Sequence(openEventsCmd(m.sessionAPI, sessionID), send)
+					}
+					return m, send
 				}
 				return m, nil
 			case "ctrl+y":
@@ -722,18 +731,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "message sent"
 		m.clearPendingSend(msg.token)
-		if msg.id != "" {
-			provider := m.selectedSessionProvider()
-			if shouldStreamItems(provider) {
-				return m, openItemsCmd(m.sessionAPI, msg.id)
-			}
-			if provider == "codex" {
-				if m.chat != nil {
-					return m, m.chat.OpenEventStream(msg.id)
-				}
-				return m, openEventsCmd(m.sessionAPI, msg.id)
-			}
-		}
 		return m, nil
 	case approvalMsg:
 		if msg.err != nil {
@@ -835,7 +832,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "stream error: " + msg.err.Error()
 			return m, nil
 		}
-		if msg.id != m.selectedSessionID() {
+		targetID := m.composeSessionID()
+		if targetID == "" {
+			targetID = m.selectedSessionID()
+		}
+		if msg.id != targetID {
 			if msg.cancel != nil {
 				msg.cancel()
 			}
@@ -851,7 +852,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "events error: " + msg.err.Error()
 			return m, nil
 		}
-		if msg.id != m.selectedSessionID() {
+		targetID := m.composeSessionID()
+		if targetID == "" {
+			targetID = m.selectedSessionID()
+		}
+		if msg.id != targetID {
 			if msg.cancel != nil {
 				msg.cancel()
 			}
@@ -867,7 +872,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "items stream error: " + msg.err.Error()
 			return m, nil
 		}
-		if msg.id != m.selectedSessionID() {
+		targetID := m.composeSessionID()
+		if targetID == "" {
+			targetID = m.selectedSessionID()
+		}
+		if msg.id != targetID {
 			if msg.cancel != nil {
 				msg.cancel()
 			}
@@ -1371,8 +1380,7 @@ func (m *Model) setLoadingContent() {
 	m.setContentText(m.loader.View() + " Loading...")
 }
 
-func (m *Model) appendUserMessageLocal(text string) int {
-	provider := m.selectedSessionProvider()
+func (m *Model) appendUserMessageLocal(provider, text string) int {
 	if shouldStreamItems(provider) && m.itemStream != nil {
 		m.itemStream.SetSnapshot(m.currentLines())
 		headerIndex := m.itemStream.AppendUserMessage(text)
@@ -1407,16 +1415,17 @@ func (m *Model) nextSendToken() int {
 	return m.sendSeq
 }
 
-func (m *Model) registerPendingSend(token int, sessionID string) {
+func (m *Model) registerPendingSend(token int, sessionID, provider string) {
 	key := m.selectedKey()
 	m.pendingSends[token] = pendingSend{
 		key:        key,
 		sessionID:  sessionID,
 		headerLine: -1,
+		provider:   provider,
 	}
 }
 
-func (m *Model) registerPendingSendHeader(token int, sessionID string, headerIndex int) {
+func (m *Model) registerPendingSendHeader(token int, sessionID, provider string, headerIndex int) {
 	entry, ok := m.pendingSends[token]
 	if !ok {
 		return
@@ -1424,6 +1433,9 @@ func (m *Model) registerPendingSendHeader(token int, sessionID string, headerInd
 	entry.sessionID = sessionID
 	entry.key = m.selectedKey()
 	entry.headerLine = headerIndex
+	if provider != "" {
+		entry.provider = provider
+	}
 	m.pendingSends[token] = entry
 }
 
@@ -1435,7 +1447,11 @@ func (m *Model) clearPendingSend(token int) {
 			return
 		}
 		if entry.key == m.selectedKey() {
-			if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+			provider := entry.provider
+			if provider == "" {
+				provider = m.selectedSessionProvider()
+			}
+			if shouldStreamItems(provider) && m.itemStream != nil {
 				if m.itemStream.MarkUserMessageSent(entry.headerLine) {
 					lines := m.itemStream.Lines()
 					m.applyLines(lines, false)
@@ -1471,7 +1487,11 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 		return
 	}
 	if entry.key == m.selectedKey() {
-		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+		provider := entry.provider
+		if provider == "" {
+			provider = m.selectedSessionProvider()
+		}
+		if shouldStreamItems(provider) && m.itemStream != nil {
 			if m.itemStream.MarkUserMessageFailed(entry.headerLine) {
 				lines := m.itemStream.Lines()
 				m.applyLines(lines, false)
@@ -2167,6 +2187,18 @@ func (m *Model) selectedSessionProvider() string {
 		return ""
 	}
 	return item.session.Provider
+}
+
+func (m *Model) providerForSessionID(sessionID string) string {
+	if strings.TrimSpace(sessionID) == "" {
+		return m.selectedSessionProvider()
+	}
+	for _, session := range m.sessions {
+		if session != nil && session.ID == sessionID {
+			return session.Provider
+		}
+	}
+	return m.selectedSessionProvider()
 }
 
 func shouldStreamItems(provider string) bool {

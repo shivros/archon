@@ -87,6 +87,20 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 			"delta": text,
 		})
 	case "result":
+		if state != nil && state.SawDelta {
+			items = append(items, map[string]any{
+				"type": "agentMessageEnd",
+			})
+			state.SawDelta = false
+			return items, "", nil
+		}
+		if result, _ := payload["result"].(string); strings.TrimSpace(result) != "" {
+			items = append(items, map[string]any{
+				"type": "agentMessage",
+				"text": result,
+			})
+			return items, "", nil
+		}
 		items = append(items, payload)
 	default:
 		items = append(items, map[string]any{
