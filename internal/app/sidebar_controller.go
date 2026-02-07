@@ -1,8 +1,12 @@
 package app
 
 import (
+	"math"
+	"strings"
+
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"control/internal/types"
 )
@@ -12,6 +16,8 @@ type SidebarController struct {
 	delegate *sidebarDelegate
 	selected map[string]struct{}
 }
+
+const sidebarScrollbarWidth = 1
 
 func NewSidebarController() *SidebarController {
 	items := []list.Item{}
@@ -31,7 +37,12 @@ func NewSidebarController() *SidebarController {
 }
 
 func (c *SidebarController) View() string {
-	return c.list.View()
+	view := c.list.View()
+	bar := c.scrollbarView()
+	if bar == "" {
+		return view
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, view, bar)
 }
 
 func (c *SidebarController) Update(msg tea.Msg) tea.Cmd {
@@ -41,7 +52,11 @@ func (c *SidebarController) Update(msg tea.Msg) tea.Cmd {
 }
 
 func (c *SidebarController) SetSize(width, height int) {
-	c.list.SetSize(width, height)
+	if width <= sidebarScrollbarWidth {
+		c.list.SetSize(width, height)
+		return
+	}
+	c.list.SetSize(width-sidebarScrollbarWidth, height)
 }
 
 func (c *SidebarController) CursorDown() {
@@ -137,6 +152,122 @@ func (c *SidebarController) SelectByRow(row int) {
 		target = 0
 	}
 	c.list.Select(target)
+}
+
+func (c *SidebarController) ScrollbarWidth() int {
+	return sidebarScrollbarWidth
+}
+
+func (c *SidebarController) ScrollbarSelect(row int) bool {
+	if c == nil {
+		return false
+	}
+	height := c.list.Height()
+	if height <= 0 {
+		return false
+	}
+	headerRows := c.headerRows()
+	trackHeight := height - headerRows
+	if trackHeight <= 0 {
+		return false
+	}
+	total := len(c.list.VisibleItems())
+	if total == 0 {
+		return false
+	}
+	itemsOnPage := c.list.Paginator.PerPage
+	if itemsOnPage <= 0 || itemsOnPage > total {
+		itemsOnPage = total
+	}
+	maxStart := total - itemsOnPage
+	if maxStart <= 0 {
+		return false
+	}
+	trackRow := row - headerRows
+	if trackRow < 0 {
+		trackRow = 0
+	}
+	if trackRow >= trackHeight {
+		trackRow = trackHeight - 1
+	}
+	targetStart := 0
+	denom := trackHeight - 1
+	if denom > 0 {
+		targetStart = int(math.Round(float64(trackRow) / float64(denom) * float64(maxStart*3)))
+	}
+	if targetStart < 0 {
+		targetStart = 0
+	}
+	if targetStart > maxStart {
+		targetStart = maxStart
+	}
+	c.list.Select(targetStart)
+	return true
+}
+
+func (c *SidebarController) scrollbarView() string {
+	if c == nil {
+		return ""
+	}
+	height := c.list.Height()
+	if height <= 0 {
+		return ""
+	}
+	total := len(c.list.VisibleItems())
+	itemsOnPage := c.list.Paginator.ItemsOnPage(total)
+	if itemsOnPage <= 0 {
+		itemsOnPage = total
+	}
+	headerRows := c.headerRows()
+	trackHeight := height - headerRows
+	if trackHeight < 1 {
+		trackHeight = 1
+	}
+
+	barLines := make([]string, 0, height)
+	for i := 0; i < headerRows && i < height; i++ {
+		barLines = append(barLines, strings.Repeat(" ", sidebarScrollbarWidth))
+	}
+
+	if total <= itemsOnPage || total == 0 || trackHeight <= 0 {
+		for i := 0; i < trackHeight; i++ {
+			barLines = append(barLines, strings.Repeat(" ", sidebarScrollbarWidth))
+		}
+		return scrollbarTrackStyle.Render(strings.Join(barLines, "\n"))
+	}
+
+	thumbHeight := int(math.Round(float64(itemsOnPage) / float64(total) * float64(trackHeight)))
+	if thumbHeight < 1 {
+		thumbHeight = 1
+	}
+	if thumbHeight > trackHeight {
+		thumbHeight = trackHeight
+	}
+	maxStart := trackHeight - thumbHeight
+	if maxStart < 0 {
+		maxStart = 0
+	}
+	startIdx, _ := c.list.Paginator.GetSliceBounds(total)
+	denom := total - itemsOnPage
+	startPos := 0
+	if denom > 0 && maxStart > 0 {
+		startPos = int(math.Round(float64(startIdx) / float64(denom) * float64(maxStart)))
+	}
+	if startPos < 0 {
+		startPos = 0
+	}
+	if startPos > maxStart {
+		startPos = maxStart
+	}
+
+	for i := 0; i < trackHeight; i++ {
+		if i >= startPos && i < startPos+thumbHeight {
+			barLines = append(barLines, scrollbarThumbStyle.Render(strings.Repeat("┃", sidebarScrollbarWidth)))
+		} else {
+			barLines = append(barLines, scrollbarTrackStyle.Render(strings.Repeat("│", sidebarScrollbarWidth)))
+		}
+	}
+	return strings.Join(barLines, "\n")
 }
 
 func (c *SidebarController) headerRows() int {

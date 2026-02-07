@@ -131,6 +131,34 @@ func TestAPISessionExitHidesFromList(t *testing.T) {
 	}
 }
 
+func TestAPISessionExitAllowsNoProcessProvider(t *testing.T) {
+	store := storeSessionsIndex(t)
+	now := time.Now().UTC()
+	_, err := store.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-claude",
+			Provider:  "claude",
+			Cmd:       "claude",
+			Status:    types.SessionStatusRunning,
+			CreatedAt: now,
+		},
+		Source: "claude",
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	server := newTestServerWithStores(t, nil, &Stores{Sessions: store})
+	defer server.Close()
+
+	markExited(t, server, "sess-claude")
+
+	got := getSession(t, server, "sess-claude")
+	if got.Status != types.SessionStatusExited {
+		t.Fatalf("expected exited status, got %s", got.Status)
+	}
+}
+
 func TestAPISessionListOrder(t *testing.T) {
 	store := storeSessionsIndex(t)
 	older := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)

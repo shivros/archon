@@ -170,6 +170,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	cfg.OnProviderSessionID = func(providerID string) {
 		m.upsertSessionProviderID(cfg.Provider, session.ID, providerID)
 	}
+	caps := types.Capabilities(cfg.Provider)
 	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
 		m.mu.Lock()
@@ -191,8 +192,16 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	if proc.Process != nil {
 		session.PID = proc.Process.Pid
 	}
-	session.Status = types.SessionStatusRunning
-	session.StartedAt = &startedAt
+	if proc.Process != nil {
+		session.Status = types.SessionStatusRunning
+		session.StartedAt = &startedAt
+	} else if caps.NoProcess {
+		session.Status = types.SessionStatusInactive
+		session.StartedAt = &startedAt
+	} else {
+		session.Status = types.SessionStatusRunning
+		session.StartedAt = &startedAt
+	}
 	m.mu.Unlock()
 
 	m.upsertSessionMeta(cfg, sessionID, session.Status)
@@ -200,38 +209,41 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	m.upsertSessionProviderID(cfg.Provider, sessionID, proc.ThreadID)
 	m.upsertSessionRecord(session, sessionSourceInternal)
 
-	go m.flushLoop(runtimeState)
+	if proc.Process != nil || !caps.NoProcess {
+		go m.flushLoop(runtimeState)
+		go func() {
+			err := proc.Wait()
+			exitCode := exitCodeFromError(err)
 
-	go func() {
-		err := proc.Wait()
-		exitCode := exitCodeFromError(err)
+			var finalStatus types.SessionStatus
+			m.mu.Lock()
+			if runtimeState.killed {
+				session.Status = types.SessionStatusKilled
+			} else if err == nil {
+				session.Status = types.SessionStatusExited
+			} else if isExitSignal(err) {
+				session.Status = types.SessionStatusExited
+			} else {
+				session.Status = types.SessionStatusFailed
+			}
+			finalStatus = session.Status
+			if exitCode != nil {
+				session.ExitCode = exitCode
+			}
+			session.ExitedAt = ptrTime(time.Now().UTC())
+			m.mu.Unlock()
 
-		var finalStatus types.SessionStatus
-		m.mu.Lock()
-		if runtimeState.killed {
-			session.Status = types.SessionStatusKilled
-		} else if err == nil {
-			session.Status = types.SessionStatusExited
-		} else if isExitSignal(err) {
-			session.Status = types.SessionStatusExited
-		} else {
-			session.Status = types.SessionStatusFailed
-		}
-		finalStatus = session.Status
-		if exitCode != nil {
-			session.ExitCode = exitCode
-		}
-		session.ExitedAt = ptrTime(time.Now().UTC())
-		m.mu.Unlock()
-
-		m.upsertSessionMeta(cfg, sessionID, finalStatus)
-		m.upsertSessionRecord(session, sessionSourceInternal)
-		runtimeState.sink.Close()
-		if runtimeState.items != nil {
-			runtimeState.items.Close()
-		}
+			m.upsertSessionMeta(cfg, sessionID, finalStatus)
+			m.upsertSessionRecord(session, sessionSourceInternal)
+			runtimeState.sink.Close()
+			if runtimeState.items != nil {
+				runtimeState.items.Close()
+			}
+			close(runtimeState.done)
+		}()
+	} else {
 		close(runtimeState.done)
-	}()
+	}
 
 	return cloneSession(session), nil
 }
@@ -318,6 +330,7 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 	session.Status = types.SessionStatusStarting
 	m.mu.Unlock()
 
+	caps := types.Capabilities(cfg.Provider)
 	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
 		m.mu.Lock()
@@ -339,8 +352,16 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 	if proc.Process != nil {
 		session.PID = proc.Process.Pid
 	}
-	session.Status = types.SessionStatusRunning
-	session.StartedAt = &startedAt
+	if proc.Process != nil {
+		session.Status = types.SessionStatusRunning
+		session.StartedAt = &startedAt
+	} else if caps.NoProcess {
+		session.Status = types.SessionStatusInactive
+		session.StartedAt = &startedAt
+	} else {
+		session.Status = types.SessionStatusRunning
+		session.StartedAt = &startedAt
+	}
 	session.ExitedAt = nil
 	m.mu.Unlock()
 
@@ -349,38 +370,41 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 	m.upsertSessionProviderID(cfg.Provider, session.ID, proc.ThreadID)
 	m.upsertSessionRecord(session, sessionSourceInternal)
 
-	go m.flushLoop(runtimeState)
+	if proc.Process != nil || !caps.NoProcess {
+		go m.flushLoop(runtimeState)
+		go func() {
+			err := proc.Wait()
+			exitCode := exitCodeFromError(err)
 
-	go func() {
-		err := proc.Wait()
-		exitCode := exitCodeFromError(err)
+			var finalStatus types.SessionStatus
+			m.mu.Lock()
+			if runtimeState.killed {
+				session.Status = types.SessionStatusKilled
+			} else if err == nil {
+				session.Status = types.SessionStatusExited
+			} else if isExitSignal(err) {
+				session.Status = types.SessionStatusExited
+			} else {
+				session.Status = types.SessionStatusFailed
+			}
+			finalStatus = session.Status
+			if exitCode != nil {
+				session.ExitCode = exitCode
+			}
+			session.ExitedAt = ptrTime(time.Now().UTC())
+			m.mu.Unlock()
 
-		var finalStatus types.SessionStatus
-		m.mu.Lock()
-		if runtimeState.killed {
-			session.Status = types.SessionStatusKilled
-		} else if err == nil {
-			session.Status = types.SessionStatusExited
-		} else if isExitSignal(err) {
-			session.Status = types.SessionStatusExited
-		} else {
-			session.Status = types.SessionStatusFailed
-		}
-		finalStatus = session.Status
-		if exitCode != nil {
-			session.ExitCode = exitCode
-		}
-		session.ExitedAt = ptrTime(time.Now().UTC())
-		m.mu.Unlock()
-
-		m.upsertSessionMeta(cfg, session.ID, finalStatus)
-		m.upsertSessionRecord(session, sessionSourceInternal)
-		runtimeState.sink.Close()
-		if runtimeState.items != nil {
-			runtimeState.items.Close()
-		}
+			m.upsertSessionMeta(cfg, session.ID, finalStatus)
+			m.upsertSessionRecord(session, sessionSourceInternal)
+			runtimeState.sink.Close()
+			if runtimeState.items != nil {
+				runtimeState.items.Close()
+			}
+			close(runtimeState.done)
+		}()
+	} else {
 		close(runtimeState.done)
-	}()
+	}
 
 	return cloneSession(session), nil
 }
@@ -477,8 +501,10 @@ func (m *SessionManager) MarkExited(id string) error {
 		return ErrSessionNotFound
 	}
 	if isActiveStatus(state.session.Status) {
-		m.mu.Unlock()
-		return errors.New("session is active; kill it first")
+		if !types.Capabilities(state.session.Provider).NoProcess {
+			m.mu.Unlock()
+			return errors.New("session is active; kill it first")
+		}
 	}
 	now := time.Now().UTC()
 	state.session.Status = types.SessionStatusExited

@@ -215,12 +215,337 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 
 	logPhase("ui_new_session")
 	h.SendKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	h.SelectProvider("codex")
 	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" and nothing else.")
 	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
+}
+
+func TestUICodexStreamingResumeSession(t *testing.T) {
+	requireUIIntegration(t)
+	requireCodexIntegration(t)
+
+	start := time.Now()
+	phase := "init"
+	logPhase := func(next string) {
+		phase = next
+		t.Logf("phase=%s elapsed=%s", phase, time.Since(start).Truncate(time.Millisecond))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	logPhase("create_workspace")
+	repoDir, codexHome := createCodexWorkspace(t)
+	writeCodexConfig(t, codexHome, repoDir, "", "", "")
+	requireCodexAuth(t, repoDir, codexHome)
+
+	server, _, _ := newUITestServer(t)
+	defer server.Close()
+
+	api := client.NewWithBaseURL(server.URL, "token")
+
+	ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+		Name:     "codex-ui-resume",
+		RepoPath: repoDir,
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	logPhase("start_session")
+	session, err := api.StartWorkspaceSession(ctx, ws.ID, "", client.StartSessionRequest{
+		Provider:    "codex",
+		WorkspaceID: ws.ID,
+		Text:        "Say \"ok\" and nothing else.",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	logPhase("wait_history_initial")
+	waitForHistoryItems(t, api, session.ID, codexIntegrationTimeout())
+
+	model := NewModel(api)
+	model.tickFn = func() tea.Cmd { return nil }
+
+	h := newUIHarness(t, &model)
+	defer h.Close()
+	logPhase("ui_init")
+	h.Init()
+	h.Resize(120, 40)
+	h.SelectWorkspace(ws.ID)
+	h.SelectSession(session.ID)
+
+	logPhase("ui_send")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SetChatInput("Say \"ok\" again.")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	logPhase("wait_agent_reply")
+	h.WaitForAgentReply(45 * time.Second)
+}
+
+func TestUIClaudeStreamingNewSession(t *testing.T) {
+	requireUIIntegration(t)
+	requireClaudeIntegration(t)
+
+	start := time.Now()
+	phase := "init"
+	logPhase := func(next string) {
+		phase = next
+		t.Logf("phase=%s elapsed=%s", phase, time.Since(start).Truncate(time.Millisecond))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	logPhase("create_workspace")
+	repoDir := createClaudeWorkspace(t)
+
+	server, _, _ := newUITestServer(t)
+	defer server.Close()
+
+	api := client.NewWithBaseURL(server.URL, "token")
+
+	ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+		Name:     "claude-ui-new",
+		RepoPath: repoDir,
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	model := NewModel(api)
+	model.tickFn = func() tea.Cmd { return nil }
+
+	h := newUIHarness(t, &model)
+	defer h.Close()
+	logPhase("ui_init")
+	h.Init()
+	h.Resize(120, 40)
+	h.SelectWorkspace(ws.ID)
+
+	logPhase("ui_new_session")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	h.SelectProvider("claude")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SetChatInput("Say \"ok\" and nothing else.")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	logPhase("wait_agent_reply")
+	h.WaitForAgentReply(45 * time.Second)
+}
+
+func TestUIClaudeStreamingResumeSession(t *testing.T) {
+	requireUIIntegration(t)
+	requireClaudeIntegration(t)
+
+	start := time.Now()
+	phase := "init"
+	logPhase := func(next string) {
+		phase = next
+		t.Logf("phase=%s elapsed=%s", phase, time.Since(start).Truncate(time.Millisecond))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	logPhase("create_workspace")
+	repoDir := createClaudeWorkspace(t)
+
+	server, _, _ := newUITestServer(t)
+	defer server.Close()
+
+	api := client.NewWithBaseURL(server.URL, "token")
+
+	ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+		Name:     "claude-ui-resume",
+		RepoPath: repoDir,
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	logPhase("start_session")
+	session, err := api.StartWorkspaceSession(ctx, ws.ID, "", client.StartSessionRequest{
+		Provider:    "claude",
+		WorkspaceID: ws.ID,
+		Text:        "Say \"ok\" and nothing else.",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	logPhase("wait_history_initial")
+	waitForHistoryItems(t, api, session.ID, claudeIntegrationTimeout())
+	waitForHistoryAgent(t, api, session.ID, "ok", claudeIntegrationTimeout())
+
+	model := NewModel(api)
+	model.tickFn = func() tea.Cmd { return nil }
+
+	h := newUIHarness(t, &model)
+	defer h.Close()
+	logPhase("ui_init")
+	h.Init()
+	h.Resize(120, 40)
+	h.SelectWorkspace(ws.ID)
+	h.SelectSession(session.ID)
+
+	logPhase("ui_send")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SetChatInput("Say \"ok\" again.")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	logPhase("wait_agent_reply")
+	h.WaitForAgentReply(45 * time.Second)
+}
+
+func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
+	requireUIIntegration(t)
+
+	for _, provider := range []string{"codex", "claude"} {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			server, _, stores := newUITestServer(t)
+			defer server.Close()
+
+			api := client.NewWithBaseURL(server.URL, "token")
+
+			ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+				Name:     "dismiss-ui-" + provider,
+				RepoPath: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatalf("create workspace: %v", err)
+			}
+
+			now := time.Now().UTC()
+			sessionID := "sess-dismiss-" + provider
+			insertSessionWithMeta(t, stores, &types.Session{
+				ID:        sessionID,
+				Provider:  provider,
+				Cmd:       provider + " app-server",
+				Status:    types.SessionStatusInactive,
+				CreatedAt: now,
+			}, &types.SessionMeta{
+				SessionID:   sessionID,
+				WorkspaceID: ws.ID,
+				Title:       "Dismiss me",
+				LastActiveAt: func() *time.Time {
+					t := now
+					return &t
+				}(),
+			})
+
+			model := NewModel(api)
+			model.tickFn = func() tea.Cmd { return nil }
+
+			h := newUIHarness(t, &model)
+			defer h.Close()
+			h.Init()
+			h.Resize(120, 40)
+			h.SelectWorkspace(ws.ID)
+			h.SelectSession(sessionID)
+
+			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+			h.WaitFor(func() bool {
+				return !sidebarHasSession(h.model, sessionID)
+			}, 2*time.Second)
+
+			got, err := api.GetSession(ctx, sessionID)
+			if err != nil {
+				t.Fatalf("get session: %v", err)
+			}
+			if got.Status != types.SessionStatusExited {
+				t.Fatalf("expected exited status, got %s", got.Status)
+			}
+		})
+	}
+}
+
+func TestUIDismissBulkSessions(t *testing.T) {
+	requireUIIntegration(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	server, _, stores := newUITestServer(t)
+	defer server.Close()
+
+	api := client.NewWithBaseURL(server.URL, "token")
+
+	ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+		Name:     "dismiss-ui-bulk",
+		RepoPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	now := time.Now().UTC()
+	insertSessionWithMeta(t, stores, &types.Session{
+		ID:        "sess-bulk-1",
+		Provider:  "codex",
+		Cmd:       "codex app-server",
+		Status:    types.SessionStatusInactive,
+		CreatedAt: now,
+	}, &types.SessionMeta{
+		SessionID:   "sess-bulk-1",
+		WorkspaceID: ws.ID,
+		Title:       "Bulk One",
+	})
+	insertSessionWithMeta(t, stores, &types.Session{
+		ID:        "sess-bulk-2",
+		Provider:  "claude",
+		Cmd:       "claude",
+		Status:    types.SessionStatusInactive,
+		CreatedAt: now.Add(-1 * time.Minute),
+	}, &types.SessionMeta{
+		SessionID:   "sess-bulk-2",
+		WorkspaceID: ws.ID,
+		Title:       "Bulk Two",
+	})
+
+	model := NewModel(api)
+	model.tickFn = func() tea.Cmd { return nil }
+
+	h := newUIHarness(t, &model)
+	defer h.Close()
+	h.Init()
+	h.Resize(120, 40)
+	h.SelectWorkspace(ws.ID)
+	h.SelectSession("sess-bulk-1")
+
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if h.model.sidebar.SelectionCount() != 1 {
+		t.Fatalf("expected 1 selected, got %d", h.model.sidebar.SelectionCount())
+	}
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if h.model.sidebar.SelectionCount() != 2 {
+		t.Fatalf("expected 2 selected, got %d", h.model.sidebar.SelectionCount())
+	}
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	h.WaitFor(func() bool {
+		return !sidebarHasSession(h.model, "sess-bulk-1") && !sidebarHasSession(h.model, "sess-bulk-2")
+	}, 2*time.Second)
+
+	got1, err := api.GetSession(ctx, "sess-bulk-1")
+	if err != nil {
+		t.Fatalf("get session 1: %v", err)
+	}
+	got2, err := api.GetSession(ctx, "sess-bulk-2")
+	if err != nil {
+		t.Fatalf("get session 2: %v", err)
+	}
+	if got1.Status != types.SessionStatusExited || got2.Status != types.SessionStatusExited {
+		t.Fatalf("expected exited status, got %s/%s", got1.Status, got2.Status)
+	}
 }
 
 type uiHarness struct {
@@ -260,6 +585,14 @@ func (h *uiHarness) SetChatInput(text string) {
 	if h.model.chatInput != nil {
 		h.model.chatInput.SetValue(text)
 	}
+}
+
+func (h *uiHarness) SelectProvider(id string) {
+	h.t.Helper()
+	if h.model.providerPicker == nil {
+		h.t.Fatalf("provider picker not initialized")
+	}
+	h.model.providerPicker.Enter(id)
 }
 
 func (h *uiHarness) SelectSession(sessionID string) {
@@ -834,6 +1167,41 @@ func newUITestServer(t *testing.T) (*httptest.Server, *daemon.SessionManager, *d
 	api.RegisterRoutes(mux)
 	server := httptest.NewServer(daemon.TokenAuthMiddleware("token", mux))
 	return server, manager, stores
+}
+
+func insertSessionWithMeta(t *testing.T, stores *daemon.Stores, session *types.Session, meta *types.SessionMeta) {
+	t.Helper()
+	if stores == nil || stores.Sessions == nil || stores.SessionMeta == nil {
+		t.Fatalf("stores not initialized")
+	}
+	_, err := stores.Sessions.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: session,
+		Source:  session.Provider,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	if meta != nil {
+		if _, err := stores.SessionMeta.Upsert(context.Background(), meta); err != nil {
+			t.Fatalf("upsert meta: %v", err)
+		}
+	}
+}
+
+func sidebarHasSession(model *Model, sessionID string) bool {
+	if model == nil || model.sidebar == nil {
+		return false
+	}
+	for _, item := range model.sidebar.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.session == nil {
+			continue
+		}
+		if entry.session.ID == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 func waitForHistoryItems(t *testing.T, api *client.Client, sessionID string, timeout time.Duration) {

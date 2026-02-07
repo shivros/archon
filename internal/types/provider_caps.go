@@ -7,6 +7,7 @@ type ProviderCapabilities struct {
 	SupportsEvents    bool
 	SupportsApprovals bool
 	SupportsInterrupt bool
+	NoProcess         bool
 }
 
 func Capabilities(provider string) ProviderCapabilities {
@@ -20,6 +21,7 @@ func Capabilities(provider string) ProviderCapabilities {
 	case "claude":
 		return ProviderCapabilities{
 			UsesItems: true,
+			NoProcess: true,
 		}
 	default:
 		return ProviderCapabilities{}

@@ -23,6 +23,8 @@ const (
 	maxEventsPerTick  = 64
 	tickInterval      = 100 * time.Millisecond
 	selectionDebounce = 500 * time.Millisecond
+	sidebarWheelCooldown = 30 * time.Millisecond
+	sidebarWheelSettle   = 120 * time.Millisecond
 	historyPollDelay  = 500 * time.Millisecond
 	historyPollMax    = 20
 	minListWidth      = 24
@@ -91,6 +93,9 @@ type Model struct {
 	loadingKey        string
 	loader            spinner.Model
 	pendingMouseCmd   tea.Cmd
+	lastSidebarWheelAt time.Time
+	pendingSidebarWheel bool
+	sidebarDragging   bool
 	hotkeys           *HotkeyRenderer
 	newSession        *newSessionTarget
 	pendingSelectID   string
@@ -1105,6 +1110,14 @@ func (m *Model) resize(width, height int) {
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {
+	return m.onSelectionChangedWithDelay(selectionDebounce)
+}
+
+func (m *Model) onSelectionChangedImmediate() tea.Cmd {
+	return m.onSelectionChangedWithDelay(0)
+}
+
+func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	item := m.selectedItem()
 	if item == nil {
 		m.resetStream()
@@ -1176,19 +1189,22 @@ func (m *Model) onSelectionChanged() tea.Cmd {
 		m.updateDelegate()
 		stateChanged = true
 	}
-	cmd := m.scheduleSessionLoad(item)
+	cmd := m.scheduleSessionLoad(item, delay)
 	if stateChanged {
 		return tea.Batch(cmd, m.saveAppStateCmd())
 	}
 	return cmd
 }
 
-func (m *Model) scheduleSessionLoad(item *sidebarItem) tea.Cmd {
+func (m *Model) scheduleSessionLoad(item *sidebarItem, delay time.Duration) tea.Cmd {
 	if item == nil || item.session == nil {
 		return nil
 	}
+	if delay <= 0 {
+		return m.loadSelectedSession(item)
+	}
 	m.selectSeq++
-	return debounceSelectCmd(item.session.ID, m.selectSeq, selectionDebounce)
+	return debounceSelectCmd(item.session.ID, m.selectSeq, delay)
 }
 
 func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
@@ -1282,6 +1298,14 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if m.loading {
 		m.loader, _ = m.loader.Update(spinner.TickMsg{Time: time.Time(msg), ID: m.loader.ID()})
 		m.setLoadingContent()
+	}
+	if m.pendingSidebarWheel {
+		if time.Since(m.lastSidebarWheelAt) >= sidebarWheelSettle {
+			m.pendingSidebarWheel = false
+			if cmd := m.onSelectionChangedImmediate(); cmd != nil {
+				return tea.Batch(cmd, m.tickCmd())
+			}
+		}
 	}
 	return m.tickCmd()
 }
@@ -1656,6 +1680,14 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 			listWidth = max(minListWidth, m.width/2)
 		}
 	}
+	barWidth := 0
+	if m.sidebar != nil {
+		barWidth = m.sidebar.ScrollbarWidth()
+	}
+	barStart := listWidth - barWidth
+	if barStart < 0 {
+		barStart = 0
+	}
 	rightStart := 0
 	if listWidth > 0 {
 		rightStart = listWidth + 1
@@ -1681,12 +1713,31 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return y >= start && y <= end
 	}
 
+	if msg.Action == tea.MouseActionRelease {
+		m.sidebarDragging = false
+	}
+	if msg.Action == tea.MouseActionMotion && m.sidebarDragging {
+		if listWidth > 0 && msg.X < listWidth && barWidth > 0 && msg.X >= barStart {
+			if m.sidebar != nil && m.sidebar.ScrollbarSelect(msg.Y) {
+				m.lastSidebarWheelAt = time.Now()
+				m.pendingSidebarWheel = true
+				return true
+			}
+		}
+		return true
+	}
+
 	if msg.Action == tea.MouseActionPress {
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
 			if listWidth > 0 && msg.X < listWidth {
+				now := time.Now()
+				if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
+					return true
+				}
+				m.lastSidebarWheelAt = now
 				if m.sidebar != nil && m.sidebar.Scroll(-1) {
-					m.pendingMouseCmd = m.onSelectionChanged()
+					m.pendingSidebarWheel = true
 					return true
 				}
 			}
@@ -1718,8 +1769,13 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 			return true
 		case tea.MouseButtonWheelDown:
 			if listWidth > 0 && msg.X < listWidth {
+				now := time.Now()
+				if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
+					return true
+				}
+				m.lastSidebarWheelAt = now
 				if m.sidebar != nil && m.sidebar.Scroll(1) {
-					m.pendingMouseCmd = m.onSelectionChanged()
+					m.pendingSidebarWheel = true
 					return true
 				}
 			}
@@ -1757,6 +1813,14 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	}
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return false
+	}
+	if listWidth > 0 && msg.X < listWidth && barWidth > 0 && msg.X >= barStart {
+		if m.sidebar != nil && m.sidebar.ScrollbarSelect(msg.Y) {
+			m.lastSidebarWheelAt = time.Now()
+			m.pendingSidebarWheel = true
+			m.sidebarDragging = true
+			return true
+		}
 	}
 	if msg.X >= rightStart && isOverInput(msg.Y) {
 		if m.mode == uiModeCompose && m.chatInput != nil {

@@ -60,6 +60,7 @@ func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []
 			}
 		}
 	}
+	s.normalizeNoProcessSessions(ctx, sessionMap)
 	for _, session := range sessionMap {
 		if session == nil {
 			continue
@@ -79,6 +80,31 @@ func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []
 		return sessions, nil, unavailableError(err.Error(), err)
 	}
 	return sessions, meta, nil
+}
+
+func (s *SessionService) normalizeNoProcessSessions(ctx context.Context, sessionMap map[string]*types.Session) {
+	if len(sessionMap) == 0 {
+		return
+	}
+	for id, session := range sessionMap {
+		if session == nil {
+			continue
+		}
+		if !types.Capabilities(session.Provider).NoProcess || !isActiveStatus(session.Status) {
+			continue
+		}
+		copy := *session
+		copy.Status = types.SessionStatusInactive
+		copy.PID = 0
+		copy.ExitedAt = nil
+		sessionMap[id] = &copy
+		if s.stores != nil && s.stores.Sessions != nil {
+			_, _ = s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
+				Session: &copy,
+				Source:  sessionSourceInternal,
+			})
+		}
+	}
 }
 
 func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*types.Session, error) {
@@ -465,7 +491,9 @@ func (s *SessionService) MarkExited(ctx context.Context, id string) error {
 		return notFoundError("session not found", ErrSessionNotFound)
 	}
 	if isActiveStatus(record.Session.Status) {
-		return invalidError("session is active; kill it first", nil)
+		if !types.Capabilities(record.Session.Provider).NoProcess {
+			return invalidError("session is active; kill it first", nil)
+		}
 	}
 	copy := *record.Session
 	copy.Status = types.SessionStatusExited
