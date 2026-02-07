@@ -174,6 +174,27 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		if text := extractContentText(item["content"]); text != "" {
 			t.appendLines("### Agent", "", text, "")
 		}
+	case "assistant":
+		if msg, ok := item["message"].(map[string]any); ok {
+			if text := extractContentText(msg["content"]); text != "" {
+				t.appendLines("### Agent", "", text, "")
+				return
+			}
+		}
+		if text := extractContentText(item["content"]); text != "" {
+			t.appendLines("### Agent", "", text, "")
+		}
+	case "result":
+		if text := asString(item["result"]); text != "" {
+			t.appendLines("### Agent", "", text, "")
+			return
+		}
+		if result, ok := item["result"].(map[string]any); ok {
+			if text := asString(result["result"]); text != "" {
+				t.appendLines("### Agent", "", text, "")
+				return
+			}
+		}
 	case "commandExecution":
 		cmd := extractCommand(item["command"])
 		status := asString(item["status"])

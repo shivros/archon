@@ -40,6 +40,10 @@ func TestAPIClaudeSessionFlow(t *testing.T) {
 
 	sendClaudeMessage(t, server, session.ID, "Say \"ok\" again.")
 	waitForHistoryItemsClaude(t, server, manager, session.ID, claudeIntegrationTimeout())
+	history := historySession(t, server, session.ID)
+	if !historyHasAgentText(history.Items, "ok") {
+		t.Fatalf("agent reply missing\n%s", sessionDiagnostics(manager, session.ID))
+	}
 }
 
 func TestClaudeItemsStream(t *testing.T) {
@@ -71,6 +75,22 @@ func TestClaudeItemsStream(t *testing.T) {
 	if typ, _ := item["type"].(string); typ == "" {
 		t.Fatalf("expected item type to be set")
 	}
+
+	sendClaudeMessage(t, server, session.ID, "Say \"ok\" again.")
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		data, ok = waitForSSEData(stream, 5*time.Second)
+		if !ok {
+			continue
+		}
+		if err := json.Unmarshal([]byte(data), &item); err != nil {
+			continue
+		}
+		if historyHasAgentText([]map[string]any{item}, "ok") {
+			return
+		}
+	}
+	t.Fatalf("timeout waiting for agent reply on items stream\n%s", sessionDiagnostics(manager, session.ID))
 }
 
 func sendClaudeMessage(t *testing.T, server *httptest.Server, sessionID, text string) {
@@ -141,4 +161,50 @@ func sessionDiagnostics(manager *SessionManager, sessionID string) string {
 		strings.Join(stdoutLines, "\n"),
 		strings.Join(stderrLines, "\n"),
 	)
+}
+
+func historyHasAgentText(items []map[string]any, needle string) bool {
+	if len(items) == 0 || needle == "" {
+		return false
+	}
+	needle = strings.ToLower(needle)
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		if typ != "agentMessage" && typ != "agentMessageDelta" && typ != "assistant" {
+			continue
+		}
+		if text := extractHistoryText(item); text != "" {
+			if strings.Contains(strings.ToLower(text), needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractHistoryText(item map[string]any) string {
+	if item == nil {
+		return ""
+	}
+	if text, _ := item["text"].(string); strings.TrimSpace(text) != "" {
+		return text
+	}
+	content, ok := item["content"].([]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, entry := range content {
+		block, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }

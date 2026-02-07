@@ -15,6 +15,18 @@ type claudeProvider struct {
 	cmdName string
 }
 
+type claudeRunner struct {
+	cmdName string
+	cwd     string
+	env     []string
+	sink    *logSink
+	items   *itemSink
+
+	mu        sync.Mutex
+	sessionID string
+	onSession func(string)
+}
+
 func newClaudeProvider() (Provider, error) {
 	cmdName, err := findCommand("ARCHON_CLAUDE_CMD", "claude")
 	if err != nil {
@@ -32,102 +44,153 @@ func (p *claudeProvider) Command() string {
 }
 
 func (p *claudeProvider) Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error) {
-	args := []string{
-		"--print",
-		"--verbose",
-		"--output-format", "stream-json",
-		"--input-format", "stream-json",
-		"--replay-user-messages",
-	}
-	if strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_INCLUDE_PARTIAL")) == "1" {
-		args = append(args, "--include-partial-messages")
-	}
 	if cfg.Resume {
-		sessionID := strings.TrimSpace(cfg.ProviderSessionID)
-		if sessionID == "" {
+		if strings.TrimSpace(cfg.ProviderSessionID) == "" {
 			return nil, errors.New("provider session id is required to resume")
 		}
-		args = append(args, "--resume", sessionID)
-	} else if strings.TrimSpace(cfg.ProviderSessionID) != "" {
-		args = append(args, "--session-id", strings.TrimSpace(cfg.ProviderSessionID))
 	}
 
-	cmd := exec.Command(p.cmdName, args...)
-	if cfg.Cwd != "" {
-		cmd.Dir = cfg.Cwd
-	}
-	if len(cfg.Env) > 0 {
-		cmd.Env = append(os.Environ(), cfg.Env...)
-	}
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
+	runner := &claudeRunner{
+		cmdName:   p.cmdName,
+		cwd:       cfg.Cwd,
+		env:       append([]string{}, cfg.Env...),
+		sink:      sink,
+		items:     items,
+		sessionID: strings.TrimSpace(cfg.ProviderSessionID),
+		onSession: cfg.OnProviderSessionID,
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	writer := &claudeInputWriter{w: stdinPipe}
-
-	go func() {
-		_ = readClaudeStream(stdoutPipe, sink, items, cfg.OnProviderSessionID)
-	}()
-	go func() {
-		_ = readClaudeStream(stderrPipe, nil, items, cfg.OnProviderSessionID)
-	}()
+	done := make(chan struct{})
+	closeDone := sync.OnceFunc(func() { close(done) })
 
 	if strings.TrimSpace(cfg.InitialText) != "" {
-		if err := writer.SendUser(cfg.InitialText); err != nil && sink != nil {
-			sink.Write("stderr", []byte("claude send error: "+err.Error()+"\n"))
+		if err := runner.SendUser(cfg.InitialText); err != nil {
+			closeDone()
+			return nil, err
 		}
 	}
 
 	threadID := strings.TrimSpace(cfg.ProviderSessionID)
 	return &providerProcess{
-		Process: cmd.Process,
-		Wait:    cmd.Wait,
+		Process: nil,
+		Wait: func() error {
+			<-done
+			return nil
+		},
 		Interrupt: func() error {
-			return signalTerminate(cmd.Process)
+			closeDone()
+			return nil
 		},
 		ThreadID: threadID,
-		Send:     writer.Send,
+		Send:     runner.Send,
 	}, nil
 }
 
-type claudeInputWriter struct {
-	w  io.Writer
-	mu sync.Mutex
-}
-
-func (w *claudeInputWriter) Send(payload []byte) error {
-	if w == nil || w.w == nil {
-		return errors.New("stdin is not available")
+func (r *claudeRunner) Send(payload []byte) error {
+	if r == nil {
+		return errors.New("runner is nil")
 	}
 	if len(payload) == 0 {
 		return errors.New("payload is required")
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if !strings.HasSuffix(string(payload), "\n") {
-		payload = append(payload, '\n')
+	text, err := extractClaudeUserText(payload)
+	if err != nil {
+		return err
 	}
-	_, err := w.w.Write(payload)
+	if strings.TrimSpace(text) == "" {
+		return errors.New("text is required")
+	}
+	r.appendUserItem(text)
+	return r.run(text)
+}
+
+func (r *claudeRunner) SendUser(text string) error {
+	payload := buildClaudeUserPayload(text)
+	return r.Send(payload)
+}
+
+func (r *claudeRunner) run(text string) error {
+	args := []string{
+		"--print",
+		"--verbose",
+		"--output-format", "stream-json",
+	}
+	if strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_INCLUDE_PARTIAL")) == "1" {
+		args = append(args, "--include-partial-messages")
+	}
+	sessionID := r.getSessionID()
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
+	}
+	args = append(args, text)
+
+	cmd := exec.Command(r.cmdName, args...)
+	if r.cwd != "" {
+		cmd.Dir = r.cwd
+	}
+	if len(r.env) > 0 {
+		cmd.Env = append(os.Environ(), r.env...)
+	}
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_ = readClaudeStream(stdoutPipe, r.sink, r.items, r.updateSessionID)
+	}()
+	go func() {
+		defer wg.Done()
+		_ = readClaudeStream(stderrPipe, nil, r.items, r.updateSessionID)
+	}()
+
+	err = cmd.Wait()
+	wg.Wait()
 	return err
 }
 
-func (w *claudeInputWriter) SendUser(text string) error {
-	payload := buildClaudeUserPayload(text)
-	return w.Send(payload)
+func (r *claudeRunner) appendUserItem(text string) {
+	if r == nil || r.items == nil {
+		return
+	}
+	r.items.Append(map[string]any{
+		"type": "userMessage",
+		"content": []map[string]any{
+			{"type": "text", "text": text},
+		},
+	})
+}
+
+func (r *claudeRunner) getSessionID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessionID
+}
+
+func (r *claudeRunner) updateSessionID(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	changed := r.sessionID != id
+	r.sessionID = id
+	r.mu.Unlock()
+	if changed && r.onSession != nil {
+		r.onSession(id)
+	}
 }
 
 func readClaudeStream(r io.Reader, sink *logSink, items *itemSink, onSessionID func(string)) error {
@@ -186,3 +249,15 @@ func buildClaudeUserPayload(text string) []byte {
 }
 
 // session_id is provided by the CLI in the first system init event.
+
+func extractClaudeUserText(payload []byte) (string, error) {
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return "", err
+	}
+	if typ, _ := body["type"].(string); typ != "user" {
+		return "", errors.New("unsupported payload type")
+	}
+	text := extractClaudeMessageText(body["message"])
+	return text, nil
+}

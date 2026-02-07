@@ -220,9 +220,9 @@ func debounceSelectCmd(id string, seq int, delay time.Duration) tea.Cmd {
 	})
 }
 
-func historyPollCmd(id, key string, attempt int, delay time.Duration) tea.Cmd {
+func historyPollCmd(id, key string, attempt int, delay time.Duration, minAgents int) tea.Cmd {
 	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return historyPollMsg{id: id, key: key, attempt: attempt}
+		return historyPollMsg{id: id, key: key, attempt: attempt, minAgents: minAgents}
 	})
 }
 

@@ -436,10 +436,6 @@ func (m *SessionManager) KillSession(id string) error {
 		m.mu.Unlock()
 		return ErrSessionNotFound
 	}
-	if state.process == nil {
-		m.mu.Unlock()
-		return errors.New("session process not started")
-	}
 	if state.session.Status == types.SessionStatusExited || state.session.Status == types.SessionStatusFailed || state.session.Status == types.SessionStatusKilled {
 		m.mu.Unlock()
 		return nil
@@ -452,6 +448,15 @@ func (m *SessionManager) KillSession(id string) error {
 
 	if interrupt != nil {
 		_ = interrupt()
+	}
+
+	if process == nil {
+		select {
+		case <-done:
+			return nil
+		case <-time.After(1 * time.Second):
+			return nil
+		}
 	}
 
 	_ = signalTerminate(process)

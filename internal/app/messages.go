@@ -60,9 +60,10 @@ type historyMsg struct {
 }
 
 type historyPollMsg struct {
-	id      string
-	key     string
-	attempt int
+	id        string
+	key       string
+	attempt   int
+	minAgents int
 }
 
 type killMsg struct {

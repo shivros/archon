@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	uiIntegrationEnv     = "ARCHON_UI_INTEGRATION"
-	codexIntegrationEnv  = "ARCHON_CODEX_INTEGRATION"
-	codexIntegrationSkip = "ARCHON_CODEX_SKIP"
+	uiIntegrationEnv      = "ARCHON_UI_INTEGRATION"
+	codexIntegrationEnv   = "ARCHON_CODEX_INTEGRATION"
+	codexIntegrationSkip  = "ARCHON_CODEX_SKIP"
+	claudeIntegrationEnv  = "ARCHON_CLAUDE_INTEGRATION"
+	claudeIntegrationSkip = "ARCHON_CLAUDE_SKIP"
 )
 
 func TestUICodexStreamingExistingSession(t *testing.T) {
@@ -81,6 +83,69 @@ func TestUICodexStreamingExistingSession(t *testing.T) {
 	model.tickFn = func() tea.Cmd { return nil }
 
 	h := newUIHarness(t, &model)
+	defer h.Close()
+	logPhase("ui_init")
+	h.Init()
+	h.Resize(120, 40)
+	h.SelectSession(session.ID)
+
+	logPhase("ui_send")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SetChatInput("Say \"ok\" again.")
+	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	logPhase("wait_agent_reply")
+	h.WaitForAgentReply(45 * time.Second)
+}
+
+func TestUIClaudeStreamingExistingSession(t *testing.T) {
+	requireUIIntegration(t)
+	requireClaudeIntegration(t)
+
+	start := time.Now()
+	phase := "init"
+	logPhase := func(next string) {
+		phase = next
+		t.Logf("phase=%s elapsed=%s", phase, time.Since(start).Truncate(time.Millisecond))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	logPhase("create_workspace")
+	repoDir := createClaudeWorkspace(t)
+
+	server, _, _ := newUITestServer(t)
+	defer server.Close()
+
+	api := client.NewWithBaseURL(server.URL, "token")
+
+	ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+		Name:     "claude-ui",
+		RepoPath: repoDir,
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	logPhase("start_session")
+	session, err := api.StartWorkspaceSession(ctx, ws.ID, "", client.StartSessionRequest{
+		Provider:    "claude",
+		WorkspaceID: ws.ID,
+		Text:        "Say \"ok\" and nothing else.",
+	})
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	logPhase("wait_history_initial")
+	waitForHistoryItems(t, api, session.ID, claudeIntegrationTimeout())
+	waitForHistoryAgent(t, api, session.ID, "ok", claudeIntegrationTimeout())
+
+	model := NewModel(api)
+	model.tickFn = func() tea.Cmd { return nil }
+
+	h := newUIHarness(t, &model)
+	defer h.Close()
 	logPhase("ui_init")
 	h.Init()
 	h.Resize(120, 40)
@@ -99,8 +164,12 @@ func containsAgentReply(lines []string) bool {
 	if len(lines) == 0 {
 		return false
 	}
-	joined := strings.ToLower(strings.Join(lines, "\n"))
-	return strings.Contains(joined, "### agent") && strings.Contains(joined, "ok")
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "### agent") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUICodexStreamingNewSession(t *testing.T) {
@@ -138,6 +207,7 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 	model.tickFn = func() tea.Cmd { return nil }
 
 	h := newUIHarness(t, &model)
+	defer h.Close()
 	logPhase("ui_init")
 	h.Init()
 	h.Resize(120, 40)
@@ -161,6 +231,13 @@ type uiHarness struct {
 func newUIHarness(t *testing.T, model *Model) *uiHarness {
 	t.Helper()
 	return &uiHarness{t: t, model: model}
+}
+
+func (h *uiHarness) Close() {
+	h.t.Helper()
+	if h.model != nil {
+		h.model.resetStream()
+	}
 }
 
 func (h *uiHarness) Init() {
@@ -235,7 +312,7 @@ func (h *uiHarness) WaitForAgentReply(timeout time.Duration) {
 		if h.model.mode != uiModeCompose {
 			return false
 		}
-		return containsAgentReply(h.model.renderedPlain)
+		return containsAgentReply(h.model.currentLines())
 	}, timeout)
 }
 
@@ -266,6 +343,13 @@ func (h *uiHarness) WaitFor(check func() bool, timeout time.Duration) {
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	lines := h.model.currentLines()
+	if len(lines) > 20 {
+		lines = lines[len(lines)-20:]
+	}
+	if len(lines) > 0 {
+		h.t.Logf("content_raw_tail:\n%s", strings.Join(lines, "\n"))
 	}
 	h.t.Fatalf("timeout waiting for UI condition (status=%s loading=%v)", h.model.status, h.model.loading)
 }
@@ -345,6 +429,23 @@ func requireUIIntegration(t *testing.T) {
 	}
 }
 
+func requireClaudeIntegration(t *testing.T) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv(claudeIntegrationSkip)) != "" {
+		t.Skipf("%s set", claudeIntegrationSkip)
+	}
+	if os.Getenv(claudeIntegrationEnv) != "1" {
+		t.Skipf("set %s=1 to run Claude integration tests", claudeIntegrationEnv)
+	}
+	cmd := strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_CMD"))
+	if cmd == "" {
+		cmd = "claude"
+	}
+	if _, err := exec.LookPath(cmd); err != nil {
+		t.Fatalf("claude command not found (%s): %v", cmd, err)
+	}
+}
+
 func requireCodexIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getenv(codexIntegrationSkip) == "1" {
@@ -371,6 +472,15 @@ func codexIntegrationTimeout() time.Duration {
 	return 2 * time.Minute
 }
 
+func claudeIntegrationTimeout() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_TIMEOUT")); raw != "" {
+		if secs, err := time.ParseDuration(raw); err == nil {
+			return secs
+		}
+	}
+	return 2 * time.Minute
+}
+
 func createCodexWorkspace(t *testing.T) (string, string) {
 	t.Helper()
 	repoDir := filepath.Join(t.TempDir(), "repo")
@@ -382,6 +492,15 @@ func createCodexWorkspace(t *testing.T) (string, string) {
 		t.Fatalf("mkdir codex home: %v", err)
 	}
 	return repoDir, codexHome
+}
+
+func createClaudeWorkspace(t *testing.T) string {
+	t.Helper()
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o700); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	return repoDir
 }
 
 func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxMode, trustLevel string) {
@@ -738,4 +857,73 @@ func waitForHistoryItems(t *testing.T, api *client.Client, sessionID string, tim
 		t.Fatalf("timeout waiting for history items (last_err=%v)", lastErr)
 	}
 	t.Fatalf("timeout waiting for history items")
+}
+
+func waitForHistoryAgent(t *testing.T, api *client.Client, sessionID, needle string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		history, err := api.History(ctx, sessionID, 200)
+		cancel()
+		if err == nil && historyHasAgentText(history.Items, needle) {
+			return
+		}
+		if err != nil {
+			lastErr = err
+			t.Logf("history poll error: %v", err)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if lastErr != nil {
+		t.Fatalf("timeout waiting for history agent text (last_err=%v)", lastErr)
+	}
+	t.Fatalf("timeout waiting for history agent text")
+}
+
+func historyHasAgentText(items []map[string]any, needle string) bool {
+	if len(items) == 0 || strings.TrimSpace(needle) == "" {
+		return false
+	}
+	needle = strings.ToLower(needle)
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		if typ != "agentMessage" && typ != "agentMessageDelta" && typ != "assistant" {
+			continue
+		}
+		if text := extractHistoryText(item); text != "" {
+			if strings.Contains(strings.ToLower(text), needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractHistoryText(item map[string]any) string {
+	if item == nil {
+		return ""
+	}
+	if text, _ := item["text"].(string); strings.TrimSpace(text) != "" {
+		return text
+	}
+	content, ok := item["content"].([]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, entry := range content {
+		block, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }

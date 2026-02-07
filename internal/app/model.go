@@ -438,10 +438,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
 					if shouldStreamItems(provider) {
-						return m, tea.Batch(openItemsCmd(m.sessionAPI, sessionID), send)
+						cmds := []tea.Cmd{send}
+						if m.itemStream == nil || !m.itemStream.HasStream() {
+							cmds = append([]tea.Cmd{openItemsCmd(m.sessionAPI, sessionID)}, cmds...)
+						}
+						key := m.pendingSessionKey
+						if key == "" {
+							key = m.selectedKey()
+						}
+						if key != "" {
+							cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentReplies(m.currentLines())))
+						}
+						return m, tea.Batch(cmds...)
 					}
 					if provider == "codex" {
-						return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send)
+						if m.codexStream == nil || !m.codexStream.HasStream() {
+							return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send)
+						}
+						return m, send
 					}
 					return m, send
 				}
@@ -755,11 +769,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if targetID != msg.id {
 			return m, nil
 		}
-		if hasAgentReply(m.currentLines()) {
+		currentAgents := countAgentReplies(m.currentLines())
+		if msg.minAgents >= 0 {
+			if currentAgents > msg.minAgents {
+				return m, nil
+			}
+		} else if currentAgents > 0 {
 			return m, nil
 		}
 		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, msg.id, msg.key, maxViewportLines)}
-		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay))
+		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
 		return m, tea.Batch(cmds...)
 	case sendMsg:
 		if msg.err != nil {
@@ -855,7 +874,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, openStreamCmd(m.sessionAPI, msg.session.ID))
 		}
 		if msg.session.Provider == "codex" {
-			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay))
+			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay, countAgentReplies(m.currentLines())))
 		}
 		return m, tea.Batch(cmds...)
 	case killMsg:
@@ -1452,6 +1471,9 @@ func (m *Model) setLoadingContent() {
 }
 
 func (m *Model) appendUserMessageLocal(provider, text string) int {
+	if strings.EqualFold(provider, "claude") {
+		return -1
+	}
 	if shouldStreamItems(provider) && m.itemStream != nil {
 		m.itemStream.SetSnapshot(m.currentLines())
 		headerIndex := m.itemStream.AppendUserMessage(text)
@@ -2325,6 +2347,19 @@ func hasAgentReply(lines []string) bool {
 		}
 	}
 	return false
+}
+
+func countAgentReplies(lines []string) int {
+	if len(lines) == 0 {
+		return 0
+	}
+	count := 0
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "### agent") {
+			count++
+		}
+	}
+	return count
 }
 
 func clamp(value, minValue, maxValue int) int {

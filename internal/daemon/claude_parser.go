@@ -6,7 +6,8 @@ import (
 )
 
 type ClaudeParseState struct {
-	SawDelta bool
+	SawDelta   bool
+	SawMessage bool
 }
 
 func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, string, error) {
@@ -42,6 +43,7 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 					"type": "agentMessageEnd",
 				})
 				state.SawDelta = false
+				state.SawMessage = true
 			}
 			return items, "", nil
 		}
@@ -50,12 +52,16 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 				"type": "agentMessageEnd",
 			})
 			state.SawDelta = false
+			state.SawMessage = true
 			return items, "", nil
 		}
 		items = append(items, map[string]any{
 			"type": "agentMessage",
 			"text": text,
 		})
+		if state != nil {
+			state.SawMessage = true
+		}
 	case "system":
 		if subtype, _ := payload["subtype"].(string); subtype == "init" {
 			if id, _ := payload["session_id"].(string); strings.TrimSpace(id) != "" {
@@ -68,11 +74,15 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 		if event == nil {
 			return nil, "", nil
 		}
-		delta, _ := event["delta"].(map[string]any)
-		if delta == nil {
+		if eventType, _ := event["type"].(string); eventType == "message_start" {
+			if state != nil {
+				state.SawDelta = false
+				state.SawMessage = false
+			}
 			return nil, "", nil
 		}
-		if deltaType, _ := delta["type"].(string); deltaType != "text_delta" {
+		delta, _ := event["delta"].(map[string]any)
+		if delta == nil {
 			return nil, "", nil
 		}
 		text, _ := delta["text"].(string)
@@ -92,14 +102,39 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 				"type": "agentMessageEnd",
 			})
 			state.SawDelta = false
+			state.SawMessage = true
 			return items, "", nil
+		}
+		if state != nil && state.SawMessage {
+			if id, _ := payload["session_id"].(string); strings.TrimSpace(id) != "" {
+				sessionID = id
+			}
+			return items, sessionID, nil
 		}
 		if result, _ := payload["result"].(string); strings.TrimSpace(result) != "" {
 			items = append(items, map[string]any{
 				"type": "agentMessage",
 				"text": result,
 			})
+			if state != nil {
+				state.SawMessage = true
+			}
 			return items, "", nil
+		}
+		if resultObj, _ := payload["result"].(map[string]any); resultObj != nil {
+			if text, _ := resultObj["result"].(string); strings.TrimSpace(text) != "" {
+				items = append(items, map[string]any{
+					"type": "agentMessage",
+					"text": text,
+				})
+				if id, _ := resultObj["session_id"].(string); strings.TrimSpace(id) != "" {
+					sessionID = id
+				}
+				if state != nil {
+					state.SawMessage = true
+				}
+				return items, sessionID, nil
+			}
 		}
 		items = append(items, payload)
 	default:
@@ -131,9 +166,6 @@ func extractClaudeMessageText(raw any) string {
 	for _, entry := range content {
 		block, ok := entry.(map[string]any)
 		if !ok {
-			continue
-		}
-		if typ, _ := block["type"].(string); typ != "text" && typ != "text_delta" {
 			continue
 		}
 		if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {

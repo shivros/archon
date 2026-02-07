@@ -124,6 +124,10 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		codexHome = resolveCodexHome(cwd, workspacePath)
 	}
 
+	initialTextForStart := initialText
+	if req.Provider == "claude" {
+		initialTextForStart = ""
+	}
 	session, err := s.manager.StartSession(StartSessionConfig{
 		Provider:     req.Provider,
 		Cmd:          req.Cmd,
@@ -136,10 +140,21 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		WorkspaceID:  req.WorkspaceID,
 		WorktreeID:   req.WorktreeID,
 		InitialInput: initialInput,
-		InitialText:  initialText,
+		InitialText:  initialTextForStart,
 	})
 	if err != nil {
 		return nil, invalidError(err.Error(), err)
+	}
+	if req.Provider == "claude" && initialText != "" && s.manager != nil {
+		payload := buildClaudeUserPayload(initialText)
+		go func(sessionID string) {
+			if err := s.manager.SendInput(sessionID, payload); err != nil && s.logger != nil {
+				s.logger.Warn("claude_initial_send_failed",
+					logging.F("session_id", sessionID),
+					logging.F("error", err),
+				)
+			}
+		}(session.ID)
 	}
 	return session, nil
 }
