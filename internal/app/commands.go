@@ -117,24 +117,33 @@ func fetchHistoryCmd(api SessionAPI, id, key string, lines int) tea.Cmd {
 
 func openStreamCmd(api SessionAPI, id string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancelCtx := context.WithCancel(context.Background())
 		ch, cancel, err := api.TailStream(ctx, id, "combined")
+		if err != nil {
+			cancelCtx()
+		}
 		return streamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
 func openEventsCmd(api SessionAPI, id string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancelCtx := context.WithCancel(context.Background())
 		ch, cancel, err := api.EventStream(ctx, id)
+		if err != nil {
+			cancelCtx()
+		}
 		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
 func openItemsCmd(api SessionAPI, id string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancelCtx := context.WithCancel(context.Background())
 		ch, cancel, err := api.ItemsStream(ctx, id)
+		if err != nil {
+			cancelCtx()
+		}
 		return itemsStreamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
@@ -208,6 +217,12 @@ func interruptSessionCmd(api SessionAPI, id string) tea.Cmd {
 func debounceSelectCmd(id string, seq int, delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(time.Time) tea.Msg {
 		return selectDebounceMsg{id: id, seq: seq}
+	})
+}
+
+func historyPollCmd(id, key string, attempt int, delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return historyPollMsg{id: id, key: key, attempt: attempt}
 	})
 }
 

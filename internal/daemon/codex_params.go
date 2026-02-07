@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	codexApprovalPolicyEnv = "CONTROL_CODEX_APPROVAL_POLICY"
-	codexSandboxPolicyEnv  = "CONTROL_CODEX_SANDBOX_POLICY"
-	codexNetworkAccessEnv  = "CONTROL_CODEX_NETWORK_ACCESS"
+	codexApprovalPolicyEnv = "ARCHON_CODEX_APPROVAL_POLICY"
+	codexSandboxPolicyEnv  = "ARCHON_CODEX_SANDBOX_POLICY"
+	codexNetworkAccessEnv  = "ARCHON_CODEX_NETWORK_ACCESS"
 )
 
 func codexTurnOptionsFromEnv() map[string]any {

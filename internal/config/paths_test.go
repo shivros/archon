@@ -13,7 +13,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DataDir: %v", err)
 	}
-	if !strings.HasSuffix(dataDir, filepath.Join(".control")) {
+	if !strings.HasSuffix(dataDir, filepath.Join(".archon")) {
 		t.Fatalf("unexpected data dir: %s", dataDir)
 	}
 
@@ -21,7 +21,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionsDir: %v", err)
 	}
-	if !strings.HasSuffix(sessionsDir, filepath.Join(".control", "sessions")) {
+	if !strings.HasSuffix(sessionsDir, filepath.Join(".archon", "sessions")) {
 		t.Fatalf("unexpected sessions dir: %s", sessionsDir)
 	}
 
@@ -29,7 +29,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TokenPath: %v", err)
 	}
-	if !strings.HasSuffix(tokenPath, filepath.Join(".control", "token")) {
+	if !strings.HasSuffix(tokenPath, filepath.Join(".archon", "token")) {
 		t.Fatalf("unexpected token path: %s", tokenPath)
 	}
 
@@ -37,7 +37,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorkspacesPath: %v", err)
 	}
-	if !strings.HasSuffix(workspacesPath, filepath.Join(".control", "workspaces.json")) {
+	if !strings.HasSuffix(workspacesPath, filepath.Join(".archon", "workspaces.json")) {
 		t.Fatalf("unexpected workspaces path: %s", workspacesPath)
 	}
 
@@ -45,7 +45,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StatePath: %v", err)
 	}
-	if !strings.HasSuffix(statePath, filepath.Join(".control", "state.json")) {
+	if !strings.HasSuffix(statePath, filepath.Join(".archon", "state.json")) {
 		t.Fatalf("unexpected state path: %s", statePath)
 	}
 
@@ -53,7 +53,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("KeymapPath: %v", err)
 	}
-	if !strings.HasSuffix(keymapPath, filepath.Join(".control", "keymap.json")) {
+	if !strings.HasSuffix(keymapPath, filepath.Join(".archon", "keymap.json")) {
 		t.Fatalf("unexpected keymap path: %s", keymapPath)
 	}
 
@@ -61,7 +61,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionsMetaPath: %v", err)
 	}
-	if !strings.HasSuffix(sessionsMetaPath, filepath.Join(".control", "sessions_meta.json")) {
+	if !strings.HasSuffix(sessionsMetaPath, filepath.Join(".archon", "sessions_meta.json")) {
 		t.Fatalf("unexpected sessions meta path: %s", sessionsMetaPath)
 	}
 
@@ -69,7 +69,7 @@ func TestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionsIndexPath: %v", err)
 	}
-	if !strings.HasSuffix(sessionsIndexPath, filepath.Join(".control", "sessions_index.json")) {
+	if !strings.HasSuffix(sessionsIndexPath, filepath.Join(".archon", "sessions_index.json")) {
 		t.Fatalf("unexpected sessions index path: %s", sessionsIndexPath)
 	}
 }

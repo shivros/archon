@@ -59,6 +59,12 @@ type historyMsg struct {
 	key   string
 }
 
+type historyPollMsg struct {
+	id      string
+	key     string
+	attempt int
+}
+
 type killMsg struct {
 	id  string
 	err error

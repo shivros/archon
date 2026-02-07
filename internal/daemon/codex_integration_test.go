@@ -17,12 +17,13 @@ import (
 
 	"control/internal/logging"
 	"control/internal/store"
+	"control/internal/testutil"
 	"control/internal/types"
 )
 
 const (
-	codexIntegrationEnv  = "CONTROL_CODEX_INTEGRATION"
-	codexIntegrationSkip = "CONTROL_CODEX_SKIP"
+	codexIntegrationEnv  = "ARCHON_CODEX_INTEGRATION"
+	codexIntegrationSkip = "ARCHON_CODEX_SKIP"
 )
 
 func TestCodexAppServerIntegration(t *testing.T) {
@@ -40,7 +41,7 @@ func TestCodexAppServerIntegration(t *testing.T) {
 	}
 	defer client.Close()
 
-	model := strings.TrimSpace(os.Getenv("CONTROL_CODEX_MODEL"))
+	model := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
 	if model == "" {
 		model = defaultCodexModel
 	}
@@ -217,12 +218,11 @@ func TestCodexInterruptFlow(t *testing.T) {
 func TestCodexApprovalFlow(t *testing.T) {
 	requireCodexIntegration(t)
 
-	t.Setenv("CONTROL_CODEX_APPROVAL_POLICY", "untrusted")
-	t.Setenv("CONTROL_CODEX_SANDBOX_POLICY", "workspace-write")
-	t.Setenv("CONTROL_CODEX_NETWORK_ACCESS", "false")
+	t.Setenv("ARCHON_CODEX_APPROVAL_POLICY", "untrusted")
+	t.Setenv("ARCHON_CODEX_SANDBOX_POLICY", "workspace-write")
+	t.Setenv("ARCHON_CODEX_NETWORK_ACCESS", "false")
 	repoDir, codexHome := createCodexWorkspace(t)
-	_ = os.RemoveAll(codexHome)
-	codexHome = ""
+	writeCodexConfig(t, codexHome, repoDir, "untrusted", "workspace-write", "untrusted")
 	requireCodexAuth(t, repoDir, codexHome)
 	server, _, _ := newCodexIntegrationServer(t)
 	defer server.Close()
@@ -254,7 +254,7 @@ func TestCodexApprovalFlow(t *testing.T) {
 		for _, msg := range errors {
 			if strings.Contains(strings.ToLower(msg), "quota exceeded") {
 				diag := fetchCodexDiagnostics(repoDir, codexHome)
-				t.Fatalf("codex quota exceeded; ensure the authenticated account has quota or set CONTROL_CODEX_API_KEY to a billed key (diag=%s)", diag)
+				t.Fatalf("codex quota exceeded; ensure the authenticated account has quota or set ARCHON_CODEX_API_KEY to a billed key (diag=%s)", diag)
 			}
 		}
 		t.Fatalf("expected approval event but none observed (events=%v errors=%v)", methods, errors)
@@ -292,7 +292,7 @@ func requireCodexIntegration(t *testing.T) {
 	if os.Getenv(codexIntegrationSkip) == "1" {
 		t.Skipf("%s=1 set; skipping codex integration tests", codexIntegrationSkip)
 	}
-	cmd := strings.TrimSpace(os.Getenv("CONTROL_CODEX_CMD"))
+	cmd := strings.TrimSpace(os.Getenv("ARCHON_CODEX_CMD"))
 	if cmd == "" {
 		cmd = "codex"
 	}
@@ -305,7 +305,7 @@ func requireCodexIntegration(t *testing.T) {
 }
 
 func codexIntegrationTimeout() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv("CONTROL_CODEX_TIMEOUT")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("ARCHON_CODEX_TIMEOUT")); raw != "" {
 		if secs, err := time.ParseDuration(raw); err == nil {
 			return secs
 		}
@@ -326,7 +326,7 @@ func createCodexWorkspace(t *testing.T) (string, string) {
 	return repoDir, codexHome
 }
 
-func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxMode string) {
+func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxMode, trustLevel string) {
 	t.Helper()
 	if strings.TrimSpace(codexHome) == "" {
 		t.Fatalf("codex home is required")
@@ -336,7 +336,7 @@ func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxM
 	}
 	path := filepath.Join(codexHome, "config.toml")
 	content := strings.Builder{}
-	authStore := strings.TrimSpace(os.Getenv("CONTROL_CODEX_AUTH_STORE"))
+	authStore := strings.TrimSpace(os.Getenv("ARCHON_CODEX_AUTH_STORE"))
 	if authStore == "" {
 		authStore = "keyring"
 	}
@@ -348,8 +348,11 @@ func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxM
 		content.WriteString(`sandbox_mode = "` + sandboxMode + `"` + "\n")
 	}
 	content.WriteString("\n")
+	if strings.TrimSpace(trustLevel) == "" {
+		trustLevel = "trusted"
+	}
 	content.WriteString(`[projects."` + repoDir + `"]` + "\n")
-	content.WriteString(`trust_level = "trusted"` + "\n")
+	content.WriteString(`trust_level = "` + trustLevel + `"` + "\n")
 	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
 		t.Fatalf("write config.toml: %v", err)
 	}
@@ -357,11 +360,8 @@ func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxM
 
 func requireCodexAuth(t *testing.T, repoDir, codexHome string) {
 	t.Helper()
-	apiKey := strings.TrimSpace(os.Getenv("CONTROL_CODEX_API_KEY"))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	}
-	forceAPI := strings.TrimSpace(os.Getenv("CONTROL_CODEX_FORCE_API_KEY")) == "1"
+	apiKey := testutil.LoadCodexAPIKey()
+	forceAPI := strings.TrimSpace(os.Getenv("ARCHON_CODEX_FORCE_API_KEY")) == "1"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -378,6 +378,9 @@ func requireCodexAuth(t *testing.T, repoDir, codexHome string) {
 		}
 		if err := client.request(ctx, "account/read", map[string]any{"refreshToken": false}, &result); err != nil {
 			return false, err
+		}
+		if data, err := json.Marshal(result); err == nil {
+			t.Logf("codex account/read: %s", string(data))
 		}
 		if result.RequiresOpenaiAuth && result.Account == nil {
 			return false, nil
@@ -428,7 +431,7 @@ func requireCodexAuth(t *testing.T, repoDir, codexHome string) {
 		}
 	}
 
-	t.Fatalf("codex auth not configured; log in or set CONTROL_CODEX_API_KEY/OPENAI_API_KEY or provide ~/.codex/auth.json")
+	t.Fatalf("codex auth not configured; log in or set ARCHON_CODEX_API_KEY/OPENAI_API_KEY or provide ~/.codex/auth.json or ~/.archon/test-keys.json")
 }
 
 func tryCopyAuthFile(t *testing.T, codexHome string) bool {

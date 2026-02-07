@@ -82,7 +82,7 @@ func lookupCommand(cmdName string) (string, error) {
 }
 
 func findOpenCodeCommand() (string, error) {
-	if override := strings.TrimSpace(os.Getenv("CONTROL_OPENCODE_CMD")); override != "" {
+	if override := strings.TrimSpace(os.Getenv("ARCHON_OPENCODE_CMD")); override != "" {
 		return lookupCommand(override)
 	}
 	if _, err := exec.LookPath("opencode"); err == nil {

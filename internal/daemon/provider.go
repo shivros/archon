@@ -35,7 +35,7 @@ func ResolveProvider(provider, customCmd string) (Provider, error) {
 		cmd, err := findOpenCodeCommand()
 		return newExecProvider("opencode", cmd, err)
 	case "gemini":
-		cmd, err := findCommand("CONTROL_GEMINI_CMD", "gemini")
+		cmd, err := findCommand("ARCHON_GEMINI_CMD", "gemini")
 		return newExecProvider("gemini", cmd, err)
 	case "custom":
 		if customCmd == "" {

@@ -43,6 +43,17 @@ func New() (*Client, error) {
 	return c, nil
 }
 
+func NewWithBaseURL(baseURL, token string) *Client {
+	return &Client{
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		tokenPath: "",
+		token:     token,
+		http: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	var resp HealthResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, false, &resp); err != nil {

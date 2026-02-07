@@ -162,7 +162,7 @@ func ParseLevel(raw string) Level {
 }
 
 func LevelFromEnv() Level {
-	return ParseLevel(os.Getenv("CONTROL_LOG_LEVEL"))
+	return ParseLevel(os.Getenv("ARCHON_LOG_LEVEL"))
 }
 
 func NewRequestID() string {

@@ -82,7 +82,7 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logg
 	if logger == nil {
 		logger = logging.Nop()
 	}
-	cmdName, err := findCommand("CONTROL_CODEX_CMD", "codex")
+	cmdName, err := findCommand("ARCHON_CODEX_CMD", "codex")
 	if err != nil {
 		return nil, err
 	}
@@ -172,8 +172,8 @@ func (c *codexAppServer) Requests() <-chan rpcMessage {
 func (c *codexAppServer) initialize(ctx context.Context) error {
 	params := map[string]any{
 		"clientInfo": map[string]any{
-			"name":    "control",
-			"title":   "Control",
+			"name":    "archon",
+			"title":   "Archon",
 			"version": "dev",
 		},
 	}

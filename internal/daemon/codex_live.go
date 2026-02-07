@@ -243,6 +243,14 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 		Params: msg.Params,
 		TS:     time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if s.client != nil && s.client.logger != nil && s.client.logger.Enabled(logging.Debug) {
+		if msg.Method == "error" || msg.Method == "codex/event/error" {
+			s.client.logger.Debug("codex_event_error",
+				logging.F("session_id", s.sessionID),
+				logging.F("params", string(msg.Params)),
+			)
+		}
+	}
 	s.hub.Broadcast(event)
 	if msg.Method == "turn/completed" {
 		var payload struct {

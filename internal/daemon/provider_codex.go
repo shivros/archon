@@ -25,11 +25,11 @@ type codexProvider struct {
 }
 
 func newCodexProvider() (Provider, error) {
-	cmdName, err := findCommand("CONTROL_CODEX_CMD", "codex")
+	cmdName, err := findCommand("ARCHON_CODEX_CMD", "codex")
 	if err != nil {
 		return nil, err
 	}
-	model := strings.TrimSpace(os.Getenv("CONTROL_CODEX_MODEL"))
+	model := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
 	if model == "" {
 		model = defaultCodexModel
 	}
@@ -276,8 +276,8 @@ func extractCommandOutputDelta(raw json.RawMessage) (string, string) {
 func (c *codexController) initialize(ctx context.Context) error {
 	_, err := c.request(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]string{
-			"name":    "control_cli",
-			"title":   "Control CLI",
+			"name":    "archon_cli",
+			"title":   "Archon CLI",
 			"version": "0.0.0",
 		},
 	})

@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	claudeIntegrationEnv  = "CONTROL_CLAUDE_INTEGRATION"
-	claudeIntegrationSkip = "CONTROL_CLAUDE_SKIP"
+	claudeIntegrationEnv  = "ARCHON_CLAUDE_INTEGRATION"
+	claudeIntegrationSkip = "ARCHON_CLAUDE_SKIP"
 )
 
 // These tests require the real Claude CLI to be installed and authenticated.
@@ -89,13 +89,13 @@ func requireClaudeIntegration(t *testing.T) {
 	if os.Getenv(claudeIntegrationEnv) != "1" {
 		t.Skipf("set %s=1 to run Claude integration tests", claudeIntegrationEnv)
 	}
-	if _, err := findCommand("CONTROL_CLAUDE_CMD", "claude"); err != nil {
+	if _, err := findCommand("ARCHON_CLAUDE_CMD", "claude"); err != nil {
 		t.Fatalf("claude command not found: %v", err)
 	}
 }
 
 func claudeIntegrationTimeout() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv("CONTROL_CLAUDE_TIMEOUT")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_TIMEOUT")); raw != "" {
 		if secs, err := time.ParseDuration(raw); err == nil {
 			return secs
 		}

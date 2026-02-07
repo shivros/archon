@@ -27,10 +27,10 @@ import (
 	"control/internal/types"
 )
 
-const usageText = `control is a placeholder CLI.
+const usageText = `archon is a placeholder CLI.
 
 Usage:
-  control <command> [flags]
+  archon <command> [flags]
 
 Commands:
   daemon   run background daemon
@@ -50,9 +50,9 @@ Daemon flags:
   --kill          stop any running daemon and exit
 
 Examples:
-  control ps
-  control start --provider codex --cwd . -- --help
-  control tail <id> --lines 200
+  archon ps
+  archon start --provider codex --cwd . -- --help
+  archon tail <id> --lines 200
 `
 
 const version = "dev"

@@ -12,6 +12,9 @@ type CodexStreamController struct {
 	maxEventsPerTick int
 	transcript       *ChatTranscript
 	pendingApproval  *ApprovalRequest
+	activeAgentID    string
+	agentDeltaSeen   bool
+	lastError        string
 }
 
 func NewCodexStreamController(maxLines, maxEventsPerTick int) *CodexStreamController {
@@ -34,6 +37,16 @@ func (c *CodexStreamController) Reset() {
 		c.transcript.Reset()
 	}
 	c.pendingApproval = nil
+	c.activeAgentID = ""
+	c.agentDeltaSeen = false
+	c.lastError = ""
+}
+
+func (c *CodexStreamController) HasStream() bool {
+	if c == nil {
+		return false
+	}
+	return c.events != nil
 }
 
 func (c *CodexStreamController) SetStream(ch <-chan types.CodexEvent, cancel func()) {
@@ -78,6 +91,13 @@ func (c *CodexStreamController) PendingApproval() *ApprovalRequest {
 		return nil
 	}
 	return c.pendingApproval
+}
+
+func (c *CodexStreamController) LastError() string {
+	if c == nil {
+		return ""
+	}
+	return c.lastError
 }
 
 func (c *CodexStreamController) ClearApproval() {
@@ -144,6 +164,12 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			return false
 		}
 		if typ, _ := payload.Item["type"].(string); typ == "agentMessage" {
+			if id, _ := payload.Item["id"].(string); id != "" {
+				c.activeAgentID = id
+			} else {
+				c.activeAgentID = ""
+			}
+			c.agentDeltaSeen = false
 			if c.transcript != nil {
 				c.transcript.StartAgentBlock()
 			}
@@ -154,6 +180,7 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 		if delta == "" {
 			return false
 		}
+		c.agentDeltaSeen = true
 		if c.transcript != nil {
 			c.transcript.AppendAgentDelta(delta)
 		}
@@ -169,10 +196,25 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			return false
 		}
 		if typ, _ := payload.Item["type"].(string); typ == "agentMessage" {
+			if !c.agentDeltaSeen {
+				text := asString(payload.Item["text"])
+				if text == "" {
+					text = extractContentText(payload.Item["content"])
+				}
+				if text != "" && c.transcript != nil {
+					c.transcript.AppendAgentDelta(text)
+				}
+			}
 			if c.transcript != nil {
 				c.transcript.FinishAgentBlock()
 			}
+			c.activeAgentID = ""
+			c.agentDeltaSeen = false
 			return true
+		}
+	case "error", "codex/event/error":
+		if msg := parseCodexError(event.Params); msg != "" {
+			c.lastError = msg
 		}
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "tool/requestUserInput":
 		req := parseApprovalRequest(event)
@@ -200,6 +242,39 @@ func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
 		Summary:   summary,
 		Detail:    detail,
 	}
+}
+
+func parseCodexError(params []byte) string {
+	if len(params) == 0 {
+		return ""
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return ""
+	}
+	if errVal, ok := payload["error"]; ok {
+		if msg := extractErrorMessage(errVal); msg != "" {
+			return msg
+		}
+	}
+	if msgVal, ok := payload["msg"]; ok {
+		if msg := extractErrorMessage(msgVal); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+func extractErrorMessage(raw any) string {
+	switch val := raw.(type) {
+	case map[string]any:
+		if msg, ok := val["message"].(string); ok {
+			return msg
+		}
+	case string:
+		return val
+	}
+	return ""
 }
 
 func extractDelta(raw json.RawMessage) string {

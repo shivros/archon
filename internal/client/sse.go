@@ -18,7 +18,7 @@ import (
 )
 
 func streamDebugEnabled() bool {
-	return strings.TrimSpace(os.Getenv("CONTROL_STREAM_DEBUG")) == "1"
+	return strings.TrimSpace(os.Getenv("ARCHON_STREAM_DEBUG")) == "1"
 }
 
 var (
@@ -33,10 +33,10 @@ func streamDebugLogger() *log.Logger {
 	streamLoggerOnce.Do(func() {
 		path := ""
 		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			path = filepath.Join(home, ".control", "ui-stream.log")
+			path = filepath.Join(home, ".archon", "ui-stream.log")
 		}
 		if path == "" {
-			path = filepath.Join(os.TempDir(), "control-ui-stream.log")
+			path = filepath.Join(os.TempDir(), "archon-ui-stream.log")
 		}
 		_ = os.MkdirAll(filepath.Dir(path), 0o700)
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

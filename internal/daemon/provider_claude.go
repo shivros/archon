@@ -16,7 +16,7 @@ type claudeProvider struct {
 }
 
 func newClaudeProvider() (Provider, error) {
-	cmdName, err := findCommand("CONTROL_CLAUDE_CMD", "claude")
+	cmdName, err := findCommand("ARCHON_CLAUDE_CMD", "claude")
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func (p *claudeProvider) Start(cfg StartSessionConfig, sink *logSink, items *ite
 		"--input-format", "stream-json",
 		"--replay-user-messages",
 	}
-	if strings.TrimSpace(os.Getenv("CONTROL_CLAUDE_INCLUDE_PARTIAL")) == "1" {
+	if strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_INCLUDE_PARTIAL")) == "1" {
 		args = append(args, "--include-partial-messages")
 	}
 	if cfg.Resume {

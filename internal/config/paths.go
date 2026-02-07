@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 )
 
-const appDirName = ".control"
+const appDirName = ".archon"
 
-// DataDir returns the base data directory for Control.
+// DataDir returns the base data directory for Archon.
 func DataDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

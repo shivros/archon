@@ -23,6 +23,8 @@ const (
 	maxEventsPerTick  = 64
 	tickInterval      = 100 * time.Millisecond
 	selectionDebounce = 500 * time.Millisecond
+	historyPollDelay  = 500 * time.Millisecond
+	historyPollMax    = 20
 	minListWidth      = 24
 	maxListWidth      = 40
 	minViewportWidth  = 20
@@ -95,6 +97,7 @@ type Model struct {
 	selectSeq         int
 	sendSeq           int
 	pendingSends      map[int]pendingSend
+	tickFn            func() tea.Cmd
 }
 
 type newSessionTarget struct {
@@ -165,7 +168,7 @@ func Run(client *client.Client) error {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(fetchAppStateCmd(m.stateAPI), fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), tickCmd())
+	return tea.Batch(fetchAppStateCmd(m.stateAPI), fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), m.tickCmd())
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -221,14 +224,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == uiModeAddWorkspace {
 		switch msg := msg.(type) {
 		case tickMsg:
-			m.consumeStreamTick()
-			return m, tickCmd()
+			return m, m.handleTick(msg)
 		case streamMsg:
 			if msg.err != nil {
 				m.status = "stream error: " + msg.err.Error()
 				return m, nil
 			}
-			if msg.id != m.selectedSessionID() {
+			targetID := m.composeSessionID()
+			if targetID == "" {
+				targetID = m.selectedSessionID()
+			}
+			if msg.id != targetID {
 				if msg.cancel != nil {
 					msg.cancel()
 				}
@@ -249,14 +255,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == uiModeAddWorktree {
 		switch msg := msg.(type) {
 		case tickMsg:
-			m.consumeStreamTick()
-			return m, tickCmd()
+			return m, m.handleTick(msg)
 		case streamMsg:
 			if msg.err != nil {
 				m.status = "stream error: " + msg.err.Error()
 				return m, nil
 			}
-			if msg.id != m.selectedSessionID() {
+			targetID := m.composeSessionID()
+			if targetID == "" {
+				targetID = m.selectedSessionID()
+			}
+			if msg.id != targetID {
 				if msg.cancel != nil {
 					msg.cancel()
 				}
@@ -281,14 +290,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == uiModePickProvider {
 		switch msg := msg.(type) {
 		case tickMsg:
-			m.consumeStreamTick()
-			return m, tickCmd()
+			return m, m.handleTick(msg)
 		case streamMsg:
 			if msg.err != nil {
 				m.status = "stream error: " + msg.err.Error()
 				return m, nil
 			}
-			if msg.id != m.selectedSessionID() {
+			targetID := m.composeSessionID()
+			if targetID == "" {
+				targetID = m.selectedSessionID()
+			}
+			if msg.id != targetID {
 				if msg.cancel != nil {
 					msg.cancel()
 				}
@@ -332,14 +344,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == uiModeCompose {
 		switch msg := msg.(type) {
 		case tickMsg:
-			m.consumeStreamTick()
-			return m, tickCmd()
+			return m, m.handleTick(msg)
 		case streamMsg:
 			if msg.err != nil {
 				m.status = "stream error: " + msg.err.Error()
 				return m, nil
 			}
-			if msg.id != m.selectedSessionID() {
+			targetID := m.composeSessionID()
+			if targetID == "" {
+				targetID = m.selectedSessionID()
+			}
+			if msg.id != targetID {
 				if msg.cancel != nil {
 					msg.cancel()
 				}
@@ -423,10 +438,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
 					if shouldStreamItems(provider) {
-						return m, tea.Sequence(openItemsCmd(m.sessionAPI, sessionID), send)
+						return m, tea.Batch(openItemsCmd(m.sessionAPI, sessionID), send)
 					}
 					if provider == "codex" {
-						return m, tea.Sequence(openEventsCmd(m.sessionAPI, sessionID), send)
+						return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send)
 					}
 					return m, send
 				}
@@ -723,6 +738,29 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "history updated"
 		return m, nil
+	case historyPollMsg:
+		if msg.id == "" || msg.key == "" {
+			return m, nil
+		}
+		if msg.attempt >= historyPollMax {
+			return m, nil
+		}
+		if m.mode != uiModeCompose {
+			return m, nil
+		}
+		targetID := m.composeSessionID()
+		if targetID == "" {
+			targetID = m.selectedSessionID()
+		}
+		if targetID != msg.id {
+			return m, nil
+		}
+		if hasAgentReply(m.currentLines()) {
+			return m, nil
+		}
+		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, msg.id, msg.key, maxViewportLines)}
+		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay))
+		return m, tea.Batch(cmds...)
 	case sendMsg:
 		if msg.err != nil {
 			m.status = "send error: " + msg.err.Error()
@@ -731,6 +769,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = "message sent"
 		m.clearPendingSend(msg.token)
+		provider := m.providerForSessionID(msg.id)
+		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
+			return m, openItemsCmd(m.sessionAPI, msg.id)
+		}
+		if provider == "codex" && m.codexStream != nil && !m.codexStream.HasStream() {
+			return m, openEventsCmd(m.sessionAPI, msg.id)
+		}
 		return m, nil
 	case approvalMsg:
 		if msg.err != nil {
@@ -798,8 +843,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.compose != nil {
 			m.compose.Enter(msg.session.ID, label)
 		}
+		key := "sess:" + msg.session.ID
+		m.pendingSessionKey = key
 		m.status = "session started"
-		return m, fetchSessionsWithMetaCmd(m.sessionAPI)
+		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
+		if shouldStreamItems(msg.session.Provider) {
+			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
+		} else if msg.session.Provider == "codex" {
+			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.session.ID))
+		} else if isActiveStatus(msg.session.Status) {
+			cmds = append(cmds, openStreamCmd(m.sessionAPI, msg.session.ID))
+		}
+		if msg.session.Provider == "codex" {
+			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay))
+		}
+		return m, tea.Batch(cmds...)
 	case killMsg:
 		if msg.err != nil {
 			m.status = "kill error: " + msg.err.Error()
@@ -889,15 +947,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "streaming items"
 		return m, nil
 	case tickMsg:
-		m.consumeStreamTick()
-		m.consumeCodexTick()
-		m.consumeItemTick()
-		if m.loading {
-			m.loader, _ = m.loader.Update(spinner.TickMsg{Time: time.Time(msg), ID: m.loader.ID()})
-			m.setLoadingContent()
-			return m, tickCmd()
-		}
-		return m, tickCmd()
+		return m, m.handleTick(msg)
 	}
 
 	return m, cmd
@@ -1199,6 +1249,24 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func (m *Model) tickCmd() tea.Cmd {
+	if m != nil && m.tickFn != nil {
+		return m.tickFn()
+	}
+	return tickCmd()
+}
+
+func (m *Model) handleTick(msg tickMsg) tea.Cmd {
+	m.consumeStreamTick()
+	m.consumeCodexTick()
+	m.consumeItemTick()
+	if m.loading {
+		m.loader, _ = m.loader.Update(spinner.TickMsg{Time: time.Time(msg), ID: m.loader.ID()})
+		m.setLoadingContent()
+	}
+	return m.tickCmd()
+}
+
 func (m *Model) resetStream() {
 	if m.stream != nil {
 		m.stream.Reset()
@@ -1240,6 +1308,9 @@ func (m *Model) consumeCodexTick() {
 	}
 	if changed {
 		m.applyLines(lines, false)
+	}
+	if errMsg := m.codexStream.LastError(); errMsg != "" {
+		m.status = "codex error: " + errMsg
 	}
 	if approval := m.codexStream.PendingApproval(); approval != nil {
 		m.pendingApproval = approval
@@ -2242,6 +2313,18 @@ func renderInputDivider(width int, scrollable bool) string {
 		line = strings.Repeat("─", width)
 	}
 	return dividerStyle.Render(line)
+}
+
+func hasAgentReply(lines []string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "### agent") {
+			return true
+		}
+	}
+	return false
 }
 
 func clamp(value, minValue, maxValue int) int {

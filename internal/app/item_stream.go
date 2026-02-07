@@ -28,6 +28,13 @@ func (c *ItemStreamController) Reset() {
 	}
 }
 
+func (c *ItemStreamController) HasStream() bool {
+	if c == nil {
+		return false
+	}
+	return c.items != nil
+}
+
 func (c *ItemStreamController) SetStream(ch <-chan map[string]any, cancel func()) {
 	if c == nil {
 		return
