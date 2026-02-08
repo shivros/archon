@@ -65,7 +65,16 @@ func (c *CodexStreamController) SetSnapshot(lines []string) {
 		return
 	}
 	if c.transcript != nil {
-		c.transcript.SetLines(lines)
+		c.transcript.SetBlocks(nil)
+	}
+}
+
+func (c *CodexStreamController) SetSnapshotBlocks(blocks []ChatBlock) {
+	if c == nil {
+		return
+	}
+	if c.transcript != nil {
+		c.transcript.SetBlocks(blocks)
 	}
 }
 
@@ -76,14 +85,14 @@ func (c *CodexStreamController) AppendUserMessage(text string) int {
 	return c.transcript.AppendUserMessage(text)
 }
 
-func (c *CodexStreamController) Lines() []string {
+func (c *CodexStreamController) Blocks() []ChatBlock {
 	if c == nil {
 		return nil
 	}
 	if c.transcript == nil {
 		return nil
 	}
-	return c.transcript.Lines()
+	return c.transcript.Blocks()
 }
 
 func (c *CodexStreamController) PendingApproval() *ApprovalRequest {
@@ -128,9 +137,9 @@ func (c *CodexStreamController) MarkUserMessageSent(headerIndex int) bool {
 	return c.transcript.MarkUserMessageSent(headerIndex)
 }
 
-func (c *CodexStreamController) ConsumeTick() (lines []string, changed bool, closed bool) {
+func (c *CodexStreamController) ConsumeTick() (changed bool, closed bool) {
 	if c == nil || c.events == nil {
-		return nil, false, false
+		return false, false
 	}
 	for i := 0; i < c.maxEventsPerTick; i++ {
 		select {
@@ -139,16 +148,16 @@ func (c *CodexStreamController) ConsumeTick() (lines []string, changed bool, clo
 				c.events = nil
 				c.cancel = nil
 				closed = true
-				return c.Lines(), changed, closed
+				return changed, closed
 			}
 			if c.applyEvent(event) {
 				changed = true
 			}
 		default:
-			return c.Lines(), changed, closed
+			return changed, closed
 		}
 	}
-	return c.Lines(), changed, closed
+	return changed, closed
 }
 
 func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {

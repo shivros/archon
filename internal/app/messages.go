@@ -17,6 +17,11 @@ type workspacesMsg struct {
 	err        error
 }
 
+type workspaceGroupsMsg struct {
+	groups []*types.WorkspaceGroup
+	err    error
+}
+
 type appStateMsg struct {
 	state *types.AppState
 	err   error
@@ -30,6 +35,36 @@ type appStateSavedMsg struct {
 type createWorkspaceMsg struct {
 	workspace *types.Workspace
 	err       error
+}
+
+type createWorkspaceGroupMsg struct {
+	group *types.WorkspaceGroup
+	err   error
+}
+
+type updateWorkspaceGroupMsg struct {
+	group *types.WorkspaceGroup
+	err   error
+}
+
+type deleteWorkspaceGroupMsg struct {
+	id  string
+	err error
+}
+
+type assignGroupWorkspacesMsg struct {
+	groupID string
+	updated int
+	err     error
+}
+type updateWorkspaceMsg struct {
+	workspace *types.Workspace
+	err       error
+}
+
+type deleteWorkspaceMsg struct {
+	id  string
+	err error
 }
 
 type worktreesMsg struct {
@@ -90,6 +125,12 @@ type createWorktreeMsg struct {
 type addWorktreeMsg struct {
 	workspaceID string
 	worktree    *types.Worktree
+	err         error
+}
+
+type worktreeDeletedMsg struct {
+	workspaceID string
+	worktreeID  string
 	err         error
 }
 

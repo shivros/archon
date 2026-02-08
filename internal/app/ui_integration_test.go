@@ -160,12 +160,12 @@ func TestUIClaudeStreamingExistingSession(t *testing.T) {
 	h.WaitForAgentReply(45 * time.Second)
 }
 
-func containsAgentReply(lines []string) bool {
-	if len(lines) == 0 {
+func containsAgentReply(blocks []ChatBlock) bool {
+	if len(blocks) == 0 {
 		return false
 	}
-	for _, line := range lines {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "### agent") {
+	for _, block := range blocks {
+		if block.Role == ChatRoleAgent {
 			return true
 		}
 	}
@@ -452,6 +452,7 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 			h.SelectSession(sessionID)
 
 			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 
 			h.WaitFor(func() bool {
 				return !sidebarHasSession(h.model, sessionID)
@@ -530,6 +531,7 @@ func TestUIDismissBulkSessions(t *testing.T) {
 		t.Fatalf("expected 2 selected, got %d", h.model.sidebar.SelectionCount())
 	}
 	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 
 	h.WaitFor(func() bool {
 		return !sidebarHasSession(h.model, "sess-bulk-1") && !sidebarHasSession(h.model, "sess-bulk-2")
@@ -545,6 +547,75 @@ func TestUIDismissBulkSessions(t *testing.T) {
 	}
 	if got1.Status != types.SessionStatusExited || got2.Status != types.SessionStatusExited {
 		t.Fatalf("expected exited status, got %s/%s", got1.Status, got2.Status)
+	}
+}
+
+func TestUIDismissSessionCancelKeepsSession(t *testing.T) {
+	requireUIIntegration(t)
+
+	for _, provider := range []string{"codex", "claude"} {
+		provider := provider
+		t.Run(provider, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			server, _, stores := newUITestServer(t)
+			defer server.Close()
+
+			api := client.NewWithBaseURL(server.URL, "token")
+
+			ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+				Name:     "dismiss-ui-cancel-" + provider,
+				RepoPath: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatalf("create workspace: %v", err)
+			}
+
+			now := time.Now().UTC()
+			sessionID := "sess-dismiss-cancel-" + provider
+			insertSessionWithMeta(t, stores, &types.Session{
+				ID:        sessionID,
+				Provider:  provider,
+				Cmd:       provider + " app-server",
+				Status:    types.SessionStatusInactive,
+				CreatedAt: now,
+			}, &types.SessionMeta{
+				SessionID:   sessionID,
+				WorkspaceID: ws.ID,
+				Title:       "Dismiss Cancel",
+				LastActiveAt: func() *time.Time {
+					t := now
+					return &t
+				}(),
+			})
+
+			model := NewModel(api)
+			model.tickFn = func() tea.Cmd { return nil }
+
+			h := newUIHarness(t, &model)
+			defer h.Close()
+			h.Init()
+			h.Resize(120, 40)
+			h.SelectWorkspace(ws.ID)
+			h.SelectSession(sessionID)
+
+			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+
+			time.Sleep(100 * time.Millisecond)
+
+			if !sidebarHasSession(h.model, sessionID) {
+				t.Fatalf("expected session to remain after cancel")
+			}
+			got, err := api.GetSession(ctx, sessionID)
+			if err != nil {
+				t.Fatalf("get session: %v", err)
+			}
+			if got.Status != types.SessionStatusInactive {
+				t.Fatalf("expected inactive status, got %s", got.Status)
+			}
+		})
 	}
 }
 
@@ -645,7 +716,7 @@ func (h *uiHarness) WaitForAgentReply(timeout time.Duration) {
 		if h.model.mode != uiModeCompose {
 			return false
 		}
-		return containsAgentReply(h.model.currentLines())
+		return containsAgentReply(h.model.currentBlocks())
 	}, timeout)
 }
 
@@ -1144,6 +1215,7 @@ func newUITestServer(t *testing.T) (*httptest.Server, *daemon.SessionManager, *d
 	stores := &daemon.Stores{
 		Workspaces:  workspaces,
 		Worktrees:   workspaces,
+		Groups:      workspaces,
 		AppState:    state,
 		Keymap:      keymap,
 		SessionMeta: meta,

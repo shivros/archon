@@ -80,12 +80,18 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *types.Wor
 		ID:       id,
 		Name:     strings.TrimSpace(req.Name),
 		RepoPath: providedRepoPath,
+		GroupIDs: nil,
 	}
 	if merged.Name == "" {
 		merged.Name = existing.Name
 	}
 	if merged.RepoPath == "" {
 		merged.RepoPath = existing.RepoPath
+	}
+	if req.GroupIDs != nil {
+		merged.GroupIDs = req.GroupIDs
+	} else {
+		merged.GroupIDs = existing.GroupIDs
 	}
 	if providedRepoPath != "" {
 		if err := validateWorkspacePath(merged.RepoPath); err != nil {

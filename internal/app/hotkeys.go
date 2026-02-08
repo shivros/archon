@@ -10,6 +10,8 @@ const (
 	HotkeyAddWorktree
 	HotkeyPickProvider
 	HotkeySearch
+	HotkeyContextMenu
+	HotkeyConfirm
 	HotkeyApproval
 )
 
@@ -27,8 +29,8 @@ type HotkeyResolver interface {
 func DefaultHotkeys() []Hotkey {
 	return []Hotkey{
 		{Key: "ctrl+b", Label: "sidebar", Context: HotkeyGlobal, Priority: 10},
+		{Key: "m", Label: "menu", Context: HotkeyGlobal, Priority: 11},
 		{Key: "q", Label: "quit", Context: HotkeyGlobal, Priority: 90},
-		{Key: "ctrl+c", Label: "quit", Context: HotkeyGlobal, Priority: 91},
 		{Key: "a", Label: "add workspace", Context: HotkeySidebar, Priority: 20},
 		{Key: "t", Label: "add worktree", Context: HotkeySidebar, Priority: 21},
 		{Key: "enter", Label: "chat", Context: HotkeySidebar, Priority: 22},
@@ -38,6 +40,12 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "d", Label: "dismiss", Context: HotkeySidebar, Priority: 31},
 		{Key: "ctrl+y", Label: "copy id", Context: HotkeySidebar, Priority: 32},
 		{Key: "i", Label: "interrupt", Context: HotkeySidebar, Priority: 33},
+		{Key: "esc", Label: "close", Context: HotkeyContextMenu, Priority: 5},
+		{Key: "enter", Label: "select", Context: HotkeyContextMenu, Priority: 6},
+		{Key: "j/k/↑/↓", Label: "move", Context: HotkeyContextMenu, Priority: 7},
+		{Key: "y/enter", Label: "confirm", Context: HotkeyConfirm, Priority: 5},
+		{Key: "n/esc", Label: "cancel", Context: HotkeyConfirm, Priority: 6},
+		{Key: "h/l/←/→", Label: "switch", Context: HotkeyConfirm, Priority: 7},
 		{Key: "y", Label: "approve", Context: HotkeyApproval, Priority: 5},
 		{Key: "x", Label: "decline", Context: HotkeyApproval, Priority: 6},
 		{Key: "j/k/↑/↓", Label: "move", Context: HotkeySidebar, Priority: 40},
@@ -49,6 +57,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "n/N", Label: "next/prev", Context: HotkeySidebar, Priority: 56},
 		{Key: "ctrl+f", Label: "page down", Context: HotkeySidebar, Priority: 57},
 		{Key: "pgup/pgdn", Label: "scroll", Context: HotkeySidebar, Priority: 60},
+		{Key: "e", Label: "toggle reasoning", Context: HotkeySidebar, Priority: 65},
 		{Key: "p", Label: "pause", Context: HotkeySidebar, Priority: 70},
 		{Key: "esc", Label: "cancel", Context: HotkeySearch, Priority: 10},
 		{Key: "enter", Label: "search", Context: HotkeySearch, Priority: 11},
@@ -63,6 +72,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "esc", Label: "cancel", Context: HotkeyChatInput, Priority: 10},
 		{Key: "enter", Label: "send", Context: HotkeyChatInput, Priority: 11},
 		{Key: "ctrl+y", Label: "copy id", Context: HotkeyChatInput, Priority: 12},
+		{Key: "ctrl+c", Label: "clear", Context: HotkeyChatInput, Priority: 13},
 	}
 }
 
@@ -71,6 +81,12 @@ type DefaultHotkeyResolver struct{}
 func (r DefaultHotkeyResolver) ActiveContexts(m *Model) []HotkeyContext {
 	if m == nil {
 		return []HotkeyContext{HotkeyGlobal}
+	}
+	if m.confirm != nil && m.confirm.IsOpen() {
+		return []HotkeyContext{HotkeyGlobal, HotkeyConfirm}
+	}
+	if m.contextMenu != nil && m.contextMenu.IsOpen() {
+		return []HotkeyContext{HotkeyGlobal, HotkeyContextMenu}
 	}
 	if m.mode == uiModeSearch {
 		return []HotkeyContext{HotkeySearch}
@@ -85,7 +101,7 @@ func (r DefaultHotkeyResolver) ActiveContexts(m *Model) []HotkeyContext {
 		contexts = append(contexts, HotkeyPickProvider)
 	case uiModeCompose:
 		if m.input != nil && m.input.IsChatFocused() {
-			contexts = append(contexts, HotkeyChatInput)
+			return []HotkeyContext{HotkeyChatInput}
 		} else {
 			contexts = append(contexts, HotkeySidebar)
 		}

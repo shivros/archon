@@ -1,6 +1,7 @@
 package app
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -68,6 +69,7 @@ func (c *ChatInput) Clear() {
 func (c *ChatInput) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	c.input, cmd = c.input.Update(msg)
+	c.sanitize()
 	return cmd
 }
 
@@ -117,6 +119,7 @@ func (c *ChatInput) Scroll(lines int) tea.Cmd {
 		}
 		c.input, cmd = c.input.Update(tea.KeyMsg{Type: key})
 	}
+	c.sanitize()
 	if !wasFocused {
 		c.input.Blur()
 	}
@@ -157,4 +160,37 @@ func wrappedLineCount(value string, width int) int {
 		count += (w-1)/width + 1
 	}
 	return max(1, count)
+}
+
+var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+func (c *ChatInput) sanitize() {
+	if c == nil {
+		return
+	}
+	value := c.input.Value()
+	if value == "" {
+		return
+	}
+	cleaned := sanitizeChatInput(value)
+	if cleaned != value {
+		c.input.SetValue(cleaned)
+	}
+}
+
+func sanitizeChatInput(value string) string {
+	value = ansiEscapeRE.ReplaceAllString(value, "")
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		if r == '\n' {
+			b.WriteRune(r)
+			continue
+		}
+		if r < 32 || r == 127 {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

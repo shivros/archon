@@ -15,6 +15,10 @@ type WorkspacesResponse struct {
 	Workspaces []*types.Workspace `json:"workspaces"`
 }
 
+type WorkspaceGroupsResponse struct {
+	Groups []*types.WorkspaceGroup `json:"groups"`
+}
+
 type WorktreesResponse struct {
 	Worktrees []*types.Worktree `json:"worktrees"`
 }

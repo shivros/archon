@@ -234,6 +234,7 @@ func newTestStores(t *testing.T) *Stores {
 	return &Stores{
 		Workspaces:  workspaces,
 		Worktrees:   workspaces,
+		Groups:      workspaces,
 		AppState:    state,
 		Keymap:      keymap,
 		SessionMeta: meta,

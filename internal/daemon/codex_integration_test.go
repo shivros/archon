@@ -470,6 +470,7 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 	stores := &Stores{
 		Workspaces:  workspaces,
 		Worktrees:   workspaces,
+		Groups:      workspaces,
 		AppState:    state,
 		Keymap:      keymap,
 		SessionMeta: meta,

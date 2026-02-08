@@ -17,6 +17,7 @@ import (
 
 var ErrWorkspaceNotFound = errors.New("workspace not found")
 var ErrWorktreeNotFound = errors.New("worktree not found")
+var ErrWorkspaceGroupNotFound = errors.New("workspace group not found")
 
 const workspaceSchemaVersion = 1
 
@@ -34,15 +35,24 @@ type WorktreeStore interface {
 	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
 }
 
+type WorkspaceGroupStore interface {
+	ListGroups(ctx context.Context) ([]*types.WorkspaceGroup, error)
+	GetGroup(ctx context.Context, id string) (*types.WorkspaceGroup, bool, error)
+	AddGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+	UpdateGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+	DeleteGroup(ctx context.Context, id string) error
+}
+
 type FileWorkspaceStore struct {
 	path string
 	mu   sync.Mutex
 }
 
 type workspaceFile struct {
-	Version    int                `json:"version"`
-	Workspaces []*types.Workspace `json:"workspaces"`
-	Worktrees  []*types.Worktree  `json:"worktrees"`
+	Version    int                     `json:"version"`
+	Workspaces []*types.Workspace      `json:"workspaces"`
+	Worktrees  []*types.Worktree       `json:"worktrees"`
+	Groups     []*types.WorkspaceGroup `json:"groups"`
 }
 
 func NewFileWorkspaceStore(path string) *FileWorkspaceStore {
@@ -213,6 +223,135 @@ func (s *FileWorkspaceStore) ListWorktrees(ctx context.Context, workspaceID stri
 	return out, nil
 }
 
+func (s *FileWorkspaceStore) ListGroups(ctx context.Context) ([]*types.WorkspaceGroup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil {
+		if errors.Is(err, ErrWorkspaceNotFound) {
+			return []*types.WorkspaceGroup{}, nil
+		}
+		return nil, err
+	}
+	out := make([]*types.WorkspaceGroup, 0, len(file.Groups))
+	for _, group := range file.Groups {
+		copy := *group
+		out = append(out, &copy)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *FileWorkspaceStore) GetGroup(ctx context.Context, id string) (*types.WorkspaceGroup, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil {
+		if errors.Is(err, ErrWorkspaceNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	for _, group := range file.Groups {
+		if group.ID == id {
+			copy := *group
+			return &copy, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (s *FileWorkspaceStore) AddGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil && !errors.Is(err, ErrWorkspaceNotFound) {
+		return nil, err
+	}
+	if file == nil {
+		file = newWorkspaceFile()
+	}
+	normalized, err := normalizeWorkspaceGroup(group)
+	if err != nil {
+		return nil, err
+	}
+	for _, existing := range file.Groups {
+		if existing.ID == normalized.ID {
+			return nil, errors.New("workspace group already exists")
+		}
+		if strings.EqualFold(existing.Name, normalized.Name) {
+			return nil, errors.New("workspace group name already exists")
+		}
+	}
+	file.Groups = append(file.Groups, normalized)
+	if err := s.save(file); err != nil {
+		return nil, err
+	}
+	copy := *normalized
+	return &copy, nil
+}
+
+func (s *FileWorkspaceStore) UpdateGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := normalizeWorkspaceGroup(group)
+	if err != nil {
+		return nil, err
+	}
+	updated := false
+	for i, existing := range file.Groups {
+		if existing.ID == normalized.ID {
+			normalized.CreatedAt = existing.CreatedAt
+			normalized.UpdatedAt = time.Now().UTC()
+			file.Groups[i] = normalized
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		return nil, ErrWorkspaceGroupNotFound
+	}
+	if err := s.save(file); err != nil {
+		return nil, err
+	}
+	copy := *normalized
+	return &copy, nil
+}
+
+func (s *FileWorkspaceStore) DeleteGroup(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil {
+		return err
+	}
+	filtered := file.Groups[:0]
+	found := false
+	for _, group := range file.Groups {
+		if group.ID == id {
+			found = true
+			continue
+		}
+		filtered = append(filtered, group)
+	}
+	file.Groups = filtered
+	if !found {
+		return ErrWorkspaceGroupNotFound
+	}
+	return s.save(file)
+}
+
 func (s *FileWorkspaceStore) AddWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -297,6 +436,7 @@ func newWorkspaceFile() *workspaceFile {
 		Version:    workspaceSchemaVersion,
 		Workspaces: []*types.Workspace{},
 		Worktrees:  []*types.Worktree{},
+		Groups:     []*types.WorkspaceGroup{},
 	}
 }
 
@@ -319,6 +459,7 @@ func normalizeWorkspace(workspace *types.Workspace) (*types.Workspace, error) {
 		ID:        workspace.ID,
 		Name:      name,
 		RepoPath:  path,
+		GroupIDs:  normalizeGroupIDs(workspace.GroupIDs),
 		CreatedAt: workspace.CreatedAt,
 		UpdatedAt: workspace.UpdatedAt,
 	}
@@ -336,6 +477,60 @@ func normalizeWorkspace(workspace *types.Workspace) (*types.Workspace, error) {
 		ws.UpdatedAt = ws.CreatedAt
 	}
 	return ws, nil
+}
+
+func normalizeGroupIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" || trimmed == "ungrouped" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeWorkspaceGroup(group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	if group == nil {
+		return nil, errors.New("workspace group is required")
+	}
+	name := strings.TrimSpace(group.Name)
+	if name == "" {
+		return nil, errors.New("workspace group name is required")
+	}
+	out := &types.WorkspaceGroup{
+		ID:        group.ID,
+		Name:      name,
+		CreatedAt: group.CreatedAt,
+		UpdatedAt: group.UpdatedAt,
+	}
+	if out.ID == "" {
+		id, err := newID()
+		if err != nil {
+			return nil, err
+		}
+		out.ID = id
+	}
+	if out.CreatedAt.IsZero() {
+		out.CreatedAt = time.Now().UTC()
+	}
+	if out.UpdatedAt.IsZero() {
+		out.UpdatedAt = out.CreatedAt
+	}
+	return out, nil
 }
 
 func normalizeWorktree(workspaceID string, worktree *types.Worktree) (*types.Worktree, error) {

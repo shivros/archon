@@ -175,6 +175,7 @@ func runDaemon(background bool) error {
 	stores := &daemon.Stores{
 		Workspaces:  workspaceStore,
 		Worktrees:   workspaceStore,
+		Groups:      workspaceStore,
 		AppState:    appStateStore,
 		Keymap:      keymapStore,
 		SessionMeta: sessionMetaStore,

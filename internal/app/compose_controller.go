@@ -44,6 +44,11 @@ func (c *ComposeController) Exit() {
 	c.input.Blur()
 }
 
+func (c *ComposeController) SetSession(sessionID, sessionTag string) {
+	c.sessionID = sessionID
+	c.sessionTag = sessionTag
+}
+
 func (c *ComposeController) Update(msg tea.Msg, host composeHost) (bool, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {

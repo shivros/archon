@@ -10,10 +10,17 @@ import (
 type WorkspaceAPI interface {
 	ListWorkspaces(ctx context.Context) ([]*types.Workspace, error)
 	CreateWorkspace(ctx context.Context, workspace *types.Workspace) (*types.Workspace, error)
+	UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error)
+	DeleteWorkspace(ctx context.Context, id string) error
+	ListWorkspaceGroups(ctx context.Context) ([]*types.WorkspaceGroup, error)
+	CreateWorkspaceGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+	UpdateWorkspaceGroup(ctx context.Context, id string, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+	DeleteWorkspaceGroup(ctx context.Context, id string) error
 	ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error)
 	ListAvailableWorktrees(ctx context.Context, workspaceID string) ([]*types.GitWorktree, error)
 	AddWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
 	CreateWorktree(ctx context.Context, workspaceID string, req client.CreateWorktreeRequest) (*types.Worktree, error)
+	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
 }
 
 type SessionAPI interface {
@@ -53,6 +60,30 @@ func (a *ClientAPI) CreateWorkspace(ctx context.Context, workspace *types.Worksp
 	return a.client.CreateWorkspace(ctx, workspace)
 }
 
+func (a *ClientAPI) UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error) {
+	return a.client.UpdateWorkspace(ctx, id, workspace)
+}
+
+func (a *ClientAPI) DeleteWorkspace(ctx context.Context, id string) error {
+	return a.client.DeleteWorkspace(ctx, id)
+}
+
+func (a *ClientAPI) ListWorkspaceGroups(ctx context.Context) ([]*types.WorkspaceGroup, error) {
+	return a.client.ListWorkspaceGroups(ctx)
+}
+
+func (a *ClientAPI) CreateWorkspaceGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	return a.client.CreateWorkspaceGroup(ctx, group)
+}
+
+func (a *ClientAPI) UpdateWorkspaceGroup(ctx context.Context, id string, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	return a.client.UpdateWorkspaceGroup(ctx, id, group)
+}
+
+func (a *ClientAPI) DeleteWorkspaceGroup(ctx context.Context, id string) error {
+	return a.client.DeleteWorkspaceGroup(ctx, id)
+}
+
 func (a *ClientAPI) ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error) {
 	return a.client.ListWorktrees(ctx, workspaceID)
 }
@@ -67,6 +98,10 @@ func (a *ClientAPI) AddWorktree(ctx context.Context, workspaceID string, worktre
 
 func (a *ClientAPI) CreateWorktree(ctx context.Context, workspaceID string, req client.CreateWorktreeRequest) (*types.Worktree, error) {
 	return a.client.CreateWorktree(ctx, workspaceID, req)
+}
+
+func (a *ClientAPI) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {
+	return a.client.DeleteWorktree(ctx, workspaceID, worktreeID)
 }
 
 func (a *ClientAPI) ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {

@@ -24,6 +24,7 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 
 	ws, err := store.Add(ctx, &types.Workspace{
 		RepoPath: repoDir,
+		GroupIDs: []string{"group-1", " group-1 ", "ungrouped", ""},
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -36,6 +37,9 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 	}
 	if ws.RepoPath != repoDir {
 		t.Fatalf("expected repo path %q, got %q", repoDir, ws.RepoPath)
+	}
+	if len(ws.GroupIDs) != 1 || ws.GroupIDs[0] != "group-1" {
+		t.Fatalf("expected normalized group ids")
 	}
 
 	list, err := store.List(ctx)
@@ -155,6 +159,47 @@ func TestWorktreeRequiresWorkspace(t *testing.T) {
 	_, err := store.AddWorktree(ctx, "missing", &types.Worktree{Path: "/tmp"})
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestWorkspaceGroupStoreCRUD(t *testing.T) {
+	ctx := context.Background()
+	store := NewFileWorkspaceStore(filepath.Join(t.TempDir(), "workspaces.json"))
+
+	group, err := store.AddGroup(ctx, &types.WorkspaceGroup{Name: "Work"})
+	if err != nil {
+		t.Fatalf("add group: %v", err)
+	}
+	if group.ID == "" {
+		t.Fatalf("expected group id")
+	}
+
+	list, err := store.ListGroups(ctx)
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(list))
+	}
+
+	group.Name = "Personal"
+	updated, err := store.UpdateGroup(ctx, group)
+	if err != nil {
+		t.Fatalf("update group: %v", err)
+	}
+	if updated.Name != "Personal" {
+		t.Fatalf("expected updated name")
+	}
+
+	if err := store.DeleteGroup(ctx, group.ID); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+	list, err = store.ListGroups(ctx)
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected empty list")
 	}
 }
 

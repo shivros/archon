@@ -24,6 +24,7 @@ type Daemon struct {
 type Stores struct {
 	Workspaces  WorkspaceStore
 	Worktrees   WorktreeStore
+	Groups      WorkspaceGroupStore
 	AppState    AppStateStore
 	Keymap      KeymapStore
 	SessionMeta SessionMetaStore
@@ -43,6 +44,14 @@ type WorktreeStore interface {
 	ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error)
 	AddWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
 	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
+}
+
+type WorkspaceGroupStore interface {
+	ListGroups(ctx context.Context) ([]*types.WorkspaceGroup, error)
+	GetGroup(ctx context.Context, id string) (*types.WorkspaceGroup, bool, error)
+	AddGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+	UpdateGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+	DeleteGroup(ctx context.Context, id string) error
 }
 
 type AppStateStore interface {

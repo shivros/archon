@@ -86,6 +86,48 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]*types.Workspace, error)
 	return resp.Workspaces, nil
 }
 
+func (c *Client) ListWorkspaceGroups(ctx context.Context) ([]*types.WorkspaceGroup, error) {
+	var resp WorkspaceGroupsResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/workspace-groups", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Groups, nil
+}
+
+func (c *Client) CreateWorkspaceGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	if group == nil {
+		return nil, errors.New("workspace group is required")
+	}
+	var resp types.WorkspaceGroup
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/workspace-groups", group, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateWorkspaceGroup(ctx context.Context, id string, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("workspace group id is required")
+	}
+	if group == nil {
+		return nil, errors.New("workspace group is required")
+	}
+	var resp types.WorkspaceGroup
+	path := fmt.Sprintf("/v1/workspace-groups/%s", id)
+	if err := c.doJSON(ctx, http.MethodPatch, path, group, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteWorkspaceGroup(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("workspace group id is required")
+	}
+	path := fmt.Sprintf("/v1/workspace-groups/%s", id)
+	return c.doJSON(ctx, http.MethodDelete, path, nil, true, nil)
+}
+
 func (c *Client) ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error) {
 	var resp WorktreesResponse
 	path := fmt.Sprintf("/v1/workspaces/%s/worktrees", workspaceID)
@@ -125,6 +167,17 @@ func (c *Client) CreateWorktree(ctx context.Context, workspaceID string, req Cre
 	return &resp, nil
 }
 
+func (c *Client) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {
+	if strings.TrimSpace(workspaceID) == "" {
+		return errors.New("workspace id is required")
+	}
+	if strings.TrimSpace(worktreeID) == "" {
+		return errors.New("worktree id is required")
+	}
+	path := fmt.Sprintf("/v1/workspaces/%s/worktrees/%s", workspaceID, worktreeID)
+	return c.doJSON(ctx, http.MethodDelete, path, nil, true, nil)
+}
+
 func (c *Client) CreateWorkspace(ctx context.Context, workspace *types.Workspace) (*types.Workspace, error) {
 	if workspace == nil {
 		return nil, errors.New("workspace is required")
@@ -134,6 +187,29 @@ func (c *Client) CreateWorkspace(ctx context.Context, workspace *types.Workspace
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (c *Client) UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("workspace id is required")
+	}
+	if workspace == nil {
+		return nil, errors.New("workspace is required")
+	}
+	var resp types.Workspace
+	path := fmt.Sprintf("/v1/workspaces/%s", id)
+	if err := c.doJSON(ctx, http.MethodPatch, path, workspace, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteWorkspace(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("workspace id is required")
+	}
+	path := fmt.Sprintf("/v1/workspaces/%s", id)
+	return c.doJSON(ctx, http.MethodDelete, path, nil, true, nil)
 }
 
 func (c *Client) GetAppState(ctx context.Context) (*types.AppState, error) {

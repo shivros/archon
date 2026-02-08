@@ -5,12 +5,12 @@ import (
 	"strings"
 )
 
-func itemsToLines(items []map[string]any) []string {
+func itemsToBlocks(items []map[string]any) []ChatBlock {
 	transcript := NewChatTranscript(0)
 	for _, item := range items {
 		transcript.AppendItem(item)
 	}
-	return transcript.Lines()
+	return transcript.Blocks()
 }
 
 func extractContentText(raw any) string {

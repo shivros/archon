@@ -46,12 +46,12 @@ func (c *ItemStreamController) SetStream(ch <-chan map[string]any, cancel func()
 	c.cancel = cancel
 }
 
-func (c *ItemStreamController) SetSnapshot(lines []string) {
+func (c *ItemStreamController) SetSnapshotBlocks(blocks []ChatBlock) {
 	if c == nil {
 		return
 	}
 	if c.transcript != nil {
-		c.transcript.SetLines(lines)
+		c.transcript.SetBlocks(blocks)
 	}
 }
 
@@ -62,11 +62,11 @@ func (c *ItemStreamController) AppendUserMessage(text string) int {
 	return c.transcript.AppendUserMessage(text)
 }
 
-func (c *ItemStreamController) Lines() []string {
+func (c *ItemStreamController) Blocks() []ChatBlock {
 	if c == nil || c.transcript == nil {
 		return nil
 	}
-	return c.transcript.Lines()
+	return c.transcript.Blocks()
 }
 
 func (c *ItemStreamController) MarkUserMessageFailed(headerIndex int) bool {
@@ -90,9 +90,9 @@ func (c *ItemStreamController) MarkUserMessageSent(headerIndex int) bool {
 	return c.transcript.MarkUserMessageSent(headerIndex)
 }
 
-func (c *ItemStreamController) ConsumeTick() (lines []string, changed bool, closed bool) {
+func (c *ItemStreamController) ConsumeTick() (changed bool, closed bool) {
 	if c == nil || c.items == nil {
-		return nil, false, false
+		return false, false
 	}
 	for i := 0; i < c.maxEventsPerTick; i++ {
 		select {
@@ -101,15 +101,15 @@ func (c *ItemStreamController) ConsumeTick() (lines []string, changed bool, clos
 				c.items = nil
 				c.cancel = nil
 				closed = true
-				return c.Lines(), changed, closed
+				return changed, closed
 			}
 			if c.transcript != nil {
 				c.transcript.AppendItem(item)
 				changed = true
 			}
 		default:
-			return c.Lines(), changed, closed
+			return changed, closed
 		}
 	}
-	return c.Lines(), changed, closed
+	return changed, closed
 }

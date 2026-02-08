@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
+	"strings"
 	"time"
 
 	"control/internal/client"
@@ -26,6 +28,15 @@ func fetchWorkspacesCmd(api WorkspaceAPI) tea.Cmd {
 		defer cancel()
 		workspaces, err := api.ListWorkspaces(ctx)
 		return workspacesMsg{workspaces: workspaces, err: err}
+	}
+}
+
+func fetchWorkspaceGroupsCmd(api WorkspaceAPI) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		groups, err := api.ListWorkspaceGroups(ctx)
+		return workspaceGroupsMsg{groups: groups, err: err}
 	}
 }
 
@@ -73,6 +84,120 @@ func createWorkspaceCmd(api WorkspaceAPI, path, name string) tea.Cmd {
 	}
 }
 
+func createWorkspaceGroupCmd(api WorkspaceAPI, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		group, err := api.CreateWorkspaceGroup(ctx, &types.WorkspaceGroup{Name: name})
+		return createWorkspaceGroupMsg{group: group, err: err}
+	}
+}
+
+func updateWorkspaceGroupCmd(api WorkspaceAPI, id, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		group, err := api.UpdateWorkspaceGroup(ctx, id, &types.WorkspaceGroup{Name: name})
+		return updateWorkspaceGroupMsg{group: group, err: err}
+	}
+}
+
+func deleteWorkspaceGroupCmd(api WorkspaceAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		err := api.DeleteWorkspaceGroup(ctx, id)
+		return deleteWorkspaceGroupMsg{id: id, err: err}
+	}
+}
+
+func updateWorkspaceCmd(api WorkspaceAPI, id, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		workspace, err := api.UpdateWorkspace(ctx, id, &types.Workspace{Name: name})
+		return updateWorkspaceMsg{workspace: workspace, err: err}
+	}
+}
+
+func updateWorkspaceGroupsCmd(api WorkspaceAPI, id string, groupIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		workspace, err := api.UpdateWorkspace(ctx, id, &types.Workspace{GroupIDs: groupIDs})
+		return updateWorkspaceMsg{workspace: workspace, err: err}
+	}
+}
+
+func assignGroupWorkspacesCmd(api WorkspaceAPI, groupID string, workspaceIDs []string, workspaces []*types.Workspace) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		if strings.TrimSpace(groupID) == "" {
+			return assignGroupWorkspacesMsg{groupID: groupID, err: errors.New("group id is required")}
+		}
+		selected := map[string]bool{}
+		for _, id := range workspaceIDs {
+			selected[strings.TrimSpace(id)] = true
+		}
+		updated := 0
+		for _, ws := range workspaces {
+			if ws == nil {
+				continue
+			}
+			next := applyGroupAssignment(ws.GroupIDs, groupID, selected[ws.ID])
+			if slicesEqual(ws.GroupIDs, next) {
+				continue
+			}
+			if _, err := api.UpdateWorkspace(ctx, ws.ID, &types.Workspace{GroupIDs: next}); err != nil {
+				return assignGroupWorkspacesMsg{groupID: groupID, err: err, updated: updated}
+			}
+			updated++
+		}
+		return assignGroupWorkspacesMsg{groupID: groupID, updated: updated}
+	}
+}
+
+func applyGroupAssignment(current []string, groupID string, selected bool) []string {
+	out := make([]string, 0, len(current)+1)
+	found := false
+	for _, id := range current {
+		if id == groupID {
+			found = true
+			if selected {
+				out = append(out, id)
+			}
+			continue
+		}
+		out = append(out, id)
+	}
+	if selected && !found {
+		out = append(out, groupID)
+	}
+	return out
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func deleteWorkspaceCmd(api WorkspaceAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		err := api.DeleteWorkspace(ctx, id)
+		return deleteWorkspaceMsg{id: id, err: err}
+	}
+}
+
 func createWorktreeCmd(api WorkspaceAPI, workspaceID string, req client.CreateWorktreeRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -88,6 +213,15 @@ func addWorktreeCmd(api WorkspaceAPI, workspaceID string, worktree *types.Worktr
 		defer cancel()
 		created, err := api.AddWorktree(ctx, workspaceID, worktree)
 		return addWorktreeMsg{workspaceID: workspaceID, worktree: created, err: err}
+	}
+}
+
+func deleteWorktreeCmd(api WorkspaceAPI, workspaceID, worktreeID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		err := api.DeleteWorktree(ctx, workspaceID, worktreeID)
+		return worktreeDeletedMsg{workspaceID: workspaceID, worktreeID: worktreeID, err: err}
 	}
 }
 

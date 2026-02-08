@@ -3,20 +3,21 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"strings"
 )
 
 type ChatTranscript struct {
-	lines             []string
-	maxLines          int
-	activeAgentLine   int
+	blocks            []ChatBlock
+	maxBlocks         int
+	activeAgentIndex  int
 	pendingAgentBlock bool
 }
 
 func NewChatTranscript(maxLines int) *ChatTranscript {
 	return &ChatTranscript{
-		maxLines:        maxLines,
-		activeAgentLine: -1,
+		maxBlocks:        maxLines,
+		activeAgentIndex: -1,
 	}
 }
 
@@ -24,34 +25,42 @@ func (t *ChatTranscript) Reset() {
 	if t == nil {
 		return
 	}
-	t.lines = nil
-	t.activeAgentLine = -1
+	t.blocks = nil
+	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
 }
 
-func (t *ChatTranscript) SetLines(lines []string) {
+func (t *ChatTranscript) SetBlocks(blocks []ChatBlock) {
 	if t == nil {
 		return
 	}
-	t.lines = trimLines(lines, t.maxLines)
-	t.activeAgentLine = -1
+	if len(blocks) == 0 {
+		t.blocks = nil
+	} else {
+		t.blocks = append([]ChatBlock(nil), blocks...)
+	}
+	t.trim()
+	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
 }
 
-func (t *ChatTranscript) Lines() []string {
+func (t *ChatTranscript) Blocks() []ChatBlock {
 	if t == nil {
 		return nil
 	}
-	return t.lines
+	return t.blocks
 }
 
 func (t *ChatTranscript) AppendUserMessage(text string) int {
 	if t == nil || strings.TrimSpace(text) == "" {
 		return -1
 	}
-	headerIndex := len(t.lines)
-	t.lines = append(t.lines, "### User", "")
-	t.lines = append(t.lines, text, "")
+	headerIndex := len(t.blocks)
+	t.blocks = append(t.blocks, ChatBlock{
+		Role:   ChatRoleUser,
+		Text:   text,
+		Status: ChatStatusNone,
+	})
 	t.trim()
 	return headerIndex
 }
@@ -60,9 +69,12 @@ func (t *ChatTranscript) StartAgentBlock() {
 	if t == nil {
 		return
 	}
-	t.lines = append(t.lines, "### Agent", "")
-	t.lines = append(t.lines, "")
-	t.activeAgentLine = len(t.lines) - 1
+	t.blocks = append(t.blocks, ChatBlock{
+		Role:   ChatRoleAgent,
+		Text:   "",
+		Status: ChatStatusNone,
+	})
+	t.activeAgentIndex = len(t.blocks) - 1
 	t.pendingAgentBlock = true
 	t.trim()
 }
@@ -71,23 +83,15 @@ func (t *ChatTranscript) AppendAgentDelta(delta string) {
 	if t == nil {
 		return
 	}
-	if t.activeAgentLine < 0 || t.activeAgentLine >= len(t.lines) {
+	if t.activeAgentIndex < 0 || t.activeAgentIndex >= len(t.blocks) {
 		if !t.pendingAgentBlock {
 			t.StartAgentBlock()
 		}
 	}
-	if t.activeAgentLine < 0 || t.activeAgentLine >= len(t.lines) {
+	if t.activeAgentIndex < 0 || t.activeAgentIndex >= len(t.blocks) {
 		return
 	}
-	parts := strings.Split(delta, "\n")
-	if len(parts) == 0 {
-		return
-	}
-	t.lines[t.activeAgentLine] += parts[0]
-	for _, part := range parts[1:] {
-		t.lines = append(t.lines, part)
-		t.activeAgentLine = len(t.lines) - 1
-	}
+	t.blocks[t.activeAgentIndex].Text += delta
 	t.trim()
 }
 
@@ -95,7 +99,7 @@ func (t *ChatTranscript) FinishAgentBlock() {
 	if t == nil {
 		return
 	}
-	t.activeAgentLine = -1
+	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
 	t.trim()
 }
@@ -104,13 +108,13 @@ func (t *ChatTranscript) MarkUserMessageFailed(headerIndex int) bool {
 	if t == nil {
 		return false
 	}
-	if headerIndex < 0 || headerIndex >= len(t.lines) {
+	if headerIndex < 0 || headerIndex >= len(t.blocks) {
 		return false
 	}
-	if !strings.HasPrefix(t.lines[headerIndex], "### User") {
+	if t.blocks[headerIndex].Role != ChatRoleUser {
 		return false
 	}
-	t.lines[headerIndex] = "### User (failed)"
+	t.blocks[headerIndex].Status = ChatStatusFailed
 	return true
 }
 
@@ -118,13 +122,13 @@ func (t *ChatTranscript) MarkUserMessageSending(headerIndex int) bool {
 	if t == nil {
 		return false
 	}
-	if headerIndex < 0 || headerIndex >= len(t.lines) {
+	if headerIndex < 0 || headerIndex >= len(t.blocks) {
 		return false
 	}
-	if !strings.HasPrefix(t.lines[headerIndex], "### User") {
+	if t.blocks[headerIndex].Role != ChatRoleUser {
 		return false
 	}
-	t.lines[headerIndex] = "### User (sending…)"
+	t.blocks[headerIndex].Status = ChatStatusSending
 	return true
 }
 
@@ -132,13 +136,13 @@ func (t *ChatTranscript) MarkUserMessageSent(headerIndex int) bool {
 	if t == nil {
 		return false
 	}
-	if headerIndex < 0 || headerIndex >= len(t.lines) {
+	if headerIndex < 0 || headerIndex >= len(t.blocks) {
 		return false
 	}
-	if !strings.HasPrefix(t.lines[headerIndex], "### User") {
+	if t.blocks[headerIndex].Role != ChatRoleUser {
 		return false
 	}
-	t.lines[headerIndex] = "### User"
+	t.blocks[headerIndex].Status = ChatStatusNone
 	return true
 }
 
@@ -150,7 +154,7 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 	switch typ {
 	case "log":
 		if text := asString(item["text"]); text != "" {
-			t.appendLines(escapeMarkdown(text))
+			t.appendBlock(ChatRoleSystem, text)
 		}
 	case "agentMessageDelta":
 		if delta := asString(item["delta"]); delta != "" {
@@ -168,119 +172,120 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		}
 	case "agentMessage":
 		if text := asString(item["text"]); text != "" {
-			t.appendLines("### Agent", "", text, "")
+			t.appendBlock(ChatRoleAgent, text)
 			return
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendLines("### Agent", "", text, "")
+			t.appendBlock(ChatRoleAgent, text)
 		}
 	case "assistant":
 		if msg, ok := item["message"].(map[string]any); ok {
 			if text := extractContentText(msg["content"]); text != "" {
-				t.appendLines("### Agent", "", text, "")
+				t.appendBlock(ChatRoleAgent, text)
 				return
 			}
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendLines("### Agent", "", text, "")
+			t.appendBlock(ChatRoleAgent, text)
 		}
 	case "result":
 		if text := asString(item["result"]); text != "" {
-			t.appendLines("### Agent", "", text, "")
+			t.appendBlock(ChatRoleAgent, text)
 			return
 		}
 		if result, ok := item["result"].(map[string]any); ok {
 			if text := asString(result["result"]); text != "" {
-				t.appendLines("### Agent", "", text, "")
+				t.appendBlock(ChatRoleAgent, text)
 				return
 			}
 		}
 	case "commandExecution":
 		cmd := extractCommand(item["command"])
 		status := asString(item["status"])
-		lines := []string{"### Command"}
+		lines := []string{"Command"}
 		if cmd != "" {
-			lines = append(lines, "", escapeMarkdown(cmd))
+			lines = append(lines, "", cmd)
 		}
 		if status != "" {
-			lines = append(lines, "", "Status: "+escapeMarkdown(status))
+			lines = append(lines, "", "Status: "+status)
 		}
-		lines = append(lines, "")
-		t.appendLines(lines...)
+		t.appendBlock(ChatRoleSystem, strings.Join(lines, "\n"))
 	case "fileChange":
 		paths := extractChangePaths(item["changes"])
 		if len(paths) > 0 {
-			t.appendLines("### File change", "", escapeMarkdown(strings.Join(paths, ", ")), "")
+			t.appendBlock(ChatRoleSystem, "File change\n\n"+strings.Join(paths, ", "))
 		}
 	case "enteredReviewMode":
 		if text := asString(item["review"]); text != "" {
-			t.appendLines("### Review started", "", text, "")
+			t.appendBlock(ChatRoleSystem, "Review started\n\n"+text)
 		}
 	case "exitedReviewMode":
 		if text := asString(item["review"]); text != "" {
-			t.appendLines("### Review completed", "", text, "")
+			t.appendBlock(ChatRoleSystem, "Review completed\n\n"+text)
 		}
 	case "reasoning":
 		summary := extractStringList(item["summary"])
 		if len(summary) > 0 {
-			lines := []string{"> ### Reasoning (summary)", ">"}
+			lines := []string{"Reasoning (summary)", ""}
 			for _, entry := range summary {
 				for _, line := range strings.Split(entry, "\n") {
 					line = strings.TrimSpace(line)
 					if line == "" {
 						continue
 					}
-					lines = append(lines, "> - "+escapeMarkdown(line))
+					lines = append(lines, "- "+line)
 				}
 			}
-			lines = append(lines, ">")
-			t.appendLines(lines...)
+			t.appendBlock(ChatRoleReasoning, strings.Join(lines, "\n"))
 			return
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			lines := []string{"> ### Reasoning", ">"}
-			for _, line := range strings.Split(text, "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					lines = append(lines, ">")
-					continue
-				}
-				lines = append(lines, "> "+escapeMarkdown(line))
-			}
-			lines = append(lines, ">")
-			t.appendLines(lines...)
+			t.appendBlock(ChatRoleReasoning, "Reasoning\n\n"+text)
 		}
 	default:
 		if typ != "" {
 			if data, err := json.Marshal(item); err == nil {
-				t.appendLines(escapeMarkdown(fmt.Sprintf("%s: %s", typ, string(data))))
+				t.appendBlock(ChatRoleSystem, fmt.Sprintf("%s: %s", typ, string(data)))
 				return
 			}
 		}
 		if data, err := json.Marshal(item); err == nil {
-			t.appendLines(escapeMarkdown(string(data)))
+			t.appendBlock(ChatRoleSystem, string(data))
 		}
 	}
 }
 
-func (t *ChatTranscript) appendLines(lines ...string) {
-	if t == nil || len(lines) == 0 {
+func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
+	if t == nil || strings.TrimSpace(text) == "" {
 		return
 	}
-	t.lines = append(t.lines, lines...)
+	block := ChatBlock{
+		ID:        makeChatBlockID(role, len(t.blocks), text),
+		Role:      role,
+		Text:      text,
+		Status:    ChatStatusNone,
+		Collapsed: role == ChatRoleReasoning,
+	}
+	t.blocks = append(t.blocks, block)
 	t.trim()
 }
 
+func makeChatBlockID(role ChatRole, index int, text string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(text))
+	return fmt.Sprintf("%s-%d-%x", role, index, h.Sum64())
+}
+
 func (t *ChatTranscript) trim() {
-	if t.maxLines <= 0 || len(t.lines) <= t.maxLines {
+	if t.maxBlocks <= 0 || len(t.blocks) <= t.maxBlocks {
 		return
 	}
-	drop := len(t.lines) - t.maxLines
-	t.lines = t.lines[drop:]
-	if t.activeAgentLine >= 0 {
-		t.activeAgentLine -= drop
-		if t.activeAgentLine < 0 {
-			t.activeAgentLine = len(t.lines) - 1
+	drop := len(t.blocks) - t.maxBlocks
+	t.blocks = t.blocks[drop:]
+	if t.activeAgentIndex >= 0 {
+		t.activeAgentIndex -= drop
+		if t.activeAgentIndex < 0 {
+			t.activeAgentIndex = len(t.blocks) - 1
 		}
 	}
 }
