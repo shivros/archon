@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,21 +20,23 @@ import (
 )
 
 const (
-	defaultTailLines       = 200
-	maxViewportLines       = 2000
-	maxEventsPerTick       = 64
-	tickInterval           = 100 * time.Millisecond
-	selectionDebounce      = 500 * time.Millisecond
-	sidebarWheelCooldown   = 30 * time.Millisecond
-	sidebarWheelSettle     = 120 * time.Millisecond
-	historyPollDelay       = 500 * time.Millisecond
-	historyPollMax         = 20
-	viewportScrollbarWidth = 1
-	minListWidth           = 24
-	maxListWidth           = 40
-	minViewportWidth       = 20
-	minContentHeight       = 6
-	statusLinePadding      = 1
+	defaultTailLines          = 200
+	maxViewportLines          = 2000
+	maxEventsPerTick          = 64
+	tickInterval              = 100 * time.Millisecond
+	selectionDebounce         = 500 * time.Millisecond
+	sidebarWheelCooldown      = 30 * time.Millisecond
+	sidebarWheelSettle        = 120 * time.Millisecond
+	historyPollDelay          = 500 * time.Millisecond
+	historyPollMax            = 20
+	composeHistoryMaxEntries  = 200
+	composeHistoryMaxSessions = 200
+	viewportScrollbarWidth    = 1
+	minListWidth              = 24
+	maxListWidth              = 40
+	minViewportWidth          = 20
+	minContentHeight          = 6
+	statusLinePadding         = 1
 )
 
 type uiMode int
@@ -133,6 +136,7 @@ type Model struct {
 	selectSeq           int
 	sendSeq             int
 	pendingSends        map[int]pendingSend
+	composeHistory      map[string]*composeHistoryState
 	tickFn              func() tea.Cmd
 	pendingConfirm      confirmAction
 	scrollOnLoad        bool
@@ -149,6 +153,12 @@ type pendingSend struct {
 	sessionID  string
 	headerLine int
 	provider   string
+}
+
+type composeHistoryState struct {
+	entries []string
+	cursor  int
+	draft   string
 }
 
 type confirmActionKind int
@@ -221,6 +231,7 @@ func NewModel(client *client.Client) Model {
 		loader:            loader,
 		hotkeys:           hotkeyRenderer,
 		pendingSends:      map[int]pendingSend{},
+		composeHistory:    map[string]*composeHistoryState{},
 		menu:              NewMenuController(),
 		contextMenu:       NewContextMenuController(),
 		confirm:           NewConfirmController(),
@@ -977,6 +988,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.exitCompose("compose canceled")
 				return m, nil
+			case "up":
+				if m.chatInput != nil {
+					if value, ok := m.composeHistoryNavigate(-1, m.chatInput.Value()); ok {
+						m.chatInput.SetValue(value)
+						return m, nil
+					}
+				}
+				return m, nil
+			case "down":
+				if m.chatInput != nil {
+					if value, ok := m.composeHistoryNavigate(1, m.chatInput.Value()); ok {
+						m.chatInput.SetValue(value)
+						return m, nil
+					}
+				}
+				return m, nil
 			case "enter":
 				if m.chatInput != nil {
 					text := strings.TrimSpace(m.chatInput.Value())
@@ -999,6 +1026,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.status = "select a session to chat"
 						return m, nil
 					}
+					m.recordComposeHistory(sessionID, text)
+					saveHistoryCmd := m.saveAppStateCmd()
 					provider := m.providerForSessionID(sessionID)
 					token := m.nextSendToken()
 					m.registerPendingSend(token, sessionID, provider)
@@ -1021,13 +1050,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						if key != "" {
 							cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
 						}
+						if saveHistoryCmd != nil {
+							cmds = append(cmds, saveHistoryCmd)
+						}
 						return m, tea.Batch(cmds...)
 					}
 					if provider == "codex" {
 						if m.codexStream == nil || !m.codexStream.HasStream() {
+							if saveHistoryCmd != nil {
+								return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send, saveHistoryCmd)
+							}
 							return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send)
 						}
+						if saveHistoryCmd != nil {
+							return m, tea.Batch(send, saveHistoryCmd)
+						}
 						return m, send
+					}
+					if saveHistoryCmd != nil {
+						return m, tea.Batch(send, saveHistoryCmd)
 					}
 					return m, send
 				}
@@ -1052,6 +1093,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.chatInput != nil {
+				m.resetComposeHistoryCursor()
 				cmd := m.chatInput.Update(msg)
 				return m, cmd
 			}
@@ -1849,6 +1891,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	}
 	if m.mode == uiModeCompose && m.compose != nil && item.session != nil {
 		m.compose.SetSession(item.session.ID, sessionTitle(item.session, item.meta))
+		m.resetComposeHistoryCursor()
 	}
 	stateChanged := false
 	if wsID := item.workspaceID(); wsID != "" && wsID != unassignedWorkspaceID && wsID != m.appState.ActiveWorkspaceID {
@@ -3472,6 +3515,7 @@ func (m *Model) applyAppState(state *types.AppState) {
 		return
 	}
 	m.appState = *state
+	m.composeHistory = importComposeHistory(state.ComposeHistory)
 	m.hasAppState = true
 	if m.menu != nil {
 		if state.ActiveWorkspaceGroupIDs == nil {
@@ -3494,6 +3538,7 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 	if m.stateAPI == nil || !m.hasAppState {
 		return nil
 	}
+	m.syncAppStateComposeHistory()
 	state := m.appState
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -3777,6 +3822,7 @@ func (m *Model) enterCompose(sessionID string) {
 	if m.compose != nil {
 		m.compose.Enter(sessionID, label)
 	}
+	m.resetComposeHistoryCursor()
 	if m.chatInput != nil {
 		m.chatInput.SetPlaceholder("message")
 		m.chatInput.Focus()
@@ -4188,6 +4234,197 @@ func (m *Model) composeSessionID() string {
 		return ""
 	}
 	return m.compose.sessionID
+}
+
+func (m *Model) composeHistorySessionID() string {
+	id := m.composeSessionID()
+	if strings.TrimSpace(id) != "" {
+		return id
+	}
+	return m.selectedSessionID()
+}
+
+func (m *Model) historyStateFor(sessionID string) *composeHistoryState {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	if m.composeHistory == nil {
+		m.composeHistory = map[string]*composeHistoryState{}
+	}
+	state, ok := m.composeHistory[sessionID]
+	if !ok || state == nil {
+		state = &composeHistoryState{cursor: -1}
+		m.composeHistory[sessionID] = state
+	}
+	return state
+}
+
+func (m *Model) recordComposeHistory(sessionID, text string) {
+	sessionID = strings.TrimSpace(sessionID)
+	text = strings.TrimSpace(text)
+	if sessionID == "" || text == "" {
+		return
+	}
+	state := m.historyStateFor(sessionID)
+	if state == nil {
+		return
+	}
+	state.entries = append(state.entries, text)
+	if len(state.entries) > composeHistoryMaxEntries {
+		state.entries = state.entries[len(state.entries)-composeHistoryMaxEntries:]
+	}
+	state.cursor = -1
+	state.draft = ""
+	m.hasAppState = true
+	m.syncAppStateComposeHistory()
+}
+
+func (m *Model) composeHistoryNavigate(direction int, current string) (string, bool) {
+	sessionID := m.composeHistorySessionID()
+	if strings.TrimSpace(sessionID) == "" {
+		return "", false
+	}
+	state := m.historyStateFor(sessionID)
+	if state == nil || len(state.entries) == 0 {
+		return "", false
+	}
+	if direction < 0 {
+		if state.cursor == -1 {
+			state.draft = current
+			state.cursor = len(state.entries) - 1
+			return state.entries[state.cursor], true
+		}
+		if state.cursor > 0 {
+			state.cursor--
+			return state.entries[state.cursor], true
+		}
+		return state.entries[0], true
+	}
+	if direction > 0 {
+		if state.cursor == -1 {
+			return "", false
+		}
+		if state.cursor < len(state.entries)-1 {
+			state.cursor++
+			return state.entries[state.cursor], true
+		}
+		state.cursor = -1
+		state.draft = ""
+		return "", true
+	}
+	return "", false
+}
+
+func (m *Model) resetComposeHistoryCursor() {
+	sessionID := m.composeHistorySessionID()
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	state := m.historyStateFor(sessionID)
+	if state == nil {
+		return
+	}
+	if state.cursor != -1 {
+		state.cursor = -1
+		state.draft = ""
+	}
+}
+
+func (m *Model) syncAppStateComposeHistory() {
+	if m == nil {
+		return
+	}
+	if m.appState.ComposeHistory == nil {
+		m.appState.ComposeHistory = map[string][]string{}
+	}
+	m.appState.ComposeHistory = exportComposeHistory(m.composeHistory)
+}
+
+func importComposeHistory(raw map[string][]string) map[string]*composeHistoryState {
+	out := map[string]*composeHistoryState{}
+	if len(raw) == 0 {
+		return out
+	}
+	keys := make([]string, 0, len(raw))
+	for sessionID := range raw {
+		id := strings.TrimSpace(sessionID)
+		if id == "" {
+			continue
+		}
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
+	if len(keys) > composeHistoryMaxSessions {
+		keys = keys[len(keys)-composeHistoryMaxSessions:]
+	}
+	for _, id := range keys {
+		entries := raw[id]
+		if len(entries) == 0 {
+			continue
+		}
+		start := 0
+		if len(entries) > composeHistoryMaxEntries {
+			start = len(entries) - composeHistoryMaxEntries
+		}
+		cleaned := make([]string, 0, len(entries)-start)
+		for _, entry := range entries[start:] {
+			text := strings.TrimSpace(entry)
+			if text == "" {
+				continue
+			}
+			cleaned = append(cleaned, text)
+		}
+		if len(cleaned) == 0 {
+			continue
+		}
+		out[id] = &composeHistoryState{
+			entries: cleaned,
+			cursor:  -1,
+		}
+	}
+	return out
+}
+
+func exportComposeHistory(raw map[string]*composeHistoryState) map[string][]string {
+	out := map[string][]string{}
+	if len(raw) == 0 {
+		return out
+	}
+	keys := make([]string, 0, len(raw))
+	for sessionID := range raw {
+		id := strings.TrimSpace(sessionID)
+		if id == "" {
+			continue
+		}
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
+	if len(keys) > composeHistoryMaxSessions {
+		keys = keys[len(keys)-composeHistoryMaxSessions:]
+	}
+	for _, id := range keys {
+		state := raw[id]
+		if state == nil || len(state.entries) == 0 {
+			continue
+		}
+		start := 0
+		if len(state.entries) > composeHistoryMaxEntries {
+			start = len(state.entries) - composeHistoryMaxEntries
+		}
+		cleaned := make([]string, 0, len(state.entries)-start)
+		for _, entry := range state.entries[start:] {
+			text := strings.TrimSpace(entry)
+			if text == "" {
+				continue
+			}
+			cleaned = append(cleaned, text)
+		}
+		if len(cleaned) == 0 {
+			continue
+		}
+		out[id] = cleaned
+	}
+	return out
 }
 
 func renderStatusLine(width int, help, status string) string {

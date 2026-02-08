@@ -24,6 +24,9 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	state.ActiveWorkspaceID = "ws_1"
 	state.ActiveWorktreeID = "wt_1"
 	state.SidebarCollapsed = true
+	state.ComposeHistory = map[string][]string{
+		"s1": []string{"hello", "world"},
+	}
 
 	if err := store.Save(ctx, state); err != nil {
 		t.Fatalf("save: %v", err)
@@ -35,6 +38,9 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	}
 	if loaded.ActiveWorkspaceID != "ws_1" || loaded.ActiveWorktreeID != "wt_1" || !loaded.SidebarCollapsed {
 		t.Fatalf("unexpected reload state")
+	}
+	if len(loaded.ComposeHistory["s1"]) != 2 || loaded.ComposeHistory["s1"][0] != "hello" || loaded.ComposeHistory["s1"][1] != "world" {
+		t.Fatalf("expected compose history to round-trip")
 	}
 }
 

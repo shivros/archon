@@ -73,6 +73,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "enter", Label: "send", Context: HotkeyChatInput, Priority: 11},
 		{Key: "ctrl+y", Label: "copy id", Context: HotkeyChatInput, Priority: 12},
 		{Key: "ctrl+c", Label: "clear", Context: HotkeyChatInput, Priority: 13},
+		{Key: "↑/↓", Label: "history", Context: HotkeyChatInput, Priority: 14},
 	}
 }
 
