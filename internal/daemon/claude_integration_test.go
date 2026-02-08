@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"control/internal/providers"
 )
 
 const (
@@ -109,7 +111,11 @@ func requireClaudeIntegration(t *testing.T) {
 	if os.Getenv(claudeIntegrationEnv) != "1" {
 		t.Skipf("set %s=1 to run Claude integration tests", claudeIntegrationEnv)
 	}
-	if _, err := findCommand("ARCHON_CLAUDE_CMD", "claude"); err != nil {
+	def, ok := providers.Lookup("claude")
+	if !ok {
+		t.Fatalf("claude provider not registered")
+	}
+	if _, err := resolveProviderCommandName(def, ""); err != nil {
 		t.Fatalf("claude command not found: %v", err)
 	}
 }

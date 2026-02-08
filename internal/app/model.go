@@ -16,6 +16,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/client"
+	"control/internal/providers"
 	"control/internal/types"
 )
 
@@ -504,368 +505,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, cmd := m.addWorktree.Update(msg, m)
 		return m, cmd
 	}
-	if m.mode == uiModeRenameWorkspace {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitRenameWorkspace("rename canceled")
-				return m, nil
-			case "enter":
-				if m.renameInput != nil {
-					name := strings.TrimSpace(m.renameInput.Value())
-					if name == "" {
-						m.status = "name is required"
-						return m, nil
-					}
-					id := m.renameWorkspaceID
-					if id == "" {
-						m.status = "no workspace selected"
-						return m, nil
-					}
-					m.renameInput.SetValue("")
-					m.exitRenameWorkspace("renaming workspace")
-					return m, updateWorkspaceCmd(m.workspaceAPI, id, name)
-				}
-				return m, nil
-			}
-			if m.renameInput != nil {
-				cmd := m.renameInput.Update(msg)
-				return m, cmd
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModeAddWorkspaceGroup {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitAddWorkspaceGroup("add group canceled")
-				return m, nil
-			case "enter":
-				if m.groupInput != nil {
-					name := strings.TrimSpace(m.groupInput.Value())
-					if name == "" {
-						m.status = "name is required"
-						return m, nil
-					}
-					m.groupInput.SetValue("")
-					m.exitAddWorkspaceGroup("creating group")
-					return m, createWorkspaceGroupCmd(m.workspaceAPI, name)
-				}
-				return m, nil
-			}
-			if m.groupInput != nil {
-				cmd := m.groupInput.Update(msg)
-				return m, cmd
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitWorkspacePicker("selection canceled")
-				return m, nil
-			case "enter":
-				id := ""
-				if m.workspacePicker != nil {
-					id = m.workspacePicker.SelectedID()
-				}
-				if id == "" {
-					m.status = "no workspace selected"
-					return m, nil
-				}
-				if m.mode == uiModePickWorkspaceRename {
-					m.enterRenameWorkspace(id)
-					return m, nil
-				}
-				m.enterEditWorkspaceGroups(id)
-				return m, nil
-			case "j", "down":
-				if m.workspacePicker != nil {
-					m.workspacePicker.Move(1)
-				}
-				return m, nil
-			case "k", "up":
-				if m.workspacePicker != nil {
-					m.workspacePicker.Move(-1)
-				}
-				return m, nil
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModePickWorkspaceGroupRename {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitWorkspacePicker("selection canceled")
-				return m, nil
-			case "enter":
-				id := ""
-				if m.groupSelectPicker != nil {
-					id = m.groupSelectPicker.SelectedID()
-				}
-				if id == "" {
-					m.status = "no group selected"
-					return m, nil
-				}
-				m.enterRenameWorkspaceGroup(id)
-				return m, nil
-			case "j", "down":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(1)
-				}
-				return m, nil
-			case "k", "up":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(-1)
-				}
-				return m, nil
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModePickWorkspaceGroupDelete {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitWorkspacePicker("selection canceled")
-				return m, nil
-			case "enter":
-				id := ""
-				if m.groupSelectPicker != nil {
-					id = m.groupSelectPicker.SelectedID()
-				}
-				if id == "" {
-					m.status = "no group selected"
-					return m, nil
-				}
-				m.confirmDeleteWorkspaceGroup(id)
-				return m, nil
-			case "j", "down":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(1)
-				}
-				return m, nil
-			case "k", "up":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(-1)
-				}
-				return m, nil
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModePickWorkspaceGroupAssign {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitWorkspacePicker("selection canceled")
-				return m, nil
-			case "enter":
-				id := ""
-				if m.groupSelectPicker != nil {
-					id = m.groupSelectPicker.SelectedID()
-				}
-				if id == "" {
-					m.status = "no group selected"
-					return m, nil
-				}
-				m.enterAssignGroupWorkspaces(id)
-				return m, nil
-			case "j", "down":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(1)
-				}
-				return m, nil
-			case "k", "up":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(-1)
-				}
-				return m, nil
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModePickWorkspaceGroupAssign {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitWorkspacePicker("selection canceled")
-				return m, nil
-			case "enter":
-				id := ""
-				if m.groupSelectPicker != nil {
-					id = m.groupSelectPicker.SelectedID()
-				}
-				if id == "" {
-					m.status = "no group selected"
-					return m, nil
-				}
-				m.enterAssignGroupWorkspaces(id)
-				return m, nil
-			case "j", "down":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(1)
-				}
-				return m, nil
-			case "k", "up":
-				if m.groupSelectPicker != nil {
-					m.groupSelectPicker.Move(-1)
-				}
-				return m, nil
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModeEditWorkspaceGroups {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitEditWorkspaceGroups("edit canceled")
-				return m, nil
-			case "enter":
-				if m.groupPicker != nil {
-					ids := m.groupPicker.SelectedIDs()
-					id := m.editWorkspaceID
-					if id == "" {
-						m.status = "no workspace selected"
-						return m, nil
-					}
-					m.exitEditWorkspaceGroups("saving groups")
-					return m, updateWorkspaceGroupsCmd(m.workspaceAPI, id, ids)
-				}
-				return m, nil
-			case " ", "space":
-				if m.groupPicker != nil && m.groupPicker.Toggle() {
-					return m, nil
-				}
-			case "j", "down":
-				if m.groupPicker != nil && m.groupPicker.Move(1) {
-					return m, nil
-				}
-			case "k", "up":
-				if m.groupPicker != nil && m.groupPicker.Move(-1) {
-					return m, nil
-				}
-			}
-			if m.groupPicker != nil {
-				return m, nil
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModeRenameWorkspaceGroup {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitRenameWorkspaceGroup("rename canceled")
-				return m, nil
-			case "enter":
-				if m.groupInput != nil {
-					name := strings.TrimSpace(m.groupInput.Value())
-					if name == "" {
-						m.status = "name is required"
-						return m, nil
-					}
-					id := m.renameGroupID
-					if id == "" {
-						m.status = "no group selected"
-						return m, nil
-					}
-					m.groupInput.SetValue("")
-					m.exitRenameWorkspaceGroup("renaming group")
-					return m, updateWorkspaceGroupCmd(m.workspaceAPI, id, name)
-				}
-				return m, nil
-			}
-			if m.groupInput != nil {
-				cmd := m.groupInput.Update(msg)
-				return m, cmd
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModeAssignGroupWorkspaces {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitAssignGroupWorkspaces("assignment canceled")
-				return m, nil
-			case "enter":
-				if m.workspaceMulti != nil {
-					ids := m.workspaceMulti.SelectedIDs()
-					groupID := m.assignGroupID
-					if groupID == "" {
-						m.status = "no group selected"
-						return m, nil
-					}
-					m.exitAssignGroupWorkspaces("saving assignments")
-					return m, assignGroupWorkspacesCmd(m.workspaceAPI, groupID, ids, m.workspaces)
-				}
-				return m, nil
-			case " ", "space":
-				if m.workspaceMulti != nil && m.workspaceMulti.Toggle() {
-					return m, nil
-				}
-			case "j", "down":
-				if m.workspaceMulti != nil && m.workspaceMulti.Move(1) {
-					return m, nil
-				}
-			case "k", "up":
-				if m.workspaceMulti != nil && m.workspaceMulti.Move(-1) {
-					return m, nil
-				}
-			}
-		}
-		return m, nil
-	}
-	if m.mode == uiModeAssignGroupWorkspaces {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitAssignGroupWorkspaces("assignment canceled")
-				return m, nil
-			case "enter":
-				if m.workspaceMulti != nil {
-					ids := m.workspaceMulti.SelectedIDs()
-					groupID := m.assignGroupID
-					if groupID == "" {
-						m.status = "no group selected"
-						return m, nil
-					}
-					m.exitAssignGroupWorkspaces("saving assignments")
-					return m, assignGroupWorkspacesCmd(m.workspaceAPI, groupID, ids, m.workspaces)
-				}
-				return m, nil
-			case " ", "space":
-				if m.workspaceMulti != nil && m.workspaceMulti.Toggle() {
-					return m, nil
-				}
-			case "j", "down":
-				if m.workspaceMulti != nil && m.workspaceMulti.Move(1) {
-					return m, nil
-				}
-			case "k", "up":
-				if m.workspaceMulti != nil && m.workspaceMulti.Move(-1) {
-					return m, nil
-				}
-			}
-		}
-		return m, nil
+	if handled, cmd := m.reduceWorkspaceEditModes(msg); handled {
+		return m, cmd
 	}
 	if m.mode == uiModePickProvider {
 		switch msg := msg.(type) {
@@ -910,45 +551,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.menu != nil && m.menu.IsActive() {
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			previous := m.menu.SelectedGroupIDs()
-			if handled, action := m.menu.HandleKey(msg); handled {
-				cmds := []tea.Cmd{}
-				if cmd := m.handleMenuAction(action); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				if m.handleMenuGroupChange(previous) {
-					cmds = append(cmds, m.saveAppStateCmd())
-				}
-				return m, tea.Batch(cmds...)
-			}
-		}
+	if handled, cmd := m.reduceMenuMode(msg); handled {
+		return m, cmd
 	}
-	if m.mode == uiModeCompose {
-		switch msg := msg.(type) {
-		case streamMsg:
-			if msg.err != nil {
-				m.status = "stream error: " + msg.err.Error()
-				return m, nil
-			}
-			targetID := m.composeSessionID()
-			if targetID == "" {
-				targetID = m.selectedSessionID()
-			}
-			if msg.id != targetID {
-				if msg.cancel != nil {
-					msg.cancel()
-				}
-				return m, nil
-			}
-			if m.stream != nil {
-				m.stream.SetStream(msg.ch, msg.cancel)
-			}
-			m.status = "streaming"
-			return m, nil
-		}
+	if handled, cmd := m.reduceComposeMode(msg); handled {
+		return m, cmd
 	}
 
 	switch msg := msg.(type) {
@@ -956,24 +563,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 	case tea.KeyMsg:
-		if m.mode == uiModeSearch {
-			switch msg.String() {
-			case "esc":
-				m.exitSearch("search canceled")
-				return m, nil
-			case "enter":
-				if m.searchInput != nil {
-					query := m.searchInput.Value()
-					m.applySearch(query)
-				}
-				m.exitSearch("")
-				return m, nil
-			}
-			if m.searchInput != nil {
-				cmd := m.searchInput.Update(msg)
-				return m, cmd
-			}
-			return m, nil
+		if handled, cmd := m.reduceSearchModeKey(msg); handled {
+			return m, cmd
 		}
 		if m.pendingApproval != nil && (m.mode == uiModeNormal || (m.input != nil && m.input.IsSidebarFocused())) {
 			switch msg.String() {
@@ -983,121 +574,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.approvePending("decline")
 			}
 		}
-		if m.input != nil && m.input.IsChatFocused() {
-			switch msg.String() {
-			case "esc":
-				m.exitCompose("compose canceled")
-				return m, nil
-			case "up":
-				if m.chatInput != nil {
-					if value, ok := m.composeHistoryNavigate(-1, m.chatInput.Value()); ok {
-						m.chatInput.SetValue(value)
-						return m, nil
-					}
-				}
-				return m, nil
-			case "down":
-				if m.chatInput != nil {
-					if value, ok := m.composeHistoryNavigate(1, m.chatInput.Value()); ok {
-						m.chatInput.SetValue(value)
-						return m, nil
-					}
-				}
-				return m, nil
-			case "enter":
-				if m.chatInput != nil {
-					text := strings.TrimSpace(m.chatInput.Value())
-					if text == "" {
-						m.status = "message is required"
-						return m, nil
-					}
-					if m.newSession != nil {
-						target := m.newSession
-						if strings.TrimSpace(target.provider) == "" {
-							m.status = "provider is required"
-							return m, nil
-						}
-						m.status = "starting session"
-						m.chatInput.Clear()
-						return m, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text)
-					}
-					sessionID := m.composeSessionID()
-					if sessionID == "" {
-						m.status = "select a session to chat"
-						return m, nil
-					}
-					m.recordComposeHistory(sessionID, text)
-					saveHistoryCmd := m.saveAppStateCmd()
-					provider := m.providerForSessionID(sessionID)
-					token := m.nextSendToken()
-					m.registerPendingSend(token, sessionID, provider)
-					headerIndex := m.appendUserMessageLocal(provider, text)
-					m.status = "sending message"
-					m.chatInput.Clear()
-					if headerIndex >= 0 {
-						m.registerPendingSendHeader(token, sessionID, provider, headerIndex)
-					}
-					send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
-					if shouldStreamItems(provider) {
-						cmds := []tea.Cmd{send}
-						if m.itemStream == nil || !m.itemStream.HasStream() {
-							cmds = append([]tea.Cmd{openItemsCmd(m.sessionAPI, sessionID)}, cmds...)
-						}
-						key := m.pendingSessionKey
-						if key == "" {
-							key = m.selectedKey()
-						}
-						if key != "" {
-							cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
-						}
-						if saveHistoryCmd != nil {
-							cmds = append(cmds, saveHistoryCmd)
-						}
-						return m, tea.Batch(cmds...)
-					}
-					if provider == "codex" {
-						if m.codexStream == nil || !m.codexStream.HasStream() {
-							if saveHistoryCmd != nil {
-								return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send, saveHistoryCmd)
-							}
-							return m, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send)
-						}
-						if saveHistoryCmd != nil {
-							return m, tea.Batch(send, saveHistoryCmd)
-						}
-						return m, send
-					}
-					if saveHistoryCmd != nil {
-						return m, tea.Batch(send, saveHistoryCmd)
-					}
-					return m, send
-				}
-				return m, nil
-			case "ctrl+c":
-				if m.chatInput != nil {
-					m.chatInput.Clear()
-					m.status = "input cleared"
-				}
-				return m, nil
-			case "ctrl+y":
-				id := m.selectedSessionID()
-				if id == "" {
-					m.status = "no session selected"
-					return m, nil
-				}
-				if err := clipboard.WriteAll(id); err != nil {
-					m.status = "copy failed: " + err.Error()
-					return m, nil
-				}
-				m.status = "copied session id"
-				return m, nil
-			}
-			if m.chatInput != nil {
-				m.resetComposeHistoryCursor()
-				cmd := m.chatInput.Update(msg)
-				return m, cmd
-			}
-			return m, nil
+		if handled, cmd := m.reduceComposeInputKey(msg); handled {
+			return m, cmd
 		}
 		if m.sidebar != nil {
 			if msg.String() == "up" {
@@ -1592,78 +1070,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) View() string {
-	headerText := "Tail"
-	bodyText := m.viewport.View()
-	if m.mode == uiModeAddWorkspace {
-		headerText = "Add Workspace"
-		if m.addWorkspace != nil {
-			bodyText = m.addWorkspace.View()
-		}
-	} else if m.mode == uiModeAddWorkspaceGroup {
-		headerText = "Add Workspace Group"
-		if m.groupInput != nil {
-			bodyText = m.groupInput.View()
-		}
-	} else if m.mode == uiModePickWorkspaceRename {
-		headerText = "Select Workspace"
-		if m.workspacePicker != nil {
-			bodyText = m.workspacePicker.View()
-		}
-	} else if m.mode == uiModePickWorkspaceGroupEdit {
-		headerText = "Select Workspace"
-		if m.workspacePicker != nil {
-			bodyText = m.workspacePicker.View()
-		}
-	} else if m.mode == uiModePickWorkspaceGroupRename {
-		headerText = "Select Group"
-		if m.groupSelectPicker != nil {
-			bodyText = m.groupSelectPicker.View()
-		}
-	} else if m.mode == uiModePickWorkspaceGroupDelete {
-		headerText = "Select Group"
-		if m.groupSelectPicker != nil {
-			bodyText = m.groupSelectPicker.View()
-		}
-	} else if m.mode == uiModePickWorkspaceGroupAssign {
-		headerText = "Select Group"
-		if m.groupSelectPicker != nil {
-			bodyText = m.groupSelectPicker.View()
-		}
-	} else if m.mode == uiModeEditWorkspaceGroups {
-		headerText = "Edit Workspace Groups"
-		if m.groupPicker != nil {
-			bodyText = m.groupPicker.View()
-		}
-	} else if m.mode == uiModeRenameWorkspaceGroup {
-		headerText = "Rename Workspace Group"
-		if m.groupInput != nil {
-			bodyText = m.groupInput.View()
-		}
-	} else if m.mode == uiModeAssignGroupWorkspaces {
-		headerText = "Assign Workspaces"
-		if m.workspaceMulti != nil {
-			bodyText = m.workspaceMulti.View()
-		}
-	} else if m.mode == uiModeAddWorktree {
-		headerText = "Add Worktree"
-		if m.addWorktree != nil {
-			bodyText = m.addWorktree.View()
-		}
-	} else if m.mode == uiModePickProvider {
-		headerText = "Provider"
-		if m.providerPicker != nil {
-			bodyText = m.providerPicker.View()
-		}
-	} else if m.mode == uiModeCompose {
-		headerText = "Chat"
-	} else if m.mode == uiModeSearch {
-		headerText = "Search"
-	} else if m.mode == uiModeRenameWorkspace {
-		headerText = "Rename Workspace"
-		if m.renameInput != nil {
-			bodyText = m.renameInput.View()
-		}
-	}
+	headerText, bodyText := m.modeViewContent()
 	rightHeader := headerStyle.Render(headerText)
 	rightBody := bodyText
 	if m.usesViewport() {
@@ -1672,16 +1079,7 @@ func (m *Model) View() string {
 			rightBody = lipgloss.JoinHorizontal(lipgloss.Top, bodyText, scrollbar)
 		}
 	}
-	inputLine := ""
-	inputScrollable := false
-	if m.mode == uiModeCompose && m.chatInput != nil {
-		inputLine = m.chatInput.View()
-		inputScrollable = m.chatInput.CanScroll()
-	}
-	if m.mode == uiModeSearch && m.searchInput != nil {
-		inputLine = m.searchInput.View()
-		inputScrollable = m.searchInput.CanScroll()
-	}
+	inputLine, inputScrollable := m.modeInputView()
 	rightLines := []string{rightHeader, rightBody}
 	if inputLine != "" {
 		dividerWidth := m.viewport.Width
@@ -4226,7 +3624,7 @@ func (m *Model) providerForSessionID(sessionID string) string {
 }
 
 func shouldStreamItems(provider string) bool {
-	return types.Capabilities(provider).UsesItems
+	return providers.CapabilitiesFor(provider).UsesItems
 }
 
 func (m *Model) composeSessionID() string {

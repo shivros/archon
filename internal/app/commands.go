@@ -13,7 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func fetchSessionsWithMetaCmd(api SessionAPI) tea.Cmd {
+func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -22,7 +22,7 @@ func fetchSessionsWithMetaCmd(api SessionAPI) tea.Cmd {
 	}
 }
 
-func fetchWorkspacesCmd(api WorkspaceAPI) tea.Cmd {
+func fetchWorkspacesCmd(api WorkspaceListAPI) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -31,7 +31,7 @@ func fetchWorkspacesCmd(api WorkspaceAPI) tea.Cmd {
 	}
 }
 
-func fetchWorkspaceGroupsCmd(api WorkspaceAPI) tea.Cmd {
+func fetchWorkspaceGroupsCmd(api WorkspaceGroupListAPI) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -40,7 +40,7 @@ func fetchWorkspaceGroupsCmd(api WorkspaceAPI) tea.Cmd {
 	}
 }
 
-func fetchWorktreesCmd(api WorkspaceAPI, workspaceID string) tea.Cmd {
+func fetchWorktreesCmd(api WorktreeListAPI, workspaceID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -49,7 +49,7 @@ func fetchWorktreesCmd(api WorkspaceAPI, workspaceID string) tea.Cmd {
 	}
 }
 
-func fetchAvailableWorktreesCmd(api WorkspaceAPI, workspaceID, workspacePath string) tea.Cmd {
+func fetchAvailableWorktreesCmd(api AvailableWorktreeListAPI, workspaceID, workspacePath string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -63,7 +63,7 @@ func fetchAvailableWorktreesCmd(api WorkspaceAPI, workspaceID, workspacePath str
 	}
 }
 
-func fetchAppStateCmd(api StateAPI) tea.Cmd {
+func fetchAppStateCmd(api AppStateGetAPI) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -72,7 +72,7 @@ func fetchAppStateCmd(api StateAPI) tea.Cmd {
 	}
 }
 
-func createWorkspaceCmd(api WorkspaceAPI, path, name string) tea.Cmd {
+func createWorkspaceCmd(api WorkspaceCreateAPI, path, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -84,7 +84,7 @@ func createWorkspaceCmd(api WorkspaceAPI, path, name string) tea.Cmd {
 	}
 }
 
-func createWorkspaceGroupCmd(api WorkspaceAPI, name string) tea.Cmd {
+func createWorkspaceGroupCmd(api WorkspaceGroupCreateAPI, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -93,7 +93,7 @@ func createWorkspaceGroupCmd(api WorkspaceAPI, name string) tea.Cmd {
 	}
 }
 
-func updateWorkspaceGroupCmd(api WorkspaceAPI, id, name string) tea.Cmd {
+func updateWorkspaceGroupCmd(api WorkspaceGroupUpdateAPI, id, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -102,7 +102,7 @@ func updateWorkspaceGroupCmd(api WorkspaceAPI, id, name string) tea.Cmd {
 	}
 }
 
-func deleteWorkspaceGroupCmd(api WorkspaceAPI, id string) tea.Cmd {
+func deleteWorkspaceGroupCmd(api WorkspaceGroupDeleteAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -111,7 +111,7 @@ func deleteWorkspaceGroupCmd(api WorkspaceAPI, id string) tea.Cmd {
 	}
 }
 
-func updateWorkspaceCmd(api WorkspaceAPI, id, name string) tea.Cmd {
+func updateWorkspaceCmd(api WorkspaceUpdateAPI, id, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -120,7 +120,7 @@ func updateWorkspaceCmd(api WorkspaceAPI, id, name string) tea.Cmd {
 	}
 }
 
-func updateWorkspaceGroupsCmd(api WorkspaceAPI, id string, groupIDs []string) tea.Cmd {
+func updateWorkspaceGroupsCmd(api WorkspaceUpdateAPI, id string, groupIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -129,7 +129,7 @@ func updateWorkspaceGroupsCmd(api WorkspaceAPI, id string, groupIDs []string) te
 	}
 }
 
-func assignGroupWorkspacesCmd(api WorkspaceAPI, groupID string, workspaceIDs []string, workspaces []*types.Workspace) tea.Cmd {
+func assignGroupWorkspacesCmd(api WorkspaceUpdateAPI, groupID string, workspaceIDs []string, workspaces []*types.Workspace) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
@@ -189,7 +189,7 @@ func slicesEqual(a, b []string) bool {
 	return true
 }
 
-func deleteWorkspaceCmd(api WorkspaceAPI, id string) tea.Cmd {
+func deleteWorkspaceCmd(api WorkspaceDeleteAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -198,7 +198,7 @@ func deleteWorkspaceCmd(api WorkspaceAPI, id string) tea.Cmd {
 	}
 }
 
-func createWorktreeCmd(api WorkspaceAPI, workspaceID string, req client.CreateWorktreeRequest) tea.Cmd {
+func createWorktreeCmd(api WorktreeCreateAPI, workspaceID string, req client.CreateWorktreeRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -207,7 +207,7 @@ func createWorktreeCmd(api WorkspaceAPI, workspaceID string, req client.CreateWo
 	}
 }
 
-func addWorktreeCmd(api WorkspaceAPI, workspaceID string, worktree *types.Worktree) tea.Cmd {
+func addWorktreeCmd(api WorktreeAddAPI, workspaceID string, worktree *types.Worktree) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -216,7 +216,7 @@ func addWorktreeCmd(api WorkspaceAPI, workspaceID string, worktree *types.Worktr
 	}
 }
 
-func deleteWorktreeCmd(api WorkspaceAPI, workspaceID, worktreeID string) tea.Cmd {
+func deleteWorktreeCmd(api WorktreeDeleteAPI, workspaceID, worktreeID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -225,7 +225,7 @@ func deleteWorktreeCmd(api WorkspaceAPI, workspaceID, worktreeID string) tea.Cmd
 	}
 }
 
-func fetchTailCmd(api SessionAPI, id, key string) tea.Cmd {
+func fetchTailCmd(api SessionTailAPI, id, key string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -237,7 +237,7 @@ func fetchTailCmd(api SessionAPI, id, key string) tea.Cmd {
 	}
 }
 
-func fetchHistoryCmd(api SessionAPI, id, key string, lines int) tea.Cmd {
+func fetchHistoryCmd(api SessionHistoryAPI, id, key string, lines int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -249,7 +249,7 @@ func fetchHistoryCmd(api SessionAPI, id, key string, lines int) tea.Cmd {
 	}
 }
 
-func openStreamCmd(api SessionAPI, id string) tea.Cmd {
+func openStreamCmd(api SessionTailStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancelCtx := context.WithCancel(context.Background())
 		ch, cancel, err := api.TailStream(ctx, id, "combined")
@@ -260,7 +260,7 @@ func openStreamCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
-func openEventsCmd(api SessionAPI, id string) tea.Cmd {
+func openEventsCmd(api SessionEventStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancelCtx := context.WithCancel(context.Background())
 		ch, cancel, err := api.EventStream(ctx, id)
@@ -271,7 +271,7 @@ func openEventsCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
-func openItemsCmd(api SessionAPI, id string) tea.Cmd {
+func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancelCtx := context.WithCancel(context.Background())
 		ch, cancel, err := api.ItemsStream(ctx, id)
@@ -282,7 +282,7 @@ func openItemsCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
-func fetchApprovalsCmd(api SessionAPI, id string) tea.Cmd {
+func fetchApprovalsCmd(api SessionApprovalsAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -291,7 +291,7 @@ func fetchApprovalsCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
-func killSessionCmd(api SessionAPI, id string) tea.Cmd {
+func killSessionCmd(api SessionKillAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -300,7 +300,7 @@ func killSessionCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
-func markExitedCmd(api SessionAPI, id string) tea.Cmd {
+func markExitedCmd(api SessionMarkExitedAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -309,7 +309,7 @@ func markExitedCmd(api SessionAPI, id string) tea.Cmd {
 	}
 }
 
-func markExitedManyCmd(api SessionAPI, ids []string) tea.Cmd {
+func markExitedManyCmd(api SessionMarkExitedAPI, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		if len(ids) == 0 {
 			return bulkExitMsg{ids: ids}
@@ -325,7 +325,7 @@ func markExitedManyCmd(api SessionAPI, ids []string) tea.Cmd {
 	}
 }
 
-func sendSessionCmd(api SessionAPI, id, text string, token int) tea.Cmd {
+func sendSessionCmd(api SessionSendAPI, id, text string, token int) tea.Cmd {
 	return func() tea.Msg {
 		log.Printf("ui send: id=%s text_len=%d", id, len(text))
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -339,7 +339,7 @@ func sendSessionCmd(api SessionAPI, id, text string, token int) tea.Cmd {
 	}
 }
 
-func interruptSessionCmd(api SessionAPI, id string) tea.Cmd {
+func interruptSessionCmd(api SessionInterruptAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
@@ -360,7 +360,7 @@ func historyPollCmd(id, key string, attempt int, delay time.Duration, minAgents 
 	})
 }
 
-func approveSessionCmd(api SessionAPI, id string, requestID int, decision string) tea.Cmd {
+func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -373,7 +373,7 @@ func approveSessionCmd(api SessionAPI, id string, requestID int, decision string
 	}
 }
 
-func startSessionCmd(api SessionAPI, workspaceID, worktreeID, provider, text string) tea.Cmd {
+func startSessionCmd(api WorkspaceSessionStartAPI, workspaceID, worktreeID, provider, text string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()

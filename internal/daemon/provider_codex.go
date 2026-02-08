@@ -24,10 +24,9 @@ type codexProvider struct {
 	model   string
 }
 
-func newCodexProvider() (Provider, error) {
-	cmdName, err := findCommand("ARCHON_CODEX_CMD", "codex")
-	if err != nil {
-		return nil, err
+func newCodexProvider(cmdName string) (Provider, error) {
+	if strings.TrimSpace(cmdName) == "" {
+		return nil, errors.New("command name is required")
 	}
 	model := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
 	if model == "" {

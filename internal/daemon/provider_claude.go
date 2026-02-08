@@ -27,10 +27,9 @@ type claudeRunner struct {
 	onSession func(string)
 }
 
-func newClaudeProvider() (Provider, error) {
-	cmdName, err := findCommand("ARCHON_CLAUDE_CMD", "claude")
-	if err != nil {
-		return nil, err
+func newClaudeProvider(cmdName string) (Provider, error) {
+	if strings.TrimSpace(cmdName) == "" {
+		return nil, errors.New("command name is required")
 	}
 	return &claudeProvider{cmdName: cmdName}, nil
 }

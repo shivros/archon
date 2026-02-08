@@ -7,22 +7,30 @@ import (
 	"time"
 
 	"control/internal/logging"
+	"control/internal/providers"
 	"control/internal/store"
 	"control/internal/types"
 )
 
 type SessionService struct {
-	manager *SessionManager
-	stores  *Stores
-	live    *CodexLiveManager
-	logger  logging.Logger
+	manager  *SessionManager
+	stores   *Stores
+	live     *CodexLiveManager
+	logger   logging.Logger
+	adapters *conversationAdapterRegistry
 }
 
 func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
 	}
-	return &SessionService{manager: manager, stores: stores, live: live, logger: logger}
+	return &SessionService{
+		manager:  manager,
+		stores:   stores,
+		live:     live,
+		logger:   logger,
+		adapters: newConversationAdapterRegistry(),
+	}
 }
 
 func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
@@ -90,7 +98,7 @@ func (s *SessionService) normalizeNoProcessSessions(ctx context.Context, session
 		if session == nil {
 			continue
 		}
-		if !types.Capabilities(session.Provider).NoProcess || !isActiveStatus(session.Status) {
+		if !providers.CapabilitiesFor(session.Provider).NoProcess || !isActiveStatus(session.Status) {
 			continue
 		}
 		copy := *session
@@ -197,28 +205,7 @@ func (s *SessionService) History(ctx context.Context, id string, lines int) ([]m
 		return nil, notFoundError("session not found", ErrSessionNotFound)
 	}
 	meta := s.getSessionMeta(ctx, id)
-	threadID := resolveThreadID(session, meta)
-	if source == sessionSourceCodex || (session.Provider == "codex" && threadID != "") {
-		return s.tailCodexThread(ctx, session, threadID, lines)
-	}
-	if providerUsesItems(session.Provider) {
-		if items, _, err := s.readSessionItems(session.ID, lines); err == nil && items != nil {
-			return items, nil
-		}
-	}
-	if s.manager != nil {
-		if _, ok := s.manager.GetSession(id); ok {
-			out, _, _, err := s.manager.TailSession(id, "combined", lines)
-			if err == nil {
-				return logLinesToItems(out), nil
-			}
-		}
-	}
-	out, _, _, err := s.readSessionLogs(session.ID, lines)
-	if err != nil {
-		return nil, invalidError(err.Error(), err)
-	}
-	return logLinesToItems(out), nil
+	return s.conversationAdapter(session.Provider).History(ctx, s, session, meta, source, lines)
 }
 
 func (s *SessionService) SendMessage(ctx context.Context, id string, input []map[string]any) (string, error) {
@@ -235,94 +222,8 @@ func (s *SessionService) SendMessage(ctx context.Context, id string, input []map
 		return "", notFoundError("session not found", ErrSessionNotFound)
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
-	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
-		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
-			session.Cwd = cwd
-		}
-	}
-	switch session.Provider {
-	case "claude":
-		if s.manager == nil {
-			return "", unavailableError("session manager not available", nil)
-		}
-		text := extractTextInput(input)
-		if text == "" {
-			return "", invalidError("text input is required", nil)
-		}
-		payload := buildClaudeUserPayload(text)
-		if err := s.manager.SendInput(id, payload); err != nil {
-			if errors.Is(err, ErrSessionNotFound) {
-				providerSessionID := ""
-				if meta != nil {
-					providerSessionID = meta.ProviderSessionID
-				}
-				if strings.TrimSpace(providerSessionID) == "" {
-					return "", invalidError("provider session id not available", nil)
-				}
-				if strings.TrimSpace(session.Cwd) == "" {
-					return "", invalidError("session cwd is required", nil)
-				}
-				_, resumeErr := s.manager.ResumeSession(StartSessionConfig{
-					Provider:          session.Provider,
-					Cwd:               session.Cwd,
-					Env:               session.Env,
-					Resume:            true,
-					ProviderSessionID: providerSessionID,
-				}, session)
-				if resumeErr != nil {
-					return "", invalidError(resumeErr.Error(), resumeErr)
-				}
-				if err := s.manager.SendInput(id, payload); err != nil {
-					return "", invalidError(err.Error(), err)
-				}
-			} else {
-				return "", invalidError(err.Error(), err)
-			}
-		}
-		now := time.Now().UTC()
-		if s.stores != nil && s.stores.SessionMeta != nil {
-			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-				SessionID:    id,
-				LastActiveAt: &now,
-			})
-		}
-		return "", nil
-	case "codex":
-		threadID := resolveThreadID(session, meta)
-		s.logger.Info("send_resolved",
-			logging.F("session_id", session.ID),
-			logging.F("provider", session.Provider),
-			logging.F("thread_id", threadID),
-			logging.F("cwd", session.Cwd),
-		)
-		if threadID == "" {
-			return "", invalidError("thread id not available", nil)
-		}
-		if strings.TrimSpace(session.Cwd) == "" {
-			return "", invalidError("session cwd is required", nil)
-		}
-		if s.live == nil {
-			return "", unavailableError("live codex manager not available", nil)
-		}
-		workspacePath := s.resolveWorkspacePath(ctx, meta)
-		codexHome := resolveCodexHome(session.Cwd, workspacePath)
-		turnID, err := s.live.StartTurn(ctx, session, meta, codexHome, input)
-		if err != nil {
-			return "", invalidError(err.Error(), err)
-		}
-		now := time.Now().UTC()
-		if s.stores != nil && s.stores.SessionMeta != nil {
-			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-				SessionID:    id,
-				ThreadID:     threadID,
-				LastTurnID:   turnID,
-				LastActiveAt: &now,
-			})
-		}
-		return turnID, nil
-	default:
-		return "", invalidError("provider does not support messaging", nil)
-	}
+	s.ensureSessionCwd(ctx, session, meta)
+	return s.conversationAdapter(session.Provider).SendMessage(ctx, s, session, meta, input)
 }
 
 func (s *SessionService) Approve(ctx context.Context, id string, requestID int, decision string, responses []string, acceptSettings map[string]any) error {
@@ -342,43 +243,9 @@ func (s *SessionService) Approve(ctx context.Context, id string, requestID int, 
 		}
 		return invalidError("session not found", ErrSessionNotFound)
 	}
-	if session.Provider != "codex" {
-		return invalidError("provider does not support approvals", nil)
-	}
 	meta := s.getSessionMeta(ctx, session.ID)
-	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
-		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
-			session.Cwd = cwd
-		}
-	}
-	if s.live == nil {
-		return unavailableError("live codex manager not available", nil)
-	}
-	workspacePath := s.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	result := map[string]any{
-		"decision": decision,
-	}
-	if len(responses) > 0 {
-		result["responses"] = responses
-	}
-	if len(acceptSettings) > 0 {
-		result["acceptSettings"] = acceptSettings
-	}
-	if err := s.live.Respond(ctx, session, meta, codexHome, requestID, result); err != nil {
-		return invalidError(err.Error(), err)
-	}
-	if s.stores != nil && s.stores.Approvals != nil {
-		_ = s.stores.Approvals.Delete(ctx, id, requestID)
-	}
-	now := time.Now().UTC()
-	if s.stores != nil && s.stores.SessionMeta != nil {
-		_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-			SessionID:    id,
-			LastActiveAt: &now,
-		})
-	}
-	return nil
+	s.ensureSessionCwd(ctx, session, meta)
+	return s.conversationAdapter(session.Provider).Approve(ctx, s, session, meta, requestID, decision, responses, acceptSettings)
 }
 
 func (s *SessionService) ListApprovals(ctx context.Context, id string) ([]*types.Approval, error) {
@@ -409,24 +276,9 @@ func (s *SessionService) InterruptTurn(ctx context.Context, id string) error {
 		}
 		return invalidError("session not found", ErrSessionNotFound)
 	}
-	if session.Provider != "codex" {
-		return invalidError("provider does not support interrupt", nil)
-	}
 	meta := s.getSessionMeta(ctx, session.ID)
-	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
-		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
-			session.Cwd = cwd
-		}
-	}
-	if s.live == nil {
-		return unavailableError("live codex manager not available", nil)
-	}
-	workspacePath := s.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	if err := s.live.Interrupt(ctx, session, meta, codexHome); err != nil {
-		return invalidError(err.Error(), err)
-	}
-	return nil
+	s.ensureSessionCwd(ctx, session, meta)
+	return s.conversationAdapter(session.Provider).Interrupt(ctx, s, session, meta)
 }
 
 func (s *SessionService) Get(ctx context.Context, id string) (*types.Session, error) {
@@ -491,7 +343,7 @@ func (s *SessionService) MarkExited(ctx context.Context, id string) error {
 		return notFoundError("session not found", ErrSessionNotFound)
 	}
 	if isActiveStatus(record.Session.Status) {
-		if !types.Capabilities(record.Session.Provider).NoProcess {
+		if !providers.CapabilitiesFor(record.Session.Provider).NoProcess {
 			return invalidError("session is active; kill it first", nil)
 		}
 	}
@@ -587,9 +439,6 @@ func (s *SessionService) Subscribe(ctx context.Context, id, stream string) (<-ch
 }
 
 func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {
-	if s.live == nil {
-		return nil, nil, unavailableError("live codex manager not available", nil)
-	}
 	if strings.TrimSpace(id) == "" {
 		return nil, nil, invalidError("session id is required", nil)
 	}
@@ -603,22 +452,25 @@ func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan
 		}
 		return nil, nil, notFoundError("session not found", ErrSessionNotFound)
 	}
-	if !types.Capabilities(session.Provider).SupportsEvents {
-		return nil, nil, invalidError("provider does not support events", nil)
-	}
 	meta := s.getSessionMeta(ctx, session.ID)
-	if meta != nil && strings.TrimSpace(session.Cwd) == "" {
-		if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
-			session.Cwd = cwd
-		}
+	s.ensureSessionCwd(ctx, session, meta)
+	return s.conversationAdapter(session.Provider).SubscribeEvents(ctx, s, session, meta)
+}
+
+func (s *SessionService) conversationAdapter(provider string) conversationAdapter {
+	if s.adapters == nil {
+		s.adapters = newConversationAdapterRegistry()
 	}
-	workspacePath := s.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	ch, cancel, err := s.live.Subscribe(session, meta, codexHome)
-	if err != nil {
-		return nil, nil, invalidError(err.Error(), err)
+	return s.adapters.adapterFor(provider)
+}
+
+func (s *SessionService) ensureSessionCwd(ctx context.Context, session *types.Session, meta *types.SessionMeta) {
+	if session == nil || meta == nil || strings.TrimSpace(session.Cwd) != "" {
+		return
 	}
-	return ch, cancel, nil
+	if cwd, _, err := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); err == nil && strings.TrimSpace(cwd) != "" {
+		session.Cwd = cwd
+	}
 }
 
 func (s *SessionService) SubscribeItems(ctx context.Context, id string) (<-chan map[string]any, func(), error) {

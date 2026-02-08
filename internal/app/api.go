@@ -7,41 +7,158 @@ import (
 	"control/internal/types"
 )
 
-type WorkspaceAPI interface {
+type WorkspaceListAPI interface {
 	ListWorkspaces(ctx context.Context) ([]*types.Workspace, error)
+}
+
+type WorkspaceCreateAPI interface {
 	CreateWorkspace(ctx context.Context, workspace *types.Workspace) (*types.Workspace, error)
+}
+
+type WorkspaceUpdateAPI interface {
 	UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error)
+}
+
+type WorkspaceDeleteAPI interface {
 	DeleteWorkspace(ctx context.Context, id string) error
+}
+
+type WorkspaceGroupListAPI interface {
 	ListWorkspaceGroups(ctx context.Context) ([]*types.WorkspaceGroup, error)
+}
+
+type WorkspaceGroupCreateAPI interface {
 	CreateWorkspaceGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+}
+
+type WorkspaceGroupUpdateAPI interface {
 	UpdateWorkspaceGroup(ctx context.Context, id string, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error)
+}
+
+type WorkspaceGroupDeleteAPI interface {
 	DeleteWorkspaceGroup(ctx context.Context, id string) error
+}
+
+type WorktreeListAPI interface {
 	ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error)
+}
+
+type AvailableWorktreeListAPI interface {
 	ListAvailableWorktrees(ctx context.Context, workspaceID string) ([]*types.GitWorktree, error)
+}
+
+type WorktreeAddAPI interface {
 	AddWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
+}
+
+type WorktreeCreateAPI interface {
 	CreateWorktree(ctx context.Context, workspaceID string, req client.CreateWorktreeRequest) (*types.Worktree, error)
+}
+
+type WorktreeDeleteAPI interface {
 	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
 }
 
-type SessionAPI interface {
+type WorkspaceAPI interface {
+	WorkspaceListAPI
+	WorkspaceCreateAPI
+	WorkspaceUpdateAPI
+	WorkspaceDeleteAPI
+	WorkspaceGroupListAPI
+	WorkspaceGroupCreateAPI
+	WorkspaceGroupUpdateAPI
+	WorkspaceGroupDeleteAPI
+	WorktreeListAPI
+	AvailableWorktreeListAPI
+	WorktreeAddAPI
+	WorktreeCreateAPI
+	WorktreeDeleteAPI
+}
+
+type SessionListWithMetaAPI interface {
 	ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
+}
+
+type SessionTailAPI interface {
 	TailItems(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
+}
+
+type SessionHistoryAPI interface {
 	History(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
+}
+
+type SessionTailStreamAPI interface {
 	TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
+}
+
+type SessionEventStreamAPI interface {
 	EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error)
+}
+
+type SessionItemsStreamAPI interface {
 	ItemsStream(ctx context.Context, id string) (<-chan map[string]any, func(), error)
+}
+
+type SessionKillAPI interface {
 	KillSession(ctx context.Context, id string) error
+}
+
+type SessionMarkExitedAPI interface {
 	MarkSessionExited(ctx context.Context, id string) error
+}
+
+type SessionSendAPI interface {
 	SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error)
+}
+
+type SessionApproveAPI interface {
 	ApproveSession(ctx context.Context, id string, req client.ApproveSessionRequest) error
+}
+
+type SessionApprovalsAPI interface {
 	ListApprovals(ctx context.Context, id string) ([]*types.Approval, error)
+}
+
+type SessionInterruptAPI interface {
 	InterruptSession(ctx context.Context, id string) error
+}
+
+type WorkspaceSessionStartAPI interface {
 	StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error)
 }
 
-type StateAPI interface {
+type SessionAPI interface {
+	SessionListWithMetaAPI
+	SessionTailAPI
+	SessionHistoryAPI
+	SessionTailStreamAPI
+	SessionEventStreamAPI
+	SessionItemsStreamAPI
+	SessionKillAPI
+	SessionMarkExitedAPI
+	SessionSendAPI
+	SessionApproveAPI
+	SessionApprovalsAPI
+	SessionInterruptAPI
+	WorkspaceSessionStartAPI
+}
+
+type SessionChatAPI interface {
+	SessionSendAPI
+	SessionEventStreamAPI
+}
+
+type AppStateGetAPI interface {
 	GetAppState(ctx context.Context) (*types.AppState, error)
+}
+
+type AppStateUpdateAPI interface {
 	UpdateAppState(ctx context.Context, state *types.AppState) (*types.AppState, error)
+}
+
+type StateAPI interface {
+	AppStateGetAPI
+	AppStateUpdateAPI
 }
 
 type ClientAPI struct {

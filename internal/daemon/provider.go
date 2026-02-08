@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"control/internal/providers"
 )
 
 type Provider interface {
@@ -22,32 +24,63 @@ type providerProcess struct {
 }
 
 func ResolveProvider(provider, customCmd string) (Provider, error) {
-	if provider == "" {
+	name := providers.Normalize(provider)
+	if name == "" {
 		return nil, errors.New("provider is required")
 	}
-
-	switch normalizeProvider(provider) {
-	case "codex":
-		return newCodexProvider()
-	case "claude":
-		return newClaudeProvider()
-	case "opencode":
-		cmd, err := findOpenCodeCommand()
-		return newExecProvider("opencode", cmd, err)
-	case "gemini":
-		cmd, err := findCommand("ARCHON_GEMINI_CMD", "gemini")
-		return newExecProvider("gemini", cmd, err)
-	case "custom":
-		if customCmd == "" {
-			return nil, errors.New("custom provider requires cmd")
-		}
-		cmd, err := lookupCommand(customCmd)
-		return newExecProvider("custom", cmd, err)
-	default:
+	def, ok := providers.Lookup(name)
+	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
+	}
+	cmdName, err := resolveProviderCommandName(def, customCmd)
+	if err != nil {
+		return nil, err
+	}
+
+	switch def.Runtime {
+	case providers.RuntimeCodex:
+		return newCodexProvider(cmdName)
+	case providers.RuntimeClaude:
+		return newClaudeProvider(cmdName)
+	case providers.RuntimeExec, providers.RuntimeCustom:
+		return newExecProvider(def.Name, cmdName, nil)
+	default:
+		return nil, fmt.Errorf("provider runtime is not supported: %s", def.Runtime)
 	}
 }
 
-func normalizeProvider(provider string) string {
-	return strings.ToLower(strings.TrimSpace(provider))
+func resolveProviderCommandName(def providers.Definition, customCmd string) (string, error) {
+	if def.Runtime == providers.RuntimeCustom {
+		if strings.TrimSpace(customCmd) == "" {
+			return "", errors.New("custom provider requires cmd")
+		}
+		return lookupCommand(customCmd)
+	}
+	if cmd := strings.TrimSpace(def.CommandEnv); cmd != "" {
+		if envVal := strings.TrimSpace(os.Getenv(cmd)); envVal != "" {
+			return lookupCommand(envVal)
+		}
+	}
+	candidates := def.CommandCandidates
+	if len(candidates) == 0 {
+		return "", errors.New("provider command is not configured")
+	}
+	if len(candidates) == 1 {
+		return lookupCommand(candidates[0])
+	}
+	var valid []string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		valid = append(valid, candidate)
+		if cmd, err := lookupCommand(candidate); err == nil {
+			return cmd, nil
+		}
+	}
+	if len(valid) == 0 {
+		return "", errors.New("provider command is not configured")
+	}
+	return "", fmt.Errorf("command not found: %s", strings.Join(valid, " or "))
 }

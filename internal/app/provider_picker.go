@@ -4,6 +4,8 @@ import (
 	"io"
 	"strings"
 
+	"control/internal/providers"
+
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -160,11 +162,10 @@ func (p *ProviderPicker) Selected() string {
 }
 
 func defaultProviderItems() []list.Item {
-	return []list.Item{
-		providerItem{id: "codex", label: "codex"},
-		providerItem{id: "claude", label: "claude"},
-		providerItem{id: "opencode", label: "opencode"},
-		providerItem{id: "gemini", label: "gemini"},
-		providerItem{id: "custom", label: "custom"},
+	defs := providers.All()
+	items := make([]list.Item, 0, len(defs))
+	for _, def := range defs {
+		items = append(items, providerItem{id: def.Name, label: def.Label})
 	}
+	return items
 }

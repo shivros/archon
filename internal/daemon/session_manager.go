@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"control/internal/providers"
 	"control/internal/types"
 )
 
@@ -167,10 +168,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	cfg.OnProviderSessionID = func(providerID string) {
 		m.upsertSessionProviderID(cfg.Provider, sessionID, providerID)
 	}
-	cfg.OnProviderSessionID = func(providerID string) {
-		m.upsertSessionProviderID(cfg.Provider, session.ID, providerID)
-	}
-	caps := types.Capabilities(cfg.Provider)
+	caps := providers.CapabilitiesFor(cfg.Provider)
 	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
 		m.mu.Lock()
@@ -249,7 +247,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 }
 
 func providerUsesItems(provider string) bool {
-	return types.Capabilities(provider).UsesItems
+	return providers.CapabilitiesFor(provider).UsesItems
 }
 
 func (m *SessionManager) SendInput(id string, payload []byte) error {
@@ -330,7 +328,7 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 	session.Status = types.SessionStatusStarting
 	m.mu.Unlock()
 
-	caps := types.Capabilities(cfg.Provider)
+	caps := providers.CapabilitiesFor(cfg.Provider)
 	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
 		m.mu.Lock()
@@ -501,7 +499,7 @@ func (m *SessionManager) MarkExited(id string) error {
 		return ErrSessionNotFound
 	}
 	if isActiveStatus(state.session.Status) {
-		if !types.Capabilities(state.session.Provider).NoProcess {
+		if !providers.CapabilitiesFor(state.session.Provider).NoProcess {
 			m.mu.Unlock()
 			return errors.New("session is active; kill it first")
 		}

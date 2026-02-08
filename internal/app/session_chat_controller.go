@@ -3,11 +3,11 @@ package app
 import tea "github.com/charmbracelet/bubbletea"
 
 type SessionChatController struct {
-	api         SessionAPI
+	api         SessionChatAPI
 	codexStream *CodexStreamController
 }
 
-func NewSessionChatController(api SessionAPI, codexStream *CodexStreamController) *SessionChatController {
+func NewSessionChatController(api SessionChatAPI, codexStream *CodexStreamController) *SessionChatController {
 	return &SessionChatController{api: api, codexStream: codexStream}
 }
 

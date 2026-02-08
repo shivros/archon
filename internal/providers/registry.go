@@ -1,0 +1,126 @@
+package providers
+
+import "strings"
+
+type Capabilities struct {
+	UsesItems         bool
+	SupportsEvents    bool
+	SupportsApprovals bool
+	SupportsInterrupt bool
+	NoProcess         bool
+}
+
+type Runtime string
+
+const (
+	RuntimeCodex  Runtime = "codex"
+	RuntimeClaude Runtime = "claude"
+	RuntimeExec   Runtime = "exec"
+	RuntimeCustom Runtime = "custom"
+)
+
+type Definition struct {
+	Name              string
+	Label             string
+	Runtime           Runtime
+	CommandEnv        string
+	CommandCandidates []string
+	Capabilities      Capabilities
+}
+
+var registry = []Definition{
+	{
+		Name:              "codex",
+		Label:             "codex",
+		Runtime:           RuntimeCodex,
+		CommandEnv:        "ARCHON_CODEX_CMD",
+		CommandCandidates: []string{"codex"},
+		Capabilities: Capabilities{
+			SupportsEvents:    true,
+			SupportsApprovals: true,
+			SupportsInterrupt: true,
+		},
+	},
+	{
+		Name:              "claude",
+		Label:             "claude",
+		Runtime:           RuntimeClaude,
+		CommandEnv:        "ARCHON_CLAUDE_CMD",
+		CommandCandidates: []string{"claude"},
+		Capabilities: Capabilities{
+			UsesItems: true,
+			NoProcess: true,
+		},
+	},
+	{
+		Name:              "opencode",
+		Label:             "opencode",
+		Runtime:           RuntimeExec,
+		CommandEnv:        "ARCHON_OPENCODE_CMD",
+		CommandCandidates: []string{"opencode", "opencode-cli"},
+	},
+	{
+		Name:              "gemini",
+		Label:             "gemini",
+		Runtime:           RuntimeExec,
+		CommandEnv:        "ARCHON_GEMINI_CMD",
+		CommandCandidates: []string{"gemini"},
+	},
+	{
+		Name:       "custom",
+		Label:      "custom",
+		Runtime:    RuntimeCustom,
+		CommandEnv: "",
+	},
+}
+
+var registryByName = buildByName(registry)
+
+func Normalize(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func All() []Definition {
+	out := make([]Definition, 0, len(registry))
+	for _, def := range registry {
+		out = append(out, cloneDefinition(def))
+	}
+	return out
+}
+
+func Lookup(name string) (Definition, bool) {
+	key := Normalize(name)
+	def, ok := registryByName[key]
+	if !ok {
+		return Definition{}, false
+	}
+	return cloneDefinition(def), true
+}
+
+func CapabilitiesFor(name string) Capabilities {
+	def, ok := Lookup(name)
+	if !ok {
+		return Capabilities{}
+	}
+	return def.Capabilities
+}
+
+func buildByName(defs []Definition) map[string]Definition {
+	out := make(map[string]Definition, len(defs))
+	for _, def := range defs {
+		name := Normalize(def.Name)
+		if name == "" {
+			continue
+		}
+		out[name] = cloneDefinition(def)
+	}
+	return out
+}
+
+func cloneDefinition(def Definition) Definition {
+	copy := def
+	if def.CommandCandidates != nil {
+		copy.CommandCandidates = append([]string{}, def.CommandCandidates...)
+	}
+	return copy
+}

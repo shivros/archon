@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"control/internal/logging"
+	"control/internal/providers"
 )
 
 type codexAppServer struct {
@@ -82,7 +83,8 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logg
 	if logger == nil {
 		logger = logging.Nop()
 	}
-	cmdName, err := findCommand("ARCHON_CODEX_CMD", "codex")
+	def, _ := providers.Lookup("codex")
+	cmdName, err := resolveProviderCommandName(def, "")
 	if err != nil {
 		return nil, err
 	}

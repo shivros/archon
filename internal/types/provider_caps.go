@@ -1,29 +1,9 @@
 package types
 
-import "strings"
+import "control/internal/providers"
 
-type ProviderCapabilities struct {
-	UsesItems         bool
-	SupportsEvents    bool
-	SupportsApprovals bool
-	SupportsInterrupt bool
-	NoProcess         bool
-}
+type ProviderCapabilities = providers.Capabilities
 
 func Capabilities(provider string) ProviderCapabilities {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex":
-		return ProviderCapabilities{
-			SupportsEvents:    true,
-			SupportsApprovals: true,
-			SupportsInterrupt: true,
-		}
-	case "claude":
-		return ProviderCapabilities{
-			UsesItems: true,
-			NoProcess: true,
-		}
-	default:
-		return ProviderCapabilities{}
-	}
+	return providers.CapabilitiesFor(provider)
 }
