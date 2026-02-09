@@ -1,8 +1,12 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"control/internal/types"
 )
 
 type contextMenuTarget struct {
@@ -19,21 +23,68 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 		return true, nil
 	case ContextMenuWorkspaceRename:
 		if target.id == "" {
-			m.status = "select a workspace to rename"
+			m.setValidationStatus("select a workspace to rename")
 			return true, nil
 		}
 		m.enterRenameWorkspace(target.id)
 		return true, nil
 	case ContextMenuWorkspaceEditGroups:
 		if target.id == "" {
-			m.status = "select a workspace"
+			m.setValidationStatus("select a workspace")
 			return true, nil
 		}
 		m.enterEditWorkspaceGroups(target.id)
 		return true, nil
+	case ContextMenuWorkspaceOpenNotes:
+		if target.id == "" || target.id == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace")
+			return true, nil
+		}
+		scope := noteScopeTarget{
+			Scope:       types.NoteScopeWorkspace,
+			WorkspaceID: target.id,
+		}
+		return true, m.openNotesScope(scope)
+	case ContextMenuWorkspaceAddNote:
+		if target.id == "" || target.id == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace")
+			return true, nil
+		}
+		scope := noteScopeTarget{
+			Scope:       types.NoteScopeWorkspace,
+			WorkspaceID: target.id,
+		}
+		return true, m.enterAddNoteForScope(scope)
+	case ContextMenuWorkspaceAddWorktree:
+		if target.id == "" || target.id == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace")
+			return true, nil
+		}
+		m.enterAddWorktree(target.id)
+		return true, nil
+	case ContextMenuWorkspaceCopyPath:
+		if target.id == "" || target.id == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace")
+			return true, nil
+		}
+		workspace := m.workspaceByID(target.id)
+		path := ""
+		if workspace != nil {
+			path = strings.TrimSpace(workspace.RepoPath)
+		}
+		if path == "" {
+			m.setCopyStatusWarning("workspace path unavailable")
+			return true, nil
+		}
+		if err := clipboard.WriteAll(path); err != nil {
+			m.setCopyStatusError("copy failed: " + err.Error())
+			return true, nil
+		}
+		m.setCopyStatusInfo("copied workspace path")
+		return true, nil
 	case ContextMenuWorkspaceDelete:
 		if target.id == "" || target.id == unassignedWorkspaceID {
-			m.status = "select a workspace to delete"
+			m.setValidationStatus("select a workspace to delete")
 			return true, nil
 		}
 		m.confirmDeleteWorkspace(target.id)
@@ -47,14 +98,56 @@ func (m *Model) handleWorktreeContextMenuAction(action ContextMenuAction, target
 	switch action {
 	case ContextMenuWorktreeAdd:
 		if target.workspaceID == "" {
-			m.status = "select a workspace"
+			m.setValidationStatus("select a workspace")
 			return true, nil
 		}
 		m.enterAddWorktree(target.workspaceID)
 		return true, nil
+	case ContextMenuWorktreeOpenNotes:
+		if target.worktreeID == "" || target.workspaceID == "" {
+			m.setValidationStatus("select a worktree")
+			return true, nil
+		}
+		scope := noteScopeTarget{
+			Scope:       types.NoteScopeWorktree,
+			WorkspaceID: target.workspaceID,
+			WorktreeID:  target.worktreeID,
+		}
+		return true, m.openNotesScope(scope)
+	case ContextMenuWorktreeAddNote:
+		if target.worktreeID == "" || target.workspaceID == "" {
+			m.setValidationStatus("select a worktree")
+			return true, nil
+		}
+		scope := noteScopeTarget{
+			Scope:       types.NoteScopeWorktree,
+			WorkspaceID: target.workspaceID,
+			WorktreeID:  target.worktreeID,
+		}
+		return true, m.enterAddNoteForScope(scope)
+	case ContextMenuWorktreeCopyPath:
+		if target.worktreeID == "" {
+			m.setValidationStatus("select a worktree")
+			return true, nil
+		}
+		worktree := m.worktreeByID(target.worktreeID)
+		path := ""
+		if worktree != nil {
+			path = strings.TrimSpace(worktree.Path)
+		}
+		if path == "" {
+			m.setCopyStatusWarning("worktree path unavailable")
+			return true, nil
+		}
+		if err := clipboard.WriteAll(path); err != nil {
+			m.setCopyStatusError("copy failed: " + err.Error())
+			return true, nil
+		}
+		m.setCopyStatusInfo("copied worktree path")
+		return true, nil
 	case ContextMenuWorktreeDelete:
 		if target.worktreeID == "" || target.workspaceID == "" {
-			m.status = "select a worktree"
+			m.setValidationStatus("select a worktree")
 			return true, nil
 		}
 		m.confirmDeleteWorktree(target.workspaceID, target.worktreeID)
@@ -68,42 +161,56 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 	switch action {
 	case ContextMenuSessionChat:
 		if target.sessionID == "" {
-			m.status = "select a session"
+			m.setValidationStatus("select a session")
 			return true, nil
 		}
 		m.enterCompose(target.sessionID)
 		return true, nil
+	case ContextMenuSessionOpenNotes:
+		if target.sessionID == "" {
+			m.setValidationStatus("select a session")
+			return true, nil
+		}
+		scope := m.noteScopeForSession(target.sessionID, target.workspaceID, target.worktreeID)
+		return true, m.openNotesScope(scope)
+	case ContextMenuSessionAddNote:
+		if target.sessionID == "" {
+			m.setValidationStatus("select a session")
+			return true, nil
+		}
+		scope := m.noteScopeForSession(target.sessionID, target.workspaceID, target.worktreeID)
+		return true, m.enterAddNoteForScope(scope)
 	case ContextMenuSessionDismiss:
 		if target.sessionID == "" {
-			m.status = "select a session"
+			m.setValidationStatus("select a session")
 			return true, nil
 		}
 		m.confirmDismissSessions([]string{target.sessionID})
 		return true, nil
 	case ContextMenuSessionKill:
 		if target.sessionID == "" {
-			m.status = "select a session"
+			m.setValidationStatus("select a session")
 			return true, nil
 		}
-		m.status = "killing " + target.sessionID
+		m.setStatusMessage("killing " + target.sessionID)
 		return true, killSessionCmd(m.sessionAPI, target.sessionID)
 	case ContextMenuSessionInterrupt:
 		if target.sessionID == "" {
-			m.status = "select a session"
+			m.setValidationStatus("select a session")
 			return true, nil
 		}
-		m.status = "interrupting " + target.sessionID
+		m.setStatusMessage("interrupting " + target.sessionID)
 		return true, interruptSessionCmd(m.sessionAPI, target.sessionID)
 	case ContextMenuSessionCopyID:
 		if target.sessionID == "" {
-			m.status = "select a session"
+			m.setCopyStatusWarning("select a session")
 			return true, nil
 		}
 		if err := clipboard.WriteAll(target.sessionID); err != nil {
-			m.status = "copy failed: " + err.Error()
+			m.setCopyStatusError("copy failed: " + err.Error())
 			return true, nil
 		}
-		m.status = "copied session id"
+		m.setCopyStatusInfo("copied session id")
 		return true, nil
 	default:
 		return false, nil

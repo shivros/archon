@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -160,6 +161,152 @@ func TestPhase0ConsumeCodexTickSetsPendingApprovalStatus(t *testing.T) {
 	}
 	if m.status != "approval required: command (go test ./...)" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestPhase0ApprovePendingAllowsRequestIDZero(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.pendingApproval = &ApprovalRequest{RequestID: 0, Summary: "command"}
+
+	cmd := m.approvePending("accept")
+	if cmd == nil {
+		t.Fatalf("expected approval command")
+	}
+	if m.status != "sending approval" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestPhase0ApprovePendingUsesApprovalSessionWhenSidebarNotOnSession(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	items := m.sidebar.Items()
+	for i, item := range items {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkspace {
+			continue
+		}
+		m.sidebar.Select(i)
+		break
+	}
+	if m.selectedSessionID() != "" {
+		t.Fatalf("expected no selected session")
+	}
+	m.pendingApproval = &ApprovalRequest{RequestID: 4, SessionID: "s1", Summary: "command"}
+
+	cmd := m.approvePending("accept")
+	if cmd == nil {
+		t.Fatalf("expected approval command")
+	}
+	if m.status != "sending approval" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestPhase0ConsumeCodexTickAcceptsApprovalRequestIDZero(t *testing.T) {
+	m := NewModel(nil)
+	requestID := 0
+
+	events := make(chan types.CodexEvent, 1)
+	events <- types.CodexEvent{
+		ID:     &requestID,
+		Method: "item/commandExecution/requestApproval",
+		Params: []byte(`{"parsedCmd":"echo ok"}`),
+	}
+	close(events)
+
+	m.codexStream.SetStream(events, nil)
+	m.consumeCodexTick()
+
+	if m.pendingApproval == nil {
+		t.Fatalf("expected pending approval to be visible")
+	}
+	if m.pendingApproval.RequestID != 0 {
+		t.Fatalf("expected request id 0, got %d", m.pendingApproval.RequestID)
+	}
+}
+
+func TestPhase0ApprovalsMsgAddsApprovalBlock(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.applyBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "reply"}})
+
+	handled, _ := m.reduceStateMessages(approvalsMsg{
+		id: "s1",
+		approvals: []*types.Approval{
+			{
+				SessionID: "s1",
+				RequestID: 0,
+				Method:    "item/commandExecution/requestApproval",
+				Params:    []byte(`{"parsedCmd":"go test ./..."}`),
+				CreatedAt: time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+			},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected approvals msg to be handled")
+	}
+	blocks := m.currentBlocks()
+	if len(blocks) < 2 {
+		t.Fatalf("expected approval block to be appended, got %#v", blocks)
+	}
+	last := blocks[len(blocks)-1]
+	if last.Role != ChatRoleApproval || last.RequestID != 0 {
+		t.Fatalf("unexpected approval block: %#v", last)
+	}
+}
+
+func TestPhase0ApprovalMsgReplacesPendingWithResolvedMarker(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.setApprovalsForSession("s1", []*ApprovalRequest{
+		{
+			RequestID: 0,
+			Method:    "item/commandExecution/requestApproval",
+			Summary:   "command",
+			Detail:    "go test ./...",
+			CreatedAt: time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+		},
+	})
+	m.pendingApproval = latestApprovalRequest(m.sessionApprovals["s1"])
+	m.applyBlocks(mergeApprovalBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "reply"}}, m.sessionApprovals["s1"], nil))
+
+	handled, _ := m.reduceStateMessages(approvalMsg{
+		id:        "s1",
+		requestID: 0,
+		decision:  "accept",
+	})
+	if !handled {
+		t.Fatalf("expected approval msg to be handled")
+	}
+	if m.pendingApproval != nil {
+		t.Fatalf("expected pending approval to clear")
+	}
+	if len(m.sessionApprovals["s1"]) != 0 {
+		t.Fatalf("expected pending approvals to clear, got %#v", m.sessionApprovals["s1"])
+	}
+	if len(m.sessionApprovalResolutions["s1"]) != 1 {
+		t.Fatalf("expected one approval resolution, got %#v", m.sessionApprovalResolutions["s1"])
+	}
+	blocks := m.currentBlocks()
+	if len(blocks) < 2 {
+		t.Fatalf("expected resolved approval block, got %#v", blocks)
+	}
+	last := blocks[len(blocks)-1]
+	if last.Role != ChatRoleApprovalResolved || last.RequestID != 0 {
+		t.Fatalf("unexpected resolved approval block: %#v", last)
+	}
+	if !strings.Contains(strings.ToLower(last.Text), "approved") {
+		t.Fatalf("expected approved marker text, got %q", last.Text)
 	}
 }
 

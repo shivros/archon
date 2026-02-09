@@ -12,6 +12,7 @@ type ChatTranscript struct {
 	maxBlocks         int
 	activeAgentIndex  int
 	pendingAgentBlock bool
+	agentSegmentBreak bool
 }
 
 func NewChatTranscript(maxLines int) *ChatTranscript {
@@ -28,6 +29,7 @@ func (t *ChatTranscript) Reset() {
 	t.blocks = nil
 	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
+	t.agentSegmentBreak = false
 }
 
 func (t *ChatTranscript) SetBlocks(blocks []ChatBlock) {
@@ -42,6 +44,7 @@ func (t *ChatTranscript) SetBlocks(blocks []ChatBlock) {
 	t.trim()
 	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
+	t.agentSegmentBreak = false
 }
 
 func (t *ChatTranscript) Blocks() []ChatBlock {
@@ -69,6 +72,12 @@ func (t *ChatTranscript) StartAgentBlock() {
 	if t == nil {
 		return
 	}
+	if len(t.blocks) > 0 && t.blocks[len(t.blocks)-1].Role == ChatRoleAgent {
+		t.activeAgentIndex = len(t.blocks) - 1
+		t.pendingAgentBlock = true
+		t.agentSegmentBreak = strings.TrimSpace(t.blocks[t.activeAgentIndex].Text) != ""
+		return
+	}
 	t.blocks = append(t.blocks, ChatBlock{
 		Role:   ChatRoleAgent,
 		Text:   "",
@@ -76,6 +85,7 @@ func (t *ChatTranscript) StartAgentBlock() {
 	})
 	t.activeAgentIndex = len(t.blocks) - 1
 	t.pendingAgentBlock = true
+	t.agentSegmentBreak = false
 	t.trim()
 }
 
@@ -91,7 +101,12 @@ func (t *ChatTranscript) AppendAgentDelta(delta string) {
 	if t.activeAgentIndex < 0 || t.activeAgentIndex >= len(t.blocks) {
 		return
 	}
-	t.blocks[t.activeAgentIndex].Text += delta
+	if t.agentSegmentBreak {
+		t.blocks[t.activeAgentIndex].Text = concatAdjacentAgentText(t.blocks[t.activeAgentIndex].Text, delta)
+		t.agentSegmentBreak = false
+	} else {
+		t.blocks[t.activeAgentIndex].Text += delta
+	}
 	t.trim()
 }
 
@@ -101,6 +116,7 @@ func (t *ChatTranscript) FinishAgentBlock() {
 	}
 	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
+	t.agentSegmentBreak = false
 	t.trim()
 }
 
@@ -143,6 +159,41 @@ func (t *ChatTranscript) MarkUserMessageSent(headerIndex int) bool {
 		return false
 	}
 	t.blocks[headerIndex].Status = ChatStatusNone
+	return true
+}
+
+func (t *ChatTranscript) UpsertReasoning(itemID, text string) bool {
+	if t == nil {
+		return false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		t.appendBlock(ChatRoleReasoning, text)
+		return true
+	}
+	blockID := "reasoning:" + itemID
+	for i := range t.blocks {
+		if t.blocks[i].ID != blockID {
+			continue
+		}
+		if strings.TrimSpace(t.blocks[i].Text) == text {
+			return false
+		}
+		t.blocks[i].Text = text
+		return true
+	}
+	t.blocks = append(t.blocks, ChatBlock{
+		ID:        blockID,
+		Role:      ChatRoleReasoning,
+		Text:      text,
+		Status:    ChatStatusNone,
+		Collapsed: true,
+	})
+	t.trim()
 	return true
 }
 
@@ -224,23 +275,8 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 			t.appendBlock(ChatRoleSystem, "Review completed\n\n"+text)
 		}
 	case "reasoning":
-		summary := extractStringList(item["summary"])
-		if len(summary) > 0 {
-			lines := []string{"Reasoning (summary)", ""}
-			for _, entry := range summary {
-				for _, line := range strings.Split(entry, "\n") {
-					line = strings.TrimSpace(line)
-					if line == "" {
-						continue
-					}
-					lines = append(lines, "- "+line)
-				}
-			}
-			t.appendBlock(ChatRoleReasoning, strings.Join(lines, "\n"))
-			return
-		}
-		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlock(ChatRoleReasoning, "Reasoning\n\n"+text)
+		if text := reasoningText(item); text != "" {
+			t.UpsertReasoning(asString(item["id"]), text)
 		}
 	default:
 		if typ != "" {
@@ -255,9 +291,40 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 	}
 }
 
+func reasoningText(item map[string]any) string {
+	if item == nil {
+		return ""
+	}
+	summary := extractStringList(item["summary"])
+	if len(summary) > 0 {
+		lines := []string{"Reasoning (summary)", ""}
+		for _, entry := range summary {
+			for _, line := range strings.Split(entry, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				lines = append(lines, "- "+line)
+			}
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	if text := extractContentText(item["content"]); text != "" {
+		return "Reasoning\n\n" + text
+	}
+	return ""
+}
+
 func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
 	if t == nil || strings.TrimSpace(text) == "" {
 		return
+	}
+	if role == ChatRoleAgent && len(t.blocks) > 0 {
+		last := len(t.blocks) - 1
+		if t.blocks[last].Role == ChatRoleAgent {
+			t.blocks[last].Text = concatAdjacentAgentText(t.blocks[last].Text, text)
+			return
+		}
 	}
 	block := ChatBlock{
 		ID:        makeChatBlockID(role, len(t.blocks), text),
@@ -268,6 +335,19 @@ func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
 	}
 	t.blocks = append(t.blocks, block)
 	t.trim()
+}
+
+func concatAdjacentAgentText(current, next string) string {
+	if strings.TrimSpace(next) == "" {
+		return current
+	}
+	if strings.TrimSpace(current) == "" {
+		return next
+	}
+	if strings.HasSuffix(current, "\n") || strings.HasPrefix(next, "\n") {
+		return current + next
+	}
+	return current + "\n\n" + next
 }
 
 func makeChatBlockID(role ChatRole, index int, text string) string {

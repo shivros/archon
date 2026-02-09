@@ -73,6 +73,24 @@ type worktreesMsg struct {
 	err         error
 }
 
+type notesMsg struct {
+	scope noteScopeTarget
+	notes []*types.Note
+	err   error
+}
+
+type noteCreatedMsg struct {
+	note  *types.Note
+	scope noteScopeTarget
+	err   error
+}
+
+type notePinnedMsg struct {
+	note      *types.Note
+	sessionID string
+	err       error
+}
+
 type availableWorktreesMsg struct {
 	workspaceID   string
 	workspacePath string

@@ -31,18 +31,23 @@ const (
 	historyPollMax            = 20
 	composeHistoryMaxEntries  = 200
 	composeHistoryMaxSessions = 200
+	toastDuration             = 2 * time.Second
 	viewportScrollbarWidth    = 1
 	minListWidth              = 24
 	maxListWidth              = 40
 	minViewportWidth          = 20
 	minContentHeight          = 6
 	statusLinePadding         = 1
+	requestStaleRefreshDelay  = 4 * time.Second
+	requestRefreshCooldown    = 3 * time.Second
 )
 
 type uiMode int
 
 const (
 	uiModeNormal uiMode = iota
+	uiModeNotes
+	uiModeAddNote
 	uiModeAddWorkspace
 	uiModeAddWorkspaceGroup
 	uiModeAddWorktree
@@ -61,88 +66,99 @@ const (
 )
 
 type Model struct {
-	workspaceAPI         WorkspaceAPI
-	sessionAPI           SessionAPI
-	stateAPI             StateAPI
-	sidebar              *SidebarController
-	viewport             viewport.Model
-	mode                 uiMode
-	addWorkspace         *AddWorkspaceController
-	addWorktree          *AddWorktreeController
-	providerPicker       *ProviderPicker
-	compose              *ComposeController
-	chatInput            *ChatInput
-	searchInput          *ChatInput
-	renameInput          *ChatInput
-	groupInput           *ChatInput
-	groupPicker          *GroupPicker
-	workspacePicker      *SelectPicker
-	groupSelectPicker    *SelectPicker
-	workspaceMulti       *MultiSelectPicker
-	renameWorkspaceID    string
-	editWorkspaceID      string
-	renameGroupID        string
-	assignGroupID        string
-	status               string
-	width                int
-	height               int
-	follow               bool
-	workspaces           []*types.Workspace
-	groups               []*types.WorkspaceGroup
-	worktrees            map[string][]*types.Worktree
-	sessions             []*types.Session
-	sessionMeta          map[string]*types.SessionMeta
-	appState             types.AppState
-	hasAppState          bool
-	stream               *StreamController
-	codexStream          *CodexStreamController
-	itemStream           *ItemStreamController
-	input                *InputController
-	chat                 *SessionChatController
-	pendingApproval      *ApprovalRequest
-	contentRaw           string
-	contentEsc           bool
-	contentBlocks        []ChatBlock
-	contentBlockSpans    []renderedBlockSpan
-	reasoningExpanded    map[string]bool
-	renderedText         string
-	renderedLines        []string
-	renderedPlain        []string
-	contentVersion       int
-	renderVersion        int
-	renderedForWidth     int
-	renderedForContent   int
-	renderedForSelection int
-	searchQuery          string
-	searchMatches        []int
-	searchIndex          int
-	searchVersion        int
-	messageSelectActive  bool
-	messageSelectIndex   int
-	sectionOffsets       []int
-	sectionVersion       int
-	transcriptCache      map[string][]ChatBlock
-	pendingSessionKey    string
-	loading              bool
-	loadingKey           string
-	loader               spinner.Model
-	pendingMouseCmd      tea.Cmd
-	lastSidebarWheelAt   time.Time
-	pendingSidebarWheel  bool
-	sidebarDragging      bool
-	menu                 *MenuController
-	hotkeys              *HotkeyRenderer
-	contextMenu          *ContextMenuController
-	confirm              *ConfirmController
-	newSession           *newSessionTarget
-	pendingSelectID      string
-	selectSeq            int
-	sendSeq              int
-	pendingSends         map[int]pendingSend
-	composeHistory       map[string]*composeHistoryState
-	tickFn               func() tea.Cmd
-	pendingConfirm       confirmAction
-	scrollOnLoad         bool
+	workspaceAPI               WorkspaceAPI
+	sessionAPI                 SessionAPI
+	notesAPI                   NotesAPI
+	stateAPI                   StateAPI
+	sidebar                    *SidebarController
+	viewport                   viewport.Model
+	mode                       uiMode
+	addWorkspace               *AddWorkspaceController
+	addWorktree                *AddWorktreeController
+	providerPicker             *ProviderPicker
+	compose                    *ComposeController
+	chatInput                  *ChatInput
+	searchInput                *ChatInput
+	renameInput                *ChatInput
+	groupInput                 *ChatInput
+	groupPicker                *GroupPicker
+	workspacePicker            *SelectPicker
+	groupSelectPicker          *SelectPicker
+	workspaceMulti             *MultiSelectPicker
+	noteInput                  *ChatInput
+	renameWorkspaceID          string
+	editWorkspaceID            string
+	renameGroupID              string
+	assignGroupID              string
+	status                     string
+	toastText                  string
+	toastLevel                 toastLevel
+	toastUntil                 time.Time
+	width                      int
+	height                     int
+	follow                     bool
+	workspaces                 []*types.Workspace
+	groups                     []*types.WorkspaceGroup
+	worktrees                  map[string][]*types.Worktree
+	sessions                   []*types.Session
+	sessionMeta                map[string]*types.SessionMeta
+	appState                   types.AppState
+	hasAppState                bool
+	stream                     *StreamController
+	codexStream                *CodexStreamController
+	itemStream                 *ItemStreamController
+	input                      *InputController
+	chat                       *SessionChatController
+	pendingApproval            *ApprovalRequest
+	sessionApprovals           map[string][]*ApprovalRequest
+	sessionApprovalResolutions map[string][]*ApprovalResolution
+	contentRaw                 string
+	contentEsc                 bool
+	contentBlocks              []ChatBlock
+	contentBlockSpans          []renderedBlockSpan
+	reasoningExpanded          map[string]bool
+	renderedText               string
+	renderedLines              []string
+	renderedPlain              []string
+	contentVersion             int
+	renderVersion              int
+	renderedForWidth           int
+	renderedForContent         int
+	renderedForSelection       int
+	searchQuery                string
+	searchMatches              []int
+	searchIndex                int
+	searchVersion              int
+	messageSelectActive        bool
+	messageSelectIndex         int
+	sectionOffsets             []int
+	sectionVersion             int
+	transcriptCache            map[string][]ChatBlock
+	pendingSessionKey          string
+	loading                    bool
+	loadingKey                 string
+	loader                     spinner.Model
+	pendingMouseCmd            tea.Cmd
+	lastSidebarWheelAt         time.Time
+	pendingSidebarWheel        bool
+	sidebarDragging            bool
+	menu                       *MenuController
+	hotkeys                    *HotkeyRenderer
+	contextMenu                *ContextMenuController
+	confirm                    *ConfirmController
+	newSession                 *newSessionTarget
+	pendingSelectID            string
+	selectSeq                  int
+	sendSeq                    int
+	pendingSends               map[int]pendingSend
+	composeHistory             map[string]*composeHistoryState
+	requestActivity            requestActivity
+	tickFn                     func() tea.Cmd
+	pendingConfirm             confirmAction
+	scrollOnLoad               bool
+	notes                      []*types.Note
+	notesScope                 noteScopeTarget
+	notesReturnMode            uiMode
 }
 
 type newSessionTarget struct {
@@ -196,50 +212,55 @@ func NewModel(client *client.Client) Model {
 	hotkeyRenderer := NewHotkeyRenderer(DefaultHotkeys(), DefaultHotkeyResolver{})
 
 	return Model{
-		workspaceAPI:         api,
-		sessionAPI:           api,
-		stateAPI:             api,
-		sidebar:              NewSidebarController(),
-		viewport:             vp,
-		stream:               stream,
-		codexStream:          codexStream,
-		itemStream:           itemStream,
-		input:                NewInputController(),
-		chat:                 NewSessionChatController(api, codexStream),
-		mode:                 uiModeNormal,
-		addWorkspace:         NewAddWorkspaceController(minViewportWidth),
-		addWorktree:          NewAddWorktreeController(minViewportWidth),
-		providerPicker:       NewProviderPicker(minViewportWidth, minContentHeight-1),
-		compose:              NewComposeController(minViewportWidth),
-		chatInput:            NewChatInput(minViewportWidth, DefaultChatInputConfig()),
-		searchInput:          NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		renameInput:          NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		groupInput:           NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		groupPicker:          NewGroupPicker(minViewportWidth, minContentHeight-1),
-		workspacePicker:      NewSelectPicker(minViewportWidth, minContentHeight-1),
-		groupSelectPicker:    NewSelectPicker(minViewportWidth, minContentHeight-1),
-		workspaceMulti:       NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
-		status:               "",
-		follow:               true,
-		groups:               []*types.WorkspaceGroup{},
-		worktrees:            map[string][]*types.Worktree{},
-		sessionMeta:          map[string]*types.SessionMeta{},
-		contentRaw:           "No sessions.",
-		contentEsc:           false,
-		searchIndex:          -1,
-		searchVersion:        -1,
-		messageSelectIndex:   -1,
-		renderedForSelection: -2,
-		sectionVersion:       -1,
-		transcriptCache:      map[string][]ChatBlock{},
-		reasoningExpanded:    map[string]bool{},
-		loader:               loader,
-		hotkeys:              hotkeyRenderer,
-		pendingSends:         map[int]pendingSend{},
-		composeHistory:       map[string]*composeHistoryState{},
-		menu:                 NewMenuController(),
-		contextMenu:          NewContextMenuController(),
-		confirm:              NewConfirmController(),
+		workspaceAPI:               api,
+		sessionAPI:                 api,
+		notesAPI:                   api,
+		stateAPI:                   api,
+		sidebar:                    NewSidebarController(),
+		viewport:                   vp,
+		stream:                     stream,
+		codexStream:                codexStream,
+		itemStream:                 itemStream,
+		input:                      NewInputController(),
+		chat:                       NewSessionChatController(api, codexStream),
+		mode:                       uiModeNormal,
+		addWorkspace:               NewAddWorkspaceController(minViewportWidth),
+		addWorktree:                NewAddWorktreeController(minViewportWidth),
+		providerPicker:             NewProviderPicker(minViewportWidth, minContentHeight-1),
+		compose:                    NewComposeController(minViewportWidth),
+		chatInput:                  NewChatInput(minViewportWidth, DefaultChatInputConfig()),
+		searchInput:                NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		renameInput:                NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		groupInput:                 NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		groupPicker:                NewGroupPicker(minViewportWidth, minContentHeight-1),
+		workspacePicker:            NewSelectPicker(minViewportWidth, minContentHeight-1),
+		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
+		workspaceMulti:             NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
+		noteInput:                  NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		status:                     "",
+		toastLevel:                 toastLevelInfo,
+		follow:                     true,
+		groups:                     []*types.WorkspaceGroup{},
+		worktrees:                  map[string][]*types.Worktree{},
+		sessionMeta:                map[string]*types.SessionMeta{},
+		contentRaw:                 "No sessions.",
+		contentEsc:                 false,
+		searchIndex:                -1,
+		searchVersion:              -1,
+		messageSelectIndex:         -1,
+		renderedForSelection:       -2,
+		sectionVersion:             -1,
+		transcriptCache:            map[string][]ChatBlock{},
+		reasoningExpanded:          map[string]bool{},
+		sessionApprovals:           map[string][]*ApprovalRequest{},
+		sessionApprovalResolutions: map[string][]*ApprovalResolution{},
+		loader:                     loader,
+		hotkeys:                    hotkeyRenderer,
+		pendingSends:               map[int]pendingSend{},
+		composeHistory:             map[string]*composeHistoryState{},
+		menu:                       NewMenuController(),
+		contextMenu:                NewContextMenuController(),
+		confirm:                    NewConfirmController(),
 	}
 }
 
@@ -350,12 +371,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.reduceComposeMode(msg); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.reduceAddNoteMode(msg); handled {
+		return m, cmd
+	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 	case tea.KeyMsg:
+		if handled, cmd := m.reduceNotesModeKey(msg); handled {
+			return m, cmd
+		}
 		if handled, cmd := m.reduceSearchModeKey(msg); handled {
 			return m, cmd
 		}
@@ -372,6 +399,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.handleViewportScroll(msg) {
+			return m, nil
+		}
+		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
 			return m, nil
 		}
 		if handled, cmd := m.reduceNormalModeKey(msg); handled {
@@ -433,6 +463,12 @@ func (m *Model) resize(width, height int) {
 		} else {
 			extraLines = 2
 		}
+	} else if m.mode == uiModeAddNote {
+		if m.noteInput != nil {
+			extraLines = m.noteInput.Height() + 1
+		} else {
+			extraLines = 2
+		}
 	} else if m.mode == uiModeSearch {
 		extraLines = 2
 	}
@@ -470,6 +506,9 @@ func (m *Model) resize(width, height int) {
 	if m.searchInput != nil {
 		m.searchInput.Resize(viewportWidth)
 	}
+	if m.noteInput != nil {
+		m.noteInput.Resize(viewportWidth)
+	}
 	m.renderViewport()
 }
 
@@ -506,7 +545,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 			m.updateDelegate()
 			stateChanged = true
 		}
-		m.status = "workspace selected"
+		m.setStatusMessage("workspace selected")
 		if stateChanged {
 			return m.saveAppStateCmd()
 		}
@@ -527,7 +566,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 			m.updateDelegate()
 			stateChanged = true
 		}
-		m.status = "worktree selected"
+		m.setStatusMessage("worktree selected")
 		if stateChanged {
 			return m.saveAppStateCmd()
 		}
@@ -583,7 +622,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.resetStream()
 	m.pendingApproval = nil
 	m.pendingSessionKey = item.key()
-	m.status = "loading " + id
+	m.setStatusMessage("loading " + id)
 	m.scrollOnLoad = true
 	if cached, ok := m.transcriptCache[item.key()]; ok {
 		m.setSnapshotBlocks(cached)
@@ -627,6 +666,14 @@ func (m *Model) selectedKey() string {
 		return ""
 	}
 	return m.sidebar.SelectedKey()
+}
+
+func sessionIDFromSidebarKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" || !strings.HasPrefix(key, "sess:") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(key, "sess:"))
 }
 
 func (m *Model) filteredWorkspaces() []*types.Workspace {
@@ -777,7 +824,7 @@ func (m *Model) handleMenuAction(action MenuAction) tea.Cmd {
 	case MenuActionDeleteWorkspace:
 		id := m.appState.ActiveWorkspaceID
 		if id == "" || id == unassignedWorkspaceID {
-			m.status = "select a workspace to delete"
+			m.setValidationStatus("select a workspace to delete")
 			return nil
 		}
 		if m.menu != nil {
@@ -849,41 +896,41 @@ func (m *Model) handleConfirmChoice(choice confirmChoice) tea.Cmd {
 		switch action.kind {
 		case confirmDeleteWorkspace:
 			if action.workspaceID == "" || action.workspaceID == unassignedWorkspaceID {
-				m.status = "select a workspace to delete"
+				m.setValidationStatus("select a workspace to delete")
 				return nil
 			}
-			m.status = "deleting workspace"
+			m.setStatusMessage("deleting workspace")
 			return deleteWorkspaceCmd(m.workspaceAPI, action.workspaceID)
 		case confirmDeleteWorkspaceGroup:
 			if action.groupID == "" {
-				m.status = "select a group to delete"
+				m.setValidationStatus("select a group to delete")
 				return nil
 			}
-			m.status = "deleting group"
+			m.setStatusMessage("deleting group")
 			return deleteWorkspaceGroupCmd(m.workspaceAPI, action.groupID)
 		case confirmDeleteWorktree:
 			if action.workspaceID == "" || action.worktreeID == "" {
-				m.status = "select a worktree to delete"
+				m.setValidationStatus("select a worktree to delete")
 				return nil
 			}
-			m.status = "deleting worktree"
+			m.setStatusMessage("deleting worktree")
 			return deleteWorktreeCmd(m.workspaceAPI, action.workspaceID, action.worktreeID)
 		case confirmDismissSessions:
 			if len(action.sessionIDs) == 0 {
-				m.status = "no session selected"
+				m.setValidationStatus("no session selected")
 				return nil
 			}
 			if len(action.sessionIDs) == 1 {
-				m.status = "marking exited " + action.sessionIDs[0]
+				m.setStatusMessage("marking exited " + action.sessionIDs[0])
 				return markExitedCmd(m.sessionAPI, action.sessionIDs[0])
 			}
-			m.status = fmt.Sprintf("marking exited %d sessions", len(action.sessionIDs))
+			m.setStatusMessage(fmt.Sprintf("marking exited %d sessions", len(action.sessionIDs)))
 			return markExitedManyCmd(m.sessionAPI, action.sessionIDs)
 		}
-		m.status = "confirmed"
+		m.setStatusMessage("confirmed")
 		return nil
 	case confirmChoiceCancel:
-		m.status = "canceled"
+		m.setStatusMessage("canceled")
 		return nil
 	default:
 		return nil
@@ -1085,22 +1132,31 @@ func (m *Model) tickCmd() tea.Cmd {
 }
 
 func (m *Model) handleTick(msg tickMsg) tea.Cmd {
+	now := time.Time(msg)
 	m.consumeStreamTick()
 	m.consumeCodexTick()
 	m.consumeItemTick()
 	if m.loading {
-		m.loader, _ = m.loader.Update(spinner.TickMsg{Time: time.Time(msg), ID: m.loader.ID()})
+		m.loader, _ = m.loader.Update(spinner.TickMsg{Time: now, ID: m.loader.ID()})
 		m.setLoadingContent()
 	}
+	if m.toastText != "" && !m.toastActive(now) {
+		m.clearToast()
+	}
+	cmds := make([]tea.Cmd, 0, 3)
 	if m.pendingSidebarWheel {
 		if time.Since(m.lastSidebarWheelAt) >= sidebarWheelSettle {
 			m.pendingSidebarWheel = false
 			if cmd := m.onSelectionChangedImmediate(); cmd != nil {
-				return tea.Batch(cmd, m.tickCmd())
+				cmds = append(cmds, cmd)
 			}
 		}
 	}
-	return m.tickCmd()
+	if cmd := m.maybeAutoRefreshHistory(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	cmds = append(cmds, m.tickCmd())
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) resetStream() {
@@ -1119,6 +1175,7 @@ func (m *Model) resetStream() {
 	m.pendingSessionKey = ""
 	m.loading = false
 	m.loadingKey = ""
+	m.stopRequestActivity()
 }
 
 func (m *Model) consumeStreamTick() {
@@ -1127,7 +1184,7 @@ func (m *Model) consumeStreamTick() {
 	}
 	lines, changed, closed := m.stream.ConsumeTick()
 	if closed {
-		m.status = "stream closed"
+		m.setBackgroundStatus("stream closed")
 	}
 	if changed {
 		m.applyLines(lines, true)
@@ -1138,26 +1195,62 @@ func (m *Model) consumeCodexTick() {
 	if m.codexStream == nil {
 		return
 	}
-	changed, closed := m.codexStream.ConsumeTick()
+	changed, closed, events := m.codexStream.ConsumeTick()
+	sessionID := m.activeStreamTargetID()
+	if sessionID != "" && events > 0 {
+		m.noteRequestEvent(sessionID, events)
+	}
 	if closed {
-		m.status = "events closed"
+		m.setBackgroundStatus("events closed")
+		if sessionID != "" {
+			m.stopRequestActivityFor(sessionID)
+		}
 	}
 	if changed {
-		m.applyBlocks(m.codexStream.Blocks())
+		blocks := m.codexStream.Blocks()
+		if sessionID != "" {
+			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
+			m.codexStream.SetSnapshotBlocks(blocks)
+			blocks = m.codexStream.Blocks()
+		}
+		m.applyBlocks(blocks)
+		if sessionID != "" {
+			m.noteRequestVisibleUpdate(sessionID)
+			if key := m.selectedKey(); key != "" {
+				m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+			}
+		}
 	}
 	if errMsg := m.codexStream.LastError(); errMsg != "" {
-		m.status = "codex error: " + errMsg
+		m.setBackgroundError("codex error: " + errMsg)
 	}
 	if approval := m.codexStream.PendingApproval(); approval != nil {
-		m.pendingApproval = approval
-		if approval.Summary != "" {
-			if approval.Detail != "" {
-				m.status = fmt.Sprintf("approval required: %s (%s)", approval.Summary, approval.Detail)
-			} else {
-				m.status = "approval required: " + approval.Summary
+		if sessionID != "" {
+			updated := m.upsertApprovalForSession(sessionID, approval)
+			requests := m.sessionApprovals[sessionID]
+			if updated {
+				blocks := mergeApprovalBlocks(m.currentBlocks(), requests, m.sessionApprovalResolutions[sessionID])
+				m.codexStream.SetSnapshotBlocks(blocks)
+				blocks = m.codexStream.Blocks()
+				m.applyBlocks(blocks)
+				if key := m.selectedKey(); key != "" {
+					m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+				}
 			}
+			m.pendingApproval = latestApprovalRequest(requests)
 		} else {
-			m.status = "approval required"
+			m.pendingApproval = cloneApprovalRequest(approval)
+		}
+		if m.pendingApproval != nil {
+			if m.pendingApproval.Summary != "" {
+				if m.pendingApproval.Detail != "" {
+					m.setApprovalStatus(fmt.Sprintf("approval required: %s (%s)", m.pendingApproval.Summary, m.pendingApproval.Detail))
+				} else {
+					m.setApprovalStatus("approval required: " + m.pendingApproval.Summary)
+				}
+			} else {
+				m.setApprovalStatus("approval required")
+			}
 		}
 	}
 }
@@ -1167,11 +1260,19 @@ func (m *Model) consumeItemTick() {
 		return
 	}
 	changed, closed := m.itemStream.ConsumeTick()
+	sessionID := m.activeStreamTargetID()
 	if closed {
-		m.status = "items stream closed"
+		m.setBackgroundStatus("items stream closed")
+		if sessionID != "" {
+			m.stopRequestActivityFor(sessionID)
+		}
 	}
 	if changed {
 		m.applyBlocks(m.itemStream.Blocks())
+		if sessionID != "" {
+			m.noteRequestEvent(sessionID, 1)
+			m.noteRequestVisibleUpdate(sessionID)
+		}
 	}
 }
 
@@ -1272,6 +1373,16 @@ func (m *Model) applyBlocks(blocks []ChatBlock) {
 		m.contentBlockSpans = nil
 	} else {
 		resolved := append([]ChatBlock(nil), blocks...)
+		autoExpandNewest := m.shouldAutoExpandNewestReasoning()
+		newestReasoning := -1
+		if autoExpandNewest {
+			for i := len(resolved) - 1; i >= 0; i-- {
+				if resolved[i].Role == ChatRoleReasoning && strings.TrimSpace(resolved[i].Text) != "" {
+					newestReasoning = i
+					break
+				}
+			}
+		}
 		for i := range resolved {
 			if resolved[i].Role != ChatRoleReasoning {
 				continue
@@ -1279,7 +1390,13 @@ func (m *Model) applyBlocks(blocks []ChatBlock) {
 			if strings.TrimSpace(resolved[i].ID) == "" {
 				resolved[i].ID = makeChatBlockID(resolved[i].Role, i, resolved[i].Text)
 			}
-			if m.reasoningExpanded != nil && m.reasoningExpanded[resolved[i].ID] {
+			if m.reasoningExpanded != nil {
+				if expanded, ok := m.reasoningExpanded[resolved[i].ID]; ok {
+					resolved[i].Collapsed = !expanded
+					continue
+				}
+			}
+			if autoExpandNewest && i == newestReasoning {
 				resolved[i].Collapsed = false
 				continue
 			}
@@ -1296,9 +1413,21 @@ func (m *Model) applyBlocks(blocks []ChatBlock) {
 	m.renderViewport()
 }
 
+func (m *Model) shouldAutoExpandNewestReasoning() bool {
+	if m == nil || !m.requestActivity.active {
+		return false
+	}
+	active := strings.TrimSpace(m.requestActivity.sessionID)
+	target := strings.TrimSpace(m.activeStreamTargetID())
+	if active == "" || target == "" {
+		return false
+	}
+	return active == target
+}
+
 func (m *Model) usesViewport() bool {
 	switch m.mode {
-	case uiModeNormal, uiModeCompose, uiModeSearch:
+	case uiModeNormal, uiModeCompose, uiModeSearch, uiModeNotes, uiModeAddNote:
 		return true
 	default:
 		return false
@@ -1551,37 +1680,44 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 }
 
 func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
-	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
+	before := m.viewport.YOffset
+	wasFollowing := m.follow
 	switch msg.String() {
 	case "up":
+		m.pauseFollow(true)
 		m.viewport.LineUp(1)
 	case "down":
+		m.pauseFollow(true)
 		m.viewport.LineDown(1)
 	case "pgup":
+		m.pauseFollow(true)
 		m.viewport.PageUp()
 	case "pgdown":
+		m.pauseFollow(true)
 		m.viewport.PageDown()
 	case "ctrl+f":
+		m.pauseFollow(true)
 		m.viewport.PageDown()
 	case "ctrl+u":
+		m.pauseFollow(true)
 		m.viewport.HalfPageUp()
 	case "ctrl+d":
+		m.pauseFollow(true)
 		m.viewport.HalfPageDown()
 	case "home":
+		m.pauseFollow(true)
 		m.viewport.GotoTop()
 	case "end":
-		m.viewport.GotoBottom()
-		m.follow = true
-		m.status = "follow: on"
+		m.enableFollow(true)
 		return true
 	default:
 		return false
 	}
-	if m.follow {
-		m.follow = false
-		m.status = "follow: paused"
+	if !wasFollowing && before < m.maxViewportYOffset() && m.isViewportAtBottom() {
+		m.setFollowEnabled(true, true)
 	}
 	return true
 }
@@ -1651,12 +1787,15 @@ func (m *Model) toggleReasoningByIndex(index int) bool {
 		}
 		m.reasoningExpanded[block.ID] = !block.Collapsed
 	}
+	m.contentVersion++
+	m.searchVersion = -1
+	m.sectionVersion = -1
 	m.renderViewport()
 	m.persistCurrentBlocks()
 	if block.Collapsed {
-		m.status = "reasoning collapsed"
+		m.setStatusMessage("reasoning collapsed")
 	} else {
-		m.status = "reasoning expanded"
+		m.setStatusMessage("reasoning expanded")
 	}
 	return true
 }
@@ -1667,6 +1806,43 @@ func (m *Model) persistCurrentBlocks() {
 		return
 	}
 	m.transcriptCache[key] = append([]ChatBlock(nil), m.contentBlocks...)
+}
+
+func (m *Model) maxViewportYOffset() int {
+	total := m.viewport.TotalLineCount()
+	maxOffset := total - m.viewport.Height
+	if maxOffset < 0 {
+		return 0
+	}
+	return maxOffset
+}
+
+func (m *Model) isViewportAtBottom() bool {
+	return m.viewport.YOffset >= m.maxViewportYOffset()
+}
+
+func (m *Model) setFollowEnabled(enabled, announce bool) {
+	if m.follow == enabled {
+		return
+	}
+	m.follow = enabled
+	if !announce {
+		return
+	}
+	if enabled {
+		m.setStatusMessage("follow: on")
+	} else {
+		m.setStatusMessage("follow: paused")
+	}
+}
+
+func (m *Model) pauseFollow(announce bool) {
+	m.setFollowEnabled(false, announce)
+}
+
+func (m *Model) enableFollow(announce bool) {
+	m.viewport.GotoBottom()
+	m.setFollowEnabled(true, announce)
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) bool {
@@ -1708,10 +1884,16 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceInputFocusLeftPressMouse(msg, layout) {
 		return true
 	}
+	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {
+		return true
+	}
 	if m.reduceTranscriptCopyLeftPressMouse(msg, layout) {
 		return true
 	}
-	if m.reduceReasoningToggleLeftPressMouse(msg, layout) {
+	if m.reduceTranscriptReasoningButtonLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceTranscriptSelectLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceModePickersLeftPressMouse(msg, layout) {
@@ -1754,6 +1936,149 @@ func (m *Model) currentBlocks() []ChatBlock {
 		}
 	}
 	return nil
+}
+
+func (m *Model) setApprovalsForSession(sessionID string, requests []*ApprovalRequest) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	normalized := normalizeApprovalRequests(requests)
+	for i := range normalized {
+		if normalized[i] == nil {
+			continue
+		}
+		if strings.TrimSpace(normalized[i].SessionID) == "" {
+			normalized[i].SessionID = sessionID
+		}
+	}
+	m.sessionApprovals[sessionID] = normalized
+	resolutions := m.sessionApprovalResolutions[sessionID]
+	for _, req := range normalized {
+		if req == nil {
+			continue
+		}
+		updated, _ := removeApprovalResolution(resolutions, req.RequestID)
+		resolutions = updated
+	}
+	m.sessionApprovalResolutions[sessionID] = resolutions
+}
+
+func (m *Model) upsertApprovalForSession(sessionID string, request *ApprovalRequest) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	if request != nil && strings.TrimSpace(request.SessionID) == "" {
+		copy := *request
+		copy.SessionID = sessionID
+		request = &copy
+	}
+	updated, changed := upsertApprovalRequest(m.sessionApprovals[sessionID], request)
+	m.sessionApprovals[sessionID] = updated
+	if request != nil {
+		nextResolutions, removed := removeApprovalResolution(m.sessionApprovalResolutions[sessionID], request.RequestID)
+		m.sessionApprovalResolutions[sessionID] = nextResolutions
+		if removed {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (m *Model) removeApprovalForSession(sessionID string, requestID int) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	updated, changed := removeApprovalRequest(m.sessionApprovals[sessionID], requestID)
+	m.sessionApprovals[sessionID] = updated
+	return changed
+}
+
+func (m *Model) upsertApprovalResolutionForSession(sessionID string, resolution *ApprovalResolution) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	if resolution != nil && strings.TrimSpace(resolution.SessionID) == "" {
+		copy := *resolution
+		copy.SessionID = sessionID
+		resolution = &copy
+	}
+	updated, changed := upsertApprovalResolution(m.sessionApprovalResolutions[sessionID], resolution)
+	m.sessionApprovalResolutions[sessionID] = updated
+	return changed
+}
+
+func (m *Model) sessionIDForApprovalRequest(requestID int) string {
+	if requestID < 0 {
+		return ""
+	}
+	for sessionID, requests := range m.sessionApprovals {
+		for _, req := range requests {
+			if req == nil || req.RequestID != requestID {
+				continue
+			}
+			if strings.TrimSpace(req.SessionID) != "" {
+				return strings.TrimSpace(req.SessionID)
+			}
+			return strings.TrimSpace(sessionID)
+		}
+	}
+	return ""
+}
+
+func (m *Model) activeContentSessionID() string {
+	if id := strings.TrimSpace(m.composeSessionID()); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(m.selectedSessionID()); id != "" {
+		return id
+	}
+	if id := sessionIDFromSidebarKey(m.pendingSessionKey); id != "" {
+		return id
+	}
+	if m.pendingApproval != nil {
+		if id := strings.TrimSpace(m.pendingApproval.SessionID); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func (m *Model) removeApprovalResolutionForSession(sessionID string, requestID int) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	updated, changed := removeApprovalResolution(m.sessionApprovalResolutions[sessionID], requestID)
+	m.sessionApprovalResolutions[sessionID] = updated
+	return changed
+}
+
+func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
+	if strings.TrimSpace(sessionID) == "" || sessionID != m.selectedSessionID() {
+		return
+	}
+	base := m.currentBlocks()
+	requests := m.sessionApprovals[sessionID]
+	if len(base) == 0 && len(requests) == 0 {
+		return
+	}
+	blocks := mergeApprovalBlocks(base, requests, m.sessionApprovalResolutions[sessionID])
+	provider := m.providerForSessionID(sessionID)
+	if provider == "codex" && m.codexStream != nil {
+		m.codexStream.SetSnapshotBlocks(blocks)
+		blocks = m.codexStream.Blocks()
+	} else if shouldStreamItems(provider) && m.itemStream != nil {
+		m.itemStream.SetSnapshotBlocks(blocks)
+		blocks = m.itemStream.Blocks()
+	}
+	m.applyBlocks(blocks)
+	if key := m.selectedKey(); key != "" {
+		m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+	}
 }
 
 func (m *Model) toggleSidebar() {
@@ -1806,7 +2131,7 @@ func (m *Model) enterAddWorkspace() {
 	if m.addWorkspace != nil {
 		m.addWorkspace.Enter()
 	}
-	m.status = "add workspace: enter path"
+	m.setStatusMessage("add workspace: enter path")
 }
 
 func (m *Model) exitAddWorkspace(status string) {
@@ -1815,7 +2140,7 @@ func (m *Model) exitAddWorkspace(status string) {
 		m.addWorkspace.Exit()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -1829,7 +2154,7 @@ func (m *Model) enterAddWorkspaceGroup() {
 	if m.input != nil {
 		m.input.FocusChatInput()
 	}
-	m.status = "add workspace group"
+	m.setStatusMessage("add workspace group")
 }
 
 func (m *Model) exitAddWorkspaceGroup(status string) {
@@ -1842,7 +2167,7 @@ func (m *Model) exitAddWorkspaceGroup(status string) {
 		m.input.FocusSidebar()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -1858,7 +2183,7 @@ func (m *Model) enterWorkspacePicker(mode uiMode) {
 		}
 		m.workspacePicker.SetOptions(options)
 	}
-	m.status = "select workspace"
+	m.setStatusMessage("select workspace")
 }
 
 func (m *Model) enterGroupPicker() {
@@ -1876,7 +2201,7 @@ func (m *Model) enterGroupPicker() {
 		}
 		m.groupSelectPicker.SetOptions(options)
 	}
-	m.status = "select group"
+	m.setStatusMessage("select group")
 }
 
 func (m *Model) enterGroupAssignPicker() {
@@ -1894,7 +2219,7 @@ func (m *Model) enterGroupAssignPicker() {
 		}
 		m.groupSelectPicker.SetOptions(options)
 	}
-	m.status = "select group"
+	m.setStatusMessage("select group")
 }
 
 func (m *Model) enterGroupDeletePicker() {
@@ -1912,13 +2237,13 @@ func (m *Model) enterGroupDeletePicker() {
 		}
 		m.groupSelectPicker.SetOptions(options)
 	}
-	m.status = "select group"
+	m.setStatusMessage("select group")
 }
 
 func (m *Model) exitWorkspacePicker(status string) {
 	m.mode = uiModeNormal
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -1937,14 +2262,14 @@ func (m *Model) enterEditWorkspaceGroups(id string) {
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
-	m.status = "edit workspace groups"
+	m.setStatusMessage("edit workspace groups")
 }
 
 func (m *Model) exitEditWorkspaceGroups(status string) {
 	m.mode = uiModeNormal
 	m.editWorkspaceID = ""
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -1966,7 +2291,7 @@ func (m *Model) enterRenameWorkspaceGroup(id string) {
 	if m.input != nil {
 		m.input.FocusChatInput()
 	}
-	m.status = "rename workspace group"
+	m.setStatusMessage("rename workspace group")
 }
 
 func (m *Model) exitRenameWorkspaceGroup(status string) {
@@ -1980,7 +2305,7 @@ func (m *Model) exitRenameWorkspaceGroup(status string) {
 		m.input.FocusSidebar()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -2004,14 +2329,14 @@ func (m *Model) enterAssignGroupWorkspaces(groupID string) {
 		}
 		m.workspaceMulti.SetOptions(options)
 	}
-	m.status = "assign workspaces"
+	m.setStatusMessage("assign workspaces")
 }
 
 func (m *Model) exitAssignGroupWorkspaces(status string) {
 	m.mode = uiModeNormal
 	m.assignGroupID = ""
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -2024,7 +2349,7 @@ func (m *Model) enterAddWorktree(workspaceID string) {
 	if m.addWorktree != nil {
 		m.addWorktree.Enter(workspaceID, workspacePath)
 	}
-	m.status = "add worktree: new or existing"
+	m.setStatusMessage("add worktree: new or existing")
 }
 
 func (m *Model) exitAddWorktree(status string) {
@@ -2033,7 +2358,7 @@ func (m *Model) exitAddWorktree(status string) {
 		m.addWorktree.Exit()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -2051,7 +2376,7 @@ func (m *Model) enterRenameWorkspace(id string) {
 	if m.input != nil {
 		m.input.FocusChatInput()
 	}
-	m.status = "rename workspace"
+	m.setStatusMessage("rename workspace")
 }
 
 func (m *Model) exitRenameWorkspace(status string) {
@@ -2065,7 +2390,7 @@ func (m *Model) exitRenameWorkspace(status string) {
 		m.input.FocusSidebar()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 }
 
@@ -2083,7 +2408,7 @@ func (m *Model) enterCompose(sessionID string) {
 	if m.input != nil {
 		m.input.FocusChatInput()
 	}
-	m.status = "compose message"
+	m.setStatusMessage("compose message")
 	m.resize(m.width, m.height)
 }
 
@@ -2101,7 +2426,7 @@ func (m *Model) exitCompose(status string) {
 		m.input.FocusSidebar()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 	m.resize(m.width, m.height)
 }
@@ -2117,7 +2442,7 @@ func (m *Model) enterProviderPick() {
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
-	m.status = "choose provider"
+	m.setStatusMessage("choose provider")
 	m.resize(m.width, m.height)
 }
 
@@ -2131,7 +2456,7 @@ func (m *Model) exitProviderPick(status string) {
 		m.input.FocusSidebar()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 	m.resize(m.width, m.height)
 }
@@ -2142,7 +2467,7 @@ func (m *Model) selectProvider() tea.Cmd {
 	}
 	provider := m.providerPicker.Selected()
 	if provider == "" {
-		m.status = "provider is required"
+		m.setValidationStatus("provider is required")
 		return nil
 	}
 	return m.applyProviderSelection(provider)
@@ -2164,7 +2489,7 @@ func (m *Model) applyProviderSelection(provider string) tea.Cmd {
 	if m.input != nil {
 		m.input.FocusChatInput()
 	}
-	m.status = "provider set: " + provider
+	m.setStatusMessage("provider set: " + provider)
 	m.resize(m.width, m.height)
 	return nil
 }
@@ -2176,7 +2501,7 @@ func (m *Model) enterSearch() {
 		m.searchInput.SetValue(m.searchQuery)
 		m.searchInput.Focus()
 	}
-	m.status = "search"
+	m.setStatusMessage("search")
 	m.resize(m.width, m.height)
 }
 
@@ -2190,7 +2515,7 @@ func (m *Model) exitSearch(status string) {
 		m.input.FocusSidebar()
 	}
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 	m.resize(m.width, m.height)
 }
@@ -2201,7 +2526,7 @@ func (m *Model) applySearch(query string) {
 		m.searchQuery = ""
 		m.searchMatches = nil
 		m.searchIndex = -1
-		m.status = "search cleared"
+		m.setStatusMessage("search cleared")
 		return
 	}
 	m.searchQuery = query
@@ -2209,7 +2534,7 @@ func (m *Model) applySearch(query string) {
 	m.searchVersion = m.renderVersion
 	if len(m.searchMatches) == 0 {
 		m.searchIndex = -1
-		m.status = "no matches"
+		m.setStatusMessage("no matches")
 		return
 	}
 	m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset, 1)
@@ -2217,12 +2542,12 @@ func (m *Model) applySearch(query string) {
 		m.searchIndex = 0
 	}
 	m.jumpToLine(m.searchMatches[m.searchIndex])
-	m.status = fmt.Sprintf("match %d/%d", m.searchIndex+1, len(m.searchMatches))
+	m.setStatusMessage(fmt.Sprintf("match %d/%d", m.searchIndex+1, len(m.searchMatches)))
 }
 
 func (m *Model) moveSearch(delta int) {
 	if m.searchQuery == "" {
-		m.status = "no search"
+		m.setStatusMessage("no search")
 		return
 	}
 	if m.searchVersion != m.renderVersion {
@@ -2232,7 +2557,7 @@ func (m *Model) moveSearch(delta int) {
 	}
 	if len(m.searchMatches) == 0 {
 		m.searchIndex = -1
-		m.status = "no matches"
+		m.setStatusMessage("no matches")
 		return
 	}
 	if m.searchIndex < 0 {
@@ -2244,48 +2569,42 @@ func (m *Model) moveSearch(delta int) {
 		m.searchIndex = (m.searchIndex + delta + len(m.searchMatches)) % len(m.searchMatches)
 	}
 	m.jumpToLine(m.searchMatches[m.searchIndex])
-	m.status = fmt.Sprintf("match %d/%d", m.searchIndex+1, len(m.searchMatches))
+	m.setStatusMessage(fmt.Sprintf("match %d/%d", m.searchIndex+1, len(m.searchMatches)))
 }
 
 func (m *Model) approvePending(decision string) tea.Cmd {
 	if m.pendingApproval == nil {
 		return nil
 	}
-	sessionID := m.selectedSessionID()
+	return m.approveRequestForSession(m.pendingApproval.SessionID, decision, m.pendingApproval.RequestID)
+}
+
+func (m *Model) approveRequest(decision string, requestID int) tea.Cmd {
+	return m.approveRequestForSession("", decision, requestID)
+}
+
+func (m *Model) approveRequestForSession(sessionID string, decision string, requestID int) tea.Cmd {
+	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		m.status = "select a session to approve"
+		sessionID = m.activeContentSessionID()
+	}
+	if sessionID == "" {
+		sessionID = m.sessionIDForApprovalRequest(requestID)
+	}
+	if sessionID == "" {
+		m.setValidationStatus("select a session to approve")
 		return nil
 	}
-	reqID := m.pendingApproval.RequestID
-	if reqID <= 0 {
-		m.status = "invalid approval request"
+	if requestID < 0 {
+		m.setValidationStatus("invalid approval request")
 		return nil
 	}
-	m.status = "sending approval"
-	return approveSessionCmd(m.sessionAPI, sessionID, reqID, decision)
+	m.setStatusMessage("sending approval")
+	return approveSessionCmd(m.sessionAPI, sessionID, requestID, decision)
 }
 
 func selectApprovalRequest(records []*types.Approval) *ApprovalRequest {
-	if len(records) == 0 {
-		return nil
-	}
-	var latest *types.Approval
-	for _, record := range records {
-		if record == nil {
-			continue
-		}
-		if latest == nil {
-			latest = record
-			continue
-		}
-		if record.CreatedAt.After(latest.CreatedAt) {
-			latest = record
-		}
-	}
-	if latest == nil {
-		return nil
-	}
-	return approvalFromRecord(latest)
+	return latestApprovalRequest(approvalRequestsFromRecords(records))
 }
 
 func (m *Model) findSearchMatches(query string) []int {
@@ -2329,14 +2648,14 @@ func selectSearchIndex(matches []int, offset int, delta int) int {
 func (m *Model) jumpToLine(offset int) {
 	m.viewport.SetYOffset(offset)
 	if m.follow {
-		m.follow = false
+		m.pauseFollow(false)
 	}
 }
 
 func (m *Model) jumpSection(delta int) {
 	offsets := m.sectionOffsetsCached()
 	if len(offsets) == 0 {
-		m.status = "no sections"
+		m.setValidationStatus("no sections")
 		return
 	}
 	current := m.viewport.YOffset
@@ -2439,7 +2758,7 @@ func (m *Model) enterNewSession() bool {
 		worktreeID = m.appState.ActiveWorktreeID
 	}
 	if workspaceID == "" {
-		m.status = "select a workspace or worktree"
+		m.setValidationStatus("select a workspace or worktree")
 		return false
 	}
 	m.newSession = &newSessionTarget{

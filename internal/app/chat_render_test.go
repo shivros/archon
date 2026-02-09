@@ -29,7 +29,7 @@ func TestRenderChatBlocksCollapsedReasoningShowsHint(t *testing.T) {
 	}
 	rendered, _ := renderChatBlocks(blocks, 80, 2000)
 	plain := xansi.Strip(rendered)
-	if !strings.Contains(plain, "collapsed, press e or click to expand") {
+	if !strings.Contains(plain, "collapsed, press e or use [Expand]") {
 		t.Fatalf("expected collapsed hint in rendered output: %q", plain)
 	}
 }
@@ -45,7 +45,7 @@ func TestRenderChatBlocksExpandedReasoningOmitsHint(t *testing.T) {
 	}
 	rendered, _ := renderChatBlocks(blocks, 80, 2000)
 	plain := xansi.Strip(rendered)
-	if strings.Contains(plain, "collapsed, press e or click to expand") {
+	if strings.Contains(plain, "collapsed, press e or use [Expand]") {
 		t.Fatalf("did not expect collapsed hint in expanded output: %q", plain)
 	}
 }
@@ -64,6 +64,69 @@ func TestRenderChatBlocksShowsCopyControlPerMessage(t *testing.T) {
 	}
 	if spans[0].CopyLine < 0 || spans[0].CopyStart < 0 || spans[0].CopyEnd < spans[0].CopyStart {
 		t.Fatalf("expected copy hitbox metadata, got %#v", spans[0])
+	}
+}
+
+func TestRenderChatBlocksReasoningShowsToggleControlAndHitbox(t *testing.T) {
+	blocks := []ChatBlock{
+		{Role: ChatRoleReasoning, Text: "hello", Collapsed: true},
+	}
+	rendered, spans := renderChatBlocks(blocks, 80, 2000)
+	plain := xansi.Strip(rendered)
+	if !strings.Contains(plain, "[Expand]") {
+		t.Fatalf("expected expand control in rendered output: %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if spans[0].ToggleLine < 0 || spans[0].ToggleStart < 0 || spans[0].ToggleEnd < spans[0].ToggleStart {
+		t.Fatalf("expected toggle hitbox metadata, got %#v", spans[0])
+	}
+}
+
+func TestRenderChatBlocksApprovalShowsActionControlsAndHitboxes(t *testing.T) {
+	blocks := []ChatBlock{
+		{Role: ChatRoleApproval, Text: "approval required", RequestID: 0},
+	}
+	rendered, spans := renderChatBlocks(blocks, 80, 2000)
+	plain := xansi.Strip(rendered)
+	if !strings.Contains(plain, "[Approve]") {
+		t.Fatalf("expected approve control in rendered output: %q", plain)
+	}
+	if !strings.Contains(plain, "[Decline]") {
+		t.Fatalf("expected decline control in rendered output: %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if spans[0].ApproveLine < 0 || spans[0].ApproveStart < 0 || spans[0].ApproveEnd < spans[0].ApproveStart {
+		t.Fatalf("expected approve hitbox metadata, got %#v", spans[0])
+	}
+	if spans[0].DeclineLine < 0 || spans[0].DeclineStart < 0 || spans[0].DeclineEnd < spans[0].DeclineStart {
+		t.Fatalf("expected decline hitbox metadata, got %#v", spans[0])
+	}
+	if strings.Contains(plain, "Request ID:") {
+		t.Fatalf("request id should not be rendered in approval message: %q", plain)
+	}
+}
+
+func TestRenderChatBlocksResolvedApprovalHidesActionControls(t *testing.T) {
+	blocks := []ChatBlock{
+		{Role: ChatRoleApprovalResolved, Text: "approval approved", RequestID: 7},
+	}
+	rendered, spans := renderChatBlocks(blocks, 80, 2000)
+	plain := xansi.Strip(rendered)
+	if strings.Contains(plain, "[Approve]") || strings.Contains(plain, "[Decline]") {
+		t.Fatalf("resolved approval should not render action controls: %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if spans[0].ApproveStart >= 0 || spans[0].DeclineStart >= 0 {
+		t.Fatalf("resolved approval should not have action hitboxes, got %#v", spans[0])
+	}
+	if strings.Contains(plain, "Request ID:") {
+		t.Fatalf("request id should not be rendered in resolved approval message: %q", plain)
 	}
 }
 

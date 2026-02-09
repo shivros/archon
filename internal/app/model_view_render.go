@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,6 +19,9 @@ func (m *Model) renderRightPaneView() string {
 	}
 	inputLine, inputScrollable := m.modeInputView()
 	rightLines := []string{rightHeader, rightBody}
+	if activity := m.composeActivityLine(time.Now()); activity != "" {
+		rightLines = append(rightLines, activityStyle.Render(activity))
+	}
 	if inputLine != "" {
 		dividerWidth := m.viewport.Width
 		if dividerWidth <= 0 {
@@ -94,5 +98,19 @@ func (m *Model) overlayTransientViews(body string) string {
 			body = overlayBlock(body, confirmBlock, row)
 		}
 	}
+	body = m.overlayToast(body)
 	return body
+}
+
+func (m *Model) overlayToast(body string) string {
+	line := m.toastLine(m.width)
+	if line == "" {
+		return body
+	}
+	bodyHeight := len(strings.Split(body, "\n"))
+	row := bodyHeight - 1
+	if row < 0 {
+		return body
+	}
+	return overlayLine(body, line, row)
 }

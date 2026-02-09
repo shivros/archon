@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
+	"time"
 
 	"control/internal/types"
 )
@@ -137,9 +139,9 @@ func (c *CodexStreamController) MarkUserMessageSent(headerIndex int) bool {
 	return c.transcript.MarkUserMessageSent(headerIndex)
 }
 
-func (c *CodexStreamController) ConsumeTick() (changed bool, closed bool) {
+func (c *CodexStreamController) ConsumeTick() (changed bool, closed bool, events int) {
 	if c == nil || c.events == nil {
-		return false, false
+		return false, false, 0
 	}
 	for i := 0; i < c.maxEventsPerTick; i++ {
 		select {
@@ -148,32 +150,29 @@ func (c *CodexStreamController) ConsumeTick() (changed bool, closed bool) {
 				c.events = nil
 				c.cancel = nil
 				closed = true
-				return changed, closed
+				return changed, closed, events
 			}
+			events++
 			if c.applyEvent(event) {
 				changed = true
 			}
 		default:
-			return changed, closed
+			return changed, closed, events
 		}
 	}
-	return changed, closed
+	return changed, closed, events
 }
 
 func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 	switch event.Method {
 	case "item/started":
-		var payload struct {
-			Item map[string]any `json:"item"`
-		}
-		if len(event.Params) == 0 || json.Unmarshal(event.Params, &payload) != nil {
+		item := parseEventItem(event.Params)
+		if item == nil {
 			return false
 		}
-		if payload.Item == nil {
-			return false
-		}
-		if typ, _ := payload.Item["type"].(string); typ == "agentMessage" {
-			if id, _ := payload.Item["id"].(string); id != "" {
+		typ, _ := item["type"].(string)
+		if typ == "agentMessage" {
+			if id, _ := item["id"].(string); id != "" {
 				c.activeAgentID = id
 			} else {
 				c.activeAgentID = ""
@@ -183,6 +182,9 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 				c.transcript.StartAgentBlock()
 			}
 			return true
+		}
+		if typ == "reasoning" {
+			return c.applyReasoningItem(item)
 		}
 	case "item/agentMessage/delta":
 		delta := extractDelta(event.Params)
@@ -194,21 +196,33 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			c.transcript.AppendAgentDelta(delta)
 		}
 		return true
+	case "item/updated":
+		item := parseEventItem(event.Params)
+		if item == nil {
+			return false
+		}
+		typ := asString(item["type"])
+		if typ == "reasoning" {
+			return c.applyReasoningItem(item)
+		}
+		if typ == "agentMessage" {
+			if delta := strings.TrimSpace(asString(item["delta"])); delta != "" && c.transcript != nil {
+				c.agentDeltaSeen = true
+				c.transcript.AppendAgentDelta(delta)
+				return true
+			}
+		}
 	case "item/completed":
-		var payload struct {
-			Item map[string]any `json:"item"`
-		}
-		if len(event.Params) == 0 || json.Unmarshal(event.Params, &payload) != nil {
+		item := parseEventItem(event.Params)
+		if item == nil {
 			return false
 		}
-		if payload.Item == nil {
-			return false
-		}
-		if typ, _ := payload.Item["type"].(string); typ == "agentMessage" {
+		typ, _ := item["type"].(string)
+		if typ == "agentMessage" {
 			if !c.agentDeltaSeen {
-				text := asString(payload.Item["text"])
+				text := asString(item["text"])
 				if text == "" {
-					text = extractContentText(payload.Item["content"])
+					text = extractContentText(item["content"])
 				}
 				if text != "" && c.transcript != nil {
 					c.transcript.AppendAgentDelta(text)
@@ -220,6 +234,9 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			c.activeAgentID = ""
 			c.agentDeltaSeen = false
 			return true
+		}
+		if typ == "reasoning" {
+			return c.applyReasoningItem(item)
 		}
 	case "error", "codex/event/error":
 		if msg := parseCodexError(event.Params); msg != "" {
@@ -234,8 +251,33 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 	return false
 }
 
+func parseEventItem(params json.RawMessage) map[string]any {
+	if len(params) == 0 {
+		return nil
+	}
+	var payload struct {
+		Item map[string]any `json:"item"`
+	}
+	if json.Unmarshal(params, &payload) != nil {
+		return nil
+	}
+	return payload.Item
+}
+
+func (c *CodexStreamController) applyReasoningItem(item map[string]any) bool {
+	if c == nil || c.transcript == nil || item == nil {
+		return false
+	}
+	text := reasoningText(item)
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	id := strings.TrimSpace(asString(item["id"]))
+	return c.transcript.UpsertReasoning(id, text)
+}
+
 func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
-	if event.ID == nil || *event.ID <= 0 {
+	if event.ID == nil || *event.ID < 0 {
 		return nil
 	}
 	params := map[string]any{}
@@ -245,11 +287,18 @@ func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
 		}
 	}
 	summary, detail := approvalSummary(event.Method, params)
+	createdAt := time.Now().UTC()
+	if ts := strings.TrimSpace(event.TS); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			createdAt = parsed
+		}
+	}
 	return &ApprovalRequest{
 		RequestID: *event.ID,
 		Method:    event.Method,
 		Summary:   summary,
 		Detail:    detail,
+		CreatedAt: createdAt,
 	}
 }
 

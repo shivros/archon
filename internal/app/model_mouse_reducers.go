@@ -92,7 +92,13 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 					}
 				case sidebarSession:
 					if entry.session != nil {
-						m.contextMenu.OpenSession(entry.session.ID, entry.Title(), msg.X, msg.Y)
+						workspaceID := ""
+						worktreeID := ""
+						if entry.meta != nil {
+							workspaceID = entry.meta.WorkspaceID
+							worktreeID = entry.meta.WorktreeID
+						}
+						m.contextMenu.OpenSession(entry.session.ID, workspaceID, worktreeID, entry.Title(), msg.X, msg.Y)
 						return true
 					}
 				}
@@ -138,14 +144,16 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 	if m.reduceModeWheelMouse(msg, layout, delta) {
 		return true
 	}
+	before := m.viewport.YOffset
+	wasFollowing := m.follow
+	m.pauseFollow(true)
 	if delta < 0 {
 		m.viewport.LineUp(3)
 	} else {
 		m.viewport.LineDown(3)
 	}
-	if m.follow {
-		m.follow = false
-		m.status = "follow: paused"
+	if !wasFollowing && before < m.maxViewportYOffset() && m.isViewportAtBottom() {
+		m.setFollowEnabled(true, true)
 	}
 	return true
 }
@@ -254,7 +262,7 @@ func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 	return false
 }
 
-func (m *Model) reduceReasoningToggleLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+func (m *Model) reduceTranscriptReasoningButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
 	if msg.X < layout.rightStart {
 		return false
 	}
@@ -264,7 +272,50 @@ func (m *Model) reduceReasoningToggleLeftPressMouse(msg tea.MouseMsg, layout mou
 	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
 		return false
 	}
-	return m.toggleReasoningByViewportLine(msg.Y - 1)
+	return m.toggleReasoningByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+}
+
+func (m *Model) reduceTranscriptApprovalButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if msg.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+		return false
+	}
+	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+		return false
+	}
+	col := msg.X - layout.rightStart
+	absolute := m.viewport.YOffset + msg.Y - 1
+	for _, span := range m.contentBlockSpans {
+		if span.Role != ChatRoleApproval {
+			continue
+		}
+		decision := ""
+		if span.ApproveLine == absolute && span.ApproveStart >= 0 && col >= span.ApproveStart && col <= span.ApproveEnd {
+			decision = "accept"
+		}
+		if span.DeclineLine == absolute && span.DeclineStart >= 0 && col >= span.DeclineStart && col <= span.DeclineEnd {
+			decision = "decline"
+		}
+		if decision == "" {
+			continue
+		}
+		if span.BlockIndex < 0 || span.BlockIndex >= len(m.contentBlocks) {
+			return true
+		}
+		requestID, ok := approvalRequestIDFromBlock(m.contentBlocks[span.BlockIndex])
+		if !ok {
+			m.setValidationStatus("invalid approval request")
+			return true
+		}
+		sessionID := approvalSessionIDFromBlock(m.contentBlocks[span.BlockIndex])
+		if cmd := m.approveRequestForSession(sessionID, decision, requestID); cmd != nil {
+			m.pendingMouseCmd = cmd
+		}
+		return true
+	}
+	return false
 }
 
 func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
@@ -278,6 +329,19 @@ func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mous
 		return false
 	}
 	return m.copyBlockByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+}
+
+func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if msg.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+		return false
+	}
+	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+		return false
+	}
+	return m.selectMessageByViewportPoint(msg.X-layout.rightStart, msg.Y-1)
 }
 
 func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {

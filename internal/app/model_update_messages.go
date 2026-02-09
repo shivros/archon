@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -25,7 +26,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case workspaceGroupsMsg:
 		if msg.err != nil {
-			m.status = "workspace groups error: " + msg.err.Error()
+			m.setStatusError("workspace groups error: " + msg.err.Error())
 			return true, nil
 		}
 		m.groups = msg.groups
@@ -46,38 +47,38 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, fetchWorkspaceGroupsCmd(m.workspaceAPI)
 	case updateWorkspaceGroupMsg:
 		if msg.err != nil {
-			m.status = "update group error: " + msg.err.Error()
+			m.setStatusError("update group error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = "group updated"
+		m.setStatusInfo("group updated")
 		return true, fetchWorkspaceGroupsCmd(m.workspaceAPI)
 	case deleteWorkspaceGroupMsg:
 		if msg.err != nil {
-			m.status = "delete group error: " + msg.err.Error()
+			m.setStatusError("delete group error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = "group deleted"
+		m.setStatusInfo("group deleted")
 		return true, tea.Batch(fetchWorkspaceGroupsCmd(m.workspaceAPI), fetchWorkspacesCmd(m.workspaceAPI))
 	case assignGroupWorkspacesMsg:
 		if msg.err != nil {
-			m.status = "assign groups error: " + msg.err.Error()
+			m.setStatusError("assign groups error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = fmt.Sprintf("updated %d workspaces", msg.updated)
+		m.setStatusInfo(fmt.Sprintf("updated %d workspaces", msg.updated))
 		return true, fetchWorkspacesCmd(m.workspaceAPI)
 	case availableWorktreesMsg:
 		if msg.err != nil {
-			m.status = "worktrees error: " + msg.err.Error()
+			m.setStatusError("worktrees error: " + msg.err.Error())
 			return true, nil
 		}
 		if m.addWorktree != nil {
 			count := m.addWorktree.SetAvailable(msg.worktrees, m.worktrees[msg.workspaceID], msg.workspacePath)
-			m.status = fmt.Sprintf("%d worktrees found", count)
+			m.setBackgroundStatus(fmt.Sprintf("%d worktrees found", count))
 		}
 		return true, nil
 	case createWorktreeMsg:
 		if msg.err != nil {
-			m.status = "create worktree error: " + msg.err.Error()
+			m.setStatusError("create worktree error: " + msg.err.Error())
 			return true, nil
 		}
 		m.exitAddWorktree("worktree added")
@@ -88,7 +89,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, tea.Batch(cmds...)
 	case addWorktreeMsg:
 		if msg.err != nil {
-			m.status = "add worktree error: " + msg.err.Error()
+			m.setStatusError("add worktree error: " + msg.err.Error())
 			return true, nil
 		}
 		m.exitAddWorktree("worktree added")
@@ -99,14 +100,14 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, tea.Batch(cmds...)
 	case worktreeDeletedMsg:
 		if msg.err != nil {
-			m.status = "delete worktree error: " + msg.err.Error()
+			m.setStatusError("delete worktree error: " + msg.err.Error())
 			return true, nil
 		}
 		if msg.worktreeID != "" && msg.worktreeID == m.appState.ActiveWorktreeID {
 			m.appState.ActiveWorktreeID = ""
 			m.hasAppState = true
 		}
-		m.status = "worktree deleted"
+		m.setStatusInfo("worktree deleted")
 		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
 		if msg.workspaceID != "" {
 			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
@@ -114,14 +115,14 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, tea.Batch(cmds...)
 	case updateWorkspaceMsg:
 		if msg.err != nil {
-			m.status = "update workspace error: " + msg.err.Error()
+			m.setStatusError("update workspace error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = "workspace updated"
+		m.setStatusInfo("workspace updated")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchWorkspaceGroupsCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
 	case deleteWorkspaceMsg:
 		if msg.err != nil {
-			m.status = "delete workspace error: " + msg.err.Error()
+			m.setStatusError("delete workspace error: " + msg.err.Error())
 			return true, nil
 		}
 		if msg.id != "" && msg.id == m.appState.ActiveWorkspaceID {
@@ -129,7 +130,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.appState.ActiveWorktreeID = ""
 			m.hasAppState = true
 		}
-		m.status = "workspace deleted"
+		m.setStatusInfo("workspace deleted")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), m.saveAppStateCmd())
 	default:
 		return false, nil
@@ -140,7 +141,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionsWithMetaMsg:
 		if msg.err != nil {
-			m.status = "error: " + msg.err.Error()
+			m.setBackgroundError("error: " + msg.err.Error())
 			return true, nil
 		}
 		m.sessions = msg.sessions
@@ -152,11 +153,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				m.pendingSelectID = ""
 			}
 		}
-		m.status = fmt.Sprintf("%d sessions", len(msg.sessions))
+		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
 		return true, m.onSelectionChanged()
 	case workspacesMsg:
 		if msg.err != nil {
-			m.status = "workspaces error: " + msg.err.Error()
+			m.setBackgroundError("workspaces error: " + msg.err.Error())
 			return true, nil
 		}
 		m.workspaces = msg.workspaces
@@ -164,7 +165,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, m.fetchWorktreesForWorkspaces()
 	case worktreesMsg:
 		if msg.err != nil {
-			m.status = "worktrees error: " + msg.err.Error()
+			m.setBackgroundError("worktrees error: " + msg.err.Error())
 			return true, nil
 		}
 		if msg.workspaceID != "" {
@@ -172,9 +173,44 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.applySidebarItems()
 		return true, nil
+	case notesMsg:
+		if msg.err != nil {
+			m.setBackgroundError("notes error: " + msg.err.Error())
+			if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+				m.setContentText("Error loading notes.")
+			}
+			return true, nil
+		}
+		m.notesScope = msg.scope
+		m.notes = msg.notes
+		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+			m.setContentText(renderNotesContent(msg.notes, msg.scope))
+		}
+		m.setBackgroundStatus("notes updated")
+		return true, nil
+	case noteCreatedMsg:
+		if msg.err != nil {
+			m.setStatusError("note error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo("note saved")
+		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
+		}
+		return true, nil
+	case notePinnedMsg:
+		if msg.err != nil {
+			m.setStatusError("pin error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo("message pinned")
+		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
+		}
+		return true, nil
 	case appStateMsg:
 		if msg.err != nil {
-			m.status = "state error: " + msg.err.Error()
+			m.setBackgroundError("state error: " + msg.err.Error())
 			return true, nil
 		}
 		if msg.state != nil {
@@ -185,7 +221,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case appStateSavedMsg:
 		if msg.err != nil {
-			m.status = "state save error: " + msg.err.Error()
+			m.setBackgroundError("state save error: " + msg.err.Error())
 			return true, nil
 		}
 		if msg.state != nil {
@@ -194,7 +230,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case tailMsg:
 		if msg.err != nil {
-			m.status = "tail error: " + msg.err.Error()
+			m.setBackgroundError("tail error: " + msg.err.Error())
 			if msg.key != "" && msg.key == m.loadingKey {
 				m.loading = false
 				m.setContentText("Error loading history.")
@@ -207,39 +243,74 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.key != "" && msg.key == m.loadingKey {
 			m.loading = false
 		}
-		blocks := itemsToBlocks(msg.items)
-		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
-			m.itemStream.SetSnapshotBlocks(blocks)
-			blocks = m.itemStream.Blocks()
-		}
-		m.setSnapshotBlocks(blocks)
-		m.status = "tail updated"
-		return true, nil
-	case historyMsg:
-		if msg.err != nil {
-			m.status = "history error: " + msg.err.Error()
-			if msg.key != "" && msg.key == m.loadingKey {
-				m.loading = false
-				m.setContentText("Error loading history.")
+		provider := m.providerForSessionID(msg.id)
+		if provider == "codex" && m.requestActivity.active && strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(msg.id) && m.requestActivity.eventCount > 0 {
+			if msg.key != "" {
+				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
 			}
+			m.setBackgroundStatus("tail refreshed")
 			return true, nil
-		}
-		if msg.key != "" && msg.key != m.pendingSessionKey {
-			return true, nil
-		}
-		if msg.key != "" && msg.key == m.loadingKey {
-			m.loading = false
 		}
 		blocks := itemsToBlocks(msg.items)
-		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
+		if provider == "codex" {
+			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
+		}
+		if shouldStreamItems(provider) && m.itemStream != nil {
 			m.itemStream.SetSnapshotBlocks(blocks)
 			blocks = m.itemStream.Blocks()
 		}
+		if provider == "codex" && m.codexStream != nil {
+			m.codexStream.SetSnapshotBlocks(blocks)
+			blocks = m.codexStream.Blocks()
+		}
 		m.setSnapshotBlocks(blocks)
+		m.noteRequestVisibleUpdate(msg.id)
 		if msg.key != "" {
 			m.transcriptCache[msg.key] = blocks
 		}
-		m.status = "history updated"
+		m.setBackgroundStatus("tail updated")
+		return true, nil
+	case historyMsg:
+		if msg.err != nil {
+			m.setBackgroundError("history error: " + msg.err.Error())
+			if msg.key != "" && msg.key == m.loadingKey {
+				m.loading = false
+				m.setContentText("Error loading history.")
+			}
+			return true, nil
+		}
+		if msg.key != "" && msg.key != m.pendingSessionKey {
+			return true, nil
+		}
+		if msg.key != "" && msg.key == m.loadingKey {
+			m.loading = false
+		}
+		provider := m.providerForSessionID(msg.id)
+		if provider == "codex" && m.requestActivity.active && strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(msg.id) && m.requestActivity.eventCount > 0 {
+			if msg.key != "" {
+				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
+			}
+			m.setBackgroundStatus("history refreshed")
+			return true, nil
+		}
+		blocks := itemsToBlocks(msg.items)
+		if provider == "codex" {
+			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
+		}
+		if shouldStreamItems(provider) && m.itemStream != nil {
+			m.itemStream.SetSnapshotBlocks(blocks)
+			blocks = m.itemStream.Blocks()
+		}
+		if provider == "codex" && m.codexStream != nil {
+			m.codexStream.SetSnapshotBlocks(blocks)
+			blocks = m.codexStream.Blocks()
+		}
+		m.setSnapshotBlocks(blocks)
+		m.noteRequestVisibleUpdate(msg.id)
+		if msg.key != "" {
+			m.transcriptCache[msg.key] = blocks
+		}
+		m.setBackgroundStatus("history updated")
 		return true, nil
 	case historyPollMsg:
 		if msg.id == "" || msg.key == "" {
@@ -268,11 +339,13 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, tea.Batch(cmds...)
 	case sendMsg:
 		if msg.err != nil {
-			m.status = "send error: " + msg.err.Error()
+			m.setStatusError("send error: " + msg.err.Error())
 			m.markPendingSendFailed(msg.token, msg.err)
+			m.stopRequestActivityFor(msg.id)
 			return true, nil
 		}
-		m.status = "message sent"
+		m.startRequestActivity(msg.id, m.providerForSessionID(msg.id))
+		m.setStatusInfo("message sent")
 		m.clearPendingSend(msg.token)
 		provider := m.providerForSessionID(msg.id)
 		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
@@ -284,42 +357,60 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case approvalMsg:
 		if msg.err != nil {
-			m.status = "approval error: " + msg.err.Error()
+			m.setStatusError("approval error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = "approval sent"
-		if m.pendingApproval != nil && m.pendingApproval.RequestID == msg.requestID {
-			m.pendingApproval = nil
+		resolution := approvalResolutionFromRequest(findApprovalRequestByID(m.sessionApprovals[msg.id], msg.requestID), msg.decision, time.Now().UTC())
+		if resolution == nil {
+			resolution = &ApprovalResolution{
+				RequestID:  msg.requestID,
+				SessionID:  msg.id,
+				Decision:   msg.decision,
+				ResolvedAt: time.Now().UTC(),
+			}
 		}
+		_ = m.upsertApprovalResolutionForSession(msg.id, resolution)
+		_ = m.removeApprovalForSession(msg.id, msg.requestID)
+		if msg.id == m.selectedSessionID() {
+			m.pendingApproval = latestApprovalRequest(m.sessionApprovals[msg.id])
+			m.refreshVisibleApprovalBlocks(msg.id)
+		}
+		m.setStatusInfo("approval sent")
 		if m.codexStream != nil {
-			m.codexStream.ClearApproval()
+			if pending := m.codexStream.PendingApproval(); pending != nil && pending.RequestID == msg.requestID {
+				m.codexStream.ClearApproval()
+			}
 		}
 		return true, nil
 	case approvalsMsg:
 		if msg.err != nil {
-			m.status = "approvals error: " + msg.err.Error()
+			m.setBackgroundError("approvals error: " + msg.err.Error())
 			return true, nil
 		}
+		requests := approvalRequestsFromRecords(msg.approvals)
+		m.setApprovalsForSession(msg.id, requests)
 		if msg.id != m.selectedSessionID() {
 			return true, nil
 		}
-		m.pendingApproval = selectApprovalRequest(msg.approvals)
+		m.pendingApproval = latestApprovalRequest(m.sessionApprovals[msg.id])
+		m.refreshVisibleApprovalBlocks(msg.id)
 		if m.pendingApproval != nil {
 			if m.pendingApproval.Detail != "" {
-				m.status = fmt.Sprintf("approval required: %s (%s)", m.pendingApproval.Summary, m.pendingApproval.Detail)
+				m.setStatusWarning(fmt.Sprintf("approval required: %s (%s)", m.pendingApproval.Summary, m.pendingApproval.Detail))
 			} else if m.pendingApproval.Summary != "" {
-				m.status = "approval required: " + m.pendingApproval.Summary
+				m.setStatusWarning("approval required: " + m.pendingApproval.Summary)
 			} else {
-				m.status = "approval required"
+				m.setStatusWarning("approval required")
 			}
 		}
 		return true, nil
 	case interruptMsg:
 		if msg.err != nil {
-			m.status = "interrupt error: " + msg.err.Error()
+			m.setStatusError("interrupt error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = "interrupt sent"
+		m.setStatusInfo("interrupt sent")
+		m.stopRequestActivityFor(msg.id)
 		return true, nil
 	case selectDebounceMsg:
 		if msg.seq != m.selectSeq {
@@ -332,11 +423,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, m.loadSelectedSession(item)
 	case startSessionMsg:
 		if msg.err != nil {
-			m.status = "start session error: " + msg.err.Error()
+			m.setStatusError("start session error: " + msg.err.Error())
+			m.stopRequestActivity()
 			return true, nil
 		}
 		if msg.session == nil || msg.session.ID == "" {
-			m.status = "start session error: no session returned"
+			m.setStatusError("start session error: no session returned")
 			return true, nil
 		}
 		m.newSession = nil
@@ -350,7 +442,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		key := "sess:" + msg.session.ID
 		m.pendingSessionKey = key
-		m.status = "session started"
+		m.startRequestActivity(msg.session.ID, msg.session.Provider)
+		m.setStatusInfo("session started")
 		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
 		if shouldStreamItems(msg.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
@@ -365,30 +458,30 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, tea.Batch(cmds...)
 	case killMsg:
 		if msg.err != nil {
-			m.status = "kill error: " + msg.err.Error()
+			m.setStatusError("kill error: " + msg.err.Error())
 			return true, nil
 		}
-		m.status = "killed " + msg.id
+		m.setStatusInfo("killed " + msg.id)
 		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
 	case exitMsg:
 		if msg.err != nil {
-			m.status = "exit error: " + msg.err.Error()
+			m.setStatusError("exit error: " + msg.err.Error())
 			return true, nil
 		}
 		if m.sidebar != nil {
 			m.sidebar.RemoveSelection([]string{msg.id})
 		}
-		m.status = "marked exited " + msg.id
+		m.setStatusInfo("marked exited " + msg.id)
 		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
 	case bulkExitMsg:
 		if msg.err != nil {
-			m.status = "exit error: " + msg.err.Error()
+			m.setStatusError("exit error: " + msg.err.Error())
 			return true, nil
 		}
 		if m.sidebar != nil {
 			m.sidebar.RemoveSelection(msg.ids)
 		}
-		m.status = fmt.Sprintf("marked exited %d", len(msg.ids))
+		m.setStatusInfo(fmt.Sprintf("marked exited %d", len(msg.ids)))
 		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
 	case streamMsg:
 		m.applyStreamMsg(msg)
@@ -424,7 +517,7 @@ func (m *Model) streamMessageTargetsActiveSession(id string, cancel func()) bool
 
 func (m *Model) applyStreamMsg(msg streamMsg) {
 	if msg.err != nil {
-		m.status = "stream error: " + msg.err.Error()
+		m.setBackgroundError("stream error: " + msg.err.Error())
 		return
 	}
 	if !m.streamMessageTargetsActiveSession(msg.id, msg.cancel) {
@@ -433,12 +526,12 @@ func (m *Model) applyStreamMsg(msg streamMsg) {
 	if m.stream != nil {
 		m.stream.SetStream(msg.ch, msg.cancel)
 	}
-	m.status = "streaming"
+	m.setBackgroundStatus("streaming")
 }
 
 func (m *Model) applyEventsMsg(msg eventsMsg) {
 	if msg.err != nil {
-		m.status = "events error: " + msg.err.Error()
+		m.setBackgroundError("events error: " + msg.err.Error())
 		return
 	}
 	if !m.streamMessageTargetsActiveSession(msg.id, msg.cancel) {
@@ -447,12 +540,12 @@ func (m *Model) applyEventsMsg(msg eventsMsg) {
 	if m.codexStream != nil {
 		m.codexStream.SetStream(msg.ch, msg.cancel)
 	}
-	m.status = "streaming events"
+	m.setBackgroundStatus("streaming events")
 }
 
 func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
 	if msg.err != nil {
-		m.status = "items stream error: " + msg.err.Error()
+		m.setBackgroundError("items stream error: " + msg.err.Error())
 		return
 	}
 	if !m.streamMessageTargetsActiveSession(msg.id, msg.cancel) {
@@ -462,5 +555,5 @@ func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
 		m.itemStream.SetSnapshotBlocks(m.currentBlocks())
 		m.itemStream.SetStream(msg.ch, msg.cancel)
 	}
-	m.status = "streaming items"
+	m.setBackgroundStatus("streaming items")
 }

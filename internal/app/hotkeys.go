@@ -36,6 +36,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "enter", Label: "chat", Context: HotkeySidebar, Priority: 22},
 		{Key: "c", Label: "compose", Context: HotkeySidebar, Priority: 23},
 		{Key: "ctrl+n", Label: "new session", Context: HotkeySidebar, Priority: 24},
+		{Key: "O", Label: "notes", Context: HotkeySidebar, Priority: 25},
 		{Key: "space", Label: "select", Context: HotkeySidebar, Priority: 30},
 		{Key: "d", Label: "dismiss", Context: HotkeySidebar, Priority: 31},
 		{Key: "ctrl+y", Label: "copy id", Context: HotkeySidebar, Priority: 32},

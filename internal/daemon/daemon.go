@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"control/internal/logging"
+	"control/internal/store"
 	"control/internal/types"
 )
 
@@ -30,6 +31,7 @@ type Stores struct {
 	SessionMeta SessionMetaStore
 	Sessions    SessionIndexStore
 	Approvals   ApprovalStore
+	Notes       NoteStore
 }
 
 type WorkspaceStore interface {
@@ -88,6 +90,13 @@ type ApprovalStore interface {
 	Upsert(ctx context.Context, approval *types.Approval) (*types.Approval, error)
 	Delete(ctx context.Context, sessionID string, requestID int) error
 	DeleteSession(ctx context.Context, sessionID string) error
+}
+
+type NoteStore interface {
+	List(ctx context.Context, filter store.NoteFilter) ([]*types.Note, error)
+	Get(ctx context.Context, id string) (*types.Note, bool, error)
+	Upsert(ctx context.Context, note *types.Note) (*types.Note, error)
+	Delete(ctx context.Context, id string) error
 }
 
 func New(addr, token, version string, manager *SessionManager, stores *Stores) *Daemon {

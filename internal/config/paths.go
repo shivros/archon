@@ -87,3 +87,12 @@ func ApprovalsPath() (string, error) {
 	}
 	return filepath.Join(dataDir, "approvals.json"), nil
 }
+
+// NotesPath returns the path to the notes file.
+func NotesPath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "notes.json"), nil
+}

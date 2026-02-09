@@ -39,8 +39,9 @@ func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
 }
 
 func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
-	var sessions []*types.Session
 	sessionMap := make(map[string]*types.Session)
+	sourceByID := make(map[string]string)
+	liveIDs := make(map[string]struct{})
 	if s.stores != nil && s.stores.Sessions != nil {
 		records, err := s.stores.Sessions.ListRecords(ctx)
 		if err != nil {
@@ -51,6 +52,7 @@ func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []
 				continue
 			}
 			sessionMap[record.Session.ID] = record.Session
+			sourceByID[record.Session.ID] = strings.TrimSpace(record.Source)
 		}
 	}
 	if s.manager != nil {
@@ -60,6 +62,8 @@ func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []
 				continue
 			}
 			sessionMap[session.ID] = session
+			sourceByID[session.ID] = sessionSourceInternal
+			liveIDs[session.ID] = struct{}{}
 			if s.stores != nil && s.stores.Sessions != nil {
 				_, _ = s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
 					Session: session,
@@ -68,29 +72,31 @@ func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []
 			}
 		}
 	}
-	s.normalizeNoProcessSessions(ctx, sessionMap)
-	for _, session := range sessionMap {
-		if session == nil {
-			continue
-		}
-		if !isListableStatus(session.Status) {
-			continue
-		}
-		sessions = append(sessions, session)
-	}
-	sortSessionsByCreatedAt(sessions)
-
+	var meta []*types.SessionMeta
+	metaBySessionID := map[string]*types.SessionMeta{}
 	if s.stores == nil || s.stores.SessionMeta == nil {
-		return sessions, nil, nil
+		meta = nil
+	} else {
+		var err error
+		meta, err = s.stores.SessionMeta.List(ctx)
+		if err != nil {
+			return nil, nil, unavailableError(err.Error(), err)
+		}
+		for _, entry := range meta {
+			if entry == nil || strings.TrimSpace(entry.SessionID) == "" {
+				continue
+			}
+			metaBySessionID[entry.SessionID] = entry
+		}
 	}
-	meta, err := s.stores.SessionMeta.List(ctx)
-	if err != nil {
-		return sessions, nil, unavailableError(err.Error(), err)
-	}
+
+	s.normalizeSessionStatuses(ctx, sessionMap, sourceByID, liveIDs)
+	sessions := dedupeSessionsForList(sessionMap, sourceByID, liveIDs, metaBySessionID)
+	sortSessionsByCreatedAt(sessions)
 	return sessions, meta, nil
 }
 
-func (s *SessionService) normalizeNoProcessSessions(ctx context.Context, sessionMap map[string]*types.Session) {
+func (s *SessionService) normalizeSessionStatuses(ctx context.Context, sessionMap map[string]*types.Session, sourceByID map[string]string, liveIDs map[string]struct{}) {
 	if len(sessionMap) == 0 {
 		return
 	}
@@ -98,7 +104,12 @@ func (s *SessionService) normalizeNoProcessSessions(ctx context.Context, session
 		if session == nil {
 			continue
 		}
-		if !providers.CapabilitiesFor(session.Provider).NoProcess || !isActiveStatus(session.Status) {
+		if !isActiveStatus(session.Status) {
+			continue
+		}
+		_, isLive := liveIDs[id]
+		noProcess := providers.CapabilitiesFor(session.Provider).NoProcess
+		if !noProcess && isLive {
 			continue
 		}
 		copy := *session
@@ -107,12 +118,144 @@ func (s *SessionService) normalizeNoProcessSessions(ctx context.Context, session
 		copy.ExitedAt = nil
 		sessionMap[id] = &copy
 		if s.stores != nil && s.stores.Sessions != nil {
+			source := strings.TrimSpace(sourceByID[id])
+			if source == "" {
+				source = sessionSourceInternal
+			}
 			_, _ = s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
 				Session: &copy,
-				Source:  sessionSourceInternal,
+				Source:  source,
 			})
 		}
 	}
+}
+
+func dedupeSessionsForList(sessionMap map[string]*types.Session, sourceByID map[string]string, liveIDs map[string]struct{}, metaBySessionID map[string]*types.SessionMeta) []*types.Session {
+	chosenByKey := map[string]*types.Session{}
+	chosenIDByKey := map[string]string{}
+	for id, session := range sessionMap {
+		if session == nil || !isListableStatus(session.Status) {
+			continue
+		}
+		meta := metaBySessionID[id]
+		key := listDedupKey(session, meta)
+		current, ok := chosenByKey[key]
+		if !ok {
+			chosenByKey[key] = session
+			chosenIDByKey[key] = id
+			continue
+		}
+		currentID := chosenIDByKey[key]
+		if preferListSession(id, session, currentID, current, sourceByID, liveIDs, metaBySessionID) {
+			chosenByKey[key] = session
+			chosenIDByKey[key] = id
+		}
+	}
+	out := make([]*types.Session, 0, len(chosenByKey))
+	for _, session := range chosenByKey {
+		out = append(out, session)
+	}
+	return out
+}
+
+func listDedupKey(session *types.Session, meta *types.SessionMeta) string {
+	if session == nil {
+		return ""
+	}
+	if providers.Normalize(session.Provider) != "codex" {
+		return "session:" + strings.TrimSpace(session.ID)
+	}
+	threadID := strings.TrimSpace(resolveThreadID(session, meta))
+	if threadID == "" {
+		threadID = strings.TrimSpace(session.ID)
+	}
+	return "codex:" + threadID
+}
+
+func preferListSession(candidateID string, candidate *types.Session, existingID string, existing *types.Session, sourceByID map[string]string, liveIDs map[string]struct{}, metaBySessionID map[string]*types.SessionMeta) bool {
+	candidateLive := sessionIsLive(candidateID, liveIDs)
+	existingLive := sessionIsLive(existingID, liveIDs)
+	if candidateLive != existingLive {
+		return candidateLive
+	}
+
+	candidateSource := listSourcePriority(sourceByID[candidateID])
+	existingSource := listSourcePriority(sourceByID[existingID])
+	if candidateSource != existingSource {
+		return candidateSource > existingSource
+	}
+
+	candidateStatus := listStatusPriority(candidate)
+	existingStatus := listStatusPriority(existing)
+	if candidateStatus != existingStatus {
+		return candidateStatus > existingStatus
+	}
+
+	candidateMeta := metaBySessionID[candidateID]
+	existingMeta := metaBySessionID[existingID]
+	candidateLast := listLastActive(candidate, candidateMeta)
+	existingLast := listLastActive(existing, existingMeta)
+	if candidateLast.After(existingLast) {
+		return true
+	}
+	if existingLast.After(candidateLast) {
+		return false
+	}
+
+	if candidate.CreatedAt.After(existing.CreatedAt) {
+		return true
+	}
+	if existing.CreatedAt.After(candidate.CreatedAt) {
+		return false
+	}
+	return strings.TrimSpace(candidateID) < strings.TrimSpace(existingID)
+}
+
+func sessionIsLive(sessionID string, liveIDs map[string]struct{}) bool {
+	if len(liveIDs) == 0 {
+		return false
+	}
+	_, ok := liveIDs[sessionID]
+	return ok
+}
+
+func listSourcePriority(source string) int {
+	switch strings.TrimSpace(source) {
+	case sessionSourceInternal:
+		return 3
+	case "":
+		return 2
+	case sessionSourceCodex:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func listStatusPriority(session *types.Session) int {
+	if session == nil {
+		return 0
+	}
+	if isActiveStatus(session.Status) {
+		return 2
+	}
+	if session.Status == types.SessionStatusInactive {
+		return 1
+	}
+	return 0
+}
+
+func listLastActive(session *types.Session, meta *types.SessionMeta) time.Time {
+	if meta != nil && meta.LastActiveAt != nil && !meta.LastActiveAt.IsZero() {
+		return meta.LastActiveAt.UTC()
+	}
+	if session != nil && session.StartedAt != nil && !session.StartedAt.IsZero() {
+		return session.StartedAt.UTC()
+	}
+	if session != nil {
+		return session.CreatedAt.UTC()
+	}
+	return time.Time{}
 }
 
 func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*types.Session, error) {

@@ -8,7 +8,7 @@ import (
 )
 
 func (m *Model) setStatus(status string) {
-	m.status = status
+	m.setStatusMessage(status)
 }
 
 func (m *Model) createWorkspaceCmd(path, name string) tea.Cmd {

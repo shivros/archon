@@ -32,6 +32,12 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 - Persistent app/session metadata is stored by daemon-backed stores in `internal/store` and retrieved by the UI through snapshot calls (`sessions`, `history`, `approvals`, app state).
 - UI keeps a transcript cache keyed by sidebar selection so switching sessions is fast while still reconciling with history snapshots.
 
+## Status and Toast Policy
+
+- UI status/toast behavior is centralized in `internal/app/model_status_policy.go`.
+- Event categories and toast severity rules are documented in `docs/status-policy-matrix.md`.
+- New status patterns should extend the policy table instead of writing direct `m.status = ...` assignments.
+
 ## Phase 0 Baseline Contract
 
 Phase 0 must keep behavior stable for:

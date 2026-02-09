@@ -24,12 +24,12 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			name := strings.TrimSpace(m.renameInput.Value())
 			if name == "" {
-				m.status = "name is required"
+				m.setValidationStatus("name is required")
 				return true, nil
 			}
 			id := m.renameWorkspaceID
 			if id == "" {
-				m.status = "no workspace selected"
+				m.setValidationStatus("no workspace selected")
 				return true, nil
 			}
 			m.renameInput.SetValue("")
@@ -55,7 +55,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			name := strings.TrimSpace(m.groupInput.Value())
 			if name == "" {
-				m.status = "name is required"
+				m.setValidationStatus("name is required")
 				return true, nil
 			}
 			m.groupInput.SetValue("")
@@ -81,7 +81,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 				id = m.workspacePicker.SelectedID()
 			}
 			if id == "" {
-				m.status = "no workspace selected"
+				m.setValidationStatus("no workspace selected")
 				return true, nil
 			}
 			if m.mode == uiModePickWorkspaceRename {
@@ -117,7 +117,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 				id = m.groupSelectPicker.SelectedID()
 			}
 			if id == "" {
-				m.status = "no group selected"
+				m.setValidationStatus("no group selected")
 				return true, nil
 			}
 			switch m.mode {
@@ -157,7 +157,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			ids := m.groupPicker.SelectedIDs()
 			id := m.editWorkspaceID
 			if id == "" {
-				m.status = "no workspace selected"
+				m.setValidationStatus("no workspace selected")
 				return true, nil
 			}
 			m.exitEditWorkspaceGroups("saving groups")
@@ -191,12 +191,12 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			name := strings.TrimSpace(m.groupInput.Value())
 			if name == "" {
-				m.status = "name is required"
+				m.setValidationStatus("name is required")
 				return true, nil
 			}
 			id := m.renameGroupID
 			if id == "" {
-				m.status = "no group selected"
+				m.setValidationStatus("no group selected")
 				return true, nil
 			}
 			m.groupInput.SetValue("")
@@ -223,7 +223,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			ids := m.workspaceMulti.SelectedIDs()
 			groupID := m.assignGroupID
 			if groupID == "" {
-				m.status = "no group selected"
+				m.setValidationStatus("no group selected")
 				return true, nil
 			}
 			m.exitAssignGroupWorkspaces("saving assignments")
@@ -393,31 +393,34 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		text := strings.TrimSpace(m.chatInput.Value())
 		if text == "" {
-			m.status = "message is required"
+			m.setValidationStatus("message is required")
 			return true, nil
 		}
 		if m.newSession != nil {
 			target := m.newSession
 			if strings.TrimSpace(target.provider) == "" {
-				m.status = "provider is required"
+				m.setValidationStatus("provider is required")
 				return true, nil
 			}
-			m.status = "starting session"
+			m.enableFollow(false)
+			m.setStatusMessage("starting session")
 			m.chatInput.Clear()
 			return true, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text)
 		}
 		sessionID := m.composeSessionID()
 		if sessionID == "" {
-			m.status = "select a session to chat"
+			m.setValidationStatus("select a session to chat")
 			return true, nil
 		}
 		m.recordComposeHistory(sessionID, text)
 		saveHistoryCmd := m.saveAppStateCmd()
 		provider := m.providerForSessionID(sessionID)
+		m.enableFollow(false)
+		m.startRequestActivity(sessionID, provider)
 		token := m.nextSendToken()
 		m.registerPendingSend(token, sessionID, provider)
 		headerIndex := m.appendUserMessageLocal(provider, text)
-		m.status = "sending message"
+		m.setStatusMessage("sending message")
 		m.chatInput.Clear()
 		if headerIndex >= 0 {
 			m.registerPendingSendHeader(token, sessionID, provider, headerIndex)
@@ -441,16 +444,22 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			return true, tea.Batch(cmds...)
 		}
 		if provider == "codex" {
+			cmds := make([]tea.Cmd, 0, 4)
 			if m.codexStream == nil || !m.codexStream.HasStream() {
-				if saveHistoryCmd != nil {
-					return true, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send, saveHistoryCmd)
-				}
-				return true, tea.Batch(openEventsCmd(m.sessionAPI, sessionID), send)
+				cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
+			}
+			cmds = append(cmds, send)
+			key := m.pendingSessionKey
+			if key == "" {
+				key = m.selectedKey()
+			}
+			if key != "" {
+				cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
 			}
 			if saveHistoryCmd != nil {
-				return true, tea.Batch(send, saveHistoryCmd)
+				cmds = append(cmds, saveHistoryCmd)
 			}
-			return true, send
+			return true, tea.Batch(cmds...)
 		}
 		if saveHistoryCmd != nil {
 			return true, tea.Batch(send, saveHistoryCmd)
@@ -459,20 +468,20 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "ctrl+c":
 		if m.chatInput != nil {
 			m.chatInput.Clear()
-			m.status = "input cleared"
+			m.setStatusMessage("input cleared")
 		}
 		return true, nil
 	case "ctrl+y":
 		id := m.selectedSessionID()
 		if id == "" {
-			m.status = "no session selected"
+			m.setCopyStatusWarning("no session selected")
 			return true, nil
 		}
 		if err := clipboard.WriteAll(id); err != nil {
-			m.status = "copy failed: " + err.Error()
+			m.setCopyStatusError("copy failed: " + err.Error())
 			return true, nil
 		}
-		m.status = "copied session id"
+		m.setCopyStatusInfo("copied session id")
 		return true, nil
 	}
 	if m.chatInput != nil {

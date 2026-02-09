@@ -15,10 +15,19 @@ const (
 	ContextMenuWorkspaceCreate
 	ContextMenuWorkspaceRename
 	ContextMenuWorkspaceEditGroups
+	ContextMenuWorkspaceOpenNotes
+	ContextMenuWorkspaceAddNote
+	ContextMenuWorkspaceAddWorktree
+	ContextMenuWorkspaceCopyPath
 	ContextMenuWorkspaceDelete
 	ContextMenuWorktreeAdd
+	ContextMenuWorktreeOpenNotes
+	ContextMenuWorktreeAddNote
+	ContextMenuWorktreeCopyPath
 	ContextMenuWorktreeDelete
 	ContextMenuSessionChat
+	ContextMenuSessionOpenNotes
+	ContextMenuSessionAddNote
 	ContextMenuSessionDismiss
 	ContextMenuSessionKill
 	ContextMenuSessionInterrupt
@@ -117,6 +126,10 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 		{Label: "Create Workspace", Action: ContextMenuWorkspaceCreate},
 		{Label: "Rename Workspace", Action: ContextMenuWorkspaceRename},
 		{Label: "Edit Workspace Groups", Action: ContextMenuWorkspaceEditGroups},
+		{Label: "Open Notes", Action: ContextMenuWorkspaceOpenNotes},
+		{Label: "Add Note", Action: ContextMenuWorkspaceAddNote},
+		{Label: "Add Worktree", Action: ContextMenuWorkspaceAddWorktree},
+		{Label: "Copy Workspace Path", Action: ContextMenuWorkspaceCopyPath},
 		{Label: "Delete Workspace", Action: ContextMenuWorkspaceDelete},
 	}
 	c.selected = 0
@@ -136,6 +149,9 @@ func (c *ContextMenuController) OpenWorktree(worktreeID, workspaceID, label stri
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Add Worktree", Action: ContextMenuWorktreeAdd},
+		{Label: "Open Notes", Action: ContextMenuWorktreeOpenNotes},
+		{Label: "Add Note", Action: ContextMenuWorktreeAddNote},
+		{Label: "Copy Worktree Path", Action: ContextMenuWorktreeCopyPath},
 		{Label: "Delete Worktree", Action: ContextMenuWorktreeDelete},
 	}
 	c.selected = 0
@@ -143,7 +159,7 @@ func (c *ContextMenuController) OpenWorktree(worktreeID, workspaceID, label stri
 	c.y = y
 }
 
-func (c *ContextMenuController) OpenSession(sessionID, label string, x, y int) {
+func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, label string, x, y int) {
 	if c == nil {
 		return
 	}
@@ -151,9 +167,13 @@ func (c *ContextMenuController) OpenSession(sessionID, label string, x, y int) {
 	c.targetKind = contextTargetSession
 	c.targetID = sessionID
 	c.sessionID = sessionID
+	c.workspaceID = workspaceID
+	c.worktreeID = worktreeID
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Chat", Action: ContextMenuSessionChat},
+		{Label: "Open Notes", Action: ContextMenuSessionOpenNotes},
+		{Label: "Add Note", Action: ContextMenuSessionAddNote},
 		{Label: "Dismiss Session", Action: ContextMenuSessionDismiss},
 		{Label: "Kill Session", Action: ContextMenuSessionKill},
 		{Label: "Interrupt Session", Action: ContextMenuSessionInterrupt},

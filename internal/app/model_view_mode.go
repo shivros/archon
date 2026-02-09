@@ -4,6 +4,10 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 	headerText = "Tail"
 	bodyText = m.viewport.View()
 	switch m.mode {
+	case uiModeNotes:
+		headerText = "Notes"
+	case uiModeAddNote:
+		headerText = "Add Note"
 	case uiModeAddWorkspace:
 		headerText = "Add Workspace"
 		if m.addWorkspace != nil {
@@ -67,6 +71,10 @@ func (m *Model) modeInputView() (line string, scrollable bool) {
 	case uiModeCompose:
 		if m.chatInput != nil {
 			return m.chatInput.View(), m.chatInput.CanScroll()
+		}
+	case uiModeAddNote:
+		if m.noteInput != nil {
+			return m.noteInput.View(), m.noteInput.CanScroll()
 		}
 	case uiModeSearch:
 		if m.searchInput != nil {

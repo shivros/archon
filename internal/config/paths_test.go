@@ -72,4 +72,12 @@ func TestPaths(t *testing.T) {
 	if !strings.HasSuffix(sessionsIndexPath, filepath.Join(".archon", "sessions_index.json")) {
 		t.Fatalf("unexpected sessions index path: %s", sessionsIndexPath)
 	}
+
+	notesPath, err := NotesPath()
+	if err != nil {
+		t.Fatalf("NotesPath: %v", err)
+	}
+	if !strings.HasSuffix(notesPath, filepath.Join(".archon", "notes.json")) {
+		t.Fatalf("unexpected notes path: %s", notesPath)
+	}
 }

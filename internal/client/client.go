@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -92,6 +93,80 @@ func (c *Client) ListWorkspaceGroups(ctx context.Context) ([]*types.WorkspaceGro
 		return nil, err
 	}
 	return resp.Groups, nil
+}
+
+func (c *Client) ListNotes(ctx context.Context, req ListNotesRequest) ([]*types.Note, error) {
+	query := url.Values{}
+	if req.Scope != "" {
+		query.Set("scope", string(req.Scope))
+	}
+	if strings.TrimSpace(req.WorkspaceID) != "" {
+		query.Set("workspace_id", strings.TrimSpace(req.WorkspaceID))
+	}
+	if strings.TrimSpace(req.WorktreeID) != "" {
+		query.Set("worktree_id", strings.TrimSpace(req.WorktreeID))
+	}
+	if strings.TrimSpace(req.SessionID) != "" {
+		query.Set("session_id", strings.TrimSpace(req.SessionID))
+	}
+	path := "/v1/notes"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var resp NotesResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Notes, nil
+}
+
+func (c *Client) CreateNote(ctx context.Context, note *types.Note) (*types.Note, error) {
+	if note == nil {
+		return nil, errors.New("note is required")
+	}
+	var resp types.Note
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/notes", note, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateNote(ctx context.Context, id string, note *types.Note) (*types.Note, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("note id is required")
+	}
+	if note == nil {
+		return nil, errors.New("note is required")
+	}
+	var resp types.Note
+	path := fmt.Sprintf("/v1/notes/%s", id)
+	if err := c.doJSON(ctx, http.MethodPatch, path, note, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) DeleteNote(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("note id is required")
+	}
+	path := fmt.Sprintf("/v1/notes/%s", id)
+	return c.doJSON(ctx, http.MethodDelete, path, nil, true, nil)
+}
+
+func (c *Client) PinSessionMessage(ctx context.Context, sessionID string, req PinSessionNoteRequest) (*types.Note, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, errors.New("session id is required")
+	}
+	var resp types.Note
+	path := fmt.Sprintf("/v1/sessions/%s/pins", sessionID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (c *Client) CreateWorkspaceGroup(ctx context.Context, group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {

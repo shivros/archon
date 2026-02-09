@@ -127,6 +127,34 @@ type WorkspaceSessionStartAPI interface {
 	StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error)
 }
 
+type NoteListAPI interface {
+	ListNotes(ctx context.Context, req client.ListNotesRequest) ([]*types.Note, error)
+}
+
+type NoteCreateAPI interface {
+	CreateNote(ctx context.Context, note *types.Note) (*types.Note, error)
+}
+
+type NoteUpdateAPI interface {
+	UpdateNote(ctx context.Context, id string, note *types.Note) (*types.Note, error)
+}
+
+type NoteDeleteAPI interface {
+	DeleteNote(ctx context.Context, id string) error
+}
+
+type SessionPinAPI interface {
+	PinSessionMessage(ctx context.Context, sessionID string, req client.PinSessionNoteRequest) (*types.Note, error)
+}
+
+type NotesAPI interface {
+	NoteListAPI
+	NoteCreateAPI
+	NoteUpdateAPI
+	NoteDeleteAPI
+	SessionPinAPI
+}
+
 type SessionAPI interface {
 	SessionListWithMetaAPI
 	SessionTailAPI
@@ -141,6 +169,7 @@ type SessionAPI interface {
 	SessionApprovalsAPI
 	SessionInterruptAPI
 	WorkspaceSessionStartAPI
+	SessionPinAPI
 }
 
 type SessionChatAPI interface {
@@ -271,6 +300,26 @@ func (a *ClientAPI) InterruptSession(ctx context.Context, id string) error {
 
 func (a *ClientAPI) StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error) {
 	return a.client.StartWorkspaceSession(ctx, workspaceID, worktreeID, req)
+}
+
+func (a *ClientAPI) ListNotes(ctx context.Context, req client.ListNotesRequest) ([]*types.Note, error) {
+	return a.client.ListNotes(ctx, req)
+}
+
+func (a *ClientAPI) CreateNote(ctx context.Context, note *types.Note) (*types.Note, error) {
+	return a.client.CreateNote(ctx, note)
+}
+
+func (a *ClientAPI) UpdateNote(ctx context.Context, id string, note *types.Note) (*types.Note, error) {
+	return a.client.UpdateNote(ctx, id, note)
+}
+
+func (a *ClientAPI) DeleteNote(ctx context.Context, id string) error {
+	return a.client.DeleteNote(ctx, id)
+}
+
+func (a *ClientAPI) PinSessionMessage(ctx context.Context, sessionID string, req client.PinSessionNoteRequest) (*types.Note, error) {
+	return a.client.PinSessionMessage(ctx, sessionID, req)
 }
 
 func (a *ClientAPI) GetAppState(ctx context.Context) (*types.AppState, error) {

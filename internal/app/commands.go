@@ -49,6 +49,46 @@ func fetchWorktreesCmd(api WorktreeListAPI, workspaceID string) tea.Cmd {
 	}
 }
 
+func fetchNotesCmd(api NoteListAPI, scope noteScopeTarget) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		notes, err := api.ListNotes(ctx, scope.ToListRequest())
+		return notesMsg{scope: scope, notes: notes, err: err}
+	}
+}
+
+func createNoteCmd(api NoteCreateAPI, scope noteScopeTarget, body string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		note := &types.Note{
+			Kind:        types.NoteKindNote,
+			Scope:       scope.Scope,
+			WorkspaceID: scope.WorkspaceID,
+			WorktreeID:  scope.WorktreeID,
+			SessionID:   scope.SessionID,
+			Body:        strings.TrimSpace(body),
+			Status:      types.NoteStatusIdea,
+		}
+		created, err := api.CreateNote(ctx, note)
+		return noteCreatedMsg{note: created, scope: scope, err: err}
+	}
+}
+
+func pinSessionNoteCmd(api SessionPinAPI, sessionID string, block ChatBlock, snippet string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		created, err := api.PinSessionMessage(ctx, sessionID, client.PinSessionNoteRequest{
+			SourceBlockID: strings.TrimSpace(block.ID),
+			SourceRole:    strings.ToLower(strings.TrimSpace(chatRoleLabel(block.Role))),
+			SourceSnippet: strings.TrimSpace(snippet),
+		})
+		return notePinnedMsg{note: created, sessionID: sessionID, err: err}
+	}
+}
+
 func fetchAvailableWorktreesCmd(api AvailableWorktreeListAPI, workspaceID, workspacePath string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)

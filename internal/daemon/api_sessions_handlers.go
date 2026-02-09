@@ -267,6 +267,9 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
+	case "pins":
+		a.SessionPins(w, r, id)
+		return
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	}

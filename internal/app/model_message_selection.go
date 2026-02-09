@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -34,6 +35,8 @@ func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "y":
 		m.copySelectedMessage()
 		return true, nil
+	case "p":
+		return true, m.pinSelectedMessage()
 	case "enter":
 		if m.toggleReasoningByIndex(m.messageSelectIndex) {
 			m.setMessageSelectionStatus()
@@ -52,7 +55,7 @@ func (m *Model) enterMessageSelection() {
 		return
 	}
 	if len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
-		m.status = "no messages to select"
+		m.setValidationStatus("no messages to select")
 		return
 	}
 	m.messageSelectActive = true
@@ -69,7 +72,7 @@ func (m *Model) enterMessageSelection() {
 func (m *Model) exitMessageSelection(status string) {
 	m.clearMessageSelection()
 	if status != "" {
-		m.status = status
+		m.setStatusMessage(status)
 	}
 	m.renderViewport()
 }
@@ -130,6 +133,86 @@ func (m *Model) visibleMessageSelectionIndex() int {
 		return span.BlockIndex
 	}
 	return m.contentBlockSpans[len(m.contentBlockSpans)-1].BlockIndex
+}
+
+func (m *Model) isBlockBodyViewportLine(span renderedBlockSpan, absolute int) bool {
+	if absolute < span.StartLine || absolute > span.EndLine {
+		return false
+	}
+	start := span.StartLine
+	end := span.EndLine
+	if span.CopyLine >= 0 {
+		start = span.CopyLine + 1
+	}
+	if span.BlockIndex >= 0 && span.BlockIndex < len(m.contentBlocks) {
+		block := m.contentBlocks[span.BlockIndex]
+		if block.Role == ChatRoleUser && block.Status != ChatStatusNone {
+			end--
+		}
+	}
+	return absolute >= start && absolute <= end
+}
+
+func lineContentBounds(line string) (int, int, bool) {
+	runes := []rune(line)
+	if len(runes) == 0 {
+		return 0, 0, false
+	}
+	start := -1
+	end := -1
+	for i, r := range runes {
+		if !unicode.IsSpace(r) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return 0, 0, false
+	}
+	for i := len(runes) - 1; i >= start; i-- {
+		if !unicode.IsSpace(runes[i]) {
+			end = i
+			break
+		}
+	}
+	if end < start {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
+func (m *Model) blockIndexByViewportPoint(col, line int) int {
+	if line < 0 || col < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
+		return -1
+	}
+	absolute := m.viewport.YOffset + line
+	lines := m.currentLines()
+	if absolute < 0 || absolute >= len(lines) {
+		return -1
+	}
+	contentStart, contentEnd, ok := lineContentBounds(lines[absolute])
+	if !ok || col < contentStart || col > contentEnd {
+		return -1
+	}
+	for _, span := range m.contentBlockSpans {
+		if !m.isBlockBodyViewportLine(span, absolute) {
+			continue
+		}
+		return span.BlockIndex
+	}
+	return -1
+}
+
+func (m *Model) selectMessageByViewportPoint(col, line int) bool {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+		return false
+	}
+	index := m.blockIndexByViewportPoint(col, line)
+	if index < 0 {
+		return false
+	}
+	m.setMessageSelectionIndex(index)
+	return true
 }
 
 func (m *Model) moveMessageSelection(delta int) {
@@ -204,9 +287,7 @@ func (m *Model) focusMessageSelection() {
 			m.viewport.YOffset = 0
 		}
 	}
-	if m.follow {
-		m.follow = false
-	}
+	m.pauseFollow(false)
 }
 
 func (m *Model) setMessageSelectionStatus() {
@@ -214,12 +295,12 @@ func (m *Model) setMessageSelectionStatus() {
 		return
 	}
 	role := strings.ToLower(chatRoleLabel(m.contentBlocks[m.messageSelectIndex].Role))
-	m.status = fmt.Sprintf("message %d/%d selected (%s) - y copy, esc exit", m.messageSelectIndex+1, len(m.contentBlocks), role)
+	m.setStatusMessage(fmt.Sprintf("message %d/%d selected (%s) - y copy, esc exit", m.messageSelectIndex+1, len(m.contentBlocks), role))
 }
 
 func (m *Model) copySelectedMessage() {
 	if m.messageSelectIndex < 0 || m.messageSelectIndex >= len(m.contentBlocks) {
-		m.status = "no message selected"
+		m.setCopyStatusWarning("no message selected")
 		return
 	}
 	_ = m.copyBlockByIndex(m.messageSelectIndex)

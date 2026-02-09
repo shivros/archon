@@ -23,6 +23,17 @@ type WorktreesResponse struct {
 	Worktrees []*types.Worktree `json:"worktrees"`
 }
 
+type NotesResponse struct {
+	Notes []*types.Note `json:"notes"`
+}
+
+type ListNotesRequest struct {
+	Scope       types.NoteScope
+	WorkspaceID string
+	WorktreeID  string
+	SessionID   string
+}
+
 type AvailableWorktreesResponse struct {
 	Worktrees []*types.GitWorktree `json:"worktrees"`
 }
@@ -44,6 +55,19 @@ type StartSessionRequest struct {
 	WorkspaceID string   `json:"workspace_id,omitempty"`
 	WorktreeID  string   `json:"worktree_id,omitempty"`
 	Text        string   `json:"text,omitempty"`
+}
+
+type PinSessionNoteRequest struct {
+	Scope         types.NoteScope  `json:"scope,omitempty"`
+	WorkspaceID   string           `json:"workspace_id,omitempty"`
+	WorktreeID    string           `json:"worktree_id,omitempty"`
+	Title         string           `json:"title,omitempty"`
+	Body          string           `json:"body,omitempty"`
+	Tags          []string         `json:"tags,omitempty"`
+	Status        types.NoteStatus `json:"status,omitempty"`
+	SourceBlockID string           `json:"source_block_id,omitempty"`
+	SourceRole    string           `json:"source_role,omitempty"`
+	SourceSnippet string           `json:"source_snippet,omitempty"`
 }
 
 type TailItemsResponse struct {

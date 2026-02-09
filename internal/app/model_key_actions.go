@@ -28,12 +28,21 @@ func (m *Model) reduceSidebarArrowKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.sidebar == nil {
 		return false, nil
 	}
+	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes {
+		return false, nil
+	}
 	switch msg.String() {
 	case "up":
 		m.sidebar.CursorUp()
+		if m.mode == uiModeNotes {
+			return true, m.onNotesSelectionChanged()
+		}
 		return true, m.onSelectionChanged()
 	case "down":
 		m.sidebar.CursorDown()
+		if m.mode == uiModeNotes {
+			return true, m.onNotesSelectionChanged()
+		}
 		return true, m.onSelectionChanged()
 	default:
 		return false, nil
@@ -92,14 +101,14 @@ func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "ctrl+y":
 		id := m.selectedSessionID()
 		if id == "" {
-			m.status = "no session selected"
+			m.setCopyStatusWarning("no session selected")
 			return true, nil
 		}
 		if err := clipboard.WriteAll(id); err != nil {
-			m.status = "copy failed: " + err.Error()
+			m.setCopyStatusError("copy failed: " + err.Error())
 			return true, nil
 		}
-		m.status = "copied session id"
+		m.setCopyStatusInfo("copied session id")
 		return true, nil
 	case "/":
 		m.enterSearch()
@@ -113,15 +122,10 @@ func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
 	case "g":
 		m.viewport.GotoTop()
-		if m.follow {
-			m.follow = false
-			m.status = "follow: paused"
-		}
+		m.pauseFollow(true)
 		return true, nil
 	case "G":
-		m.viewport.GotoBottom()
-		m.follow = true
-		m.status = "follow: on"
+		m.enableFollow(true)
 		return true, nil
 	case "{":
 		m.jumpSection(-1)
@@ -151,7 +155,7 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 	case "t":
 		item := m.selectedItem()
 		if item == nil || item.kind != sidebarWorkspace || item.workspace == nil || item.workspace.ID == "" {
-			m.status = "select a workspace to add a worktree"
+			m.setValidationStatus("select a workspace to add a worktree")
 			return true, nil
 		}
 		m.enterAddWorktree(item.workspace.ID)
@@ -159,15 +163,17 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 	case "c":
 		id := m.selectedSessionID()
 		if id == "" {
-			m.status = "select a session to send"
+			m.setValidationStatus("select a session to send")
 			return true, nil
 		}
 		m.enterCompose(id)
 		return true, nil
+	case "O":
+		return true, m.enterNotesForSelection()
 	case "enter":
 		id := m.selectedSessionID()
 		if id == "" {
-			m.status = "select a session to chat"
+			m.setValidationStatus("select a session to chat")
 			return true, nil
 		}
 		m.enterCompose(id)
@@ -180,28 +186,28 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
 	case "r":
-		m.status = "refreshing"
+		m.setStatusMessage("refreshing")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
 	case "x":
 		id := m.selectedSessionID()
 		if id == "" {
-			m.status = "no session selected"
+			m.setValidationStatus("no session selected")
 			return true, nil
 		}
-		m.status = "killing " + id
+		m.setStatusMessage("killing " + id)
 		return true, killSessionCmd(m.sessionAPI, id)
 	case "i":
 		id := m.selectedSessionID()
 		if id == "" {
-			m.status = "no session selected"
+			m.setValidationStatus("no session selected")
 			return true, nil
 		}
-		m.status = "interrupting " + id
+		m.setStatusMessage("interrupting " + id)
 		return true, interruptSessionCmd(m.sessionAPI, id)
 	case "d":
 		ids := m.selectedSessionIDs()
 		if len(ids) == 0 {
-			m.status = "no session selected"
+			m.setValidationStatus("no session selected")
 			return true, nil
 		}
 		m.confirmDismissSessions(ids)
@@ -214,19 +220,17 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
 	case "p":
-		m.follow = !m.follow
 		if m.follow {
-			m.viewport.GotoBottom()
-			m.status = "follow: on"
+			m.pauseFollow(true)
 		} else {
-			m.status = "follow: paused"
+			m.enableFollow(true)
 		}
 		return true, nil
 	case "e":
 		if m.toggleVisibleReasoning() {
 			return true, nil
 		}
-		m.status = "no reasoning in view"
+		m.setValidationStatus("no reasoning in view")
 		return true, nil
 	case "v":
 		m.enterMessageSelection()
@@ -244,7 +248,7 @@ func (m *Model) reduceSelectionKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 			if m.sidebar != nil {
 				count = m.sidebar.SelectionCount()
 			}
-			m.status = fmt.Sprintf("selected %d", count)
+			m.setStatusMessage(fmt.Sprintf("selected %d", count))
 			if m.advanceToNextSession() {
 				return true, m.onSelectionChanged()
 			}
