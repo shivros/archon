@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -12,7 +13,17 @@ import (
 type Provider interface {
 	Name() string
 	Command() string
-	Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error)
+	Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error)
+}
+
+type ProviderLogSink interface {
+	StdoutWriter() io.Writer
+	StderrWriter() io.Writer
+	Write(stream string, data []byte)
+}
+
+type ProviderItemSink interface {
+	Append(item map[string]any)
 }
 
 type providerProcess struct {
@@ -21,6 +32,23 @@ type providerProcess struct {
 	Interrupt func() error
 	ThreadID  string
 	Send      func([]byte) error
+}
+
+type providerFactory func(def providers.Definition, commandName string) (Provider, error)
+
+var providerFactories = map[providers.Runtime]providerFactory{
+	providers.RuntimeCodex: func(_ providers.Definition, commandName string) (Provider, error) {
+		return newCodexProvider(commandName)
+	},
+	providers.RuntimeClaude: func(_ providers.Definition, commandName string) (Provider, error) {
+		return newClaudeProvider(commandName)
+	},
+	providers.RuntimeExec: func(def providers.Definition, commandName string) (Provider, error) {
+		return newExecProvider(def.Name, commandName, nil)
+	},
+	providers.RuntimeCustom: func(def providers.Definition, commandName string) (Provider, error) {
+		return newExecProvider(def.Name, commandName, nil)
+	},
 }
 
 func ResolveProvider(provider, customCmd string) (Provider, error) {
@@ -36,17 +64,11 @@ func ResolveProvider(provider, customCmd string) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	switch def.Runtime {
-	case providers.RuntimeCodex:
-		return newCodexProvider(cmdName)
-	case providers.RuntimeClaude:
-		return newClaudeProvider(cmdName)
-	case providers.RuntimeExec, providers.RuntimeCustom:
-		return newExecProvider(def.Name, cmdName, nil)
-	default:
+	factory, ok := providerFactories[def.Runtime]
+	if !ok || factory == nil {
 		return nil, fmt.Errorf("provider runtime is not supported: %s", def.Runtime)
 	}
+	return factory(def, cmdName)
 }
 
 func resolveProviderCommandName(def providers.Definition, customCmd string) (string, error) {

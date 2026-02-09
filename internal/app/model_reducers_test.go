@@ -82,3 +82,73 @@ func TestWorkspaceEditReducerRequiresWorkspaceSelection(t *testing.T) {
 		t.Fatalf("expected missing selection status, got %q", m.status)
 	}
 }
+
+func TestAddWorkspaceReducerHandlesNilController(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddWorkspace
+	m.addWorkspace = nil
+
+	handled, cmd := m.reduceAddWorkspaceMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected add workspace reducer to handle mode")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command with nil controller")
+	}
+}
+
+func TestAddWorktreeReducerHandlesStreamMsg(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddWorktree
+
+	handled, cmd := m.reduceAddWorktreeMode(streamMsg{})
+	if !handled {
+		t.Fatalf("expected add worktree reducer to handle stream messages")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for stream message")
+	}
+}
+
+func TestPickProviderReducerEscExits(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+
+	handled, cmd := m.reducePickProviderMode(tea.KeyMsg{Type: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected pick provider reducer to handle esc")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command on esc")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected normal mode after esc, got %v", m.mode)
+	}
+	if m.newSession != nil {
+		t.Fatalf("expected new session target to clear")
+	}
+	if m.status != "new session canceled" {
+		t.Fatalf("expected cancel status, got %q", m.status)
+	}
+}
+
+func TestPickProviderReducerEnterSelectsProvider(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+
+	handled, cmd := m.reducePickProviderMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected pick provider reducer to handle enter")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for direct provider selection")
+	}
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected compose mode after selection, got %v", m.mode)
+	}
+	if m.newSession == nil || m.newSession.provider == "" {
+		t.Fatalf("expected provider to be selected, got %#v", m.newSession)
+	}
+}

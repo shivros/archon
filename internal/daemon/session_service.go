@@ -146,6 +146,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	rawInput := strings.Join(req.Args, " ")
 	initialInput := sanitizeTitle(rawInput)
 	initialText := strings.TrimSpace(rawInput)
+	providerDef, hasProviderDef := providers.Lookup(req.Provider)
 	title := sanitizeTitle(req.Title)
 	if title == "" && strings.TrimSpace(req.Title) != "" {
 		return nil, invalidError("title must contain displayable characters", nil)
@@ -154,12 +155,12 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		title = trimTitle(initialInput)
 	}
 	codexHome := ""
-	if req.Provider == "codex" && cwd != "" {
+	if hasProviderDef && providerDef.Runtime == providers.RuntimeCodex && cwd != "" {
 		codexHome = resolveCodexHome(cwd, workspacePath)
 	}
 
 	initialTextForStart := initialText
-	if req.Provider == "claude" {
+	if hasProviderDef && providerDef.Runtime == providers.RuntimeClaude {
 		initialTextForStart = ""
 	}
 	session, err := s.manager.StartSession(StartSessionConfig{
@@ -179,7 +180,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	if err != nil {
 		return nil, invalidError(err.Error(), err)
 	}
-	if req.Provider == "claude" && initialText != "" && s.manager != nil {
+	if hasProviderDef && providerDef.Runtime == providers.RuntimeClaude && initialText != "" && s.manager != nil {
 		payload := buildClaudeUserPayload(initialText)
 		go func(sessionID string) {
 			if err := s.manager.SendInput(sessionID, payload); err != nil && s.logger != nil {

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -62,85 +61,88 @@ const (
 )
 
 type Model struct {
-	workspaceAPI        WorkspaceAPI
-	sessionAPI          SessionAPI
-	stateAPI            StateAPI
-	sidebar             *SidebarController
-	viewport            viewport.Model
-	mode                uiMode
-	addWorkspace        *AddWorkspaceController
-	addWorktree         *AddWorktreeController
-	providerPicker      *ProviderPicker
-	compose             *ComposeController
-	chatInput           *ChatInput
-	searchInput         *ChatInput
-	renameInput         *ChatInput
-	groupInput          *ChatInput
-	groupPicker         *GroupPicker
-	workspacePicker     *SelectPicker
-	groupSelectPicker   *SelectPicker
-	workspaceMulti      *MultiSelectPicker
-	renameWorkspaceID   string
-	editWorkspaceID     string
-	renameGroupID       string
-	assignGroupID       string
-	status              string
-	width               int
-	height              int
-	follow              bool
-	workspaces          []*types.Workspace
-	groups              []*types.WorkspaceGroup
-	worktrees           map[string][]*types.Worktree
-	sessions            []*types.Session
-	sessionMeta         map[string]*types.SessionMeta
-	appState            types.AppState
-	hasAppState         bool
-	stream              *StreamController
-	codexStream         *CodexStreamController
-	itemStream          *ItemStreamController
-	input               *InputController
-	chat                *SessionChatController
-	pendingApproval     *ApprovalRequest
-	contentRaw          string
-	contentEsc          bool
-	contentBlocks       []ChatBlock
-	contentBlockSpans   []renderedBlockSpan
-	reasoningExpanded   map[string]bool
-	renderedText        string
-	renderedLines       []string
-	renderedPlain       []string
-	contentVersion      int
-	renderVersion       int
-	renderedForWidth    int
-	renderedForContent  int
-	searchQuery         string
-	searchMatches       []int
-	searchIndex         int
-	searchVersion       int
-	sectionOffsets      []int
-	sectionVersion      int
-	transcriptCache     map[string][]ChatBlock
-	pendingSessionKey   string
-	loading             bool
-	loadingKey          string
-	loader              spinner.Model
-	pendingMouseCmd     tea.Cmd
-	lastSidebarWheelAt  time.Time
-	pendingSidebarWheel bool
-	sidebarDragging     bool
-	menu                *MenuController
-	hotkeys             *HotkeyRenderer
-	contextMenu         *ContextMenuController
-	confirm             *ConfirmController
-	newSession          *newSessionTarget
-	pendingSelectID     string
-	selectSeq           int
-	sendSeq             int
-	pendingSends        map[int]pendingSend
-	composeHistory      map[string]*composeHistoryState
-	tickFn              func() tea.Cmd
-	pendingConfirm      confirmAction
-	scrollOnLoad        bool
+	workspaceAPI         WorkspaceAPI
+	sessionAPI           SessionAPI
+	stateAPI             StateAPI
+	sidebar              *SidebarController
+	viewport             viewport.Model
+	mode                 uiMode
+	addWorkspace         *AddWorkspaceController
+	addWorktree          *AddWorktreeController
+	providerPicker       *ProviderPicker
+	compose              *ComposeController
+	chatInput            *ChatInput
+	searchInput          *ChatInput
+	renameInput          *ChatInput
+	groupInput           *ChatInput
+	groupPicker          *GroupPicker
+	workspacePicker      *SelectPicker
+	groupSelectPicker    *SelectPicker
+	workspaceMulti       *MultiSelectPicker
+	renameWorkspaceID    string
+	editWorkspaceID      string
+	renameGroupID        string
+	assignGroupID        string
+	status               string
+	width                int
+	height               int
+	follow               bool
+	workspaces           []*types.Workspace
+	groups               []*types.WorkspaceGroup
+	worktrees            map[string][]*types.Worktree
+	sessions             []*types.Session
+	sessionMeta          map[string]*types.SessionMeta
+	appState             types.AppState
+	hasAppState          bool
+	stream               *StreamController
+	codexStream          *CodexStreamController
+	itemStream           *ItemStreamController
+	input                *InputController
+	chat                 *SessionChatController
+	pendingApproval      *ApprovalRequest
+	contentRaw           string
+	contentEsc           bool
+	contentBlocks        []ChatBlock
+	contentBlockSpans    []renderedBlockSpan
+	reasoningExpanded    map[string]bool
+	renderedText         string
+	renderedLines        []string
+	renderedPlain        []string
+	contentVersion       int
+	renderVersion        int
+	renderedForWidth     int
+	renderedForContent   int
+	renderedForSelection int
+	searchQuery          string
+	searchMatches        []int
+	searchIndex          int
+	searchVersion        int
+	messageSelectActive  bool
+	messageSelectIndex   int
+	sectionOffsets       []int
+	sectionVersion       int
+	transcriptCache      map[string][]ChatBlock
+	pendingSessionKey    string
+	loading              bool
+	loadingKey           string
+	loader               spinner.Model
+	pendingMouseCmd      tea.Cmd
+	lastSidebarWheelAt   time.Time
+	pendingSidebarWheel  bool
+	sidebarDragging      bool
+	menu                 *MenuController
+	hotkeys              *HotkeyRenderer
+	contextMenu          *ContextMenuController
+	confirm              *ConfirmController
+	newSession           *newSessionTarget
+	pendingSelectID      string
+	selectSeq            int
+	sendSeq              int
+	pendingSends         map[int]pendingSend
+	composeHistory       map[string]*composeHistoryState
+	tickFn               func() tea.Cmd
+	pendingConfirm       confirmAction
+	scrollOnLoad         bool
 }
 
 type newSessionTarget struct {
@@ -194,48 +196,50 @@ func NewModel(client *client.Client) Model {
 	hotkeyRenderer := NewHotkeyRenderer(DefaultHotkeys(), DefaultHotkeyResolver{})
 
 	return Model{
-		workspaceAPI:      api,
-		sessionAPI:        api,
-		stateAPI:          api,
-		sidebar:           NewSidebarController(),
-		viewport:          vp,
-		stream:            stream,
-		codexStream:       codexStream,
-		itemStream:        itemStream,
-		input:             NewInputController(),
-		chat:              NewSessionChatController(api, codexStream),
-		mode:              uiModeNormal,
-		addWorkspace:      NewAddWorkspaceController(minViewportWidth),
-		addWorktree:       NewAddWorktreeController(minViewportWidth),
-		providerPicker:    NewProviderPicker(minViewportWidth, minContentHeight-1),
-		compose:           NewComposeController(minViewportWidth),
-		chatInput:         NewChatInput(minViewportWidth, DefaultChatInputConfig()),
-		searchInput:       NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		renameInput:       NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		groupInput:        NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		groupPicker:       NewGroupPicker(minViewportWidth, minContentHeight-1),
-		workspacePicker:   NewSelectPicker(minViewportWidth, minContentHeight-1),
-		groupSelectPicker: NewSelectPicker(minViewportWidth, minContentHeight-1),
-		workspaceMulti:    NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
-		status:            "",
-		follow:            true,
-		groups:            []*types.WorkspaceGroup{},
-		worktrees:         map[string][]*types.Worktree{},
-		sessionMeta:       map[string]*types.SessionMeta{},
-		contentRaw:        "No sessions.",
-		contentEsc:        false,
-		searchIndex:       -1,
-		searchVersion:     -1,
-		sectionVersion:    -1,
-		transcriptCache:   map[string][]ChatBlock{},
-		reasoningExpanded: map[string]bool{},
-		loader:            loader,
-		hotkeys:           hotkeyRenderer,
-		pendingSends:      map[int]pendingSend{},
-		composeHistory:    map[string]*composeHistoryState{},
-		menu:              NewMenuController(),
-		contextMenu:       NewContextMenuController(),
-		confirm:           NewConfirmController(),
+		workspaceAPI:         api,
+		sessionAPI:           api,
+		stateAPI:             api,
+		sidebar:              NewSidebarController(),
+		viewport:             vp,
+		stream:               stream,
+		codexStream:          codexStream,
+		itemStream:           itemStream,
+		input:                NewInputController(),
+		chat:                 NewSessionChatController(api, codexStream),
+		mode:                 uiModeNormal,
+		addWorkspace:         NewAddWorkspaceController(minViewportWidth),
+		addWorktree:          NewAddWorktreeController(minViewportWidth),
+		providerPicker:       NewProviderPicker(minViewportWidth, minContentHeight-1),
+		compose:              NewComposeController(minViewportWidth),
+		chatInput:            NewChatInput(minViewportWidth, DefaultChatInputConfig()),
+		searchInput:          NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		renameInput:          NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		groupInput:           NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		groupPicker:          NewGroupPicker(minViewportWidth, minContentHeight-1),
+		workspacePicker:      NewSelectPicker(minViewportWidth, minContentHeight-1),
+		groupSelectPicker:    NewSelectPicker(minViewportWidth, minContentHeight-1),
+		workspaceMulti:       NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
+		status:               "",
+		follow:               true,
+		groups:               []*types.WorkspaceGroup{},
+		worktrees:            map[string][]*types.Worktree{},
+		sessionMeta:          map[string]*types.SessionMeta{},
+		contentRaw:           "No sessions.",
+		contentEsc:           false,
+		searchIndex:          -1,
+		searchVersion:        -1,
+		messageSelectIndex:   -1,
+		renderedForSelection: -2,
+		sectionVersion:       -1,
+		transcriptCache:      map[string][]ChatBlock{},
+		reasoningExpanded:    map[string]bool{},
+		loader:               loader,
+		hotkeys:              hotkeyRenderer,
+		pendingSends:         map[int]pendingSend{},
+		composeHistory:       map[string]*composeHistoryState{},
+		menu:                 NewMenuController(),
+		contextMenu:          NewContextMenuController(),
+		confirm:              NewConfirmController(),
 	}
 }
 
@@ -260,128 +264,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tickMsg:
 		return m, m.handleTick(msg)
-	case createWorkspaceMsg:
-		if msg.err != nil {
-			m.exitAddWorkspace("add workspace error: " + msg.err.Error())
-			return m, nil
-		}
-		if msg.workspace != nil {
-			m.appState.ActiveWorkspaceID = msg.workspace.ID
-			m.hasAppState = true
-			m.updateDelegate()
-			m.exitAddWorkspace("workspace added: " + msg.workspace.Name)
-			return m, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), m.saveAppStateCmd())
-		}
-		m.exitAddWorkspace("workspace added")
-		return m, nil
-	case workspaceGroupsMsg:
-		if msg.err != nil {
-			m.status = "workspace groups error: " + msg.err.Error()
-			return m, nil
-		}
-		m.groups = msg.groups
-		if m.menu != nil {
-			previous := m.menu.SelectedGroupIDs()
-			m.menu.SetGroups(msg.groups)
-			if m.handleMenuGroupChange(previous) {
-				return m, m.saveAppStateCmd()
-			}
-		}
-		return m, nil
-	case createWorkspaceGroupMsg:
-		if msg.err != nil {
-			m.exitAddWorkspaceGroup("add group error: " + msg.err.Error())
-			return m, nil
-		}
-		m.exitAddWorkspaceGroup("group added")
-		return m, fetchWorkspaceGroupsCmd(m.workspaceAPI)
-	case updateWorkspaceGroupMsg:
-		if msg.err != nil {
-			m.status = "update group error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = "group updated"
-		return m, fetchWorkspaceGroupsCmd(m.workspaceAPI)
-	case deleteWorkspaceGroupMsg:
-		if msg.err != nil {
-			m.status = "delete group error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = "group deleted"
-		return m, tea.Batch(fetchWorkspaceGroupsCmd(m.workspaceAPI), fetchWorkspacesCmd(m.workspaceAPI))
-	case assignGroupWorkspacesMsg:
-		if msg.err != nil {
-			m.status = "assign groups error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = fmt.Sprintf("updated %d workspaces", msg.updated)
-		return m, fetchWorkspacesCmd(m.workspaceAPI)
-	case availableWorktreesMsg:
-		if msg.err != nil {
-			m.status = "worktrees error: " + msg.err.Error()
-			return m, nil
-		}
-		if m.addWorktree != nil {
-			count := m.addWorktree.SetAvailable(msg.worktrees, m.worktrees[msg.workspaceID], msg.workspacePath)
-			m.status = fmt.Sprintf("%d worktrees found", count)
-		}
-		return m, nil
-	case createWorktreeMsg:
-		if msg.err != nil {
-			m.status = "create worktree error: " + msg.err.Error()
-			return m, nil
-		}
-		m.exitAddWorktree("worktree added")
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
-		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
-		}
-		return m, tea.Batch(cmds...)
-	case addWorktreeMsg:
-		if msg.err != nil {
-			m.status = "add worktree error: " + msg.err.Error()
-			return m, nil
-		}
-		m.exitAddWorktree("worktree added")
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
-		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
-		}
-		return m, tea.Batch(cmds...)
-	case worktreeDeletedMsg:
-		if msg.err != nil {
-			m.status = "delete worktree error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.worktreeID != "" && msg.worktreeID == m.appState.ActiveWorktreeID {
-			m.appState.ActiveWorktreeID = ""
-			m.hasAppState = true
-		}
-		m.status = "worktree deleted"
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
-		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
-		}
-		return m, tea.Batch(cmds...)
-	case updateWorkspaceMsg:
-		if msg.err != nil {
-			m.status = "update workspace error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = "workspace updated"
-		return m, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchWorkspaceGroupsCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
-	case deleteWorkspaceMsg:
-		if msg.err != nil {
-			m.status = "delete workspace error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.id != "" && msg.id == m.appState.ActiveWorkspaceID {
-			m.appState.ActiveWorkspaceID = ""
-			m.appState.ActiveWorktreeID = ""
-			m.hasAppState = true
-		}
-		m.status = "workspace deleted"
-		return m, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), m.saveAppStateCmd())
+	}
+	if handled, cmd := m.reduceMutationMessages(msg); handled {
+		return m, cmd
 	}
 
 	if m.confirm != nil && m.confirm.IsOpen() {
@@ -447,109 +332,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.mode == uiModeAddWorkspace {
-		switch msg := msg.(type) {
-		case streamMsg:
-			if msg.err != nil {
-				m.status = "stream error: " + msg.err.Error()
-				return m, nil
-			}
-			targetID := m.composeSessionID()
-			if targetID == "" {
-				targetID = m.selectedSessionID()
-			}
-			if msg.id != targetID {
-				if msg.cancel != nil {
-					msg.cancel()
-				}
-				return m, nil
-			}
-			if m.stream != nil {
-				m.stream.SetStream(msg.ch, msg.cancel)
-			}
-			m.status = "streaming"
-			return m, nil
-		}
-		if m.addWorkspace == nil {
-			return m, nil
-		}
-		_, cmd := m.addWorkspace.Update(msg, m)
+	if handled, cmd := m.reduceAddWorkspaceMode(msg); handled {
 		return m, cmd
 	}
-	if m.mode == uiModeAddWorktree {
-		switch msg := msg.(type) {
-		case streamMsg:
-			if msg.err != nil {
-				m.status = "stream error: " + msg.err.Error()
-				return m, nil
-			}
-			targetID := m.composeSessionID()
-			if targetID == "" {
-				targetID = m.selectedSessionID()
-			}
-			if msg.id != targetID {
-				if msg.cancel != nil {
-					msg.cancel()
-				}
-				return m, nil
-			}
-			if m.stream != nil {
-				m.stream.SetStream(msg.ch, msg.cancel)
-			}
-			m.status = "streaming"
-			return m, nil
-		}
-		if m.addWorktree == nil {
-			return m, nil
-		}
-		_, cmd := m.addWorktree.Update(msg, m)
+	if handled, cmd := m.reduceAddWorktreeMode(msg); handled {
 		return m, cmd
 	}
 	if handled, cmd := m.reduceWorkspaceEditModes(msg); handled {
 		return m, cmd
 	}
-	if m.mode == uiModePickProvider {
-		switch msg := msg.(type) {
-		case streamMsg:
-			if msg.err != nil {
-				m.status = "stream error: " + msg.err.Error()
-				return m, nil
-			}
-			targetID := m.composeSessionID()
-			if targetID == "" {
-				targetID = m.selectedSessionID()
-			}
-			if msg.id != targetID {
-				if msg.cancel != nil {
-					msg.cancel()
-				}
-				return m, nil
-			}
-			if m.stream != nil {
-				m.stream.SetStream(msg.ch, msg.cancel)
-			}
-			m.status = "streaming"
-			return m, nil
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				m.exitProviderPick("new session canceled")
-				return m, nil
-			case "enter":
-				return m, m.selectProvider()
-			case "j", "down":
-				if m.providerPicker != nil {
-					m.providerPicker.Move(1)
-				}
-				return m, nil
-			case "k", "up":
-				if m.providerPicker != nil {
-					m.providerPicker.Move(-1)
-				}
-				return m, nil
-			}
-		}
-		return m, nil
+	if handled, cmd := m.reducePickProviderMode(msg); handled {
+		return m, cmd
 	}
 	if handled, cmd := m.reduceMenuMode(msg); handled {
 		return m, cmd
@@ -566,177 +359,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if handled, cmd := m.reduceSearchModeKey(msg); handled {
 			return m, cmd
 		}
-		if m.pendingApproval != nil && (m.mode == uiModeNormal || (m.input != nil && m.input.IsSidebarFocused())) {
-			switch msg.String() {
-			case "y":
-				return m, m.approvePending("accept")
-			case "x":
-				return m, m.approvePending("decline")
-			}
+		if handled, cmd := m.reduceMessageSelectionKey(msg); handled {
+			return m, cmd
+		}
+		if handled, cmd := m.reducePendingApprovalKey(msg); handled {
+			return m, cmd
 		}
 		if handled, cmd := m.reduceComposeInputKey(msg); handled {
 			return m, cmd
 		}
-		if m.sidebar != nil {
-			if msg.String() == "up" {
-				m.sidebar.CursorUp()
-				return m, m.onSelectionChanged()
-			}
-			if msg.String() == "down" {
-				m.sidebar.CursorDown()
-				return m, m.onSelectionChanged()
-			}
+		if handled, cmd := m.reduceSidebarArrowKey(msg); handled {
+			return m, cmd
 		}
 		if m.handleViewportScroll(msg) {
 			return m, nil
 		}
-		switch msg.String() {
-		case "m":
-			if m.menu != nil {
-				if m.contextMenu != nil {
-					m.contextMenu.Close()
-				}
-				m.menu.Toggle()
-			}
-			return m, nil
-		case "esc":
-			return m, nil
-		case "q":
-			return m, tea.Quit
-		case "ctrl+b":
-			m.toggleSidebar()
-			return m, m.saveAppStateCmd()
-		case "ctrl+y":
-			id := m.selectedSessionID()
-			if id == "" {
-				m.status = "no session selected"
-				return m, nil
-			}
-			if err := clipboard.WriteAll(id); err != nil {
-				m.status = "copy failed: " + err.Error()
-				return m, nil
-			}
-			m.status = "copied session id"
-			return m, nil
-		case "/":
-			m.enterSearch()
-			return m, nil
-		case "g":
-			m.viewport.GotoTop()
-			if m.follow {
-				m.follow = false
-				m.status = "follow: paused"
-			}
-			return m, nil
-		case "G":
-			m.viewport.GotoBottom()
-			m.follow = true
-			m.status = "follow: on"
-			return m, nil
-		case "{":
-			m.jumpSection(-1)
-			return m, nil
-		case "}":
-			m.jumpSection(1)
-			return m, nil
-		case "N":
-			m.moveSearch(-1)
-			return m, nil
-		case "n":
-			m.moveSearch(1)
-			return m, nil
-		case "ctrl+n":
-			if m.enterNewSession() {
-				return m, nil
-			}
-			return m, nil
-		case "a":
-			m.enterAddWorkspace()
-			return m, nil
-		case "t":
-			item := m.selectedItem()
-			if item == nil || item.kind != sidebarWorkspace || item.workspace == nil || item.workspace.ID == "" {
-				m.status = "select a workspace to add a worktree"
-				return m, nil
-			}
-			m.enterAddWorktree(item.workspace.ID)
-			return m, nil
-		case "c":
-			id := m.selectedSessionID()
-			if id == "" {
-				m.status = "select a session to send"
-				return m, nil
-			}
-			m.enterCompose(id)
-			return m, nil
-		case "enter":
-			id := m.selectedSessionID()
-			if id == "" {
-				m.status = "select a session to chat"
-				return m, nil
-			}
-			m.enterCompose(id)
-			return m, nil
-		case "r":
-			m.status = "refreshing"
-			return m, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
-		case "x":
-			id := m.selectedSessionID()
-			if id == "" {
-				m.status = "no session selected"
-				return m, nil
-			}
-			m.status = "killing " + id
-			return m, killSessionCmd(m.sessionAPI, id)
-		case "i":
-			id := m.selectedSessionID()
-			if id == "" {
-				m.status = "no session selected"
-				return m, nil
-			}
-			m.status = "interrupting " + id
-			return m, interruptSessionCmd(m.sessionAPI, id)
-		case "d":
-			ids := m.selectedSessionIDs()
-			if len(ids) == 0 {
-				m.status = "no session selected"
-				return m, nil
-			}
-			m.confirmDismissSessions(ids)
-			return m, nil
-		case "p":
-			m.follow = !m.follow
-			if m.follow {
-				m.viewport.GotoBottom()
-				m.status = "follow: on"
-			} else {
-				m.status = "follow: paused"
-			}
-			return m, nil
-		case "e":
-			if m.toggleVisibleReasoning() {
-				return m, nil
-			}
-			m.status = "no reasoning in view"
-			return m, nil
-		case " ", "space":
-			if m.toggleSelection() {
-				count := 0
-				if m.sidebar != nil {
-					count = m.sidebar.SelectionCount()
-				}
-				m.status = fmt.Sprintf("selected %d", count)
-				if m.advanceToNextSession() {
-					return m, m.onSelectionChanged()
-				}
-			}
-			return m, nil
-		case "j":
-			m.sidebar.CursorDown()
-			return m, m.onSelectionChanged()
-		case "k":
-			m.sidebar.CursorUp()
-			return m, m.onSelectionChanged()
+		if handled, cmd := m.reduceNormalModeKey(msg); handled {
+			return m, cmd
 		}
 	}
 
@@ -747,411 +386,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, m.onSelectionChanged())
 	}
 
-	switch msg := msg.(type) {
-	case sessionsWithMetaMsg:
-		if msg.err != nil {
-			m.status = "error: " + msg.err.Error()
-			return m, nil
-		}
-		m.sessions = msg.sessions
-		m.sessionMeta = normalizeSessionMeta(msg.meta)
-		m.pruneSelection()
-		m.applySidebarItems()
-		if m.pendingSelectID != "" && m.sidebar != nil {
-			if m.sidebar.SelectBySessionID(m.pendingSelectID) {
-				m.pendingSelectID = ""
-			}
-		}
-		m.status = fmt.Sprintf("%d sessions", len(msg.sessions))
-		return m, m.onSelectionChanged()
-	case workspacesMsg:
-		if msg.err != nil {
-			m.status = "workspaces error: " + msg.err.Error()
-			return m, nil
-		}
-		m.workspaces = msg.workspaces
-		m.applySidebarItems()
-		return m, m.fetchWorktreesForWorkspaces()
-	case worktreesMsg:
-		if msg.err != nil {
-			m.status = "worktrees error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.workspaceID != "" {
-			m.worktrees[msg.workspaceID] = msg.worktrees
-		}
-		m.applySidebarItems()
-		return m, nil
-	case appStateMsg:
-		if msg.err != nil {
-			m.status = "state error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.state != nil {
-			m.applyAppState(msg.state)
-			m.applySidebarItems()
-			m.resize(m.width, m.height)
-		}
-		return m, nil
-	case appStateSavedMsg:
-		if msg.err != nil {
-			m.status = "state save error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.state != nil {
-			m.applyAppState(msg.state)
-		}
-		return m, nil
-	case tailMsg:
-		if msg.err != nil {
-			m.status = "tail error: " + msg.err.Error()
-			if msg.key != "" && msg.key == m.loadingKey {
-				m.loading = false
-				m.setContentText("Error loading history.")
-			}
-			return m, nil
-		}
-		if msg.key != "" && msg.key != m.pendingSessionKey {
-			return m, nil
-		}
-		if msg.key != "" && msg.key == m.loadingKey {
-			m.loading = false
-		}
-		blocks := itemsToBlocks(msg.items)
-		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
-			m.itemStream.SetSnapshotBlocks(blocks)
-			blocks = m.itemStream.Blocks()
-		}
-		m.setSnapshotBlocks(blocks)
-		m.status = "tail updated"
-		return m, nil
-	case historyMsg:
-		if msg.err != nil {
-			m.status = "history error: " + msg.err.Error()
-			if msg.key != "" && msg.key == m.loadingKey {
-				m.loading = false
-				m.setContentText("Error loading history.")
-			}
-			return m, nil
-		}
-		if msg.key != "" && msg.key != m.pendingSessionKey {
-			return m, nil
-		}
-		if msg.key != "" && msg.key == m.loadingKey {
-			m.loading = false
-		}
-		blocks := itemsToBlocks(msg.items)
-		if shouldStreamItems(m.selectedSessionProvider()) && m.itemStream != nil {
-			m.itemStream.SetSnapshotBlocks(blocks)
-			blocks = m.itemStream.Blocks()
-		}
-		m.setSnapshotBlocks(blocks)
-		if msg.key != "" {
-			m.transcriptCache[msg.key] = blocks
-		}
-		m.status = "history updated"
-		return m, nil
-	case historyPollMsg:
-		if msg.id == "" || msg.key == "" {
-			return m, nil
-		}
-		if msg.attempt >= historyPollMax {
-			return m, nil
-		}
-		if m.mode != uiModeCompose {
-			return m, nil
-		}
-		targetID := m.composeSessionID()
-		if targetID == "" {
-			targetID = m.selectedSessionID()
-		}
-		if targetID != msg.id {
-			return m, nil
-		}
-		currentAgents := countAgentRepliesBlocks(m.currentBlocks())
-		if msg.minAgents >= 0 {
-			if currentAgents > msg.minAgents {
-				return m, nil
-			}
-		} else if currentAgents > 0 {
-			return m, nil
-		}
-		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, msg.id, msg.key, maxViewportLines)}
-		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
-		return m, tea.Batch(cmds...)
-	case sendMsg:
-		if msg.err != nil {
-			m.status = "send error: " + msg.err.Error()
-			m.markPendingSendFailed(msg.token, msg.err)
-			return m, nil
-		}
-		m.status = "message sent"
-		m.clearPendingSend(msg.token)
-		provider := m.providerForSessionID(msg.id)
-		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
-			return m, openItemsCmd(m.sessionAPI, msg.id)
-		}
-		if provider == "codex" && m.codexStream != nil && !m.codexStream.HasStream() {
-			return m, openEventsCmd(m.sessionAPI, msg.id)
-		}
-		return m, nil
-	case approvalMsg:
-		if msg.err != nil {
-			m.status = "approval error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = "approval sent"
-		if m.pendingApproval != nil && m.pendingApproval.RequestID == msg.requestID {
-			m.pendingApproval = nil
-		}
-		if m.codexStream != nil {
-			m.codexStream.ClearApproval()
-		}
-		return m, nil
-	case approvalsMsg:
-		if msg.err != nil {
-			m.status = "approvals error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.id != m.selectedSessionID() {
-			return m, nil
-		}
-		m.pendingApproval = selectApprovalRequest(msg.approvals)
-		if m.pendingApproval != nil {
-			if m.pendingApproval.Detail != "" {
-				m.status = fmt.Sprintf("approval required: %s (%s)", m.pendingApproval.Summary, m.pendingApproval.Detail)
-			} else if m.pendingApproval.Summary != "" {
-				m.status = "approval required: " + m.pendingApproval.Summary
-			} else {
-				m.status = "approval required"
-			}
-		}
-		return m, nil
-	case interruptMsg:
-		if msg.err != nil {
-			m.status = "interrupt error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = "interrupt sent"
-		return m, nil
-	case selectDebounceMsg:
-		if msg.seq != m.selectSeq {
-			return m, nil
-		}
-		item := m.selectedItem()
-		if item == nil || !item.isSession() || item.session == nil || item.session.ID != msg.id {
-			return m, nil
-		}
-		return m, m.loadSelectedSession(item)
-	case startSessionMsg:
-		if msg.err != nil {
-			m.status = "start session error: " + msg.err.Error()
-			return m, nil
-		}
-		if msg.session == nil || msg.session.ID == "" {
-			m.status = "start session error: no session returned"
-			return m, nil
-		}
-		m.newSession = nil
-		m.pendingSelectID = msg.session.ID
-		label := msg.session.Title
-		if strings.TrimSpace(label) == "" {
-			label = msg.session.ID
-		}
-		if m.compose != nil {
-			m.compose.Enter(msg.session.ID, label)
-		}
-		key := "sess:" + msg.session.ID
-		m.pendingSessionKey = key
-		m.status = "session started"
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
-		if shouldStreamItems(msg.session.Provider) {
-			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
-		} else if msg.session.Provider == "codex" {
-			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.session.ID))
-		} else if isActiveStatus(msg.session.Status) {
-			cmds = append(cmds, openStreamCmd(m.sessionAPI, msg.session.ID))
-		}
-		if msg.session.Provider == "codex" {
-			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
-		}
-		return m, tea.Batch(cmds...)
-	case killMsg:
-		if msg.err != nil {
-			m.status = "kill error: " + msg.err.Error()
-			return m, nil
-		}
-		m.status = "killed " + msg.id
-		return m, fetchSessionsWithMetaCmd(m.sessionAPI)
-	case exitMsg:
-		if msg.err != nil {
-			m.status = "exit error: " + msg.err.Error()
-			return m, nil
-		}
-		if m.sidebar != nil {
-			m.sidebar.RemoveSelection([]string{msg.id})
-		}
-		m.status = "marked exited " + msg.id
-		return m, fetchSessionsWithMetaCmd(m.sessionAPI)
-	case bulkExitMsg:
-		if msg.err != nil {
-			m.status = "exit error: " + msg.err.Error()
-			return m, nil
-		}
-		if m.sidebar != nil {
-			m.sidebar.RemoveSelection(msg.ids)
-		}
-		m.status = fmt.Sprintf("marked exited %d", len(msg.ids))
-		return m, fetchSessionsWithMetaCmd(m.sessionAPI)
-	case streamMsg:
-		if msg.err != nil {
-			m.status = "stream error: " + msg.err.Error()
-			return m, nil
-		}
-		targetID := m.composeSessionID()
-		if targetID == "" {
-			targetID = m.selectedSessionID()
-		}
-		if msg.id != targetID {
-			if msg.cancel != nil {
-				msg.cancel()
-			}
-			return m, nil
-		}
-		if m.stream != nil {
-			m.stream.SetStream(msg.ch, msg.cancel)
-		}
-		m.status = "streaming"
-		return m, nil
-	case eventsMsg:
-		if msg.err != nil {
-			m.status = "events error: " + msg.err.Error()
-			return m, nil
-		}
-		targetID := m.composeSessionID()
-		if targetID == "" {
-			targetID = m.selectedSessionID()
-		}
-		if msg.id != targetID {
-			if msg.cancel != nil {
-				msg.cancel()
-			}
-			return m, nil
-		}
-		if m.codexStream != nil {
-			m.codexStream.SetStream(msg.ch, msg.cancel)
-		}
-		m.status = "streaming events"
-		return m, nil
-	case itemsStreamMsg:
-		if msg.err != nil {
-			m.status = "items stream error: " + msg.err.Error()
-			return m, nil
-		}
-		targetID := m.composeSessionID()
-		if targetID == "" {
-			targetID = m.selectedSessionID()
-		}
-		if msg.id != targetID {
-			if msg.cancel != nil {
-				msg.cancel()
-			}
-			return m, nil
-		}
-		if m.itemStream != nil {
-			m.itemStream.SetSnapshotBlocks(m.currentBlocks())
-			m.itemStream.SetStream(msg.ch, msg.cancel)
-		}
-		m.status = "streaming items"
-		return m, nil
+	if handled, nextCmd := m.reduceStateMessages(msg); handled {
+		return m, nextCmd
 	}
 
 	return m, cmd
 }
 
 func (m *Model) View() string {
-	headerText, bodyText := m.modeViewContent()
-	rightHeader := headerStyle.Render(headerText)
-	rightBody := bodyText
-	if m.usesViewport() {
-		scrollbar := m.viewportScrollbarView()
-		if scrollbar != "" {
-			rightBody = lipgloss.JoinHorizontal(lipgloss.Top, bodyText, scrollbar)
-		}
-	}
-	inputLine, inputScrollable := m.modeInputView()
-	rightLines := []string{rightHeader, rightBody}
-	if inputLine != "" {
-		dividerWidth := m.viewport.Width
-		if dividerWidth <= 0 {
-			dividerWidth = max(1, m.width)
-		}
-		dividerLine := renderInputDivider(dividerWidth, inputScrollable)
-		if dividerLine != "" {
-			rightLines = append(rightLines, dividerLine)
-		}
-		rightLines = append(rightLines, inputLine)
-	}
-	rightView := lipgloss.JoinVertical(lipgloss.Left, rightLines...)
-	body := rightView
-	if !m.appState.SidebarCollapsed {
-		listView := ""
-		if m.sidebar != nil {
-			listView = m.sidebar.View()
-		}
-		height := max(lipgloss.Height(listView), lipgloss.Height(rightView))
-		if height < 1 {
-			height = 1
-		}
-		divider := strings.Repeat("│\n", height-1) + "│"
-		body = lipgloss.JoinHorizontal(lipgloss.Top, listView, dividerStyle.Render(divider), rightView)
-	}
-
-	helpText := ""
-	if m.hotkeys != nil {
-		helpText = m.hotkeys.Render(m)
-	}
-	if helpText == "" {
-		helpText = "q quit"
-	}
-	help := helpStyle.Render(helpText)
-	status := statusStyle.Render(m.status)
-	statusLine := renderStatusLine(m.width, help, status)
-
+	rightView := m.renderRightPaneView()
+	body := m.renderBodyWithSidebar(rightView)
+	statusLine := m.renderStatusLineView()
 	if m.height <= 0 || m.width <= 0 {
 		return body
 	}
-	menuBar := ""
-	if m.menu != nil {
-		menuBar = m.menu.MenuBarView(m.width)
-	}
-	body = overlayLine(body, menuBar, 0)
-	if m.menu != nil && m.menu.IsDropdownOpen() {
-		menuDrop := m.menu.DropdownView(m.sidebarWidth())
-		if menuDrop != "" {
-			if m.menu.HasSubmenu() {
-				submenu := m.menu.SubmenuView(0)
-				combined := combineBlocks(menuDrop, submenu, 1)
-				body = overlayBlock(body, combined, 1)
-			} else {
-				body = overlayBlock(body, menuDrop, 1)
-			}
-		}
-	}
-	if m.contextMenu != nil && m.contextMenu.IsOpen() {
-		bodyHeight := len(strings.Split(body, "\n"))
-		menuBlock, row := m.contextMenu.View(m.width, bodyHeight)
-		if menuBlock != "" {
-			body = overlayBlock(body, menuBlock, row)
-		}
-	}
-	if m.confirm != nil && m.confirm.IsOpen() {
-		bodyHeight := len(strings.Split(body, "\n"))
-		confirmBlock, row := m.confirm.View(m.width, bodyHeight)
-		if confirmBlock != "" {
-			body = overlayBlock(body, confirmBlock, row)
-		}
-	}
+	body = m.overlayTransientViews(body)
 	return lipgloss.JoinVertical(lipgloss.Left, body, statusLine)
 }
 
@@ -1569,80 +818,21 @@ func (m *Model) handleContextMenuAction(action ContextMenuAction) tea.Cmd {
 	if m.contextMenu == nil {
 		return nil
 	}
-	targetID := m.contextMenu.TargetID()
-	targetWorkspaceID := m.contextMenu.WorkspaceID()
-	targetWorktreeID := m.contextMenu.WorktreeID()
-	targetSessionID := m.contextMenu.SessionID()
+	target := contextMenuTarget{
+		id:          m.contextMenu.TargetID(),
+		workspaceID: m.contextMenu.WorkspaceID(),
+		worktreeID:  m.contextMenu.WorktreeID(),
+		sessionID:   m.contextMenu.SessionID(),
+	}
 	m.contextMenu.Close()
-	switch action {
-	case ContextMenuWorkspaceCreate:
-		m.enterAddWorkspace()
-	case ContextMenuWorkspaceRename:
-		if targetID == "" {
-			m.status = "select a workspace to rename"
-			return nil
-		}
-		m.enterRenameWorkspace(targetID)
-	case ContextMenuWorkspaceEditGroups:
-		if targetID == "" {
-			m.status = "select a workspace"
-			return nil
-		}
-		m.enterEditWorkspaceGroups(targetID)
-	case ContextMenuWorkspaceDelete:
-		if targetID == "" || targetID == unassignedWorkspaceID {
-			m.status = "select a workspace to delete"
-			return nil
-		}
-		m.confirmDeleteWorkspace(targetID)
-	case ContextMenuWorktreeAdd:
-		if targetWorkspaceID == "" {
-			m.status = "select a workspace"
-			return nil
-		}
-		m.enterAddWorktree(targetWorkspaceID)
-	case ContextMenuWorktreeDelete:
-		if targetWorktreeID == "" || targetWorkspaceID == "" {
-			m.status = "select a worktree"
-			return nil
-		}
-		m.confirmDeleteWorktree(targetWorkspaceID, targetWorktreeID)
-	case ContextMenuSessionChat:
-		if targetSessionID == "" {
-			m.status = "select a session"
-			return nil
-		}
-		m.enterCompose(targetSessionID)
-	case ContextMenuSessionDismiss:
-		if targetSessionID == "" {
-			m.status = "select a session"
-			return nil
-		}
-		m.confirmDismissSessions([]string{targetSessionID})
-	case ContextMenuSessionKill:
-		if targetSessionID == "" {
-			m.status = "select a session"
-			return nil
-		}
-		m.status = "killing " + targetSessionID
-		return killSessionCmd(m.sessionAPI, targetSessionID)
-	case ContextMenuSessionInterrupt:
-		if targetSessionID == "" {
-			m.status = "select a session"
-			return nil
-		}
-		m.status = "interrupting " + targetSessionID
-		return interruptSessionCmd(m.sessionAPI, targetSessionID)
-	case ContextMenuSessionCopyID:
-		if targetSessionID == "" {
-			m.status = "select a session"
-			return nil
-		}
-		if err := clipboard.WriteAll(targetSessionID); err != nil {
-			m.status = "copy failed: " + err.Error()
-			return nil
-		}
-		m.status = "copied session id"
+	if handled, cmd := m.handleWorkspaceContextMenuAction(action, target); handled {
+		return cmd
+	}
+	if handled, cmd := m.handleWorktreeContextMenuAction(action, target); handled {
+		return cmd
+	}
+	if handled, cmd := m.handleSessionContextMenuAction(action, target); handled {
+		return cmd
 	}
 	return nil
 }
@@ -2069,6 +1259,7 @@ func (m *Model) applyLines(lines []string, escape bool) {
 	m.contentEsc = escape
 	m.contentBlocks = nil
 	m.contentBlockSpans = nil
+	m.clearMessageSelection()
 	m.contentVersion++
 	m.searchVersion = -1
 	m.sectionVersion = -1
@@ -2096,6 +1287,7 @@ func (m *Model) applyBlocks(blocks []ChatBlock) {
 		}
 		m.contentBlocks = resolved
 	}
+	m.clampMessageSelection()
 	m.contentRaw = ""
 	m.contentEsc = false
 	m.contentVersion++
@@ -2155,6 +1347,7 @@ func (m *Model) setContentText(text string) {
 	m.contentEsc = false
 	m.contentBlocks = nil
 	m.contentBlockSpans = nil
+	m.clearMessageSelection()
 	m.contentVersion++
 	m.searchVersion = -1
 	m.sectionVersion = -1
@@ -2169,12 +1362,15 @@ func (m *Model) renderViewport() {
 	if !m.appState.SidebarCollapsed && renderWidth > 1 {
 		renderWidth--
 	}
-	needsRender := m.renderedForWidth != renderWidth || m.renderedForContent != m.contentVersion
+	selectedRenderIndex := m.selectedMessageRenderIndex()
+	needsRender := m.renderedForWidth != renderWidth ||
+		m.renderedForContent != m.contentVersion ||
+		m.renderedForSelection != selectedRenderIndex
 	if needsRender {
 		var rendered string
 		if m.contentBlocks != nil {
 			var spans []renderedBlockSpan
-			rendered, spans = renderChatBlocks(m.contentBlocks, renderWidth, maxViewportLines)
+			rendered, spans = renderChatBlocksWithSelection(m.contentBlocks, renderWidth, maxViewportLines, selectedRenderIndex)
 			m.contentBlockSpans = spans
 		} else {
 			content := m.contentRaw
@@ -2198,6 +1394,7 @@ func (m *Model) renderViewport() {
 		}
 		m.renderedForWidth = renderWidth
 		m.renderedForContent = m.contentVersion
+		m.renderedForSelection = selectedRenderIndex
 		m.renderVersion++
 	}
 	m.viewport.SetContent(m.renderedText)
@@ -2476,246 +1673,25 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.width <= 0 || m.height <= 0 {
 		return false
 	}
-	listWidth := 0
-	if !m.appState.SidebarCollapsed {
-		listWidth = clamp(m.width/3, minListWidth, maxListWidth)
-		if m.width-listWidth-1 < minViewportWidth {
-			listWidth = max(minListWidth, m.width/2)
-		}
-	}
-	barWidth := 0
-	if m.sidebar != nil {
-		barWidth = m.sidebar.ScrollbarWidth()
-	}
-	barStart := listWidth - barWidth
-	if barStart < 0 {
-		barStart = 0
-	}
-	rightStart := 0
-	if listWidth > 0 {
-		rightStart = listWidth + 1
-	}
-	inputBounds := func() (int, int, bool) {
-		if m.mode == uiModeCompose && m.chatInput != nil {
-			start := m.viewport.Height + 2
-			end := start + m.chatInput.Height() - 1
-			return start, end, true
-		}
-		if m.mode == uiModeSearch && m.searchInput != nil {
-			start := m.viewport.Height + 2
-			end := start + m.searchInput.Height() - 1
-			return start, end, true
-		}
-		return 0, 0, false
-	}
-	isOverInput := func(y int) bool {
-		start, end, ok := inputBounds()
-		if !ok {
-			return false
-		}
-		return y >= start && y <= end
-	}
+	layout := m.resolveMouseLayout()
 
-	if m.contextMenu != nil && m.contextMenu.IsOpen() && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-		if handled, action := m.contextMenu.HandleMouse(msg, m.width, m.height-1); handled {
-			if action != ContextMenuNone {
-				if cmd := m.handleContextMenuAction(action); cmd != nil {
-					m.pendingMouseCmd = cmd
-				}
-			}
-			return true
-		}
-		if !m.contextMenu.Contains(msg.X, msg.Y, m.width, m.height-1) {
-			m.contextMenu.Close()
-		}
+	if m.reduceContextMenuLeftPressMouse(msg) {
+		return true
 	}
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight {
-		if listWidth > 0 && msg.X < listWidth && m.sidebar != nil {
-			if entry := m.sidebar.ItemAtRow(msg.Y); entry != nil {
-				if m.menu != nil {
-					m.menu.CloseAll()
-				}
-				if m.contextMenu != nil {
-					switch entry.kind {
-					case sidebarWorkspace:
-						if entry.workspace != nil {
-							m.contextMenu.OpenWorkspace(entry.workspace.ID, entry.workspace.Name, msg.X, msg.Y)
-							return true
-						}
-					case sidebarWorktree:
-						if entry.worktree != nil {
-							m.contextMenu.OpenWorktree(entry.worktree.ID, entry.worktree.WorkspaceID, entry.worktree.Name, msg.X, msg.Y)
-							return true
-						}
-					case sidebarSession:
-						if entry.session != nil {
-							m.contextMenu.OpenSession(entry.session.ID, entry.Title(), msg.X, msg.Y)
-							return true
-						}
-					}
-				}
-			}
-		}
-		if m.contextMenu != nil && m.contextMenu.IsOpen() {
-			m.contextMenu.Close()
-			return true
-		}
+	if m.reduceContextMenuRightPressMouse(msg, layout) {
+		return true
 	}
-
-	if msg.Action == tea.MouseActionRelease {
-		m.sidebarDragging = false
-	}
-	if msg.Action == tea.MouseActionMotion && m.sidebarDragging {
-		if listWidth > 0 && msg.X < listWidth && barWidth > 0 && msg.X >= barStart {
-			if m.sidebar != nil && m.sidebar.ScrollbarSelect(msg.Y) {
-				m.lastSidebarWheelAt = time.Now()
-				m.pendingSidebarWheel = true
-				return true
-			}
-		}
+	if m.reduceSidebarDragMouse(msg, layout) {
 		return true
 	}
 
 	if msg.Action == tea.MouseActionPress {
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
-			if listWidth > 0 && msg.X < listWidth {
-				now := time.Now()
-				if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
-					return true
-				}
-				m.lastSidebarWheelAt = now
-				if m.sidebar != nil && m.sidebar.Scroll(-1) {
-					m.pendingSidebarWheel = true
-					return true
-				}
-			}
-			if m.mode == uiModePickProvider && msg.X >= rightStart {
-				if m.providerPicker != nil && m.providerPicker.Scroll(-1) {
-					return true
-				}
-			}
-			if msg.X >= rightStart && isOverInput(msg.Y) {
-				if m.mode == uiModeCompose && m.chatInput != nil {
-					m.pendingMouseCmd = m.chatInput.Scroll(-1)
-					return true
-				}
-				if m.mode == uiModeSearch && m.searchInput != nil {
-					m.pendingMouseCmd = m.searchInput.Scroll(-1)
-					return true
-				}
-			}
-			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-				if m.addWorktree.Scroll(-1) {
-					return true
-				}
-			}
-			if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil && msg.X >= rightStart {
-				if m.groupPicker.Move(-1) {
-					return true
-				}
-			}
-			if (m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit) && m.workspacePicker != nil && msg.X >= rightStart {
-				if m.workspacePicker.Move(-1) {
-					return true
-				}
-			}
-			if m.mode == uiModePickWorkspaceGroupRename && m.groupSelectPicker != nil && msg.X >= rightStart {
-				if m.groupSelectPicker.Move(-1) {
-					return true
-				}
-			}
-			if m.mode == uiModePickWorkspaceGroupDelete && m.groupSelectPicker != nil && msg.X >= rightStart {
-				if m.groupSelectPicker.Move(-1) {
-					return true
-				}
-			}
-			if m.mode == uiModePickWorkspaceGroupAssign && m.groupSelectPicker != nil && msg.X >= rightStart {
-				if m.groupSelectPicker.Move(-1) {
-					return true
-				}
-			}
-			if m.mode == uiModeAssignGroupWorkspaces && m.workspaceMulti != nil && msg.X >= rightStart {
-				if m.workspaceMulti.Move(-1) {
-					return true
-				}
-			}
-			m.viewport.LineUp(3)
-			if m.follow {
-				m.follow = false
-				m.status = "follow: paused"
-			}
-			return true
+			return m.reduceMouseWheel(msg, layout, -1)
 		case tea.MouseButtonWheelDown:
-			if listWidth > 0 && msg.X < listWidth {
-				now := time.Now()
-				if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
-					return true
-				}
-				m.lastSidebarWheelAt = now
-				if m.sidebar != nil && m.sidebar.Scroll(1) {
-					m.pendingSidebarWheel = true
-					return true
-				}
-			}
-			if m.mode == uiModePickProvider && msg.X >= rightStart {
-				if m.providerPicker != nil && m.providerPicker.Scroll(1) {
-					return true
-				}
-			}
-			if msg.X >= rightStart && isOverInput(msg.Y) {
-				if m.mode == uiModeCompose && m.chatInput != nil {
-					m.pendingMouseCmd = m.chatInput.Scroll(1)
-					return true
-				}
-				if m.mode == uiModeSearch && m.searchInput != nil {
-					m.pendingMouseCmd = m.searchInput.Scroll(1)
-					return true
-				}
-			}
-			if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-				if m.addWorktree.Scroll(1) {
-					return true
-				}
-			}
-			if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil && msg.X >= rightStart {
-				if m.groupPicker.Move(1) {
-					return true
-				}
-			}
-			if (m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit) && m.workspacePicker != nil && msg.X >= rightStart {
-				if m.workspacePicker.Move(1) {
-					return true
-				}
-			}
-			if m.mode == uiModePickWorkspaceGroupRename && m.groupSelectPicker != nil && msg.X >= rightStart {
-				if m.groupSelectPicker.Move(1) {
-					return true
-				}
-			}
-			if m.mode == uiModePickWorkspaceGroupDelete && m.groupSelectPicker != nil && msg.X >= rightStart {
-				if m.groupSelectPicker.Move(1) {
-					return true
-				}
-			}
-			if m.mode == uiModePickWorkspaceGroupAssign && m.groupSelectPicker != nil && msg.X >= rightStart {
-				if m.groupSelectPicker.Move(1) {
-					return true
-				}
-			}
-			if m.mode == uiModeAssignGroupWorkspaces && m.workspaceMulti != nil && msg.X >= rightStart {
-				if m.workspaceMulti.Move(1) {
-					return true
-				}
-			}
-			m.viewport.LineDown(3)
-			if m.follow {
-				m.follow = false
-				m.status = "follow: paused"
-			}
-			return true
+			return m.reduceMouseWheel(msg, layout, 1)
 		case tea.MouseButtonLeft:
-			break
 		default:
 			return false
 		}
@@ -2723,147 +1699,26 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return false
 	}
-	if m.menu != nil {
-		menuWidth := m.sidebarWidth()
-		if menuWidth <= 0 {
-			menuWidth = max(minListWidth, minViewportWidth)
-		}
-		if handled, action := m.menu.HandleMouse(msg, menuWidth); handled {
-			if cmd := m.handleMenuAction(action); cmd != nil {
-				m.pendingMouseCmd = cmd
-			}
-			return true
-		}
+	if m.reduceMenuLeftPressMouse(msg) {
+		return true
 	}
-	if listWidth > 0 && msg.X < listWidth && barWidth > 0 && msg.X >= barStart {
-		if m.sidebar != nil && m.sidebar.ScrollbarSelect(msg.Y) {
-			m.lastSidebarWheelAt = time.Now()
-			m.pendingSidebarWheel = true
-			m.sidebarDragging = true
-			return true
-		}
+	if m.reduceSidebarScrollbarLeftPressMouse(msg, layout) {
+		return true
 	}
-	if msg.X >= rightStart && isOverInput(msg.Y) {
-		if m.mode == uiModeCompose && m.chatInput != nil {
-			m.chatInput.Focus()
-			if m.input != nil {
-				m.input.FocusChatInput()
-			}
-			return true
-		}
-		if m.mode == uiModeSearch && m.searchInput != nil {
-			m.searchInput.Focus()
-			if m.input != nil {
-				m.input.FocusChatInput()
-			}
-			return true
-		}
+	if m.reduceInputFocusLeftPressMouse(msg, layout) {
+		return true
 	}
-	if msg.X >= rightStart && (m.mode == uiModeNormal || m.mode == uiModeCompose) {
-		if msg.Y >= 1 && msg.Y <= m.viewport.Height && !isOverInput(msg.Y) {
-			if m.toggleReasoningByViewportLine(msg.Y - 1) {
-				return true
-			}
-		}
+	if m.reduceTranscriptCopyLeftPressMouse(msg, layout) {
+		return true
 	}
-	if m.mode == uiModePickProvider && m.providerPicker != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.providerPicker.SelectByRow(row) {
-				m.pendingMouseCmd = m.selectProvider()
-				return true
-			}
-		}
+	if m.reduceReasoningToggleLeftPressMouse(msg, layout) {
+		return true
 	}
-	if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.groupPicker.HandleClick(row) {
-				return true
-			}
-		}
+	if m.reduceModePickersLeftPressMouse(msg, layout) {
+		return true
 	}
-	if (m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit) && m.workspacePicker != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.workspacePicker.HandleClick(row) {
-				id := m.workspacePicker.SelectedID()
-				if id == "" {
-					return true
-				}
-				if m.mode == uiModePickWorkspaceRename {
-					m.enterRenameWorkspace(id)
-				} else {
-					m.enterEditWorkspaceGroups(id)
-				}
-				return true
-			}
-		}
-	}
-	if m.mode == uiModePickWorkspaceGroupRename && m.groupSelectPicker != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
-				id := m.groupSelectPicker.SelectedID()
-				if id == "" {
-					return true
-				}
-				m.enterRenameWorkspaceGroup(id)
-				return true
-			}
-		}
-	}
-	if m.mode == uiModePickWorkspaceGroupDelete && m.groupSelectPicker != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
-				id := m.groupSelectPicker.SelectedID()
-				if id == "" {
-					return true
-				}
-				m.confirmDeleteWorkspaceGroup(id)
-				return true
-			}
-		}
-	}
-	if m.mode == uiModePickWorkspaceGroupAssign && m.groupSelectPicker != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
-				id := m.groupSelectPicker.SelectedID()
-				if id == "" {
-					return true
-				}
-				m.enterAssignGroupWorkspaces(id)
-				return true
-			}
-		}
-	}
-	if m.mode == uiModeAssignGroupWorkspaces && m.workspaceMulti != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 && m.workspaceMulti.HandleClick(row) {
-				return true
-			}
-		}
-	}
-	if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-		if msg.X >= rightStart {
-			row := msg.Y - 1
-			if row >= 0 {
-				if handled, cmd := m.addWorktree.HandleClick(row, m); handled {
-					m.pendingMouseCmd = cmd
-					return true
-				}
-			}
-		}
-	}
-	if listWidth > 0 && msg.X < listWidth {
-		if m.sidebar != nil {
-			m.sidebar.SelectByRow(msg.Y)
-			m.pendingMouseCmd = m.onSelectionChanged()
-			return true
-		}
+	if m.reduceSidebarSelectionLeftPressMouse(msg, layout) {
+		return true
 	}
 	return false
 }

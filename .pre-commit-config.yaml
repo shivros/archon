@@ -11,6 +11,11 @@ repos:
         entry: gofmt -w
         language: system
         types: [go]
+      - id: duplicate-logic-guard
+        name: duplicate logic guard
+        entry: bash -lc 'scripts/check_duplicate_logic.sh'
+        language: system
+        pass_filenames: false
       - id: go-test
         name: go test (unit)
         entry: bash -lc 'ARCHON_CODEX_SKIP=1 go test ./...'

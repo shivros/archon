@@ -175,9 +175,6 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 				return true, nil
 			}
 		}
-		if m.groupPicker != nil {
-			return true, nil
-		}
 		return true, nil
 	case uiModeRenameWorkspaceGroup:
 		keyMsg, ok := msg.(tea.KeyMsg)
@@ -250,6 +247,66 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 	}
 }
 
+func (m *Model) reduceAddWorkspaceMode(msg tea.Msg) (bool, tea.Cmd) {
+	if m.mode != uiModeAddWorkspace {
+		return false, nil
+	}
+	if stream, ok := msg.(streamMsg); ok {
+		m.applyStreamMsg(stream)
+		return true, nil
+	}
+	if m.addWorkspace == nil {
+		return true, nil
+	}
+	_, cmd := m.addWorkspace.Update(msg, m)
+	return true, cmd
+}
+
+func (m *Model) reduceAddWorktreeMode(msg tea.Msg) (bool, tea.Cmd) {
+	if m.mode != uiModeAddWorktree {
+		return false, nil
+	}
+	if stream, ok := msg.(streamMsg); ok {
+		m.applyStreamMsg(stream)
+		return true, nil
+	}
+	if m.addWorktree == nil {
+		return true, nil
+	}
+	_, cmd := m.addWorktree.Update(msg, m)
+	return true, cmd
+}
+
+func (m *Model) reducePickProviderMode(msg tea.Msg) (bool, tea.Cmd) {
+	if m.mode != uiModePickProvider {
+		return false, nil
+	}
+	switch msg := msg.(type) {
+	case streamMsg:
+		m.applyStreamMsg(msg)
+		return true, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			m.exitProviderPick("new session canceled")
+			return true, nil
+		case "enter":
+			return true, m.selectProvider()
+		case "j", "down":
+			if m.providerPicker != nil {
+				m.providerPicker.Move(1)
+			}
+			return true, nil
+		case "k", "up":
+			if m.providerPicker != nil {
+				m.providerPicker.Move(-1)
+			}
+			return true, nil
+		}
+	}
+	return true, nil
+}
+
 func (m *Model) reduceMenuMode(msg tea.Msg) (bool, tea.Cmd) {
 	if m.menu == nil || !m.menu.IsActive() {
 		return false, nil
@@ -280,24 +337,7 @@ func (m *Model) reduceComposeMode(msg tea.Msg) (bool, tea.Cmd) {
 	if !ok {
 		return false, nil
 	}
-	if stream.err != nil {
-		m.status = "stream error: " + stream.err.Error()
-		return true, nil
-	}
-	targetID := m.composeSessionID()
-	if targetID == "" {
-		targetID = m.selectedSessionID()
-	}
-	if stream.id != targetID {
-		if stream.cancel != nil {
-			stream.cancel()
-		}
-		return true, nil
-	}
-	if m.stream != nil {
-		m.stream.SetStream(stream.ch, stream.cancel)
-	}
-	m.status = "streaming"
+	m.applyStreamMsg(stream)
 	return true, nil
 }
 

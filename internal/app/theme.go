@@ -26,4 +26,8 @@ var (
 	systemBubbleStyle      = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(0, 1)
 	reasoningBubbleStyle   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("244")).Faint(true).Padding(0, 1)
 	userStatusStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
+	chatMetaStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true)
+	chatMetaSelectedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
+	selectedMessageStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
+	copyButtonStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true).Underline(true)
 )

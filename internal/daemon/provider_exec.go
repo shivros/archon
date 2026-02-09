@@ -32,7 +32,7 @@ func (p *execProvider) Command() string {
 	return p.cmdName
 }
 
-func (p *execProvider) Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error) {
+func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
 	cmd := exec.Command(p.cmdName, cfg.Args...)
 	if cfg.Cwd != "" {
 		cmd.Dir = cfg.Cwd

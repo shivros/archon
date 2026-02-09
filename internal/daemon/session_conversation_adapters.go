@@ -29,10 +29,16 @@ func newConversationAdapterRegistry(extra ...conversationAdapter) *conversationA
 	fallback := defaultConversationAdapter{}
 	registry := &conversationAdapterRegistry{
 		fallback: fallback,
-		byName: map[string]conversationAdapter{
-			"codex":  codexConversationAdapter{fallback: fallback},
-			"claude": claudeConversationAdapter{fallback: fallback},
-		},
+		byName:   map[string]conversationAdapter{},
+	}
+	for _, def := range providers.All() {
+		name := providers.Normalize(def.Name)
+		if name == "" {
+			continue
+		}
+		if adapter := defaultConversationAdapterFor(def, fallback); adapter != nil {
+			registry.byName[name] = adapter
+		}
 	}
 	for _, adapter := range extra {
 		if adapter == nil {
@@ -45,6 +51,17 @@ func newConversationAdapterRegistry(extra ...conversationAdapter) *conversationA
 		registry.byName[name] = adapter
 	}
 	return registry
+}
+
+func defaultConversationAdapterFor(def providers.Definition, fallback defaultConversationAdapter) conversationAdapter {
+	switch def.Runtime {
+	case providers.RuntimeCodex:
+		return codexConversationAdapter{fallback: fallback}
+	case providers.RuntimeClaude:
+		return claudeConversationAdapter{fallback: fallback}
+	default:
+		return nil
+	}
 }
 
 func (r *conversationAdapterRegistry) adapterFor(provider string) conversationAdapter {

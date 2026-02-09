@@ -19,8 +19,8 @@ type claudeRunner struct {
 	cmdName string
 	cwd     string
 	env     []string
-	sink    *logSink
-	items   *itemSink
+	sink    ProviderLogSink
+	items   ProviderItemSink
 
 	mu        sync.Mutex
 	sessionID string
@@ -42,7 +42,7 @@ func (p *claudeProvider) Command() string {
 	return p.cmdName
 }
 
-func (p *claudeProvider) Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error) {
+func (p *claudeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
 	if cfg.Resume {
 		if strings.TrimSpace(cfg.ProviderSessionID) == "" {
 			return nil, errors.New("provider session id is required to resume")
@@ -192,7 +192,7 @@ func (r *claudeRunner) updateSessionID(id string) {
 	}
 }
 
-func readClaudeStream(r io.Reader, sink *logSink, items *itemSink, onSessionID func(string)) error {
+func readClaudeStream(r io.Reader, sink ProviderLogSink, items ProviderItemSink, onSessionID func(string)) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	state := &ClaudeParseState{}

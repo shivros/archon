@@ -46,7 +46,7 @@ func (p *codexProvider) Command() string {
 	return fmt.Sprintf("%s app-server", p.cmdName)
 }
 
-func (p *codexProvider) Start(cfg StartSessionConfig, sink *logSink, items *itemSink) (*providerProcess, error) {
+func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
 	cmd := exec.Command(p.cmdName, "app-server")
 	if cfg.Cwd != "" {
 		cmd.Dir = cfg.Cwd
@@ -124,7 +124,7 @@ func (p *codexProvider) Start(cfg StartSessionConfig, sink *logSink, items *item
 type codexController struct {
 	stdin  io.Writer
 	reader *bufio.Scanner
-	sink   *logSink
+	sink   ProviderLogSink
 
 	mu              sync.Mutex
 	nextID          int
@@ -148,7 +148,7 @@ type codexError struct {
 	Message string `json:"message"`
 }
 
-func newCodexController(stdin io.Writer, stdout io.Reader, sink *logSink) *codexController {
+func newCodexController(stdin io.Writer, stdout io.Reader, sink ProviderLogSink) *codexController {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	return &codexController{
