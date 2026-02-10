@@ -1,0 +1,108 @@
+package app
+
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestCopyTextToClipboardUsesSystemBackend(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	t.Cleanup(func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	})
+
+	fallbackCalled := false
+	clipboardWriteAll = func(string) error { return nil }
+	clipboardWriteOSC52 = func(string) error {
+		fallbackCalled = true
+		return nil
+	}
+
+	method, err := copyTextToClipboard("hello")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if method != clipboardMethodSystem {
+		t.Fatalf("expected system method, got %v", method)
+	}
+	if fallbackCalled {
+		t.Fatalf("expected no OSC52 fallback call")
+	}
+}
+
+func TestCopyTextToClipboardFallsBackToOSC52(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	t.Cleanup(func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	})
+
+	fallbackCalled := false
+	clipboardWriteAll = func(string) error { return errors.New("exit status 1") }
+	clipboardWriteOSC52 = func(string) error {
+		fallbackCalled = true
+		return nil
+	}
+
+	method, err := copyTextToClipboard("hello")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if method != clipboardMethodOSC52 {
+		t.Fatalf("expected OSC52 method, got %v", method)
+	}
+	if !fallbackCalled {
+		t.Fatalf("expected OSC52 fallback call")
+	}
+}
+
+func TestCopyTextToClipboardHelpfulErrorWhenDisplayMissing(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	t.Cleanup(func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	})
+
+	t.Setenv("DISPLAY", "")
+	t.Setenv("WAYLAND_DISPLAY", "")
+	t.Setenv("TERM", "xterm-256color")
+
+	clipboardWriteAll = func(string) error { return errors.New("exit status 1") }
+	clipboardWriteOSC52 = func(string) error { return errors.New("open /dev/tty: no such device") }
+
+	_, err := copyTextToClipboard("hello")
+	if err == nil {
+		t.Fatalf("expected copy error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "no GUI clipboard available") {
+		t.Fatalf("expected no-display guidance, got %q", msg)
+	}
+	if !strings.Contains(msg, "OSC52 fallback failed") {
+		t.Fatalf("expected OSC52 fallback details, got %q", msg)
+	}
+}
+
+func TestShouldAttemptOSC52RespectsTerminalAndDisableEnv(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("ARCHON_DISABLE_OSC52", "")
+	if !shouldAttemptOSC52() {
+		t.Fatalf("expected OSC52 to be enabled with terminal")
+	}
+
+	t.Setenv("ARCHON_DISABLE_OSC52", "true")
+	if shouldAttemptOSC52() {
+		t.Fatalf("expected OSC52 to be disabled by env flag")
+	}
+
+	t.Setenv("ARCHON_DISABLE_OSC52", "")
+	t.Setenv("TERM", "dumb")
+	if shouldAttemptOSC52() {
+		t.Fatalf("expected OSC52 to be disabled for dumb terminal")
+	}
+}

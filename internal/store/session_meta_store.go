@@ -170,6 +170,9 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		if normalized.Title == "" {
 			normalized.Title = existing.Title
 		}
+		if !normalized.TitleLocked {
+			normalized.TitleLocked = existing.TitleLocked
+		}
 		if normalized.InitialInput == "" {
 			normalized.InitialInput = existing.InitialInput
 		}
@@ -187,6 +190,9 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		}
 		if normalized.LastTurnID == "" {
 			normalized.LastTurnID = existing.LastTurnID
+		}
+		if normalized.RuntimeOptions == nil {
+			normalized.RuntimeOptions = types.CloneRuntimeOptions(existing.RuntimeOptions)
 		}
 	}
 	if normalized.LastActiveAt == nil {

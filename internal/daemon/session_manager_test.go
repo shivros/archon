@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/store"
 	"control/internal/types"
 )
 
@@ -114,6 +116,98 @@ func TestTailInvalidStream(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for invalid stream")
 	}
+}
+
+func TestUpsertSessionMetaPreservesRenamedTitle(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	manager.SetMetaStore(metaStore)
+
+	sessionID := "sess-rename"
+	cfg := StartSessionConfig{
+		Title:        "Default Title",
+		InitialInput: "Initial prompt",
+	}
+
+	manager.upsertSessionMeta(cfg, sessionID, types.SessionStatusRunning)
+	if err := manager.UpdateSessionTitle(sessionID, "Renamed Title"); err != nil {
+		t.Fatalf("UpdateSessionTitle: %v", err)
+	}
+	manager.upsertSessionMeta(cfg, sessionID, types.SessionStatusExited)
+
+	meta, ok, err := metaStore.Get(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected session meta")
+	}
+	if meta.Title != "Renamed Title" {
+		t.Fatalf("expected renamed title to persist, got %q", meta.Title)
+	}
+	if !meta.TitleLocked {
+		t.Fatalf("expected renamed title to remain locked")
+	}
+}
+
+func TestUpsertSessionMetaMigratesLegacyCustomTitleToLocked(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	manager.SetMetaStore(metaStore)
+
+	sessionID := "sess-legacy"
+	if _, err := metaStore.Upsert(context.Background(), &types.SessionMeta{
+		SessionID: sessionID,
+		Title:     "Legacy Custom Title",
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	cfg := StartSessionConfig{
+		Title:        "Default Title",
+		InitialInput: "Initial prompt",
+	}
+	manager.upsertSessionMeta(cfg, sessionID, types.SessionStatusRunning)
+
+	meta, ok, err := metaStore.Get(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected session meta")
+	}
+	if meta.Title != "Legacy Custom Title" {
+		t.Fatalf("expected legacy custom title to persist, got %q", meta.Title)
+	}
+	if !meta.TitleLocked {
+		t.Fatalf("expected legacy custom title to be migrated to locked")
+	}
+}
+
+func TestUpdateSessionTitleUpdatesLiveSession(t *testing.T) {
+	manager := newTestManager(t)
+	cfg := StartSessionConfig{
+		Provider: "custom",
+		Cmd:      os.Args[0],
+		Args:     helperArgs("stdout=hello", "sleep_ms=200", "exit=0"),
+		Env:      []string{"GO_WANT_HELPER_PROCESS=1"},
+		Title:    "before",
+	}
+	session, err := manager.StartSession(cfg)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if err := manager.UpdateSessionTitle(session.ID, "after"); err != nil {
+		t.Fatalf("UpdateSessionTitle: %v", err)
+	}
+	updated, ok := manager.GetSession(session.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected live session")
+	}
+	if updated.Title != "after" {
+		t.Fatalf("expected live session title to update, got %q", updated.Title)
+	}
+	waitForStatus(t, manager, session.ID, types.SessionStatusExited, 2*time.Second)
 }
 
 func TestResolveProviderCustomPath(t *testing.T) {

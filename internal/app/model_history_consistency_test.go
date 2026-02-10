@@ -10,7 +10,7 @@ func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
 	m.requestActivity.eventCount = 3
 
 	streamBlocks := []ChatBlock{
-		{ID: "reasoning:r1", Role: ChatRoleReasoning, Text: "Reasoning\n\nlive stream"},
+		{ID: "reasoning:r1", Role: ChatRoleReasoning, Text: "Reasoning\nlive stream"},
 	}
 	m.codexStream.SetSnapshotBlocks(streamBlocks)
 	m.setSnapshotBlocks(m.codexStream.Blocks())
@@ -36,7 +36,7 @@ func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("expected live stream blocks to remain unchanged, got %d", len(blocks))
 	}
-	if blocks[0].Text != "Reasoning\n\nlive stream" {
+	if blocks[0].Text != "Reasoning\nlive stream" {
 		t.Fatalf("expected live reasoning block to remain visible, got %q", blocks[0].Text)
 	}
 }
@@ -116,7 +116,7 @@ func TestHistoryMsgCoalescesAdjacentAgentBlocksForCodex(t *testing.T) {
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected agent role, got %s", blocks[0].Role)
 	}
-	if blocks[0].Text != "First sentence.\n\nSecond sentence." {
+	if blocks[0].Text != "First sentence.Second sentence." {
 		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
 	}
 }
@@ -150,7 +150,7 @@ func TestHistoryMsgCoalescesAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected agent role, got %s", blocks[0].Role)
 	}
-	if blocks[0].Text != "First sentence.\n\nSecond sentence." {
+	if blocks[0].Text != "First sentence.Second sentence." {
 		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
 	}
 }

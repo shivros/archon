@@ -79,6 +79,19 @@ func (c *Client) ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []
 	return resp.Sessions, resp.SessionMeta, nil
 }
 
+func (c *Client) GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error) {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return nil, errors.New("provider is required")
+	}
+	path := fmt.Sprintf("/v1/providers/%s/options", provider)
+	var resp ProviderOptionsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Options, nil
+}
+
 func (c *Client) ListWorkspaces(ctx context.Context) ([]*types.Workspace, error) {
 	var resp WorkspacesResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/workspaces", nil, true, &resp); err != nil {
@@ -341,6 +354,11 @@ func (c *Client) GetSession(ctx context.Context, id string) (*types.Session, err
 		return nil, err
 	}
 	return &session, nil
+}
+
+func (c *Client) UpdateSession(ctx context.Context, id string, req UpdateSessionRequest) error {
+	path := fmt.Sprintf("/v1/sessions/%s", strings.TrimSpace(id))
+	return c.doJSON(ctx, http.MethodPatch, path, req, true, nil)
 }
 
 func (c *Client) KillSession(ctx context.Context, id string) error {

@@ -26,8 +26,8 @@ func TestRequestActivityTracksHiddenReasoningUpdates(t *testing.T) {
 	m.startRequestActivity("s1", "codex")
 
 	m.applyBlocks([]ChatBlock{
-		{ID: "reasoning:older", Role: ChatRoleReasoning, Text: "Reasoning\n\nolder"},
-		{ID: "reasoning:1", Role: ChatRoleReasoning, Text: "Reasoning\n\nstep one"},
+		{ID: "reasoning:older", Role: ChatRoleReasoning, Text: "Reasoning\nolder"},
+		{ID: "reasoning:1", Role: ChatRoleReasoning, Text: "Reasoning\nstep one"},
 	})
 	m.noteRequestVisibleUpdate("s1")
 
@@ -65,8 +65,8 @@ func TestRequestActivityAutoExpandsNewestReasoningWhileActive(t *testing.T) {
 	m.startRequestActivity("s1", "codex")
 
 	m.applyBlocks([]ChatBlock{
-		{ID: "reasoning:old", Role: ChatRoleReasoning, Text: "Reasoning\n\nfirst"},
-		{ID: "reasoning:new", Role: ChatRoleReasoning, Text: "Reasoning\n\nsecond"},
+		{ID: "reasoning:old", Role: ChatRoleReasoning, Text: "Reasoning\nfirst"},
+		{ID: "reasoning:new", Role: ChatRoleReasoning, Text: "Reasoning\nsecond"},
 	})
 
 	if len(m.contentBlocks) != 2 {
@@ -86,8 +86,8 @@ func TestRequestActivityAutoExpandHonorsManualCollapse(t *testing.T) {
 	m.startRequestActivity("s1", "codex")
 
 	m.applyBlocks([]ChatBlock{
-		{ID: "reasoning:old", Role: ChatRoleReasoning, Text: "Reasoning\n\nfirst"},
-		{ID: "reasoning:new", Role: ChatRoleReasoning, Text: "Reasoning\n\nsecond"},
+		{ID: "reasoning:old", Role: ChatRoleReasoning, Text: "Reasoning\nfirst"},
+		{ID: "reasoning:new", Role: ChatRoleReasoning, Text: "Reasoning\nsecond"},
 	})
 	if m.contentBlocks[1].Collapsed {
 		t.Fatalf("expected newest reasoning to start expanded")
@@ -100,8 +100,8 @@ func TestRequestActivityAutoExpandHonorsManualCollapse(t *testing.T) {
 	}
 
 	m.applyBlocks([]ChatBlock{
-		{ID: "reasoning:old", Role: ChatRoleReasoning, Text: "Reasoning\n\nfirst"},
-		{ID: "reasoning:new", Role: ChatRoleReasoning, Text: "Reasoning\n\nsecond updated"},
+		{ID: "reasoning:old", Role: ChatRoleReasoning, Text: "Reasoning\nfirst"},
+		{ID: "reasoning:new", Role: ChatRoleReasoning, Text: "Reasoning\nsecond updated"},
 	})
 	if !m.contentBlocks[1].Collapsed {
 		t.Fatalf("expected manual collapse preference to be preserved")

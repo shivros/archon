@@ -74,14 +74,14 @@ func TestCodexControllerFlow(t *testing.T) {
 	if err := controller.initialize(ctx); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	threadID, err := controller.startThread(ctx, "gpt-5.1-codex", "")
+	threadID, err := controller.startThread(ctx, "gpt-5.1-codex", "", nil)
 	if err != nil {
 		t.Fatalf("thread start: %v", err)
 	}
 	if threadID != "thr_test" {
 		t.Fatalf("unexpected thread id: %s", threadID)
 	}
-	turnID, err := controller.startTurn(ctx, threadID, "Hello")
+	turnID, err := controller.startTurn(ctx, threadID, "Hello", nil, "gpt-5.1-codex")
 	if err != nil {
 		t.Fatalf("turn start: %v", err)
 	}

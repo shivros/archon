@@ -29,6 +29,7 @@ type StartSessionConfig struct {
 	CodexHome           string
 	Title               string
 	Tags                []string
+	RuntimeOptions      *types.SessionRuntimeOptions
 	WorkspaceID         string
 	WorktreeID          string
 	InitialInput        string
@@ -659,6 +660,9 @@ func (m *SessionManager) UpdateSessionTitle(id, title string) error {
 	m.mu.Lock()
 	store := m.metaStore
 	sessionStore := m.sessionStore
+	if state, ok := m.sessions[id]; ok && state != nil && state.session != nil {
+		state.session.Title = strings.TrimSpace(title)
+	}
 	m.mu.Unlock()
 	if store == nil {
 		if sessionStore == nil {
@@ -666,8 +670,9 @@ func (m *SessionManager) UpdateSessionTitle(id, title string) error {
 		}
 	}
 	meta := &types.SessionMeta{
-		SessionID: id,
-		Title:     sanitizeTitle(title),
+		SessionID:   id,
+		Title:       sanitizeTitle(title),
+		TitleLocked: true,
 	}
 	if store != nil {
 		if _, err := store.Upsert(context.Background(), meta); err != nil {
@@ -698,14 +703,29 @@ func (m *SessionManager) upsertSessionMeta(cfg StartSessionConfig, sessionID str
 	if store == nil {
 		return
 	}
+	title := sanitizeTitle(cfg.Title)
+	titleLocked := false
+	if existing, ok, err := store.Get(context.Background(), sessionID); err == nil && ok && existing != nil {
+		if existing.TitleLocked {
+			// Preserve explicit user renames across lifecycle metadata refreshes.
+			title = ""
+			titleLocked = true
+		} else if existingTitle := strings.TrimSpace(existing.Title); existingTitle != "" && title != "" && existingTitle != title {
+			// Migrate legacy custom titles written before title locking existed.
+			title = ""
+			titleLocked = true
+		}
+	}
 	now := time.Now().UTC()
 	meta := &types.SessionMeta{
-		SessionID:    sessionID,
-		WorkspaceID:  cfg.WorkspaceID,
-		WorktreeID:   cfg.WorktreeID,
-		Title:        sanitizeTitle(cfg.Title),
-		InitialInput: sanitizeTitle(cfg.InitialInput),
-		LastActiveAt: &now,
+		SessionID:      sessionID,
+		WorkspaceID:    cfg.WorkspaceID,
+		WorktreeID:     cfg.WorktreeID,
+		Title:          title,
+		TitleLocked:    titleLocked,
+		InitialInput:   sanitizeTitle(cfg.InitialInput),
+		RuntimeOptions: types.CloneRuntimeOptions(cfg.RuntimeOptions),
+		LastActiveAt:   &now,
 	}
 	_, _ = store.Upsert(context.Background(), meta)
 }

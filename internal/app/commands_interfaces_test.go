@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"control/internal/client"
@@ -29,12 +30,33 @@ func TestCommandsCompileWithNarrowMocks(t *testing.T) {
 		t.Fatalf("unexpected send result: %+v", sendResult)
 	}
 
-	startCmd := startSessionCmd(&workspaceSessionStartMock{}, "ws1", "", "codex", "hello")
+	updateCmd := updateSessionCmd(&sessionUpdateMock{}, "s1", "renamed")
+	if updateCmd == nil {
+		t.Fatalf("expected update session command")
+	}
+	if _, ok := updateCmd().(updateSessionMsg); !ok {
+		t.Fatalf("expected updateSessionMsg result")
+	}
+
+	startCmd := startSessionCmd(&workspaceSessionStartMock{}, "ws1", "", "codex", "hello", nil)
 	if startCmd == nil {
 		t.Fatalf("expected start session command")
 	}
 	if _, ok := startCmd().(startSessionMsg); !ok {
 		t.Fatalf("expected startSessionMsg result")
+	}
+
+	longSnippet := strings.Repeat("x", 2048)
+	pinAPI := &sessionPinMock{}
+	pinCmd := pinSessionNoteCmd(pinAPI, "s1", ChatBlock{ID: "b1", Role: ChatRoleAgent, Text: "hello"}, longSnippet)
+	if pinCmd == nil {
+		t.Fatalf("expected pin command")
+	}
+	if _, ok := pinCmd().(notePinnedMsg); !ok {
+		t.Fatalf("expected notePinnedMsg result")
+	}
+	if pinAPI.lastRequest.SourceSnippet != longSnippet {
+		t.Fatalf("expected full snippet to be preserved, got len=%d want=%d", len(pinAPI.lastRequest.SourceSnippet), len(longSnippet))
 	}
 }
 
@@ -50,8 +72,28 @@ func (m *sessionSendMock) SendMessage(context.Context, string, client.SendSessio
 	return &client.SendSessionResponse{OK: true, TurnID: "turn-1"}, nil
 }
 
+type sessionUpdateMock struct{}
+
+func (m *sessionUpdateMock) UpdateSession(context.Context, string, client.UpdateSessionRequest) error {
+	return nil
+}
+
 type workspaceSessionStartMock struct{}
 
 func (m *workspaceSessionStartMock) StartWorkspaceSession(context.Context, string, string, client.StartSessionRequest) (*types.Session, error) {
 	return &types.Session{ID: "s1", Provider: "codex"}, nil
+}
+
+type sessionPinMock struct {
+	lastRequest client.PinSessionNoteRequest
+}
+
+func (m *sessionPinMock) PinSessionMessage(_ context.Context, _ string, req client.PinSessionNoteRequest) (*types.Note, error) {
+	m.lastRequest = req
+	return &types.Note{
+		ID: "n1",
+		Source: &types.NoteSource{
+			Snippet: req.SourceSnippet,
+		},
+	}, nil
 }

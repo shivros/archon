@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,6 +45,86 @@ func (m *Model) mouseOverInput(y int) bool {
 		start := m.viewport.Height + 2
 		end := start + m.searchInput.Height() - 1
 		return y >= start && y <= end
+	}
+	return false
+}
+
+func (m *Model) mouseOverComposeControls(y int) bool {
+	if m.mode != uiModeCompose || m.chatInput == nil {
+		return false
+	}
+	return y == m.composeControlsRow()
+}
+
+func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !m.composeOptionPickerOpen() || m.composeOptionPicker == nil {
+		return false
+	}
+	popup, row := m.composeOptionPopupView()
+	if popup == "" {
+		m.closeComposeOptionPicker()
+		return false
+	}
+	height := len(strings.Split(popup, "\n"))
+	if msg.X >= layout.rightStart {
+		if pickerRow, ok := composePickerRowForClick(msg.Y, row, height); ok {
+			if m.composeOptionPicker.HandleClick(pickerRow) {
+				cmd := m.applyComposeOptionSelection(m.composeOptionPicker.SelectedID())
+				m.closeComposeOptionPicker()
+				if cmd != nil {
+					m.pendingMouseCmd = cmd
+				}
+				return true
+			}
+			return true
+		}
+	}
+	m.closeComposeOptionPicker()
+	return true
+}
+
+func composePickerRowForClick(y, row, height int) (int, bool) {
+	if height <= 0 {
+		return 0, false
+	}
+	rel := y - row
+	if rel >= 0 && rel < height {
+		return rel, true
+	}
+	// Bubble Tea mouse coordinates can occasionally land one row above/below
+	// when overlays are rendered near the bottom input area.
+	if rel == -1 {
+		return 0, true
+	}
+	if rel == height {
+		return height - 1, true
+	}
+	return 0, false
+}
+
+func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if m.mode != uiModeCompose || msg.X < layout.rightStart || !m.mouseOverComposeControls(msg.Y) {
+		return false
+	}
+	col := msg.X - layout.rightStart
+	for _, span := range m.composeControlSpans {
+		if col < span.start || col > span.end {
+			continue
+		}
+		if m.openComposeOptionPicker(span.kind) {
+			switch span.kind {
+			case composeOptionModel:
+				m.setStatusMessage("select model")
+			case composeOptionReasoning:
+				m.setStatusMessage("select reasoning")
+			case composeOptionAccess:
+				m.setStatusMessage("select access")
+			}
+			if m.input != nil {
+				m.input.FocusChatInput()
+			}
+			return true
+		}
 	}
 	return false
 }
@@ -130,7 +211,7 @@ func (m *Model) reduceSidebarDragMouse(msg tea.MouseMsg, layout mouseLayout) boo
 }
 
 func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int) bool {
-	if layout.listWidth > 0 && msg.X < layout.listWidth {
+	if layout.listWidth > 0 && layout.barWidth > 0 && msg.X < layout.listWidth {
 		now := time.Now()
 		if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
 			return true
@@ -322,13 +403,46 @@ func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mous
 	if msg.X < layout.rightStart {
 		return false
 	}
-	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
 	if msg.Y < 1 || msg.Y > m.viewport.Height {
 		return false
 	}
 	return m.copyBlockByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+}
+
+func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if msg.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeNormal && m.mode != uiModeCompose {
+		return false
+	}
+	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+		return false
+	}
+	handled, cmd := m.pinBlockByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	if !handled {
+		return false
+	}
+	if cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
+	return true
+}
+
+func (m *Model) reduceTranscriptDeleteLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if msg.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeNotes && m.mode != uiModeAddNote {
+		return false
+	}
+	if msg.Y < 1 || msg.Y > m.viewport.Height {
+		return false
+	}
+	return m.deleteNoteByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
 }
 
 func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {

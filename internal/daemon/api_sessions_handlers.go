@@ -74,7 +74,7 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			if err := service.UpdateTitle(r.Context(), id, req.Title); err != nil {
+			if err := service.Update(r.Context(), id, req); err != nil {
 				writeServiceError(w, err)
 				return
 			}

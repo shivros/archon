@@ -3,7 +3,6 @@ package app
 import (
 	"strings"
 
-	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -35,6 +34,37 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			m.renameInput.SetValue("")
 			m.exitRenameWorkspace("renaming workspace")
 			return true, updateWorkspaceCmd(m.workspaceAPI, id, name)
+		}
+		if m.renameInput != nil {
+			return true, m.renameInput.Update(keyMsg)
+		}
+		return true, nil
+	case uiModeRenameSession:
+		keyMsg, ok := msg.(tea.KeyMsg)
+		if !ok {
+			return true, nil
+		}
+		switch keyMsg.String() {
+		case "esc":
+			m.exitRenameSession("rename canceled")
+			return true, nil
+		case "enter":
+			if m.renameInput == nil {
+				return true, nil
+			}
+			name := strings.TrimSpace(m.renameInput.Value())
+			if name == "" {
+				m.setValidationStatus("name is required")
+				return true, nil
+			}
+			id := m.renameSessionID
+			if id == "" {
+				m.setValidationStatus("no session selected")
+				return true, nil
+			}
+			m.renameInput.SetValue("")
+			m.exitRenameSession("renaming session")
+			return true, updateSessionCmd(m.sessionAPI, id, name)
 		}
 		if m.renameInput != nil {
 			return true, m.renameInput.Update(keyMsg)
@@ -367,8 +397,50 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.input == nil || !m.input.IsChatFocused() {
 		return false, nil
 	}
+	if m.composeOptionPickerOpen() {
+		switch msg.String() {
+		case "esc":
+			m.closeComposeOptionPicker()
+			m.setStatusMessage("session options picker closed")
+			return true, nil
+		case "enter":
+			value := ""
+			if m.composeOptionPicker != nil {
+				value = m.composeOptionPicker.SelectedID()
+			}
+			cmd := m.applyComposeOptionSelection(value)
+			m.closeComposeOptionPicker()
+			return true, cmd
+		case "j", "down":
+			if m.composeOptionPicker != nil {
+				m.composeOptionPicker.Move(1)
+			}
+			return true, nil
+		case "k", "up":
+			if m.composeOptionPicker != nil {
+				m.composeOptionPicker.Move(-1)
+			}
+			return true, nil
+		}
+	}
 	switch msg.String() {
+	case "ctrl+1":
+		if m.openComposeOptionPicker(composeOptionModel) {
+			m.setStatusMessage("select model")
+		}
+		return true, nil
+	case "ctrl+2":
+		if m.openComposeOptionPicker(composeOptionReasoning) {
+			m.setStatusMessage("select reasoning")
+		}
+		return true, nil
+	case "ctrl+3":
+		if m.openComposeOptionPicker(composeOptionAccess) {
+			m.setStatusMessage("select access")
+		}
+		return true, nil
 	case "esc":
+		m.closeComposeOptionPicker()
 		m.exitCompose("compose canceled")
 		return true, nil
 	case "up":
@@ -405,7 +477,7 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.enableFollow(false)
 			m.setStatusMessage("starting session")
 			m.chatInput.Clear()
-			return true, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text)
+			return true, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text, target.runtimeOptions)
 		}
 		sessionID := m.composeSessionID()
 		if sessionID == "" {
@@ -477,11 +549,7 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.setCopyStatusWarning("no session selected")
 			return true, nil
 		}
-		if err := clipboard.WriteAll(id); err != nil {
-			m.setCopyStatusError("copy failed: " + err.Error())
-			return true, nil
-		}
-		m.setCopyStatusInfo("copied session id")
+		m.copyWithStatus(id, "copied session id")
 		return true, nil
 	}
 	if m.chatInput != nil {

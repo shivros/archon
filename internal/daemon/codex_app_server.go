@@ -15,6 +15,7 @@ import (
 
 	"control/internal/logging"
 	"control/internal/providers"
+	"control/internal/types"
 )
 
 type codexAppServer struct {
@@ -77,6 +78,26 @@ type codexThreadSummary struct {
 
 type codexThreadReadResult struct {
 	Thread *codexThread `json:"thread"`
+}
+
+type codexModelListResult struct {
+	Data       []codexModelSummary `json:"data"`
+	NextCursor *string             `json:"nextCursor"`
+}
+
+type codexModelSummary struct {
+	ID                     string                    `json:"id"`
+	Model                  string                    `json:"model"`
+	DisplayName            string                    `json:"displayName"`
+	Upgrade                string                    `json:"upgrade"`
+	DefaultReasoningEffort string                    `json:"defaultReasoningEffort"`
+	ReasoningEffort        []codexReasoningEffortDef `json:"reasoningEffort"`
+	IsDefault              bool                      `json:"isDefault"`
+}
+
+type codexReasoningEffortDef struct {
+	Effort      string `json:"effort"`
+	Description string `json:"description"`
 }
 
 func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logging.Logger) (*codexAppServer, error) {
@@ -212,6 +233,21 @@ func (c *codexAppServer) ReadThread(ctx context.Context, threadID string) (*code
 	return result.Thread, nil
 }
 
+func (c *codexAppServer) ListModels(ctx context.Context, cursor *string, limit int) (*codexModelListResult, error) {
+	params := map[string]any{}
+	if cursor != nil && strings.TrimSpace(*cursor) != "" {
+		params["cursor"] = strings.TrimSpace(*cursor)
+	}
+	if limit > 0 {
+		params["limit"] = limit
+	}
+	var result codexModelListResult
+	if err := c.request(ctx, "model/list", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) error {
 	params := map[string]any{
 		"threadId": threadID,
@@ -219,12 +255,15 @@ func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) erro
 	return c.request(ctx, "thread/resume", params, nil)
 }
 
-func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input []map[string]any) (string, error) {
+func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input []map[string]any, runtimeOptions *types.SessionRuntimeOptions, model string) (string, error) {
 	params := map[string]any{
 		"threadId": threadID,
 		"input":    input,
 	}
-	if opts := codexTurnOptionsFromEnv(); len(opts) > 0 {
+	if strings.TrimSpace(model) != "" {
+		params["model"] = strings.TrimSpace(model)
+	}
+	if opts := codexTurnOptions(runtimeOptions); len(opts) > 0 {
 		for key, value := range opts {
 			params[key] = value
 		}
@@ -235,6 +274,16 @@ func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input [
 		} `json:"turn"`
 	}
 	if err := c.request(ctx, "turn/start", params, &result); err != nil {
+		if strings.TrimSpace(model) != "" && shouldRetryWithoutModel(err) {
+			delete(params, "model")
+			if retryErr := c.request(ctx, "turn/start", params, &result); retryErr != nil {
+				return "", retryErr
+			}
+			if result.Turn.ID == "" {
+				return "", errors.New("turn id missing")
+			}
+			return result.Turn.ID, nil
+		}
 		return "", err
 	}
 	if result.Turn.ID == "" {

@@ -26,6 +26,7 @@ const (
 	ContextMenuWorktreeCopyPath
 	ContextMenuWorktreeDelete
 	ContextMenuSessionChat
+	ContextMenuSessionRename
 	ContextMenuSessionOpenNotes
 	ContextMenuSessionAddNote
 	ContextMenuSessionDismiss
@@ -172,6 +173,7 @@ func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, 
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Chat", Action: ContextMenuSessionChat},
+		{Label: "Rename Session", Action: ContextMenuSessionRename},
 		{Label: "Open Notes", Action: ContextMenuSessionOpenNotes},
 		{Label: "Add Note", Action: ContextMenuSessionAddNote},
 		{Label: "Dismiss Session", Action: ContextMenuSessionDismiss},

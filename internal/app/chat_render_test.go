@@ -146,3 +146,40 @@ func TestRenderChatBlocksWithSelectionShowsSelectedMarker(t *testing.T) {
 		t.Fatalf("expected copy line to account for selected marker, got span %#v", spans[0])
 	}
 }
+
+func TestRenderChatBlocksNotesShowDeleteControlAndHitbox(t *testing.T) {
+	blocks := []ChatBlock{
+		{ID: "n1", Role: ChatRoleSessionNote, Text: "hello"},
+	}
+	rendered, spans := renderChatBlocks(blocks, 80, 2000)
+	plain := xansi.Strip(rendered)
+	if !strings.Contains(plain, "Session [Copy] [Delete]") {
+		t.Fatalf("expected delete control in rendered output: %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if spans[0].DeleteLine < 0 || spans[0].DeleteStart < 0 || spans[0].DeleteEnd < spans[0].DeleteStart {
+		t.Fatalf("expected delete hitbox metadata, got %#v", spans[0])
+	}
+	if strings.Contains(plain, "[Pin]") {
+		t.Fatalf("notes should not render pin control: %q", plain)
+	}
+}
+
+func TestRenderChatBlocksTranscriptShowsPinControlAndHitbox(t *testing.T) {
+	blocks := []ChatBlock{
+		{ID: "m1", Role: ChatRoleAgent, Text: "hello"},
+	}
+	rendered, spans := renderChatBlocks(blocks, 80, 2000)
+	plain := xansi.Strip(rendered)
+	if !strings.Contains(plain, "Assistant [Copy] [Pin]") {
+		t.Fatalf("expected pin control in rendered output: %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if spans[0].PinLine < 0 || spans[0].PinStart < 0 || spans[0].PinEnd < spans[0].PinStart {
+		t.Fatalf("expected pin hitbox metadata, got %#v", spans[0])
+	}
+}

@@ -78,4 +78,41 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if meta.Title != "Custom Title" {
 		t.Fatalf("expected updated title")
 	}
+
+	runtimeUpdateReq := UpdateSessionRequest{
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model:     "gpt-5.2-codex",
+			Reasoning: types.ReasoningHigh,
+			Access:    types.AccessOnRequest,
+		},
+	}
+	runtimeBody, _ := json.Marshal(runtimeUpdateReq)
+	runtimeReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/sessions/"+session.ID, bytes.NewReader(runtimeBody))
+	runtimeReq.Header.Set("Authorization", "Bearer token")
+	runtimeReq.Header.Set("Content-Type", "application/json")
+	runtimeResp, err := http.DefaultClient.Do(runtimeReq)
+	if err != nil {
+		t.Fatalf("patch runtime options: %v", err)
+	}
+	defer runtimeResp.Body.Close()
+	if runtimeResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", runtimeResp.StatusCode)
+	}
+
+	meta, ok, err = metaStore.Get(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("get meta runtime options: %v", err)
+	}
+	if !ok || meta == nil || meta.RuntimeOptions == nil {
+		t.Fatalf("expected runtime options to persist")
+	}
+	if meta.RuntimeOptions.Model != "gpt-5.2-codex" {
+		t.Fatalf("expected runtime model to persist, got %q", meta.RuntimeOptions.Model)
+	}
+	if meta.RuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected runtime reasoning to persist, got %q", meta.RuntimeOptions.Reasoning)
+	}
+	if meta.RuntimeOptions.Access != types.AccessOnRequest {
+		t.Fatalf("expected runtime access to persist, got %q", meta.RuntimeOptions.Access)
+	}
 }

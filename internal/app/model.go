@@ -55,6 +55,7 @@ const (
 	uiModeCompose
 	uiModeSearch
 	uiModeRenameWorkspace
+	uiModeRenameSession
 	uiModeEditWorkspaceGroups
 	uiModePickWorkspaceRename
 	uiModePickWorkspaceGroupEdit
@@ -85,8 +86,10 @@ type Model struct {
 	workspacePicker            *SelectPicker
 	groupSelectPicker          *SelectPicker
 	workspaceMulti             *MultiSelectPicker
+	composeOptionPicker        *SelectPicker
 	noteInput                  *ChatInput
 	renameWorkspaceID          string
+	renameSessionID            string
 	editWorkspaceID            string
 	renameGroupID              string
 	assignGroupID              string
@@ -102,6 +105,7 @@ type Model struct {
 	worktrees                  map[string][]*types.Worktree
 	sessions                   []*types.Session
 	sessionMeta                map[string]*types.SessionMeta
+	providerOptions            map[string]*types.ProviderOptionCatalog
 	appState                   types.AppState
 	hasAppState                bool
 	stream                     *StreamController
@@ -153,6 +157,10 @@ type Model struct {
 	pendingSends               map[int]pendingSend
 	composeHistory             map[string]*composeHistoryState
 	requestActivity            requestActivity
+	composeControlSpans        []composeControlSpan
+	composeOptionTarget        composeOptionKind
+	composeOptionSessionID     string
+	composeOptionProvider      string
 	tickFn                     func() tea.Cmd
 	pendingConfirm             confirmAction
 	scrollOnLoad               bool
@@ -162,9 +170,25 @@ type Model struct {
 }
 
 type newSessionTarget struct {
-	workspaceID string
-	worktreeID  string
-	provider    string
+	workspaceID    string
+	worktreeID     string
+	provider       string
+	runtimeOptions *types.SessionRuntimeOptions
+}
+
+type composeOptionKind int
+
+const (
+	composeOptionNone composeOptionKind = iota
+	composeOptionModel
+	composeOptionReasoning
+	composeOptionAccess
+)
+
+type composeControlSpan struct {
+	kind  composeOptionKind
+	start int
+	end   int
 }
 
 type pendingSend struct {
@@ -187,6 +211,7 @@ const (
 	confirmDeleteWorkspace
 	confirmDeleteWorkspaceGroup
 	confirmDeleteWorktree
+	confirmDeleteNote
 	confirmDismissSessions
 )
 
@@ -195,6 +220,7 @@ type confirmAction struct {
 	workspaceID string
 	groupID     string
 	worktreeID  string
+	noteID      string
 	sessionIDs  []string
 }
 
@@ -236,6 +262,7 @@ func NewModel(client *client.Client) Model {
 		workspacePicker:            NewSelectPicker(minViewportWidth, minContentHeight-1),
 		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
 		workspaceMulti:             NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
+		composeOptionPicker:        NewSelectPicker(minViewportWidth, 8),
 		noteInput:                  NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
 		status:                     "",
 		toastLevel:                 toastLevelInfo,
@@ -243,6 +270,7 @@ func NewModel(client *client.Client) Model {
 		groups:                     []*types.WorkspaceGroup{},
 		worktrees:                  map[string][]*types.Worktree{},
 		sessionMeta:                map[string]*types.SessionMeta{},
+		providerOptions:            map[string]*types.ProviderOptionCatalog{},
 		contentRaw:                 "No sessions.",
 		contentEsc:                 false,
 		searchIndex:                -1,
@@ -277,6 +305,7 @@ func (m *Model) Init() tea.Cmd {
 		fetchWorkspacesCmd(m.workspaceAPI),
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
 		fetchSessionsWithMetaCmd(m.sessionAPI),
+		fetchProviderOptionsCmd(m.sessionAPI, "codex"),
 		m.tickCmd(),
 	)
 }
@@ -459,9 +488,9 @@ func (m *Model) resize(width, height int) {
 	extraLines := 0
 	if m.mode == uiModeCompose {
 		if m.chatInput != nil {
-			extraLines = m.chatInput.Height() + 1
+			extraLines = m.chatInput.Height() + 2
 		} else {
-			extraLines = 2
+			extraLines = 3
 		}
 	} else if m.mode == uiModeAddNote {
 		if m.noteInput != nil {
@@ -499,6 +528,9 @@ func (m *Model) resize(width, height int) {
 	}
 	if m.workspaceMulti != nil {
 		m.workspaceMulti.SetSize(viewportWidth, max(3, contentHeight-2))
+	}
+	if m.composeOptionPicker != nil {
+		m.composeOptionPicker.SetSize(viewportWidth, 8)
 	}
 	if m.chatInput != nil {
 		m.chatInput.Resize(viewportWidth)
@@ -597,6 +629,14 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		stateChanged = true
 	}
 	cmd := m.scheduleSessionLoad(item, delay)
+	if item.session != nil && strings.TrimSpace(item.session.Provider) != "" {
+		fetchProviderCmd := fetchProviderOptionsCmd(m.sessionAPI, item.session.Provider)
+		if cmd != nil {
+			cmd = tea.Batch(cmd, fetchProviderCmd)
+		} else {
+			cmd = fetchProviderCmd
+		}
+	}
 	if stateChanged {
 		return tea.Batch(cmd, m.saveAppStateCmd())
 	}
@@ -915,6 +955,13 @@ func (m *Model) handleConfirmChoice(choice confirmChoice) tea.Cmd {
 			}
 			m.setStatusMessage("deleting worktree")
 			return deleteWorktreeCmd(m.workspaceAPI, action.workspaceID, action.worktreeID)
+		case confirmDeleteNote:
+			if strings.TrimSpace(action.noteID) == "" {
+				m.setValidationStatus("select a note to delete")
+				return nil
+			}
+			m.setStatusMessage("deleting note")
+			return deleteNoteCmd(m.notesAPI, action.noteID)
 		case confirmDismissSessions:
 			if len(action.sessionIDs) == 0 {
 				m.setValidationStatus("no session selected")
@@ -1036,6 +1083,32 @@ func (m *Model) confirmDeleteWorktree(workspaceID, worktreeID string) {
 		m.contextMenu.Close()
 	}
 	m.confirm.Open("Delete Worktree", message, "Delete", "Cancel")
+}
+
+func (m *Model) confirmDeleteNote(noteID string) {
+	if m.confirm == nil {
+		return
+	}
+	noteID = strings.TrimSpace(noteID)
+	if noteID == "" {
+		m.setValidationStatus("select a note to delete")
+		return
+	}
+	message := "Delete note?"
+	if note := m.noteByID(noteID); note != nil {
+		message = fmt.Sprintf("Delete note %q?", noteTitle(note))
+	}
+	m.pendingConfirm = confirmAction{
+		kind:   confirmDeleteNote,
+		noteID: noteID,
+	}
+	if m.menu != nil {
+		m.menu.CloseAll()
+	}
+	if m.contextMenu != nil {
+		m.contextMenu.Close()
+	}
+	m.confirm.Open("Delete Note", message, "Delete", "Cancel")
 }
 
 func overlayLine(body, line string, row int) string {
@@ -1881,10 +1954,22 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceSidebarScrollbarLeftPressMouse(msg, layout) {
 		return true
 	}
+	if m.reduceComposeOptionPickerLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceComposeControlsLeftPressMouse(msg, layout) {
+		return true
+	}
 	if m.reduceInputFocusLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceTranscriptPinLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceTranscriptDeleteLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptCopyLeftPressMouse(msg, layout) {
@@ -2394,8 +2479,46 @@ func (m *Model) exitRenameWorkspace(status string) {
 	}
 }
 
+func (m *Model) enterRenameSession(id string) {
+	m.mode = uiModeRenameSession
+	m.renameSessionID = id
+	if m.renameInput != nil {
+		name := ""
+		var session *types.Session
+		for _, candidate := range m.sessions {
+			if candidate != nil && candidate.ID == id {
+				session = candidate
+				break
+			}
+		}
+		name = sessionTitle(session, m.sessionMeta[id])
+		m.renameInput.SetValue(name)
+		m.renameInput.Focus()
+	}
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
+	m.setStatusMessage("rename session")
+}
+
+func (m *Model) exitRenameSession(status string) {
+	m.mode = uiModeNormal
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+		m.renameInput.Blur()
+	}
+	m.renameSessionID = ""
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	if status != "" {
+		m.setStatusMessage(status)
+	}
+}
+
 func (m *Model) enterCompose(sessionID string) {
 	m.mode = uiModeCompose
+	m.closeComposeOptionPicker()
 	label := m.selectedSessionLabel()
 	if m.compose != nil {
 		m.compose.Enter(sessionID, label)
@@ -2414,6 +2537,7 @@ func (m *Model) enterCompose(sessionID string) {
 
 func (m *Model) exitCompose(status string) {
 	m.mode = uiModeNormal
+	m.closeComposeOptionPicker()
 	if m.compose != nil {
 		m.compose.Exit()
 	}
@@ -2478,7 +2602,9 @@ func (m *Model) applyProviderSelection(provider string) tea.Cmd {
 		return nil
 	}
 	m.newSession.provider = provider
+	m.newSession.runtimeOptions = m.composeDefaultsForProvider(provider)
 	m.mode = uiModeCompose
+	m.closeComposeOptionPicker()
 	if m.compose != nil {
 		m.compose.Enter("", "New session")
 	}
@@ -2491,7 +2617,7 @@ func (m *Model) applyProviderSelection(provider string) tea.Cmd {
 	}
 	m.setStatusMessage("provider set: " + provider)
 	m.resize(m.width, m.height)
-	return nil
+	return fetchProviderOptionsCmd(m.sessionAPI, provider)
 }
 
 func (m *Model) enterSearch() {

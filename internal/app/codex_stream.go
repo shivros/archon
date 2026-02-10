@@ -246,6 +246,10 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 		req := parseApprovalRequest(event)
 		if req != nil {
 			c.pendingApproval = req
+			if c.transcript != nil {
+				c.transcript.UpsertApproval(req)
+			}
+			return true
 		}
 	}
 	return false

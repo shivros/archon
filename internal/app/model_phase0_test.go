@@ -164,6 +164,58 @@ func TestPhase0ConsumeCodexTickSetsPendingApprovalStatus(t *testing.T) {
 	}
 }
 
+func TestPhase0ConsumeCodexTickKeepsApprovalOrderWithLaterAgentMessages(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.codexStream.SetSnapshotBlocks([]ChatBlock{{Role: ChatRoleUser, Text: "user"}})
+
+	req1 := 1
+	req2 := 2
+	events := make(chan types.CodexEvent, 16)
+	events <- types.CodexEvent{
+		Method: "item/started",
+		Params: []byte(`{"item":{"type":"agentMessage","id":"agent-1"}}`),
+	}
+	events <- types.CodexEvent{Method: "item/agentMessage/delta", Params: []byte(`{"delta":"agent one"}`)}
+	events <- types.CodexEvent{Method: "item/completed", Params: []byte(`{"item":{"type":"agentMessage"}}`)}
+	events <- types.CodexEvent{
+		ID:     &req1,
+		Method: "item/commandExecution/requestApproval",
+		Params: []byte(`{"parsedCmd":"cmd one"}`),
+	}
+	events <- types.CodexEvent{
+		ID:     &req2,
+		Method: "item/commandExecution/requestApproval",
+		Params: []byte(`{"parsedCmd":"cmd two"}`),
+	}
+	events <- types.CodexEvent{
+		Method: "item/started",
+		Params: []byte(`{"item":{"type":"agentMessage","id":"agent-2"}}`),
+	}
+	events <- types.CodexEvent{Method: "item/agentMessage/delta", Params: []byte(`{"delta":"agent two"}`)}
+	events <- types.CodexEvent{Method: "item/completed", Params: []byte(`{"item":{"type":"agentMessage"}}`)}
+	close(events)
+
+	m.codexStream.SetStream(events, nil)
+	m.consumeCodexTick()
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 5 {
+		t.Fatalf("expected 5 blocks, got %#v", blocks)
+	}
+	expected := []ChatRole{ChatRoleUser, ChatRoleAgent, ChatRoleApproval, ChatRoleApproval, ChatRoleAgent}
+	for i, want := range expected {
+		if blocks[i].Role != want {
+			t.Fatalf("unexpected role order at %d: got %s want %s (blocks=%#v)", i, blocks[i].Role, want, blocks)
+		}
+	}
+	if blocks[2].RequestID != 1 || blocks[3].RequestID != 2 {
+		t.Fatalf("unexpected approval order: %#v", blocks)
+	}
+}
+
 func TestPhase0ApprovePendingAllowsRequestIDZero(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {

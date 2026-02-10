@@ -83,6 +83,53 @@ func TestWorkspaceEditReducerRequiresWorkspaceSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEditReducerRenameSessionEnterReturnsCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameSession
+	m.renameSessionID = "s1"
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Session")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle enter")
+	}
+	if cmd == nil {
+		t.Fatalf("expected update session command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "renaming session" {
+		t.Fatalf("expected renaming status, got %q", m.status)
+	}
+	if m.renameSessionID != "" {
+		t.Fatalf("expected rename session id to clear")
+	}
+}
+
+func TestWorkspaceEditReducerRenameSessionRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameSession
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Session")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle enter")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command without session id")
+	}
+	if m.status != "no session selected" {
+		t.Fatalf("expected missing selection status, got %q", m.status)
+	}
+}
+
 func TestAddWorkspaceReducerHandlesNilController(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeAddWorkspace
@@ -142,8 +189,8 @@ func TestPickProviderReducerEnterSelectsProvider(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected pick provider reducer to handle enter")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no command for direct provider selection")
+	if cmd == nil {
+		t.Fatalf("expected provider options fetch command after selection")
 	}
 	if m.mode != uiModeCompose {
 		t.Fatalf("expected compose mode after selection, got %v", m.mode)

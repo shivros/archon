@@ -1,5 +1,7 @@
 package app
 
+import "strings"
+
 type SelectPicker struct {
 	width   int
 	height  int
@@ -62,6 +64,21 @@ func (p *SelectPicker) HandleClick(row int) bool {
 	p.cursor = index
 	p.ensureVisible()
 	return true
+}
+
+func (p *SelectPicker) SelectID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for i, option := range p.options {
+		if strings.EqualFold(strings.TrimSpace(option.id), id) {
+			p.cursor = i
+			p.ensureVisible()
+			return true
+		}
+	}
+	return false
 }
 
 func (p *SelectPicker) View() string {

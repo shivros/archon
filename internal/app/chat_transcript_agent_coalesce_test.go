@@ -23,7 +23,7 @@ func TestChatTranscriptCoalescesAdjacentAgentItems(t *testing.T) {
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected agent role, got %s", blocks[0].Role)
 	}
-	if blocks[0].Text != "First answer.\n\nSecond answer." {
+	if blocks[0].Text != "First answer.Second answer." {
 		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
 	}
 }
@@ -80,7 +80,7 @@ func TestChatTranscriptCoalescesAdjacentCodexAgentStreams(t *testing.T) {
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected agent role, got %s", blocks[0].Role)
 	}
-	if blocks[0].Text != "First streamed answer.\n\nSecond streamed answer." {
+	if blocks[0].Text != "First streamed answer.Second streamed answer." {
 		t.Fatalf("unexpected stream text %q", blocks[0].Text)
 	}
 }
@@ -116,7 +116,7 @@ func TestChatTranscriptCoalescesAdjacentItemStreamAssistantMessages(t *testing.T
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected agent role, got %s", blocks[0].Role)
 	}
-	if blocks[0].Text != "First streamed answer.\n\nSecond streamed answer." {
+	if blocks[0].Text != "First streamed answer.Second streamed answer." {
 		t.Fatalf("unexpected stream text %q", blocks[0].Text)
 	}
 }

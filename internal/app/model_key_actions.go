@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 
-	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -104,11 +103,7 @@ func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.setCopyStatusWarning("no session selected")
 			return true, nil
 		}
-		if err := clipboard.WriteAll(id); err != nil {
-			m.setCopyStatusError("copy failed: " + err.Error())
-			return true, nil
-		}
-		m.setCopyStatusInfo("copied session id")
+		m.copyWithStatus(id, "copied session id")
 		return true, nil
 	case "/":
 		m.enterSearch()

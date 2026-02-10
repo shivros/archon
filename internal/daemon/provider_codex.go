@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"control/internal/types"
 )
 
 const (
@@ -94,13 +96,19 @@ func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, item
 		return nil, err
 	}
 
-	threadID, err := controller.startThread(ctx, p.model, cfg.Cwd)
+	model := p.model
+	if cfg.RuntimeOptions != nil {
+		if override := strings.TrimSpace(cfg.RuntimeOptions.Model); override != "" {
+			model = override
+		}
+	}
+	threadID, err := controller.startThread(ctx, model, cfg.Cwd, cfg.RuntimeOptions)
 	if err != nil {
 		_ = cmd.Process.Kill()
 		return nil, err
 	}
 
-	turnID, err := controller.startTurn(ctx, threadID, strings.Join(cfg.Args, " "))
+	turnID, err := controller.startTurn(ctx, threadID, strings.Join(cfg.Args, " "), cfg.RuntimeOptions, model)
 	if err != nil {
 		_ = cmd.Process.Kill()
 		return nil, err
@@ -286,14 +294,14 @@ func (c *codexController) initialize(ctx context.Context) error {
 	return c.notify("initialized", map[string]any{})
 }
 
-func (c *codexController) startThread(ctx context.Context, model, cwd string) (string, error) {
+func (c *codexController) startThread(ctx context.Context, model, cwd string, runtimeOptions *types.SessionRuntimeOptions) (string, error) {
 	params := map[string]any{
 		"model": model,
 	}
 	if cwd != "" {
 		params["cwd"] = cwd
 	}
-	if opts := codexThreadOptionsFromEnv(); len(opts) > 0 {
+	if opts := codexThreadOptions(runtimeOptions); len(opts) > 0 {
 		for key, value := range opts {
 			params[key] = value
 		}
@@ -316,7 +324,7 @@ func (c *codexController) startThread(ctx context.Context, model, cwd string) (s
 	return result.Thread.ID, nil
 }
 
-func (c *codexController) startTurn(ctx context.Context, threadID, inputText string) (string, error) {
+func (c *codexController) startTurn(ctx context.Context, threadID, inputText string, runtimeOptions *types.SessionRuntimeOptions, model string) (string, error) {
 	if strings.TrimSpace(inputText) == "" {
 		return "", errors.New("codex input is required")
 	}
@@ -330,12 +338,19 @@ func (c *codexController) startTurn(ctx context.Context, threadID, inputText str
 		"threadId": threadID,
 		"input":    input,
 	}
-	if opts := codexTurnOptionsFromEnv(); len(opts) > 0 {
+	if strings.TrimSpace(model) != "" {
+		params["model"] = strings.TrimSpace(model)
+	}
+	if opts := codexTurnOptions(runtimeOptions); len(opts) > 0 {
 		for key, value := range opts {
 			params[key] = value
 		}
 	}
 	resp, err := c.request(ctx, "turn/start", params)
+	if err != nil && strings.TrimSpace(model) != "" && shouldRetryWithoutModel(err) {
+		delete(params, "model")
+		resp, err = c.request(ctx, "turn/start", params)
+	}
 	if err != nil {
 		return "", err
 	}

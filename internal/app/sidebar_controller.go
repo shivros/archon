@@ -18,6 +18,7 @@ type SidebarController struct {
 }
 
 const sidebarScrollbarWidth = 1
+const sidebarScrollingEnabled = false
 
 func NewSidebarController() *SidebarController {
 	items := []list.Item{}
@@ -38,6 +39,9 @@ func NewSidebarController() *SidebarController {
 
 func (c *SidebarController) View() string {
 	view := c.list.View()
+	if !sidebarScrollingEnabled {
+		return view
+	}
 	bar := c.scrollbarView()
 	if bar == "" {
 		return view
@@ -52,6 +56,10 @@ func (c *SidebarController) Update(msg tea.Msg) tea.Cmd {
 }
 
 func (c *SidebarController) SetSize(width, height int) {
+	if !sidebarScrollingEnabled {
+		c.list.SetSize(width, height)
+		return
+	}
 	if width <= sidebarScrollbarWidth {
 		c.list.SetSize(width, height)
 		return
@@ -68,6 +76,9 @@ func (c *SidebarController) CursorUp() {
 }
 
 func (c *SidebarController) Scroll(lines int) bool {
+	if !sidebarScrollingEnabled {
+		return false
+	}
 	if lines == 0 {
 		return false
 	}
@@ -207,10 +218,16 @@ func (c *SidebarController) ItemAtRow(row int) *sidebarItem {
 }
 
 func (c *SidebarController) ScrollbarWidth() int {
+	if !sidebarScrollingEnabled {
+		return 0
+	}
 	return sidebarScrollbarWidth
 }
 
 func (c *SidebarController) ScrollbarSelect(row int) bool {
+	if !sidebarScrollingEnabled {
+		return false
+	}
 	if c == nil {
 		return false
 	}
@@ -258,6 +275,9 @@ func (c *SidebarController) ScrollbarSelect(row int) bool {
 }
 
 func (c *SidebarController) scrollbarView() string {
+	if !sidebarScrollingEnabled {
+		return ""
+	}
 	if c == nil {
 		return ""
 	}

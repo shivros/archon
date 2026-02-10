@@ -139,6 +139,9 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 				createdAt = time.Now().UTC()
 			}
 			title := sanitizeTitle(thread.Preview)
+			if existingMeta, ok, err := s.meta.Get(ctx, thread.ID); err == nil && ok && existingMeta != nil && existingMeta.TitleLocked && strings.TrimSpace(existingMeta.Title) != "" {
+				title = existingMeta.Title
+			}
 			sessionCwd := cwd
 			if strings.TrimSpace(thread.Cwd) != "" {
 				sessionCwd = thread.Cwd

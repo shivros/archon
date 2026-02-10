@@ -284,44 +284,101 @@ func (m *Model) noteScopeForSession(sessionID, workspaceID, worktreeID string) n
 	return scope
 }
 
-func renderNotesContent(notes []*types.Note, scope noteScopeTarget) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Scope: %s", scope.Label()))
-	if len(notes) == 0 {
-		b.WriteString("\n\nNo notes yet.\nPress n to add a note.")
-		return b.String()
+func notesToBlocks(notes []*types.Note, scope noteScopeTarget) []ChatBlock {
+	header := ChatBlock{
+		ID:   "notes-scope",
+		Role: ChatRoleSystem,
+		Text: fmt.Sprintf("Notes\n\nScope: %s\n\nKeys: n add note, r refresh, esc back", scope.Label()),
 	}
-	for i, note := range notes {
+	if len(notes) == 0 {
+		return []ChatBlock{
+			header,
+			{
+				ID:   "notes-empty",
+				Role: ChatRoleSystem,
+				Text: "No notes yet.\n\nUse Add Note from the context menu or press n.",
+			},
+		}
+	}
+
+	blocks := make([]ChatBlock, 0, len(notes)+1)
+	blocks = append(blocks, header)
+	for _, note := range notes {
 		if note == nil {
 			continue
 		}
-		b.WriteString("\n\n")
-		b.WriteString(fmt.Sprintf("%d. [%s] %s", i+1, noteKindLabel(note.Kind), noteTitle(note)))
-		if note.Status != "" {
-			b.WriteString(" • ")
-			b.WriteString(string(note.Status))
+		role := chatRoleForNoteScope(note.Scope)
+		blocks = append(blocks, ChatBlock{
+			ID:   note.ID,
+			Role: role,
+			Text: renderNoteBlockText(note),
+		})
+	}
+	return blocks
+}
+
+func chatRoleForNoteScope(scope types.NoteScope) ChatRole {
+	switch scope {
+	case types.NoteScopeSession:
+		return ChatRoleSessionNote
+	case types.NoteScopeWorkspace:
+		return ChatRoleWorkspaceNote
+	case types.NoteScopeWorktree:
+		return ChatRoleWorktreeNote
+	default:
+		return ChatRoleSystem
+	}
+}
+
+func renderNoteBlockText(note *types.Note) string {
+	var b strings.Builder
+	title := strings.TrimSpace(note.Title)
+	if title != "" {
+		b.WriteString(title)
+	}
+	if note.Body != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
 		}
-		b.WriteString("\n")
-		if note.Body != "" {
-			b.WriteString(note.Body)
-			b.WriteString("\n")
-		}
-		if note.Kind == types.NoteKindPin && note.Source != nil && note.Source.Snippet != "" {
-			b.WriteString("Source: ")
+		b.WriteString(note.Body)
+	}
+	if note.Kind == types.NoteKindPin && note.Source != nil {
+		if note.Source.Snippet != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString("Pinned from conversation:\n")
 			b.WriteString(note.Source.Snippet)
-			b.WriteString("\n")
 		}
-		if len(note.Tags) > 0 {
-			b.WriteString("Tags: ")
-			b.WriteString(strings.Join(note.Tags, ", "))
-			b.WriteString("\n")
-		}
-		if !note.UpdatedAt.IsZero() {
-			b.WriteString("Updated: ")
-			b.WriteString(note.UpdatedAt.Local().Format(time.RFC822))
+		if note.Source.SessionID != "" {
+			b.WriteString("\n\nSession: ")
+			b.WriteString(note.Source.SessionID)
 		}
 	}
-	b.WriteString("\n\nKeys: n add note, r refresh, esc back")
+	if len(note.Tags) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Tags: ")
+		b.WriteString(strings.Join(note.Tags, ", "))
+	}
+	if note.Status != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Status: ")
+		b.WriteString(string(note.Status))
+	}
+	if !note.UpdatedAt.IsZero() {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Updated: ")
+		b.WriteString(note.UpdatedAt.Local().Format(time.RFC822))
+	}
+	if b.Len() == 0 {
+		b.WriteString(noteKindLabel(note.Kind))
+	}
 	return b.String()
 }
 
@@ -341,6 +398,22 @@ func noteTitle(note *types.Note) string {
 	return body
 }
 
+func (m *Model) noteByID(id string) *types.Note {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	for _, note := range m.notes {
+		if note == nil {
+			continue
+		}
+		if strings.TrimSpace(note.ID) == id {
+			return note
+		}
+	}
+	return nil
+}
+
 func noteKindLabel(kind types.NoteKind) string {
 	if kind == types.NoteKindPin {
 		return "pin"
@@ -353,20 +426,5 @@ func (m *Model) pinSelectedMessage() tea.Cmd {
 		m.setValidationStatus("no message selected")
 		return nil
 	}
-	sessionID := strings.TrimSpace(m.selectedSessionID())
-	if sessionID == "" {
-		m.setValidationStatus("select a session to pin")
-		return nil
-	}
-	block := m.contentBlocks[m.messageSelectIndex]
-	snippet := strings.TrimSpace(block.Text)
-	if snippet == "" {
-		m.setValidationStatus("selected message is empty")
-		return nil
-	}
-	if len(snippet) > 512 {
-		snippet = snippet[:512]
-	}
-	m.setStatusMessage("pinning selected message")
-	return pinSessionNoteCmd(m.sessionAPI, sessionID, block, snippet)
+	return m.pinBlockByIndex(m.messageSelectIndex)
 }

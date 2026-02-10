@@ -33,6 +33,8 @@ var (
 	chatMetaSelectedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
 	selectedMessageStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
 	copyButtonStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true).Underline(true)
+	pinButtonStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("110")).Bold(true).Underline(true)
+	deleteButtonStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true).Underline(true)
 	approveButtonStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("70")).Bold(true).Underline(true)
 	declineButtonStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true).Underline(true)
 	toastInfoStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("29")).Bold(true)

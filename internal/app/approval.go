@@ -342,28 +342,66 @@ func approvalResolutionEqual(left, right *ApprovalResolution) bool {
 }
 
 func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolutions []*ApprovalResolution) []ChatBlock {
-	base := make([]ChatBlock, 0, len(blocks)+len(requests)+len(resolutions))
-	for _, block := range blocks {
-		if block.Role == ChatRoleApproval || block.Role == ChatRoleApprovalResolved {
-			continue
-		}
-		base = append(base, block)
-	}
 	requests = normalizeApprovalRequests(requests)
 	resolutions = normalizeApprovalResolutions(resolutions)
+	requestByID := map[int]*ApprovalRequest{}
+	for _, req := range requests {
+		if req == nil || req.RequestID < 0 {
+			continue
+		}
+		requestByID[req.RequestID] = req
+	}
+	resolutionByID := map[int]*ApprovalResolution{}
 	for _, resolution := range resolutions {
 		if resolution == nil || resolution.RequestID < 0 {
 			continue
 		}
-		base = append(base, approvalResolutionToBlock(resolution))
+		resolutionByID[resolution.RequestID] = resolution
+	}
+
+	out := make([]ChatBlock, 0, len(blocks)+len(requests)+len(resolutions))
+	consumedRequests := map[int]struct{}{}
+	consumedResolutions := map[int]struct{}{}
+	for _, block := range blocks {
+		if block.Role != ChatRoleApproval && block.Role != ChatRoleApprovalResolved {
+			out = append(out, block)
+			continue
+		}
+		requestID, ok := approvalRequestIDFromBlock(block)
+		if !ok {
+			continue
+		}
+		if resolution, exists := resolutionByID[requestID]; exists {
+			out = append(out, approvalResolutionToBlock(resolution))
+			consumedResolutions[requestID] = struct{}{}
+			continue
+		}
+		if req, exists := requestByID[requestID]; exists {
+			out = append(out, approvalRequestToBlock(req))
+			consumedRequests[requestID] = struct{}{}
+			continue
+		}
+		out = append(out, block)
+	}
+	for _, resolution := range resolutions {
+		if resolution == nil || resolution.RequestID < 0 {
+			continue
+		}
+		if _, seen := consumedResolutions[resolution.RequestID]; seen {
+			continue
+		}
+		out = append(out, approvalResolutionToBlock(resolution))
 	}
 	for _, req := range requests {
 		if req == nil || req.RequestID < 0 {
 			continue
 		}
-		base = append(base, approvalRequestToBlock(req))
+		if _, seen := consumedRequests[req.RequestID]; seen {
+			continue
+		}
+		out = append(out, approvalRequestToBlock(req))
 	}
-	return base
+	return out
 }
 
 func approvalRequestToBlock(req *ApprovalRequest) ChatBlock {
@@ -422,10 +460,18 @@ func approvalResolutionBlockID(requestID int) string {
 }
 
 func approvalRequestIDFromBlock(block ChatBlock) (int, bool) {
-	if block.Role == ChatRoleApproval && block.RequestID >= 0 {
+	if (block.Role == ChatRoleApproval || block.Role == ChatRoleApprovalResolved) && block.RequestID >= 0 {
 		return block.RequestID, true
 	}
 	raw := strings.TrimSpace(block.ID)
+	if strings.HasPrefix(raw, "approval:resolved:") {
+		raw = strings.TrimPrefix(raw, "approval:resolved:")
+		id, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || id < 0 {
+			return 0, false
+		}
+		return id, true
+	}
 	if !strings.HasPrefix(raw, "approval:") {
 		return 0, false
 	}

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"control/internal/types"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -120,6 +122,13 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.setStatusInfo("workspace updated")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchWorkspaceGroupsCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
+	case updateSessionMsg:
+		if msg.err != nil {
+			m.setStatusError("update session error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo("session updated")
+		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
 	case deleteWorkspaceMsg:
 		if msg.err != nil {
 			m.setStatusError("delete workspace error: " + msg.err.Error())
@@ -184,7 +193,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.notesScope = msg.scope
 		m.notes = msg.notes
 		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
-			m.setContentText(renderNotesContent(msg.notes, msg.scope))
+			m.setSnapshotBlocks(notesToBlocks(msg.notes, msg.scope))
 		}
 		m.setBackgroundStatus("notes updated")
 		return true, nil
@@ -208,6 +217,16 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
 		}
 		return true, nil
+	case noteDeletedMsg:
+		if msg.err != nil {
+			m.setStatusError("delete note error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo("note deleted")
+		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
+		}
+		return true, nil
 	case appStateMsg:
 		if msg.err != nil {
 			m.setBackgroundError("state error: " + msg.err.Error())
@@ -226,6 +245,19 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if msg.state != nil {
 			m.applyAppState(msg.state)
+		}
+		return true, nil
+	case providerOptionsMsg:
+		if msg.err != nil {
+			m.setBackgroundError("provider options error: " + msg.err.Error())
+			return true, nil
+		}
+		provider := strings.TrimSpace(msg.provider)
+		if provider != "" && msg.options != nil {
+			if m.providerOptions == nil {
+				m.providerOptions = map[string]*types.ProviderOptionCatalog{}
+			}
+			m.providerOptions[provider] = msg.options
 		}
 		return true, nil
 	case tailMsg:

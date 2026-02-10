@@ -22,6 +22,15 @@ func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI) tea.Cmd {
 	}
 }
 
+func fetchProviderOptionsCmd(api SessionProviderOptionsAPI, provider string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		options, err := api.GetProviderOptions(ctx, provider)
+		return providerOptionsMsg{provider: provider, options: options, err: err}
+	}
+}
+
 func fetchWorkspacesCmd(api WorkspaceListAPI) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -73,6 +82,15 @@ func createNoteCmd(api NoteCreateAPI, scope noteScopeTarget, body string) tea.Cm
 		}
 		created, err := api.CreateNote(ctx, note)
 		return noteCreatedMsg{note: created, scope: scope, err: err}
+	}
+}
+
+func deleteNoteCmd(api NoteDeleteAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		err := api.DeleteNote(ctx, id)
+		return noteDeletedMsg{id: id, err: err}
 	}
 }
 
@@ -166,6 +184,24 @@ func updateWorkspaceGroupsCmd(api WorkspaceUpdateAPI, id string, groupIDs []stri
 		defer cancel()
 		workspace, err := api.UpdateWorkspace(ctx, id, &types.Workspace{GroupIDs: groupIDs})
 		return updateWorkspaceMsg{workspace: workspace, err: err}
+	}
+}
+
+func updateSessionCmd(api SessionUpdateAPI, id, title string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		err := api.UpdateSession(ctx, id, client.UpdateSessionRequest{Title: title})
+		return updateSessionMsg{id: id, err: err}
+	}
+}
+
+func updateSessionRuntimeCmd(api SessionUpdateAPI, id string, runtimeOptions *types.SessionRuntimeOptions) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		err := api.UpdateSession(ctx, id, client.UpdateSessionRequest{RuntimeOptions: types.CloneRuntimeOptions(runtimeOptions)})
+		return updateSessionMsg{id: id, err: err}
 	}
 }
 
@@ -413,13 +449,14 @@ func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision
 	}
 }
 
-func startSessionCmd(api WorkspaceSessionStartAPI, workspaceID, worktreeID, provider, text string) tea.Cmd {
+func startSessionCmd(api WorkspaceSessionStartAPI, workspaceID, worktreeID, provider, text string, runtimeOptions *types.SessionRuntimeOptions) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		req := client.StartSessionRequest{
-			Provider: provider,
-			Text:     text,
+			Provider:       provider,
+			Text:           text,
+			RuntimeOptions: types.CloneRuntimeOptions(runtimeOptions),
 		}
 		session, err := api.StartWorkspaceSession(ctx, workspaceID, worktreeID, req)
 		return startSessionMsg{session: session, err: err}

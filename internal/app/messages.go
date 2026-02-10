@@ -32,6 +32,12 @@ type appStateSavedMsg struct {
 	err   error
 }
 
+type providerOptionsMsg struct {
+	provider string
+	options  *types.ProviderOptionCatalog
+	err      error
+}
+
 type createWorkspaceMsg struct {
 	workspace *types.Workspace
 	err       error
@@ -62,6 +68,11 @@ type updateWorkspaceMsg struct {
 	err       error
 }
 
+type updateSessionMsg struct {
+	id  string
+	err error
+}
+
 type deleteWorkspaceMsg struct {
 	id  string
 	err error
@@ -89,6 +100,11 @@ type notePinnedMsg struct {
 	note      *types.Note
 	sessionID string
 	err       error
+}
+
+type noteDeletedMsg struct {
+	id  string
+	err error
 }
 
 type availableWorktreesMsg struct {

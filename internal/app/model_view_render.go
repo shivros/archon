@@ -98,6 +98,9 @@ func (m *Model) overlayTransientViews(body string) string {
 			body = overlayBlock(body, confirmBlock, row)
 		}
 	}
+	if popup, row := m.composeOptionPopupView(); popup != "" {
+		body = overlayBlock(body, popup, row)
+	}
 	body = m.overlayToast(body)
 	return body
 }

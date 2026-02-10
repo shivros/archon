@@ -38,6 +38,6 @@ func (m *Model) sendMessageCmd(sessionID, text string) tea.Cmd {
 	return sendSessionCmd(m.sessionAPI, sessionID, text, token)
 }
 
-func (m *Model) startWorkspaceSessionCmd(workspaceID, worktreeID, provider, text string) tea.Cmd {
-	return startSessionCmd(m.sessionAPI, workspaceID, worktreeID, provider, text)
+func (m *Model) startWorkspaceSessionCmd(workspaceID, worktreeID, provider, text string, runtimeOptions *types.SessionRuntimeOptions) tea.Cmd {
+	return startSessionCmd(m.sessionAPI, workspaceID, worktreeID, provider, text, runtimeOptions)
 }

@@ -63,7 +63,7 @@ func TestCodexAppServerIntegration(t *testing.T) {
 
 	turnID, err := client.StartTurn(ctx, threadResult.Thread.ID, []map[string]any{
 		{"type": "text", "text": "Say \"ok\" and nothing else."},
-	})
+	}, nil, model)
 	if err != nil {
 		t.Fatalf("turn/start: %v", err)
 	}

@@ -79,6 +79,10 @@ type SessionListWithMetaAPI interface {
 	ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 }
 
+type SessionProviderOptionsAPI interface {
+	GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error)
+}
+
 type SessionTailAPI interface {
 	TailItems(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
 }
@@ -105,6 +109,10 @@ type SessionKillAPI interface {
 
 type SessionMarkExitedAPI interface {
 	MarkSessionExited(ctx context.Context, id string) error
+}
+
+type SessionUpdateAPI interface {
+	UpdateSession(ctx context.Context, id string, req client.UpdateSessionRequest) error
 }
 
 type SessionSendAPI interface {
@@ -157,6 +165,7 @@ type NotesAPI interface {
 
 type SessionAPI interface {
 	SessionListWithMetaAPI
+	SessionProviderOptionsAPI
 	SessionTailAPI
 	SessionHistoryAPI
 	SessionTailStreamAPI
@@ -164,6 +173,7 @@ type SessionAPI interface {
 	SessionItemsStreamAPI
 	SessionKillAPI
 	SessionMarkExitedAPI
+	SessionUpdateAPI
 	SessionSendAPI
 	SessionApproveAPI
 	SessionApprovalsAPI
@@ -254,6 +264,10 @@ func (a *ClientAPI) ListSessionsWithMeta(ctx context.Context) ([]*types.Session,
 	return a.client.ListSessionsWithMeta(ctx)
 }
 
+func (a *ClientAPI) GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error) {
+	return a.client.GetProviderOptions(ctx, provider)
+}
+
 func (a *ClientAPI) TailItems(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error) {
 	return a.client.TailItems(ctx, id, lines)
 }
@@ -280,6 +294,10 @@ func (a *ClientAPI) KillSession(ctx context.Context, id string) error {
 
 func (a *ClientAPI) MarkSessionExited(ctx context.Context, id string) error {
 	return a.client.MarkSessionExited(ctx, id)
+}
+
+func (a *ClientAPI) UpdateSession(ctx context.Context, id string, req client.UpdateSessionRequest) error {
+	return a.client.UpdateSession(ctx, id, req)
 }
 
 func (a *ClientAPI) SendMessage(ctx context.Context, id string, req client.SendSessionRequest) (*client.SendSessionResponse, error) {

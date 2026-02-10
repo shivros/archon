@@ -62,6 +62,11 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		if m.renameInput != nil {
 			bodyText = m.renameInput.View()
 		}
+	case uiModeRenameSession:
+		headerText = "Rename Session"
+		if m.renameInput != nil {
+			bodyText = m.renameInput.View()
+		}
 	}
 	return headerText, bodyText
 }
@@ -70,7 +75,11 @@ func (m *Model) modeInputView() (line string, scrollable bool) {
 	switch m.mode {
 	case uiModeCompose:
 		if m.chatInput != nil {
-			return m.chatInput.View(), m.chatInput.CanScroll()
+			controls := m.composeControlsLine()
+			if controls == "" {
+				return m.chatInput.View(), m.chatInput.CanScroll()
+			}
+			return m.chatInput.View() + "\n" + controls, m.chatInput.CanScroll()
 		}
 	case uiModeAddNote:
 		if m.noteInput != nil {

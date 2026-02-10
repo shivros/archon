@@ -263,6 +263,28 @@ func TestSessionContextActionAddNoteEntersAddNoteMode(t *testing.T) {
 	}
 }
 
+func TestSessionContextActionRenameEntersRenameMode(t *testing.T) {
+	m := NewModel(nil)
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session One"}}
+
+	handled, cmd := m.handleSessionContextMenuAction(ContextMenuSessionRename, contextMenuTarget{sessionID: "s1"})
+	if !handled {
+		t.Fatalf("expected session action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeRenameSession {
+		t.Fatalf("expected rename session mode, got %v", m.mode)
+	}
+	if m.renameSessionID != "s1" {
+		t.Fatalf("expected rename session id s1, got %q", m.renameSessionID)
+	}
+	if m.renameInput == nil || m.renameInput.Value() != "Session One" {
+		t.Fatalf("expected rename input to be prefilled")
+	}
+}
+
 func TestSessionContextActionOpenNotesEntersNotesMode(t *testing.T) {
 	m := NewModel(nil)
 	m.sessionMeta = map[string]*types.SessionMeta{
@@ -350,15 +372,22 @@ func TestContextMenuControllerWorktreeIncludesCopyPathAction(t *testing.T) {
 func TestContextMenuControllerSessionIncludesAddNoteAction(t *testing.T) {
 	c := NewContextMenuController()
 	c.OpenSession("s1", "ws1", "wt1", "Session", 0, 0)
+	foundRename := false
 	foundOpen := false
 	found := false
 	for _, item := range c.items {
+		if item.Action == ContextMenuSessionRename {
+			foundRename = true
+		}
 		if item.Action == ContextMenuSessionOpenNotes {
 			foundOpen = true
 		}
 		if item.Action == ContextMenuSessionAddNote {
 			found = true
 		}
+	}
+	if !foundRename {
+		t.Fatalf("expected session context menu to include rename session action")
 	}
 	if !foundOpen {
 		t.Fatalf("expected session context menu to include open notes action")
@@ -384,6 +413,29 @@ func TestHandleContextMenuActionClosesMenuAndRoutes(t *testing.T) {
 	}
 	if m.renameWorkspaceID != "ws1" {
 		t.Fatalf("expected workspace id ws1, got %q", m.renameWorkspaceID)
+	}
+	if m.contextMenu.IsOpen() {
+		t.Fatalf("expected context menu to be closed")
+	}
+}
+
+func TestHandleContextMenuActionClosesMenuAndRoutesSessionRename(t *testing.T) {
+	m := NewModel(nil)
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session"}}
+	if m.contextMenu == nil {
+		t.Fatalf("expected context menu controller")
+	}
+	m.contextMenu.OpenSession("s1", "ws1", "wt1", "Session", 1, 1)
+
+	cmd := m.handleContextMenuAction(ContextMenuSessionRename)
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeRenameSession {
+		t.Fatalf("expected rename session mode, got %v", m.mode)
+	}
+	if m.renameSessionID != "s1" {
+		t.Fatalf("expected session id s1, got %q", m.renameSessionID)
 	}
 	if m.contextMenu.IsOpen() {
 		t.Fatalf("expected context menu to be closed")

@@ -13,6 +13,9 @@ const (
 	ChatRoleUser             ChatRole = "user"
 	ChatRoleAgent            ChatRole = "agent"
 	ChatRoleSystem           ChatRole = "system"
+	ChatRoleSessionNote      ChatRole = "session_note"
+	ChatRoleWorkspaceNote    ChatRole = "workspace_note"
+	ChatRoleWorktreeNote     ChatRole = "worktree_note"
 	ChatRoleReasoning        ChatRole = "reasoning"
 	ChatRoleApproval         ChatRole = "approval"
 	ChatRoleApprovalResolved ChatRole = "approval_resolved"
@@ -46,6 +49,12 @@ type renderedBlockSpan struct {
 	CopyLine     int
 	CopyStart    int
 	CopyEnd      int
+	PinLine      int
+	PinStart     int
+	PinEnd       int
+	DeleteLine   int
+	DeleteStart  int
+	DeleteEnd    int
 	ToggleLine   int
 	ToggleStart  int
 	ToggleEnd    int
@@ -62,6 +71,12 @@ type renderedChatBlock struct {
 	CopyLine     int
 	CopyStart    int
 	CopyEnd      int
+	PinLine      int
+	PinStart     int
+	PinEnd       int
+	DeleteLine   int
+	DeleteStart  int
+	DeleteEnd    int
 	ToggleLine   int
 	ToggleStart  int
 	ToggleEnd    int
@@ -102,6 +117,12 @@ func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, 
 		copyLine := -1
 		copyStart := -1
 		copyEnd := -1
+		pinLine := -1
+		pinStart := -1
+		pinEnd := -1
+		deleteLine := -1
+		deleteStart := -1
+		deleteEnd := -1
 		toggleLine := -1
 		toggleStart := -1
 		toggleEnd := -1
@@ -115,6 +136,16 @@ func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, 
 			copyLine = start + rendered.CopyLine
 			copyStart = rendered.CopyStart
 			copyEnd = rendered.CopyEnd
+		}
+		if rendered.PinLine >= 0 {
+			pinLine = start + rendered.PinLine
+			pinStart = rendered.PinStart
+			pinEnd = rendered.PinEnd
+		}
+		if rendered.DeleteLine >= 0 {
+			deleteLine = start + rendered.DeleteLine
+			deleteStart = rendered.DeleteStart
+			deleteEnd = rendered.DeleteEnd
 		}
 		if rendered.ToggleLine >= 0 {
 			toggleLine = start + rendered.ToggleLine
@@ -141,6 +172,12 @@ func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, 
 			CopyLine:     copyLine,
 			CopyStart:    copyStart,
 			CopyEnd:      copyEnd,
+			PinLine:      pinLine,
+			PinStart:     pinStart,
+			PinEnd:       pinEnd,
+			DeleteLine:   deleteLine,
+			DeleteStart:  deleteStart,
+			DeleteEnd:    deleteEnd,
 			ToggleLine:   toggleLine,
 			ToggleStart:  toggleStart,
 			ToggleEnd:    toggleEnd,
@@ -171,6 +208,22 @@ func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, 
 						span.CopyLine = -1
 						span.CopyStart = -1
 						span.CopyEnd = -1
+					}
+				}
+				if span.PinLine >= 0 {
+					span.PinLine -= drop
+					if span.PinLine < 0 {
+						span.PinLine = -1
+						span.PinStart = -1
+						span.PinEnd = -1
+					}
+				}
+				if span.DeleteLine >= 0 {
+					span.DeleteLine -= drop
+					if span.DeleteLine < 0 {
+						span.DeleteLine = -1
+						span.DeleteStart = -1
+						span.DeleteEnd = -1
 					}
 				}
 				if span.ToggleLine >= 0 {
@@ -221,6 +274,16 @@ func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, 
 			span.CopyLine = -1
 			span.CopyStart = -1
 			span.CopyEnd = -1
+		}
+		if span.PinLine > maxLine {
+			span.PinLine = -1
+			span.PinStart = -1
+			span.PinEnd = -1
+		}
+		if span.DeleteLine > maxLine {
+			span.DeleteLine = -1
+			span.DeleteStart = -1
+			span.DeleteEnd = -1
 		}
 		if span.ToggleLine > maxLine {
 			span.ToggleLine = -1
@@ -291,9 +354,17 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 	}
 	roleLabel := chatRoleLabel(block.Role)
 	copyLabel := "[Copy]"
+	pinLabel := ""
+	deleteLabel := ""
 	toggleLabel := ""
 	approveLabel := ""
 	declineLabel := ""
+	if shouldShowPinControl(block) {
+		pinLabel = "[Pin]"
+	}
+	if isNoteRole(block.Role) {
+		deleteLabel = "[Delete]"
+	}
 	if block.Role == ChatRoleReasoning {
 		if block.Collapsed {
 			toggleLabel = "[Expand]"
@@ -306,6 +377,12 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 		declineLabel = "[Decline]"
 	}
 	meta := roleLabel + " " + copyLabel
+	if pinLabel != "" {
+		meta += " " + pinLabel
+	}
+	if deleteLabel != "" {
+		meta += " " + deleteLabel
+	}
 	if toggleLabel != "" {
 		meta += " " + toggleLabel
 	}
@@ -329,6 +406,22 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 		if strings.HasPrefix(remaining, copyLabel) {
 			parts = append(parts, copyButtonStyle.Render(copyLabel))
 			remaining = strings.TrimPrefix(remaining, copyLabel)
+		}
+		if strings.HasPrefix(remaining, " ") {
+			parts = append(parts, metaStyle.Render(" "))
+			remaining = strings.TrimPrefix(remaining, " ")
+		}
+		if pinLabel != "" && strings.HasPrefix(remaining, pinLabel) {
+			parts = append(parts, pinButtonStyle.Render(pinLabel))
+			remaining = strings.TrimPrefix(remaining, pinLabel)
+		}
+		if strings.HasPrefix(remaining, " ") {
+			parts = append(parts, metaStyle.Render(" "))
+			remaining = strings.TrimPrefix(remaining, " ")
+		}
+		if deleteLabel != "" && strings.HasPrefix(remaining, deleteLabel) {
+			parts = append(parts, deleteButtonStyle.Render(deleteLabel))
+			remaining = strings.TrimPrefix(remaining, deleteLabel)
 		}
 		if strings.HasPrefix(remaining, " ") {
 			parts = append(parts, metaStyle.Render(" "))
@@ -366,6 +459,22 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 	if idx := strings.Index(metaPlain, copyLabel); idx >= 0 {
 		copyStart = idx
 		copyEnd = idx + len(copyLabel) - 1
+	}
+	pinStart := -1
+	pinEnd := -1
+	if pinLabel != "" {
+		if idx := strings.Index(metaPlain, pinLabel); idx >= 0 {
+			pinStart = idx
+			pinEnd = idx + len(pinLabel) - 1
+		}
+	}
+	deleteStart := -1
+	deleteEnd := -1
+	if deleteLabel != "" {
+		if idx := strings.Index(metaPlain, deleteLabel); idx >= 0 {
+			deleteStart = idx
+			deleteEnd = idx + len(deleteLabel) - 1
+		}
 	}
 	toggleStart := -1
 	toggleEnd := -1
@@ -414,6 +523,12 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 		CopyLine:     copyLine,
 		CopyStart:    copyStart,
 		CopyEnd:      copyEnd,
+		PinLine:      copyLine,
+		PinStart:     pinStart,
+		PinEnd:       pinEnd,
+		DeleteLine:   copyLine,
+		DeleteStart:  deleteStart,
+		DeleteEnd:    deleteEnd,
 		ToggleLine:   copyLine,
 		ToggleStart:  toggleStart,
 		ToggleEnd:    toggleEnd,
@@ -432,6 +547,12 @@ func chatRoleLabel(role ChatRole) string {
 		return "You"
 	case ChatRoleAgent:
 		return "Assistant"
+	case ChatRoleSessionNote:
+		return "Session"
+	case ChatRoleWorkspaceNote:
+		return "Workspace"
+	case ChatRoleWorktreeNote:
+		return "Worktree"
 	case ChatRoleReasoning:
 		return "Reasoning"
 	case ChatRoleApproval:
@@ -440,6 +561,30 @@ func chatRoleLabel(role ChatRole) string {
 		return "Approval"
 	default:
 		return "System"
+	}
+}
+
+func isNoteRole(role ChatRole) bool {
+	switch role {
+	case ChatRoleSessionNote, ChatRoleWorkspaceNote, ChatRoleWorktreeNote:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldShowPinControl(block ChatBlock) bool {
+	if isNoteRole(block.Role) {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimSpace(block.ID), "notes-") {
+		return false
+	}
+	switch block.Role {
+	case ChatRoleApproval, ChatRoleApprovalResolved:
+		return false
+	default:
+		return true
 	}
 }
 

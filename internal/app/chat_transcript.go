@@ -55,7 +55,11 @@ func (t *ChatTranscript) Blocks() []ChatBlock {
 }
 
 func (t *ChatTranscript) AppendUserMessage(text string) int {
-	if t == nil || strings.TrimSpace(text) == "" {
+	if t == nil {
+		return -1
+	}
+	text = strings.TrimLeft(text, "\r\n")
+	if strings.TrimSpace(text) == "" {
 		return -1
 	}
 	headerIndex := len(t.blocks)
@@ -197,6 +201,26 @@ func (t *ChatTranscript) UpsertReasoning(itemID, text string) bool {
 	return true
 }
 
+func (t *ChatTranscript) UpsertApproval(req *ApprovalRequest) bool {
+	if t == nil || req == nil || req.RequestID < 0 {
+		return false
+	}
+	block := approvalRequestToBlock(req)
+	for i := range t.blocks {
+		if t.blocks[i].Role != ChatRoleApproval || t.blocks[i].RequestID != req.RequestID {
+			continue
+		}
+		if t.blocks[i] == block {
+			return false
+		}
+		t.blocks[i] = block
+		return true
+	}
+	t.blocks = append(t.blocks, block)
+	t.trim()
+	return true
+}
+
 func (t *ChatTranscript) AppendItem(item map[string]any) {
 	if t == nil || item == nil {
 		return
@@ -297,7 +321,7 @@ func reasoningText(item map[string]any) string {
 	}
 	summary := extractStringList(item["summary"])
 	if len(summary) > 0 {
-		lines := []string{"Reasoning (summary)", ""}
+		var lines []string
 		for _, entry := range summary {
 			for _, line := range strings.Split(entry, "\n") {
 				line = strings.TrimSpace(line)
@@ -307,10 +331,10 @@ func reasoningText(item map[string]any) string {
 				lines = append(lines, "- "+line)
 			}
 		}
-		return strings.TrimSpace(strings.Join(lines, "\n"))
+		return strings.Join(lines, "\n")
 	}
-	if text := extractContentText(item["content"]); text != "" {
-		return "Reasoning\n\n" + text
+	if text := strings.TrimLeft(extractContentText(item["content"]), "\n"); text != "" {
+		return "Reasoning\n" + text
 	}
 	return ""
 }
@@ -344,10 +368,7 @@ func concatAdjacentAgentText(current, next string) string {
 	if strings.TrimSpace(current) == "" {
 		return next
 	}
-	if strings.HasSuffix(current, "\n") || strings.HasPrefix(next, "\n") {
-		return current + next
-	}
-	return current + "\n\n" + next
+	return current + next
 }
 
 func makeChatBlockID(role ChatRole, index int, text string) string {

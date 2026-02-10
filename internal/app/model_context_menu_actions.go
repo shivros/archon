@@ -3,7 +3,6 @@ package app
 import (
 	"strings"
 
-	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"control/internal/types"
@@ -76,11 +75,7 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 			m.setCopyStatusWarning("workspace path unavailable")
 			return true, nil
 		}
-		if err := clipboard.WriteAll(path); err != nil {
-			m.setCopyStatusError("copy failed: " + err.Error())
-			return true, nil
-		}
-		m.setCopyStatusInfo("copied workspace path")
+		m.copyWithStatus(path, "copied workspace path")
 		return true, nil
 	case ContextMenuWorkspaceDelete:
 		if target.id == "" || target.id == unassignedWorkspaceID {
@@ -139,11 +134,7 @@ func (m *Model) handleWorktreeContextMenuAction(action ContextMenuAction, target
 			m.setCopyStatusWarning("worktree path unavailable")
 			return true, nil
 		}
-		if err := clipboard.WriteAll(path); err != nil {
-			m.setCopyStatusError("copy failed: " + err.Error())
-			return true, nil
-		}
-		m.setCopyStatusInfo("copied worktree path")
+		m.copyWithStatus(path, "copied worktree path")
 		return true, nil
 	case ContextMenuWorktreeDelete:
 		if target.worktreeID == "" || target.workspaceID == "" {
@@ -165,6 +156,13 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			return true, nil
 		}
 		m.enterCompose(target.sessionID)
+		return true, nil
+	case ContextMenuSessionRename:
+		if target.sessionID == "" {
+			m.setValidationStatus("select a session")
+			return true, nil
+		}
+		m.enterRenameSession(target.sessionID)
 		return true, nil
 	case ContextMenuSessionOpenNotes:
 		if target.sessionID == "" {
@@ -206,11 +204,7 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			m.setCopyStatusWarning("select a session")
 			return true, nil
 		}
-		if err := clipboard.WriteAll(target.sessionID); err != nil {
-			m.setCopyStatusError("copy failed: " + err.Error())
-			return true, nil
-		}
-		m.setCopyStatusInfo("copied session id")
+		m.copyWithStatus(target.sessionID, "copied session id")
 		return true, nil
 	default:
 		return false, nil

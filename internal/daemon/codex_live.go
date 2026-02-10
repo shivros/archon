@@ -49,7 +49,15 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 	}
 	ls.mu.Unlock()
 
-	turnID, err := ls.client.StartTurn(ctx, ls.threadID, input)
+	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
+	model := ""
+	if meta != nil {
+		runtimeOptions = meta.RuntimeOptions
+		if runtimeOptions != nil {
+			model = runtimeOptions.Model
+		}
+	}
+	turnID, err := ls.client.StartTurn(ctx, ls.threadID, input, runtimeOptions, model)
 	if err != nil {
 		if isClosedPipeError(err) {
 			m.dropSession(session.ID)
@@ -58,7 +66,7 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 				m.logger.Error("codex_live_restart_error", logging.F("session_id", session.ID), logging.F("error", err))
 				return "", err
 			}
-			turnID, err = ls.client.StartTurn(ctx, ls.threadID, input)
+			turnID, err = ls.client.StartTurn(ctx, ls.threadID, input, runtimeOptions, model)
 			if err != nil {
 				m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", err))
 				return "", err

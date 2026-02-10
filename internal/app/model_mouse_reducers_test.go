@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"control/internal/types"
+
 	tea "github.com/charmbracelet/bubbletea"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -151,6 +153,96 @@ func TestMouseReducerTranscriptCopyClickHandlesPerMessage(t *testing.T) {
 	}
 	if m.status != "nothing to copy" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestMouseReducerTranscriptCopyClickHandlesInNotesMode(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeNotes
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleSystem, Text: "   ", Status: ChatStatusSending},
+	})
+	if len(m.contentBlockSpans) != 1 {
+		t.Fatalf("expected rendered span metadata, got %d", len(m.contentBlockSpans))
+	}
+	span := m.contentBlockSpans[0]
+	if span.CopyLine < 0 || span.CopyStart < 0 {
+		t.Fatalf("expected copy metadata, got %#v", span)
+	}
+	layout := m.resolveMouseLayout()
+	y := span.CopyLine - m.viewport.YOffset + 1
+	x := layout.rightStart + span.CopyStart
+
+	handled := m.reduceTranscriptCopyLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected copy click to be handled in notes mode")
+	}
+	if m.status != "nothing to copy" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestMouseReducerTranscriptPinClickQueuesPinCommand(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection")
+	}
+	m.resize(120, 40)
+	m.applyBlocks([]ChatBlock{
+		{ID: "m1", Role: ChatRoleAgent, Text: "hello"},
+	})
+	if len(m.contentBlockSpans) != 1 {
+		t.Fatalf("expected rendered span metadata, got %d", len(m.contentBlockSpans))
+	}
+	span := m.contentBlockSpans[0]
+	if span.PinLine < 0 || span.PinStart < 0 {
+		t.Fatalf("expected pin metadata, got %#v", span)
+	}
+	layout := m.resolveMouseLayout()
+	y := span.PinLine - m.viewport.YOffset + 1
+	x := layout.rightStart + span.PinStart
+
+	handled := m.reduceTranscriptPinLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected pin click to be handled")
+	}
+	if m.pendingMouseCmd == nil {
+		t.Fatalf("expected pin click to queue command")
+	}
+	if m.status != "pinning message" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestMouseReducerTranscriptDeleteClickOpensConfirmInNotesMode(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeNotes
+	m.notes = []*types.Note{{ID: "n1", Title: "Important follow-up"}}
+	m.applyBlocks([]ChatBlock{
+		{ID: "n1", Role: ChatRoleSessionNote, Text: "remember this"},
+	})
+	if len(m.contentBlockSpans) != 1 {
+		t.Fatalf("expected rendered span metadata, got %d", len(m.contentBlockSpans))
+	}
+	span := m.contentBlockSpans[0]
+	if span.DeleteLine < 0 || span.DeleteStart < 0 {
+		t.Fatalf("expected delete metadata, got %#v", span)
+	}
+	layout := m.resolveMouseLayout()
+	y := span.DeleteLine - m.viewport.YOffset + 1
+	x := layout.rightStart + span.DeleteStart
+
+	handled := m.reduceTranscriptDeleteLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected delete click to be handled in notes mode")
+	}
+	if m.pendingConfirm.kind != confirmDeleteNote || m.pendingConfirm.noteID != "n1" {
+		t.Fatalf("unexpected pending confirm: %#v", m.pendingConfirm)
+	}
+	if m.confirm == nil || !m.confirm.IsOpen() {
+		t.Fatalf("expected confirm dialog to open")
 	}
 }
 
@@ -376,5 +468,71 @@ func TestMouseReducerUserStatusLineClickDoesNotSelectMessage(t *testing.T) {
 	}
 	if m.messageSelectActive {
 		t.Fatalf("expected message selection to remain inactive")
+	}
+}
+
+func TestMouseReducerComposeOptionPickerClickSelectsOption(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	layout := m.resolveMouseLayout()
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected model option picker to open")
+	}
+	popup, row := m.composeOptionPopupView()
+	if popup == "" {
+		t.Fatalf("expected popup content")
+	}
+
+	handled := m.reduceComposeOptionPickerLeftPressMouse(
+		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: row + 1},
+		layout,
+	)
+	if !handled {
+		t.Fatalf("expected picker click to be handled")
+	}
+	if m.composeOptionPickerOpen() {
+		t.Fatalf("expected picker to close after selection")
+	}
+	if m.newSession == nil || m.newSession.runtimeOptions == nil {
+		t.Fatalf("expected runtime options to be updated")
+	}
+	if got := m.newSession.runtimeOptions.Model; got != "gpt-5.2-codex" {
+		t.Fatalf("expected model gpt-5.2-codex, got %q", got)
+	}
+}
+
+func TestMouseReducerComposeOptionPickerClickBelowPopupSelectsLastOption(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	layout := m.resolveMouseLayout()
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected model option picker to open")
+	}
+	popup, row := m.composeOptionPopupView()
+	if popup == "" {
+		t.Fatalf("expected popup content")
+	}
+	height := len(strings.Split(popup, "\n"))
+	y := row + height
+
+	handled := m.reduceComposeOptionPickerLeftPressMouse(
+		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: y},
+		layout,
+	)
+	if !handled {
+		t.Fatalf("expected bottom-edge picker click to be handled")
+	}
+	if m.composeOptionPickerOpen() {
+		t.Fatalf("expected picker to close after selection")
+	}
+	if m.newSession == nil || m.newSession.runtimeOptions == nil {
+		t.Fatalf("expected runtime options to be updated")
+	}
+	if got := m.newSession.runtimeOptions.Model; got != "gpt-5.1-codex-max" {
+		t.Fatalf("expected bottom-edge click to select last model, got %q", got)
 	}
 }

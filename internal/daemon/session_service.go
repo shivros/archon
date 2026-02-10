@@ -290,6 +290,10 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	initialInput := sanitizeTitle(rawInput)
 	initialText := strings.TrimSpace(rawInput)
 	providerDef, hasProviderDef := providers.Lookup(req.Provider)
+	runtimeOptions, err := resolveRuntimeOptions(req.Provider, nil, req.RuntimeOptions, false)
+	if err != nil {
+		return nil, invalidError(err.Error(), err)
+	}
 	title := sanitizeTitle(req.Title)
 	if title == "" && strings.TrimSpace(req.Title) != "" {
 		return nil, invalidError("title must contain displayable characters", nil)
@@ -307,18 +311,19 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		initialTextForStart = ""
 	}
 	session, err := s.manager.StartSession(StartSessionConfig{
-		Provider:     req.Provider,
-		Cmd:          req.Cmd,
-		Cwd:          cwd,
-		Args:         req.Args,
-		Env:          req.Env,
-		CodexHome:    codexHome,
-		Title:        title,
-		Tags:         req.Tags,
-		WorkspaceID:  req.WorkspaceID,
-		WorktreeID:   req.WorktreeID,
-		InitialInput: initialInput,
-		InitialText:  initialTextForStart,
+		Provider:       req.Provider,
+		Cmd:            req.Cmd,
+		Cwd:            cwd,
+		Args:           req.Args,
+		Env:            req.Env,
+		CodexHome:      codexHome,
+		Title:          title,
+		Tags:           req.Tags,
+		RuntimeOptions: runtimeOptions,
+		WorkspaceID:    req.WorkspaceID,
+		WorktreeID:     req.WorktreeID,
+		InitialInput:   initialInput,
+		InitialText:    initialTextForStart,
 	})
 	if err != nil {
 		return nil, invalidError(err.Error(), err)
@@ -459,6 +464,56 @@ func (s *SessionService) UpdateTitle(ctx context.Context, id, title string) erro
 	}
 	if err := s.manager.UpdateSessionTitle(id, title); err != nil {
 		return invalidError(err.Error(), err)
+	}
+	return nil
+}
+
+func (s *SessionService) Update(ctx context.Context, id string, req UpdateSessionRequest) error {
+	if strings.TrimSpace(id) == "" {
+		return invalidError("session id is required", nil)
+	}
+	hasTitle := strings.TrimSpace(req.Title) != ""
+	hasRuntimeOptions := req.RuntimeOptions != nil
+	if !hasTitle && !hasRuntimeOptions {
+		return invalidError("at least one update field is required", nil)
+	}
+	session, _, err := s.getSessionRecord(ctx, id)
+	if session == nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return notFoundError("session not found", ErrSessionNotFound)
+		}
+		if err != nil {
+			return invalidError(err.Error(), err)
+		}
+		return notFoundError("session not found", ErrSessionNotFound)
+	}
+	if hasTitle {
+		if err := s.UpdateTitle(ctx, id, req.Title); err != nil {
+			return err
+		}
+	}
+	if hasRuntimeOptions {
+		if s.stores == nil || s.stores.SessionMeta == nil {
+			return unavailableError("session metadata store not available", nil)
+		}
+		existingMeta := s.getSessionMeta(ctx, id)
+		var baseOptions *types.SessionRuntimeOptions
+		if existingMeta != nil {
+			baseOptions = existingMeta.RuntimeOptions
+		}
+		runtimeOptions, err := resolveRuntimeOptions(session.Provider, baseOptions, req.RuntimeOptions, false)
+		if err != nil {
+			return invalidError(err.Error(), err)
+		}
+		now := time.Now().UTC()
+		_, err = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+			SessionID:      id,
+			RuntimeOptions: runtimeOptions,
+			LastActiveAt:   &now,
+		})
+		if err != nil {
+			return unavailableError(err.Error(), err)
+		}
 	}
 	return nil
 }
