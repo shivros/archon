@@ -158,7 +158,7 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.mode != uiModeNotes {
 		return false, nil
 	}
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "ctrl+o":
 		return true, m.toggleNotesPanel()
 	case "1":
@@ -192,7 +192,7 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 	if !ok {
 		return true, nil
 	}
-	switch keyMsg.String() {
+	switch m.keyString(keyMsg) {
 	case "ctrl+o":
 		return true, m.toggleNotesPanel()
 	case "esc":

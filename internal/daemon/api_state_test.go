@@ -12,16 +12,14 @@ import (
 	"control/internal/types"
 )
 
-func TestStateAndKeymapEndpoints(t *testing.T) {
+func TestStateEndpoint(t *testing.T) {
 	base := t.TempDir()
 	state := store.NewFileAppStateStore(filepath.Join(base, "state.json"))
-	keymap := store.NewFileKeymapStore(filepath.Join(base, "keymap.json"))
-	stores := &Stores{AppState: state, Keymap: keymap}
+	stores := &Stores{AppState: state}
 	api := &API{Version: "test", Stores: stores}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/state", api.AppState)
-	mux.HandleFunc("/v1/keymap", api.Keymap)
 	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
 	defer server.Close()
 
@@ -48,19 +46,5 @@ func TestStateAndKeymapEndpoints(t *testing.T) {
 	defer getResp.Body.Close()
 	if getResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", getResp.StatusCode)
-	}
-
-	keymapPayload := types.Keymap{Bindings: map[string]string{types.KeyActionToggleSidebar: "ctrl+b"}}
-	keyBody, _ := json.Marshal(keymapPayload)
-	keyReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/keymap", bytes.NewReader(keyBody))
-	keyReq.Header.Set("Authorization", "Bearer token")
-	keyReq.Header.Set("Content-Type", "application/json")
-	keyResp, err := http.DefaultClient.Do(keyReq)
-	if err != nil {
-		t.Fatalf("patch keymap: %v", err)
-	}
-	defer keyResp.Body.Close()
-	if keyResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", keyResp.StatusCode)
 	}
 }

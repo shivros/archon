@@ -49,12 +49,28 @@ func TestPaths(t *testing.T) {
 		t.Fatalf("unexpected state path: %s", statePath)
 	}
 
-	keymapPath, err := KeymapPath()
+	coreConfigPath, err := CoreConfigPath()
 	if err != nil {
-		t.Fatalf("KeymapPath: %v", err)
+		t.Fatalf("CoreConfigPath: %v", err)
 	}
-	if !strings.HasSuffix(keymapPath, filepath.Join(".archon", "keymap.json")) {
-		t.Fatalf("unexpected keymap path: %s", keymapPath)
+	if !strings.HasSuffix(coreConfigPath, filepath.Join(".archon", "config.toml")) {
+		t.Fatalf("unexpected core config path: %s", coreConfigPath)
+	}
+
+	uiConfigPath, err := UIConfigPath()
+	if err != nil {
+		t.Fatalf("UIConfigPath: %v", err)
+	}
+	if !strings.HasSuffix(uiConfigPath, filepath.Join(".archon", "ui.toml")) {
+		t.Fatalf("unexpected ui config path: %s", uiConfigPath)
+	}
+
+	keybindingsPath, err := KeybindingsPath()
+	if err != nil {
+		t.Fatalf("KeybindingsPath: %v", err)
+	}
+	if !strings.HasSuffix(keybindingsPath, filepath.Join(".archon", "keybindings.json")) {
+		t.Fatalf("unexpected keybindings path: %s", keybindingsPath)
 	}
 
 	sessionsMetaPath, err := SessionsMetaPath()

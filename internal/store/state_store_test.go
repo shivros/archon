@@ -49,36 +49,3 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 		t.Fatalf("expected provider badge overrides to round-trip")
 	}
 }
-
-func TestKeymapStoreDefaults(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "keymap.json")
-	store := NewFileKeymapStore(path)
-
-	keymap, err := store.Load(ctx)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if keymap.Bindings[types.KeyActionToggleSidebar] != "ctrl+b" {
-		t.Fatalf("expected default toggle binding")
-	}
-}
-
-func TestKeymapStoreRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "keymap.json")
-	store := NewFileKeymapStore(path)
-
-	custom := &types.Keymap{Bindings: map[string]string{types.KeyActionToggleSidebar: "alt+b"}}
-	if err := store.Save(ctx, custom); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	loaded, err := store.Load(ctx)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if loaded.Bindings[types.KeyActionToggleSidebar] != "alt+b" {
-		t.Fatalf("expected custom binding")
-	}
-}

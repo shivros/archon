@@ -363,7 +363,7 @@ func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolu
 	consumedRequests := map[int]struct{}{}
 	consumedResolutions := map[int]struct{}{}
 	for _, block := range blocks {
-		if block.Role != ChatRoleApproval && block.Role != ChatRoleApprovalResolved {
+		if !isApprovalRole(block.Role) {
 			out = append(out, block)
 			continue
 		}
@@ -411,7 +411,7 @@ func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlo
 	anchorByID := map[int]int{}
 	nonApprovalCount := 0
 	for _, block := range previous {
-		if block.Role != ChatRoleApproval && block.Role != ChatRoleApprovalResolved {
+		if !isApprovalRole(block.Role) {
 			nonApprovalCount++
 			continue
 		}
@@ -431,7 +431,7 @@ func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlo
 	anchored := map[int][]ChatBlock{}
 	unanchored := make([]ChatBlock, 0, len(next))
 	for _, block := range next {
-		if block.Role != ChatRoleApproval && block.Role != ChatRoleApprovalResolved {
+		if !isApprovalRole(block.Role) {
 			nonApproval = append(nonApproval, block)
 			continue
 		}
@@ -525,7 +525,7 @@ func approvalResolutionBlockID(requestID int) string {
 }
 
 func approvalRequestIDFromBlock(block ChatBlock) (int, bool) {
-	if (block.Role == ChatRoleApproval || block.Role == ChatRoleApprovalResolved) && block.RequestID >= 0 {
+	if isApprovalRole(block.Role) && block.RequestID >= 0 {
 		return block.RequestID, true
 	}
 	raw := strings.TrimSpace(block.ID)
@@ -546,6 +546,10 @@ func approvalRequestIDFromBlock(block ChatBlock) (int, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+func isApprovalRole(role ChatRole) bool {
+	return role == ChatRoleApproval || role == ChatRoleApprovalResolved
 }
 
 func approvalSessionIDFromBlock(block ChatBlock) string {

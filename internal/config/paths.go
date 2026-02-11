@@ -52,13 +52,31 @@ func StatePath() (string, error) {
 	return filepath.Join(dataDir, "state.json"), nil
 }
 
-// KeymapPath returns the path to the keymap configuration file.
-func KeymapPath() (string, error) {
+// CoreConfigPath returns the path to the core daemon/client configuration file.
+func CoreConfigPath() (string, error) {
 	dataDir, err := DataDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dataDir, "keymap.json"), nil
+	return filepath.Join(dataDir, "config.toml"), nil
+}
+
+// UIConfigPath returns the path to the UI configuration file.
+func UIConfigPath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "ui.toml"), nil
+}
+
+// KeybindingsPath returns the path to the UI keybindings override file.
+func KeybindingsPath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "keybindings.json"), nil
 }
 
 // SessionsMetaPath returns the path to the session metadata file.

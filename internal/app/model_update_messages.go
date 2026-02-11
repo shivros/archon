@@ -281,28 +281,14 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.loading = false
 		}
 		provider := m.providerForSessionID(msg.id)
-		if provider == "codex" && m.requestActivity.active && strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(msg.id) && m.requestActivity.eventCount > 0 {
+		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
 			if msg.key != "" {
 				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
 			}
 			m.setBackgroundStatus("tail refreshed")
 			return true, nil
 		}
-		previous := m.currentBlocks()
-		blocks := itemsToBlocks(msg.items)
-		if provider == "codex" {
-			blocks = coalesceAdjacentReasoningBlocks(blocks)
-			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
-			blocks = preserveApprovalPositions(previous, blocks)
-		}
-		if shouldStreamItems(provider) && m.itemStream != nil {
-			m.itemStream.SetSnapshotBlocks(blocks)
-			blocks = m.itemStream.Blocks()
-		}
-		if provider == "codex" && m.codexStream != nil {
-			m.codexStream.SetSnapshotBlocks(blocks)
-			blocks = m.codexStream.Blocks()
-		}
+		blocks := m.buildSessionBlocksFromItems(msg.id, provider, msg.items, m.currentBlocks())
 		m.setSnapshotBlocks(blocks)
 		m.noteRequestVisibleUpdate(msg.id)
 		if msg.key != "" {
@@ -326,28 +312,14 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.loading = false
 		}
 		provider := m.providerForSessionID(msg.id)
-		if provider == "codex" && m.requestActivity.active && strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(msg.id) && m.requestActivity.eventCount > 0 {
+		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
 			if msg.key != "" {
 				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
 			}
 			m.setBackgroundStatus("history refreshed")
 			return true, nil
 		}
-		previous := m.currentBlocks()
-		blocks := itemsToBlocks(msg.items)
-		if provider == "codex" {
-			blocks = coalesceAdjacentReasoningBlocks(blocks)
-			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
-			blocks = preserveApprovalPositions(previous, blocks)
-		}
-		if shouldStreamItems(provider) && m.itemStream != nil {
-			m.itemStream.SetSnapshotBlocks(blocks)
-			blocks = m.itemStream.Blocks()
-		}
-		if provider == "codex" && m.codexStream != nil {
-			m.codexStream.SetSnapshotBlocks(blocks)
-			blocks = m.codexStream.Blocks()
-		}
+		blocks := m.buildSessionBlocksFromItems(msg.id, provider, msg.items, m.currentBlocks())
 		m.setSnapshotBlocks(blocks)
 		m.noteRequestVisibleUpdate(msg.id)
 		if msg.key != "" {
@@ -574,10 +546,38 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	}
 }
 
+func (m *Model) shouldKeepLiveCodexSnapshot(provider, sessionID string) bool {
+	if provider != "codex" || !m.requestActivity.active {
+		return false
+	}
+	return strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(sessionID) && m.requestActivity.eventCount > 0
+}
+
+func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []map[string]any, previous []ChatBlock) []ChatBlock {
+	blocks := itemsToBlocks(items)
+	if provider == "codex" {
+		blocks = coalesceAdjacentReasoningBlocks(blocks)
+		blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
+		blocks = preserveApprovalPositions(previous, blocks)
+	}
+	if shouldStreamItems(provider) && m.itemStream != nil {
+		m.itemStream.SetSnapshotBlocks(blocks)
+		blocks = m.itemStream.Blocks()
+	}
+	if provider == "codex" && m.codexStream != nil {
+		m.codexStream.SetSnapshotBlocks(blocks)
+		blocks = m.codexStream.Blocks()
+	}
+	return blocks
+}
+
 func (m *Model) activeStreamTargetID() string {
 	targetID := m.composeSessionID()
 	if targetID == "" {
 		targetID = m.selectedSessionID()
+	}
+	if targetID == "" {
+		targetID = sessionIDFromSidebarKey(m.pendingSessionKey)
 	}
 	return targetID
 }

@@ -130,24 +130,41 @@ func (m *Model) enterNoteMoveFlow(note *types.Note) tea.Cmd {
 		m.clearNoteMoveState()
 		return nil
 	}
-	switch note.Scope {
-	case types.NoteScopeSession, types.NoteScopeWorktree:
-		options := m.noteMoveTargetOptions(note)
-		if len(options) == 0 {
-			m.setValidationStatus("no move targets available")
-			m.exitNoteMovePicker("")
+	options := m.noteMoveTargetOptions(note)
+	if len(options) == 0 {
+		m.setValidationStatus("no move targets available")
+		m.exitNoteMovePicker("")
+		return nil
+	}
+	if len(options) == 1 {
+		return m.applyNoteMoveTargetSelection(options[0].id)
+	}
+	m.enterNoteMovePicker(uiModePickNoteMoveTarget, options, "select note target")
+	return nil
+}
+
+func (m *Model) applyNoteMoveTargetSelection(target string) tea.Cmd {
+	note := m.noteByID(m.noteMoveNoteID)
+	if note == nil {
+		m.setValidationStatus("note not found")
+		m.exitNoteMovePicker("")
+		return nil
+	}
+	context := m.resolveNoteScopeTarget(note)
+	switch strings.TrimSpace(target) {
+	case noteMoveTargetWorkspace:
+		if strings.TrimSpace(context.WorkspaceID) == "" {
+			m.setValidationStatus("workspace unavailable for note")
 			return nil
 		}
-		if len(options) == 1 {
-			return m.applyNoteMoveTargetSelection(options[0].id)
-		}
-		m.enterNoteMovePicker(uiModePickNoteMoveTarget, options, "select note target")
-		return nil
-	case types.NoteScopeWorkspace:
+		targetScope := noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: context.WorkspaceID}
+		return m.commitNoteMove(note, targetScope)
+	case noteMoveTargetWorktree:
 		return m.enterNoteMoveWorktreePicker(note)
+	case noteMoveTargetSession:
+		return m.enterNoteMoveSessionPicker(note)
 	default:
-		m.setValidationStatus("invalid note scope")
-		m.exitNoteMovePicker("")
+		m.setValidationStatus("invalid move target")
 		return nil
 	}
 }
@@ -233,37 +250,6 @@ func (m *Model) handleNoteMovePickerSelection() tea.Cmd {
 	}
 }
 
-func (m *Model) applyNoteMoveTargetSelection(target string) tea.Cmd {
-	note := m.noteByID(m.noteMoveNoteID)
-	if note == nil {
-		m.setValidationStatus("note not found")
-		m.exitNoteMovePicker("")
-		return nil
-	}
-	context := m.resolveNoteScopeTarget(note)
-	switch strings.TrimSpace(target) {
-	case noteMoveTargetWorkspace:
-		if strings.TrimSpace(context.WorkspaceID) == "" {
-			m.setValidationStatus("workspace unavailable for note")
-			return nil
-		}
-		targetScope := noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: context.WorkspaceID}
-		return m.commitNoteMove(note, targetScope)
-	case noteMoveTargetWorktree:
-		if strings.TrimSpace(context.WorkspaceID) == "" || strings.TrimSpace(context.WorktreeID) == "" {
-			m.setValidationStatus("worktree unavailable for note")
-			return nil
-		}
-		targetScope := noteScopeTarget{Scope: types.NoteScopeWorktree, WorkspaceID: context.WorkspaceID, WorktreeID: context.WorktreeID}
-		return m.commitNoteMove(note, targetScope)
-	case noteMoveTargetSession:
-		return m.enterNoteMoveSessionPicker(note)
-	default:
-		m.setValidationStatus("invalid move target")
-		return nil
-	}
-}
-
 func (m *Model) enterNoteMoveWorktreePicker(note *types.Note) tea.Cmd {
 	context := m.resolveNoteScopeTarget(note)
 	workspaceID := strings.TrimSpace(context.WorkspaceID)
@@ -339,30 +325,84 @@ func (m *Model) applyNoteMoveSessionSelection(note *types.Note, sessionID string
 	return m.commitNoteMove(note, target)
 }
 
-func noteMoveAdjacentScope(from, to types.NoteScope) bool {
-	switch from {
-	case types.NoteScopeSession:
-		return to == types.NoteScopeWorktree
-	case types.NoteScopeWorktree:
-		return to == types.NoteScopeWorkspace || to == types.NoteScopeSession
-	case types.NoteScopeWorkspace:
-		return to == types.NoteScopeWorktree
-	default:
-		return false
-	}
-}
-
 func (m *Model) commitNoteMove(note *types.Note, target noteScopeTarget) tea.Cmd {
 	if note == nil {
 		m.setValidationStatus("note not found")
 		return nil
 	}
-	if !noteMoveAdjacentScope(note.Scope, target.Scope) {
+	source := m.resolveNoteScopeTarget(note)
+	sourceWorkspace := strings.TrimSpace(source.WorkspaceID)
+	if sourceWorkspace == "" {
+		m.setValidationStatus("workspace unavailable for note")
+		return nil
+	}
+	target.WorkspaceID = strings.TrimSpace(target.WorkspaceID)
+	target.WorktreeID = strings.TrimSpace(target.WorktreeID)
+	target.SessionID = strings.TrimSpace(target.SessionID)
+	if target.WorkspaceID == "" {
+		target.WorkspaceID = sourceWorkspace
+	}
+	if target.WorkspaceID != sourceWorkspace {
+		m.setValidationStatus("cross-workspace note move is not supported")
+		return nil
+	}
+	switch target.Scope {
+	case types.NoteScopeWorkspace:
+		target.WorktreeID = ""
+		target.SessionID = ""
+	case types.NoteScopeWorktree:
+		if target.WorktreeID == "" {
+			m.setValidationStatus("worktree unavailable for note move")
+			return nil
+		}
+		wt := m.worktreeByID(target.WorktreeID)
+		if wt == nil || strings.TrimSpace(wt.WorkspaceID) != sourceWorkspace {
+			m.setValidationStatus("invalid worktree target")
+			return nil
+		}
+		target.SessionID = ""
+	case types.NoteScopeSession:
+		if target.SessionID == "" {
+			m.setValidationStatus("session unavailable for note move")
+			return nil
+		}
+		meta := m.sessionMeta[target.SessionID]
+		if meta == nil {
+			m.setValidationStatus("invalid session target")
+			return nil
+		}
+		if strings.TrimSpace(meta.WorkspaceID) != sourceWorkspace {
+			m.setValidationStatus("cross-workspace note move is not supported")
+			return nil
+		}
+		target.WorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+		target.WorktreeID = strings.TrimSpace(meta.WorktreeID)
+	default:
 		m.setValidationStatus("invalid note move target")
+		return nil
+	}
+	if noteMoveTargetSameAsSource(source, target) {
+		m.setValidationStatus("note already in target scope")
 		return nil
 	}
 	m.exitNoteMovePicker("moving note")
 	return moveNoteCmd(m.notesAPI, note, target)
+}
+
+func noteMoveTargetSameAsSource(source noteScopeTarget, target noteScopeTarget) bool {
+	if source.Scope != target.Scope {
+		return false
+	}
+	switch source.Scope {
+	case types.NoteScopeWorkspace:
+		return strings.TrimSpace(source.WorkspaceID) == strings.TrimSpace(target.WorkspaceID)
+	case types.NoteScopeWorktree:
+		return strings.TrimSpace(source.WorktreeID) == strings.TrimSpace(target.WorktreeID)
+	case types.NoteScopeSession:
+		return strings.TrimSpace(source.SessionID) == strings.TrimSpace(target.SessionID)
+	default:
+		return false
+	}
 }
 
 func (m *Model) resolveNoteScopeTarget(note *types.Note) noteScopeTarget {
@@ -395,17 +435,19 @@ func (m *Model) resolveNoteScopeTarget(note *types.Note) noteScopeTarget {
 
 func (m *Model) noteMoveTargetOptions(note *types.Note) []selectOption {
 	context := m.resolveNoteScopeTarget(note)
+	workspaceID := strings.TrimSpace(context.WorkspaceID)
+	if workspaceID == "" {
+		return nil
+	}
 	options := []selectOption{}
-	switch note.Scope {
-	case types.NoteScopeSession:
-		if strings.TrimSpace(context.WorktreeID) != "" {
-			options = append(options, selectOption{id: noteMoveTargetWorktree, label: "Move to Worktree"})
-		}
-	case types.NoteScopeWorktree:
-		if strings.TrimSpace(context.WorkspaceID) != "" {
-			options = append(options, selectOption{id: noteMoveTargetWorkspace, label: "Move to Workspace"})
-			options = append(options, selectOption{id: noteMoveTargetSession, label: "Move to Session..."})
-		}
+	if note.Scope != types.NoteScopeWorkspace {
+		options = append(options, selectOption{id: noteMoveTargetWorkspace, label: "Move to Workspace"})
+	}
+	if note.Scope != types.NoteScopeWorktree && len(m.noteMoveWorktreeOptions(workspaceID)) > 0 {
+		options = append(options, selectOption{id: noteMoveTargetWorktree, label: "Move to Worktree..."})
+	}
+	if note.Scope != types.NoteScopeSession && len(m.noteMoveSessionOptions(workspaceID)) > 0 {
+		options = append(options, selectOption{id: noteMoveTargetSession, label: "Move to Session..."})
 	}
 	return options
 }

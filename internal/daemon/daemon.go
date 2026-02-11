@@ -27,7 +27,6 @@ type Stores struct {
 	Worktrees   WorktreeStore
 	Groups      WorkspaceGroupStore
 	AppState    AppStateStore
-	Keymap      KeymapStore
 	SessionMeta SessionMetaStore
 	Sessions    SessionIndexStore
 	Approvals   ApprovalStore
@@ -59,11 +58,6 @@ type WorkspaceGroupStore interface {
 type AppStateStore interface {
 	Load(ctx context.Context) (*types.AppState, error)
 	Save(ctx context.Context, state *types.AppState) error
-}
-
-type KeymapStore interface {
-	Load(ctx context.Context) (*types.Keymap, error)
-	Save(ctx context.Context, keymap *types.Keymap) error
 }
 
 type ProviderRegistry interface {

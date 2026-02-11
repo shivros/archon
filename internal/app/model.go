@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/client"
+	"control/internal/config"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -152,6 +154,7 @@ type Model struct {
 	sidebarDragging            bool
 	menu                       *MenuController
 	hotkeys                    *HotkeyRenderer
+	keybindings                *Keybindings
 	contextMenu                *ContextMenuController
 	confirm                    *ConfirmController
 	newSession                 *newSessionTarget
@@ -252,7 +255,8 @@ func NewModel(client *client.Client) Model {
 	loader := spinner.New()
 	loader.Spinner = spinner.Line
 	loader.Style = lipgloss.NewStyle()
-	hotkeyRenderer := NewHotkeyRenderer(DefaultHotkeys(), DefaultHotkeyResolver{})
+	keybindings := DefaultKeybindings()
+	hotkeyRenderer := NewHotkeyRenderer(ResolveHotkeys(DefaultHotkeys(), keybindings), DefaultHotkeyResolver{})
 
 	return Model{
 		workspaceAPI:               api,
@@ -302,6 +306,7 @@ func NewModel(client *client.Client) Model {
 		sessionApprovalResolutions: map[string][]*ApprovalResolution{},
 		loader:                     loader,
 		hotkeys:                    hotkeyRenderer,
+		keybindings:                keybindings,
 		pendingSends:               map[int]pendingSend{},
 		composeHistory:             map[string]*composeHistoryState{},
 		menu:                       NewMenuController(),
@@ -313,8 +318,22 @@ func NewModel(client *client.Client) Model {
 
 func Run(client *client.Client) error {
 	model := NewModel(client)
+	uiConfig, err := config.LoadUIConfig()
+	if err != nil {
+		return err
+	}
+	keybindingsPath, err := uiConfig.ResolveKeybindingsPath()
+	if err != nil {
+		return err
+	}
+	keybindings, err := LoadKeybindings(keybindingsPath)
+	if err != nil {
+		log.Printf("keybindings: load %s: %v", keybindingsPath, err)
+	} else {
+		model.applyKeybindings(keybindings)
+	}
 	p := tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseAllMotion())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 

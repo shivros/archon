@@ -19,8 +19,6 @@ import (
 	"control/internal/types"
 )
 
-const defaultBaseURL = "http://127.0.0.1:7777"
-
 type Client struct {
 	baseURL   string
 	tokenPath string
@@ -33,8 +31,12 @@ func New() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	coreCfg, err := config.LoadCoreConfig()
+	if err != nil {
+		return nil, err
+	}
 	c := &Client{
-		baseURL:   defaultBaseURL,
+		baseURL:   coreCfg.DaemonBaseURL(),
 		tokenPath: tokenPath,
 		http: &http.Client{
 			Timeout: 10 * time.Second,

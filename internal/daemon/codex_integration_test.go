@@ -462,7 +462,6 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 
 	workspaces := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
 	state := store.NewFileAppStateStore(filepath.Join(base, "state.json"))
-	keymap := store.NewFileKeymapStore(filepath.Join(base, "keymap.json"))
 	meta := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
 	sessions := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
 	approvals := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
@@ -472,7 +471,6 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 		Worktrees:   workspaces,
 		Groups:      workspaces,
 		AppState:    state,
-		Keymap:      keymap,
 		SessionMeta: meta,
 		Sessions:    sessions,
 		Approvals:   approvals,

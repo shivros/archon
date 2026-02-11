@@ -1,0 +1,263 @@
+package app
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"sort"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+const (
+	KeyCommandMenu                 = "ui.menu"
+	KeyCommandQuit                 = "ui.quit"
+	KeyCommandToggleSidebar        = "ui.toggleSidebar"
+	KeyCommandToggleNotesPanel     = "ui.toggleNotesPanel"
+	KeyCommandCopySessionID        = "ui.copySessionID"
+	KeyCommandOpenSearch           = "ui.openSearch"
+	KeyCommandViewportTop          = "ui.viewportTop"
+	KeyCommandViewportBottom       = "ui.viewportBottom"
+	KeyCommandSectionPrev          = "ui.sectionPrev"
+	KeyCommandSectionNext          = "ui.sectionNext"
+	KeyCommandSearchPrev           = "ui.searchPrev"
+	KeyCommandSearchNext           = "ui.searchNext"
+	KeyCommandNewSession           = "ui.newSession"
+	KeyCommandAddWorkspace         = "ui.addWorkspace"
+	KeyCommandAddWorktree          = "ui.addWorktree"
+	KeyCommandCompose              = "ui.compose"
+	KeyCommandOpenNotes            = "ui.openNotes"
+	KeyCommandOpenChat             = "ui.openChat"
+	KeyCommandRefresh              = "ui.refresh"
+	KeyCommandKillSession          = "ui.killSession"
+	KeyCommandInterruptSession     = "ui.interruptSession"
+	KeyCommandDismissSession       = "ui.dismissSession"
+	KeyCommandUndismissSession     = "ui.undismissSession"
+	KeyCommandToggleDismissed      = "ui.toggleDismissed"
+	KeyCommandToggleNotesWorkspace = "ui.toggleNotesWorkspace"
+	KeyCommandToggleNotesWorktree  = "ui.toggleNotesWorktree"
+	KeyCommandToggleNotesSession   = "ui.toggleNotesSession"
+	KeyCommandToggleNotesAll       = "ui.toggleNotesAll"
+	KeyCommandPauseFollow          = "ui.pauseFollow"
+	KeyCommandToggleReasoning      = "ui.toggleReasoning"
+	KeyCommandToggleMessageSelect  = "ui.toggleMessageSelect"
+	KeyCommandToggleSelection      = "ui.toggleSelection"
+	KeyCommandComposeClearInput    = "ui.composeClearInput"
+	KeyCommandComposeModel         = "ui.composeModel"
+	KeyCommandComposeReasoning     = "ui.composeReasoning"
+	KeyCommandComposeAccess        = "ui.composeAccess"
+	KeyCommandApprove              = "ui.approve"
+	KeyCommandDecline              = "ui.decline"
+	KeyCommandNotesNew             = "ui.notesNew"
+)
+
+var defaultKeybindingByCommand = map[string]string{
+	KeyCommandMenu:                 "m",
+	KeyCommandQuit:                 "q",
+	KeyCommandToggleSidebar:        "ctrl+b",
+	KeyCommandToggleNotesPanel:     "ctrl+o",
+	KeyCommandCopySessionID:        "ctrl+y",
+	KeyCommandOpenSearch:           "/",
+	KeyCommandViewportTop:          "g",
+	KeyCommandViewportBottom:       "G",
+	KeyCommandSectionPrev:          "{",
+	KeyCommandSectionNext:          "}",
+	KeyCommandSearchPrev:           "N",
+	KeyCommandSearchNext:           "n",
+	KeyCommandNewSession:           "ctrl+n",
+	KeyCommandAddWorkspace:         "a",
+	KeyCommandAddWorktree:          "t",
+	KeyCommandCompose:              "c",
+	KeyCommandOpenNotes:            "O",
+	KeyCommandOpenChat:             "enter",
+	KeyCommandRefresh:              "r",
+	KeyCommandKillSession:          "x",
+	KeyCommandInterruptSession:     "i",
+	KeyCommandDismissSession:       "d",
+	KeyCommandUndismissSession:     "u",
+	KeyCommandToggleDismissed:      "D",
+	KeyCommandToggleNotesWorkspace: "1",
+	KeyCommandToggleNotesWorktree:  "2",
+	KeyCommandToggleNotesSession:   "3",
+	KeyCommandToggleNotesAll:       "0",
+	KeyCommandPauseFollow:          "p",
+	KeyCommandToggleReasoning:      "e",
+	KeyCommandToggleMessageSelect:  "v",
+	KeyCommandToggleSelection:      "space",
+	KeyCommandComposeClearInput:    "ctrl+c",
+	KeyCommandComposeModel:         "ctrl+1",
+	KeyCommandComposeReasoning:     "ctrl+2",
+	KeyCommandComposeAccess:        "ctrl+3",
+	KeyCommandApprove:              "y",
+	KeyCommandDecline:              "x",
+	KeyCommandNotesNew:             "n",
+}
+
+type Keybindings struct {
+	byCommand map[string]string
+	remap     map[string]string
+}
+
+type keybindingEntry struct {
+	Command string `json:"command"`
+	Key     string `json:"key"`
+}
+
+func DefaultKeybindings() *Keybindings {
+	return NewKeybindings(nil)
+}
+
+func NewKeybindings(overrides map[string]string) *Keybindings {
+	byCommand := make(map[string]string, len(defaultKeybindingByCommand))
+	for command, key := range defaultKeybindingByCommand {
+		byCommand[command] = key
+	}
+	for command, key := range overrides {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := defaultKeybindingByCommand[command]; !ok {
+			continue
+		}
+		byCommand[command] = key
+	}
+	remap := map[string]string{}
+	commands := make([]string, 0, len(defaultKeybindingByCommand))
+	for command := range defaultKeybindingByCommand {
+		commands = append(commands, command)
+	}
+	sort.Strings(commands)
+	for _, command := range commands {
+		defaultKey := defaultKeybindingByCommand[command]
+		key := byCommand[command]
+		if strings.TrimSpace(key) == "" || key == defaultKey {
+			continue
+		}
+		remap[key] = defaultKey
+	}
+	return &Keybindings{
+		byCommand: byCommand,
+		remap:     remap,
+	}
+}
+
+func LoadKeybindings(path string) (*Keybindings, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return DefaultKeybindings(), nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return DefaultKeybindings(), nil
+		}
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return DefaultKeybindings(), nil
+	}
+	overrides, err := parseKeybindingOverrides(data)
+	if err != nil {
+		return nil, err
+	}
+	return NewKeybindings(overrides), nil
+}
+
+func (k *Keybindings) KeyFor(command, fallback string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return fallback
+	}
+	if k != nil {
+		if key := strings.TrimSpace(k.byCommand[command]); key != "" {
+			return key
+		}
+	}
+	if key := strings.TrimSpace(defaultKeybindingByCommand[command]); key != "" {
+		return key
+	}
+	return fallback
+}
+
+func (k *Keybindings) Remap(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return key
+	}
+	if k != nil {
+		if canonical, ok := k.remap[key]; ok && canonical != "" {
+			return canonical
+		}
+	}
+	return key
+}
+
+func (m *Model) applyKeybindings(bindings *Keybindings) {
+	if bindings == nil {
+		bindings = DefaultKeybindings()
+	}
+	m.keybindings = bindings
+	m.hotkeys = NewHotkeyRenderer(ResolveHotkeys(DefaultHotkeys(), bindings), DefaultHotkeyResolver{})
+}
+
+func (m *Model) keyString(msg tea.KeyMsg) string {
+	if m == nil {
+		return msg.String()
+	}
+	key := msg.String()
+	if m.keybindings == nil {
+		return key
+	}
+	return m.keybindings.Remap(key)
+}
+
+func parseKeybindingOverrides(data []byte) (map[string]string, error) {
+	data = []byte(strings.TrimSpace(string(data)))
+	if len(data) == 0 {
+		return nil, nil
+	}
+	if data[0] == '[' {
+		var entries []keybindingEntry
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return nil, err
+		}
+		out := map[string]string{}
+		for _, entry := range entries {
+			command := strings.TrimSpace(entry.Command)
+			if command == "" {
+				continue
+			}
+			if _, ok := defaultKeybindingByCommand[command]; !ok {
+				continue
+			}
+			key := strings.TrimSpace(entry.Key)
+			if key == "" {
+				continue
+			}
+			out[command] = key
+		}
+		return out, nil
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for command, key := range raw {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			continue
+		}
+		if _, ok := defaultKeybindingByCommand[command]; !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[command] = key
+	}
+	return out, nil
+}

@@ -129,8 +129,9 @@ func TestNoteMoveSessionOptionsExcludeDismissedAndIncludeWorkspaceWide(t *testin
 	}
 }
 
-func TestNoteMoveTargetOptionsSessionShowsAdjacentOnly(t *testing.T) {
+func TestNoteMoveTargetOptionsSessionAllowWorkspaceAndWorktree(t *testing.T) {
 	m := NewModel(nil)
+	m.worktrees["ws1"] = []*types.Worktree{{ID: "wt1", WorkspaceID: "ws1", Name: "feature"}}
 	m.sessionMeta["s1"] = &types.SessionMeta{SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"}
 	note := &types.Note{
 		ID:          "n1",
@@ -141,11 +142,56 @@ func TestNoteMoveTargetOptionsSessionShowsAdjacentOnly(t *testing.T) {
 	}
 
 	options := m.noteMoveTargetOptions(note)
-	if len(options) != 1 {
-		t.Fatalf("expected only one adjacent target for session notes, got %d (%#v)", len(options), options)
+	if len(options) != 2 {
+		t.Fatalf("expected workspace and worktree targets for session notes, got %d (%#v)", len(options), options)
 	}
-	if options[0].id != noteMoveTargetWorktree {
-		t.Fatalf("expected session notes to move only to worktree, got %q", options[0].id)
+	ids := options[0].id + "," + options[1].id
+	if !strings.Contains(ids, noteMoveTargetWorkspace) || !strings.Contains(ids, noteMoveTargetWorktree) {
+		t.Fatalf("expected workspace and worktree targets, got %q", ids)
+	}
+}
+
+func TestNoteMoveTargetOptionsWorkspaceAllowsSessionWithoutWorktrees(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta["s1"] = &types.SessionMeta{SessionID: "s1", WorkspaceID: "ws1"}
+	note := &types.Note{
+		ID:          "n1",
+		Scope:       types.NoteScopeWorkspace,
+		WorkspaceID: "ws1",
+	}
+
+	options := m.noteMoveTargetOptions(note)
+	if len(options) != 1 {
+		t.Fatalf("expected only session target for workspace note without worktrees, got %d (%#v)", len(options), options)
+	}
+	if options[0].id != noteMoveTargetSession {
+		t.Fatalf("expected session target, got %q", options[0].id)
+	}
+}
+
+func TestCommitNoteMoveRejectsCrossWorkspaceTargets(t *testing.T) {
+	m := NewModel(nil)
+	m.worktrees["ws2"] = []*types.Worktree{{ID: "wt2", WorkspaceID: "ws2"}}
+	note := &types.Note{
+		ID:          "n1",
+		Scope:       types.NoteScopeWorkspace,
+		WorkspaceID: "ws1",
+	}
+
+	cmd := m.commitNoteMove(note, noteScopeTarget{
+		Scope:       types.NoteScopeWorktree,
+		WorkspaceID: "ws2",
+		WorktreeID:  "wt2",
+	})
+	if cmd != nil {
+		t.Fatalf("expected cross-workspace target to be rejected")
+	}
+	if m.status != "cross-workspace note move is not supported" {
+		t.Fatalf("unexpected status %q", m.status)
 	}
 }
 

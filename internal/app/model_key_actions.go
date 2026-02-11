@@ -15,7 +15,7 @@ func (m *Model) reducePendingApprovalKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.mode != uiModeNormal && (m.input == nil || !m.input.IsSidebarFocused()) {
 		return false, nil
 	}
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "y":
 		return true, m.approvePending("accept")
 	case "x":
@@ -77,7 +77,7 @@ func (m *Model) reduceNormalModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "m":
 		if m.menu != nil {
 			if m.contextMenu != nil {
@@ -101,7 +101,7 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "ctrl+y":
 		id := m.selectedSessionID()
 		if id == "" {
@@ -119,7 +119,7 @@ func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "g":
 		m.viewport.GotoTop()
 		m.pauseFollow(true)
@@ -145,7 +145,7 @@ func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "ctrl+n":
 		m.enterNewSession()
 		return true, nil
@@ -184,7 +184,7 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 }
 
 func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "r":
 		m.setStatusMessage("refreshing")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(true))
@@ -232,7 +232,7 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case "1":
 		if m.notesPanelOpen {
 			return true, m.toggleNotesFilterScope(types.NoteScopeWorkspace)
@@ -272,7 +272,7 @@ func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceSelectionKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch msg.String() {
+	switch m.keyString(msg) {
 	case " ", "space":
 		if m.toggleSelection() {
 			count := 0

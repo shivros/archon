@@ -1,5 +1,7 @@
 package app
 
+import "strings"
+
 type HotkeyContext int
 
 const (
@@ -17,6 +19,7 @@ const (
 
 type Hotkey struct {
 	Key      string
+	Command  string
 	Label    string
 	Context  HotkeyContext
 	Priority int
@@ -28,43 +31,43 @@ type HotkeyResolver interface {
 
 func DefaultHotkeys() []Hotkey {
 	return []Hotkey{
-		{Key: "ctrl+b", Label: "sidebar", Context: HotkeyGlobal, Priority: 10},
-		{Key: "ctrl+o", Label: "notes panel", Context: HotkeyGlobal, Priority: 10},
-		{Key: "m", Label: "menu", Context: HotkeyGlobal, Priority: 11},
-		{Key: "q", Label: "quit", Context: HotkeyGlobal, Priority: 90},
-		{Key: "a", Label: "add workspace", Context: HotkeySidebar, Priority: 20},
-		{Key: "t", Label: "add worktree", Context: HotkeySidebar, Priority: 21},
-		{Key: "enter", Label: "chat", Context: HotkeySidebar, Priority: 22},
-		{Key: "c", Label: "compose", Context: HotkeySidebar, Priority: 23},
-		{Key: "ctrl+n", Label: "new session", Context: HotkeySidebar, Priority: 24},
-		{Key: "O", Label: "notes", Context: HotkeySidebar, Priority: 25},
+		{Key: "ctrl+b", Command: KeyCommandToggleSidebar, Label: "sidebar", Context: HotkeyGlobal, Priority: 10},
+		{Key: "ctrl+o", Command: KeyCommandToggleNotesPanel, Label: "notes panel", Context: HotkeyGlobal, Priority: 10},
+		{Key: "m", Command: KeyCommandMenu, Label: "menu", Context: HotkeyGlobal, Priority: 11},
+		{Key: "q", Command: KeyCommandQuit, Label: "quit", Context: HotkeyGlobal, Priority: 90},
+		{Key: "a", Command: KeyCommandAddWorkspace, Label: "add workspace", Context: HotkeySidebar, Priority: 20},
+		{Key: "t", Command: KeyCommandAddWorktree, Label: "add worktree", Context: HotkeySidebar, Priority: 21},
+		{Key: "enter", Command: KeyCommandOpenChat, Label: "chat", Context: HotkeySidebar, Priority: 22},
+		{Key: "c", Command: KeyCommandCompose, Label: "compose", Context: HotkeySidebar, Priority: 23},
+		{Key: "ctrl+n", Command: KeyCommandNewSession, Label: "new session", Context: HotkeySidebar, Priority: 24},
+		{Key: "O", Command: KeyCommandOpenNotes, Label: "notes", Context: HotkeySidebar, Priority: 25},
 		{Key: "1/2/3", Label: "toggle note scope", Context: HotkeySidebar, Priority: 26},
-		{Key: "0", Label: "all note scopes", Context: HotkeySidebar, Priority: 27},
-		{Key: "space", Label: "select", Context: HotkeySidebar, Priority: 30},
-		{Key: "d", Label: "dismiss", Context: HotkeySidebar, Priority: 31},
-		{Key: "u", Label: "undismiss", Context: HotkeySidebar, Priority: 32},
-		{Key: "D", Label: "toggle dismissed", Context: HotkeySidebar, Priority: 33},
-		{Key: "ctrl+y", Label: "copy id", Context: HotkeySidebar, Priority: 34},
-		{Key: "i", Label: "interrupt", Context: HotkeySidebar, Priority: 35},
+		{Key: "0", Command: KeyCommandToggleNotesAll, Label: "all note scopes", Context: HotkeySidebar, Priority: 27},
+		{Key: "space", Command: KeyCommandToggleSelection, Label: "select", Context: HotkeySidebar, Priority: 30},
+		{Key: "d", Command: KeyCommandDismissSession, Label: "dismiss", Context: HotkeySidebar, Priority: 31},
+		{Key: "u", Command: KeyCommandUndismissSession, Label: "undismiss", Context: HotkeySidebar, Priority: 32},
+		{Key: "D", Command: KeyCommandToggleDismissed, Label: "toggle dismissed", Context: HotkeySidebar, Priority: 33},
+		{Key: "ctrl+y", Command: KeyCommandCopySessionID, Label: "copy id", Context: HotkeySidebar, Priority: 34},
+		{Key: "i", Command: KeyCommandInterruptSession, Label: "interrupt", Context: HotkeySidebar, Priority: 35},
 		{Key: "esc", Label: "close", Context: HotkeyContextMenu, Priority: 5},
 		{Key: "enter", Label: "select", Context: HotkeyContextMenu, Priority: 6},
 		{Key: "j/k/↑/↓", Label: "move", Context: HotkeyContextMenu, Priority: 7},
 		{Key: "y/enter", Label: "confirm", Context: HotkeyConfirm, Priority: 5},
 		{Key: "n/esc", Label: "cancel", Context: HotkeyConfirm, Priority: 6},
 		{Key: "h/l/←/→", Label: "switch", Context: HotkeyConfirm, Priority: 7},
-		{Key: "y", Label: "approve", Context: HotkeyApproval, Priority: 5},
-		{Key: "x", Label: "decline", Context: HotkeyApproval, Priority: 6},
+		{Key: "y", Command: KeyCommandApprove, Label: "approve", Context: HotkeyApproval, Priority: 5},
+		{Key: "x", Command: KeyCommandDecline, Label: "decline", Context: HotkeyApproval, Priority: 6},
 		{Key: "j/k/↑/↓", Label: "move", Context: HotkeySidebar, Priority: 40},
-		{Key: "r", Label: "refresh", Context: HotkeySidebar, Priority: 50},
-		{Key: "g/gg", Label: "top", Context: HotkeySidebar, Priority: 52},
-		{Key: "G", Label: "bottom", Context: HotkeySidebar, Priority: 53},
+		{Key: "r", Command: KeyCommandRefresh, Label: "refresh", Context: HotkeySidebar, Priority: 50},
+		{Key: "g/gg", Command: KeyCommandViewportTop, Label: "top", Context: HotkeySidebar, Priority: 52},
+		{Key: "G", Command: KeyCommandViewportBottom, Label: "bottom", Context: HotkeySidebar, Priority: 53},
 		{Key: "{/}", Label: "jump", Context: HotkeySidebar, Priority: 54},
-		{Key: "/", Label: "search", Context: HotkeySidebar, Priority: 55},
+		{Key: "/", Command: KeyCommandOpenSearch, Label: "search", Context: HotkeySidebar, Priority: 55},
 		{Key: "n/N", Label: "next/prev", Context: HotkeySidebar, Priority: 56},
 		{Key: "ctrl+f", Label: "page down", Context: HotkeySidebar, Priority: 57},
 		{Key: "pgup/pgdn", Label: "scroll", Context: HotkeySidebar, Priority: 60},
-		{Key: "e", Label: "toggle reasoning", Context: HotkeySidebar, Priority: 65},
-		{Key: "p", Label: "pause", Context: HotkeySidebar, Priority: 70},
+		{Key: "e", Command: KeyCommandToggleReasoning, Label: "toggle reasoning", Context: HotkeySidebar, Priority: 65},
+		{Key: "p", Command: KeyCommandPauseFollow, Label: "pause", Context: HotkeySidebar, Priority: 70},
 		{Key: "esc", Label: "cancel", Context: HotkeySearch, Priority: 10},
 		{Key: "enter", Label: "search", Context: HotkeySearch, Priority: 11},
 		{Key: "esc", Label: "cancel", Context: HotkeyAddWorkspace, Priority: 10},
@@ -77,10 +80,25 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "j/k/↑/↓", Label: "move", Context: HotkeyPickProvider, Priority: 12},
 		{Key: "esc", Label: "cancel", Context: HotkeyChatInput, Priority: 10},
 		{Key: "enter", Label: "send", Context: HotkeyChatInput, Priority: 11},
-		{Key: "ctrl+y", Label: "copy id", Context: HotkeyChatInput, Priority: 12},
-		{Key: "ctrl+c", Label: "clear", Context: HotkeyChatInput, Priority: 13},
+		{Key: "ctrl+y", Command: KeyCommandCopySessionID, Label: "copy id", Context: HotkeyChatInput, Priority: 12},
+		{Key: "ctrl+c", Command: KeyCommandComposeClearInput, Label: "clear", Context: HotkeyChatInput, Priority: 13},
 		{Key: "↑/↓", Label: "history", Context: HotkeyChatInput, Priority: 14},
 	}
+}
+
+func ResolveHotkeys(hotkeys []Hotkey, bindings *Keybindings) []Hotkey {
+	if len(hotkeys) == 0 {
+		return nil
+	}
+	resolved := make([]Hotkey, len(hotkeys))
+	copy(resolved, hotkeys)
+	for i := range resolved {
+		if strings.TrimSpace(resolved[i].Command) == "" {
+			continue
+		}
+		resolved[i].Key = bindings.KeyFor(resolved[i].Command, resolved[i].Key)
+	}
+	return resolved
 }
 
 type DefaultHotkeyResolver struct{}

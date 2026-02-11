@@ -93,10 +93,6 @@ func runDaemonProcess(background bool) error {
 	if err != nil {
 		return err
 	}
-	keymapPath, err := config.KeymapPath()
-	if err != nil {
-		return err
-	}
 	sessionsMetaPath, err := config.SessionsMetaPath()
 	if err != nil {
 		return err
@@ -115,7 +111,6 @@ func runDaemonProcess(background bool) error {
 	}
 	workspaceStore := store.NewFileWorkspaceStore(workspacesPath)
 	appStateStore := store.NewFileAppStateStore(statePath)
-	keymapStore := store.NewFileKeymapStore(keymapPath)
 	sessionMetaStore := store.NewFileSessionMetaStore(sessionsMetaPath)
 	sessionIndexStore := store.NewFileSessionIndexStore(sessionsIndexPath)
 	approvalStore := store.NewFileApprovalStore(approvalsPath)
@@ -125,17 +120,21 @@ func runDaemonProcess(background bool) error {
 		Worktrees:   workspaceStore,
 		Groups:      workspaceStore,
 		AppState:    appStateStore,
-		Keymap:      keymapStore,
 		SessionMeta: sessionMetaStore,
 		Sessions:    sessionIndexStore,
 		Approvals:   approvalStore,
 		Notes:       noteStore,
 	}
+	coreCfg, err := config.LoadCoreConfig()
+	if err != nil {
+		return err
+	}
+	addr := coreCfg.DaemonAddress()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	d := daemon.New("127.0.0.1:7777", token, buildVersion(), manager, stores)
+	d := daemon.New(addr, token, buildVersion(), manager, stores)
 	return d.Run(ctx)
 }
 

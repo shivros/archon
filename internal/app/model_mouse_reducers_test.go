@@ -219,6 +219,11 @@ func TestMouseReducerTranscriptMoveClickOpensMovePickerInNotesMode(t *testing.T)
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.mode = uiModeNotes
+	m.worktrees["ws1"] = []*types.Worktree{{ID: "wt1", WorkspaceID: "ws1", Name: "feature"}}
+	m.sessions = []*types.Session{
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta["s2"] = &types.SessionMeta{SessionID: "s2", WorkspaceID: "ws1"}
 	m.notes = []*types.Note{
 		{
 			ID:          "n1",

@@ -229,14 +229,12 @@ func newTestStores(t *testing.T) *Stores {
 	base := t.TempDir()
 	workspaces := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
 	state := store.NewFileAppStateStore(filepath.Join(base, "state.json"))
-	keymap := store.NewFileKeymapStore(filepath.Join(base, "keymap.json"))
 	meta := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
 	return &Stores{
 		Workspaces:  workspaces,
 		Worktrees:   workspaces,
 		Groups:      workspaces,
 		AppState:    state,
-		Keymap:      keymap,
 		SessionMeta: meta,
 	}
 }

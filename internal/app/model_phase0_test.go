@@ -283,6 +283,81 @@ func TestPhase0ConsumeCodexTickAcceptsApprovalRequestIDZero(t *testing.T) {
 	}
 }
 
+func TestPhase0ConsumeCodexTickPersistsApprovalWhenActiveStreamTargetMissing(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	items := m.sidebar.Items()
+	for i, item := range items {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkspace {
+			continue
+		}
+		m.sidebar.Select(i)
+		break
+	}
+	if m.selectedSessionID() != "" {
+		t.Fatalf("expected no selected session")
+	}
+	m.pendingSessionKey = "sess:s1"
+	m.setSnapshotBlocks([]ChatBlock{
+		{Role: ChatRoleUser, Text: "user one"},
+		{Role: ChatRoleAgent, Text: "agent one"},
+	})
+
+	requestID := 9
+	events := make(chan types.CodexEvent, 1)
+	events <- types.CodexEvent{
+		ID:     &requestID,
+		Method: "item/commandExecution/requestApproval",
+		Params: []byte(`{"parsedCmd":"echo hi"}`),
+	}
+	close(events)
+
+	m.codexStream.SetStream(events, nil)
+	m.consumeCodexTick()
+
+	if m.pendingApproval == nil || m.pendingApproval.RequestID != 9 {
+		t.Fatalf("expected pending approval request 9, got %#v", m.pendingApproval)
+	}
+	if len(m.sessionApprovals["s1"]) != 1 {
+		t.Fatalf("expected approval to persist for session s1, got %#v", m.sessionApprovals["s1"])
+	}
+	if m.sessionApprovals["s1"][0].RequestID != 9 {
+		t.Fatalf("expected persisted request id 9, got %#v", m.sessionApprovals["s1"])
+	}
+
+	handled, cmd := m.reduceStateMessages(historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "userMessage", "text": "user one"},
+			{"type": "agentMessage", "text": "agent one"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+	blocks := m.currentBlocks()
+	if len(blocks) < 3 {
+		t.Fatalf("expected approval block after history refresh, got %#v", blocks)
+	}
+	found := false
+	for _, block := range blocks {
+		if block.Role == ChatRoleApproval && block.RequestID == 9 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected approval block for request 9 in %#v", blocks)
+	}
+}
+
 func TestPhase0ApprovalsMsgAddsApprovalBlock(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
