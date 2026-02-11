@@ -153,13 +153,30 @@ func (a *API) Worktrees(w http.ResponseWriter, r *http.Request, workspaceID stri
 			writeJSON(w, http.StatusCreated, wt)
 			return
 		default:
-			if r.Method == http.MethodDelete {
-				worktreeID := parts[2]
+			worktreeID := parts[2]
+			switch r.Method {
+			case http.MethodPatch:
+				var req types.Worktree
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+					return
+				}
+				wt, err := service.UpdateWorktree(r.Context(), workspaceID, worktreeID, &req)
+				if err != nil {
+					writeServiceError(w, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, wt)
+				return
+			case http.MethodDelete:
 				if err := service.DeleteWorktree(r.Context(), workspaceID, worktreeID); err != nil {
 					writeServiceError(w, err)
 					return
 				}
 				writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+				return
+			default:
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 				return
 			}
 		}

@@ -9,6 +9,7 @@ type SessionMeta struct {
 	Title             string                 `json:"title"`
 	TitleLocked       bool                   `json:"title_locked,omitempty"`
 	InitialInput      string                 `json:"initial_input"`
+	DismissedAt       *time.Time             `json:"dismissed_at,omitempty"`
 	ThreadID          string                 `json:"thread_id,omitempty"`
 	ProviderSessionID string                 `json:"provider_session_id,omitempty"`
 	LastTurnID        string                 `json:"last_turn_id,omitempty"`

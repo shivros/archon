@@ -106,6 +106,7 @@ func TestNoteMoveSessionOptionsExcludeDismissedAndIncludeWorkspaceWide(t *testin
 	m := NewModel(nil)
 	m.worktrees["ws1"] = []*types.Worktree{{ID: "wt1", WorkspaceID: "ws1", Name: "feature"}}
 	now := time.Now().UTC()
+	dismissedAt := now.Add(-30 * time.Second)
 	m.sessions = []*types.Session{
 		{ID: "s-workspace", Status: types.SessionStatusRunning, CreatedAt: now},
 		{ID: "s-worktree", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
@@ -113,7 +114,7 @@ func TestNoteMoveSessionOptionsExcludeDismissedAndIncludeWorkspaceWide(t *testin
 	}
 	m.sessionMeta["s-workspace"] = &types.SessionMeta{SessionID: "s-workspace", WorkspaceID: "ws1"}
 	m.sessionMeta["s-worktree"] = &types.SessionMeta{SessionID: "s-worktree", WorkspaceID: "ws1", WorktreeID: "wt1"}
-	m.sessionMeta["s-dismissed"] = &types.SessionMeta{SessionID: "s-dismissed", WorkspaceID: "ws1"}
+	m.sessionMeta["s-dismissed"] = &types.SessionMeta{SessionID: "s-dismissed", WorkspaceID: "ws1", DismissedAt: &dismissedAt}
 
 	options := m.noteMoveSessionOptions("ws1")
 	if len(options) != 2 {

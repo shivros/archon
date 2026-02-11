@@ -1,30 +1,21 @@
 package daemon
 
 import (
-	"os"
-	"strconv"
 	"strings"
 
 	"control/internal/types"
 )
 
-const (
-	codexApprovalPolicyEnv = "ARCHON_CODEX_APPROVAL_POLICY"
-	codexSandboxPolicyEnv  = "ARCHON_CODEX_SANDBOX_POLICY"
-	codexNetworkAccessEnv  = "ARCHON_CODEX_NETWORK_ACCESS"
-)
-
-func codexTurnOptionsFromEnv() map[string]any {
+func codexTurnOptionsFromConfig() map[string]any {
+	cfg := loadCoreConfigOrDefault()
 	opts := map[string]any{}
-	if policy := strings.TrimSpace(os.Getenv(codexApprovalPolicyEnv)); policy != "" {
+	if policy := cfg.CodexApprovalPolicy(); policy != "" {
 		opts["approvalPolicy"] = policy
 	}
-	if sandbox := strings.TrimSpace(os.Getenv(codexSandboxPolicyEnv)); sandbox != "" {
+	if sandbox := cfg.CodexSandboxPolicy(); sandbox != "" {
 		policy := map[string]any{"type": codexSandboxTurnType(sandbox)}
-		if raw := strings.TrimSpace(os.Getenv(codexNetworkAccessEnv)); raw != "" {
-			if val, err := strconv.ParseBool(raw); err == nil {
-				policy["networkAccess"] = val
-			}
+		if val, ok := cfg.CodexNetworkAccess(); ok {
+			policy["networkAccess"] = val
 		}
 		opts["sandboxPolicy"] = policy
 	}
@@ -34,12 +25,13 @@ func codexTurnOptionsFromEnv() map[string]any {
 	return opts
 }
 
-func codexThreadOptionsFromEnv() map[string]any {
+func codexThreadOptionsFromConfig() map[string]any {
+	cfg := loadCoreConfigOrDefault()
 	opts := map[string]any{}
-	if policy := strings.TrimSpace(os.Getenv(codexApprovalPolicyEnv)); policy != "" {
+	if policy := cfg.CodexApprovalPolicy(); policy != "" {
 		opts["approvalPolicy"] = policy
 	}
-	if sandbox := strings.TrimSpace(os.Getenv(codexSandboxPolicyEnv)); sandbox != "" {
+	if sandbox := cfg.CodexSandboxPolicy(); sandbox != "" {
 		opts["sandbox"] = codexSandboxThreadType(sandbox)
 	}
 	if len(opts) == 0 {
@@ -49,11 +41,11 @@ func codexThreadOptionsFromEnv() map[string]any {
 }
 
 func codexTurnOptions(runtimeOptions *types.SessionRuntimeOptions) map[string]any {
-	return mergeOptionMaps(codexTurnOptionsFromEnv(), codexTurnOptionsFromRuntime(runtimeOptions))
+	return mergeOptionMaps(codexTurnOptionsFromConfig(), codexTurnOptionsFromRuntime(runtimeOptions))
 }
 
 func codexThreadOptions(runtimeOptions *types.SessionRuntimeOptions) map[string]any {
-	return mergeOptionMaps(codexThreadOptionsFromEnv(), codexThreadOptionsFromRuntime(runtimeOptions))
+	return mergeOptionMaps(codexThreadOptionsFromConfig(), codexThreadOptionsFromRuntime(runtimeOptions))
 }
 
 func codexTurnOptionsFromRuntime(runtimeOptions *types.SessionRuntimeOptions) map[string]any {

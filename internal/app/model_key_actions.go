@@ -23,7 +23,6 @@ func (m *Model) reducePendingApprovalKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	default:
 		return false, nil
 	}
-	return false, nil
 }
 
 func (m *Model) reduceSidebarArrowKey(msg tea.KeyMsg) (bool, tea.Cmd) {
@@ -78,7 +77,7 @@ func (m *Model) reduceNormalModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch m.keyString(msg) {
-	case "m":
+	case "ctrl+m":
 		if m.menu != nil {
 			if m.contextMenu != nil {
 				m.contextMenu.Close()
@@ -146,6 +145,9 @@ func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch m.keyString(msg) {
+	case "m":
+		m.enterRenameForSelection()
+		return true, nil
 	case "ctrl+n":
 		m.enterNewSession()
 		return true, nil

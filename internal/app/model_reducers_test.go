@@ -130,6 +130,34 @@ func TestWorkspaceEditReducerRenameSessionRequiresSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEditReducerRenameWorktreeEnterReturnsCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameWorktree
+	m.renameWorktreeWorkspaceID = "ws1"
+	m.renameWorktreeID = "wt1"
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Worktree")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle enter")
+	}
+	if cmd == nil {
+		t.Fatalf("expected update worktree command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "renaming worktree" {
+		t.Fatalf("expected renaming status, got %q", m.status)
+	}
+	if m.renameWorktreeWorkspaceID != "" || m.renameWorktreeID != "" {
+		t.Fatalf("expected rename worktree ids to clear")
+	}
+}
+
 func TestAddWorkspaceReducerHandlesNilController(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeAddWorkspace

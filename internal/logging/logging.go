@@ -161,10 +161,6 @@ func ParseLevel(raw string) Level {
 	}
 }
 
-func LevelFromEnv() Level {
-	return ParseLevel(os.Getenv("ARCHON_LOG_LEVEL"))
-}
-
 func NewRequestID() string {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {

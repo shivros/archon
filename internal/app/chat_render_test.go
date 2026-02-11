@@ -221,3 +221,10 @@ func TestRenderChatTextUserStripsANSIStyling(t *testing.T) {
 		t.Fatalf("expected user chat text to omit ANSI sequences, got %q", got)
 	}
 }
+
+func TestRenderChatTextReasoningTrimsLeadingNewlines(t *testing.T) {
+	got := renderChatText(ChatRoleReasoning, "- first\n- second", 80)
+	if strings.HasPrefix(got, "\n") || strings.HasPrefix(got, "\r\n") {
+		t.Fatalf("expected reasoning chat text to trim leading newlines, got %q", got)
+	}
+}

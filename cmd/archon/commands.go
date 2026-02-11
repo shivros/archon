@@ -42,6 +42,7 @@ func defaultCommandWiring(stdout, stderr io.Writer) commandWiring {
 func buildCommands(wiring commandWiring) map[string]commandRunner {
 	return map[string]commandRunner{
 		"daemon": NewDaemonCommand(wiring.stderr, wiring.runDaemon, wiring.killDaemon),
+		"config": NewConfigCommand(wiring.stdout, wiring.stderr),
 		"ps":     NewPSCommand(wiring.stdout, wiring.stderr, wiring.newClient),
 		"start":  NewStartCommand(wiring.stdout, wiring.stderr, wiring.newClient),
 		"kill":   NewKillCommand(wiring.stdout, wiring.stderr, wiring.newClient),

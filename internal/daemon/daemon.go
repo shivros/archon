@@ -44,6 +44,7 @@ type WorkspaceStore interface {
 type WorktreeStore interface {
 	ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error)
 	AddWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
+	UpdateWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
 	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
 }
 
@@ -111,7 +112,8 @@ func New(addr, token, version string, manager *SessionManager, stores *Stores) *
 
 func (d *Daemon) Run(ctx context.Context) error {
 	if d.logger == nil {
-		d.logger = logging.New(log.Writer(), logging.LevelFromEnv())
+		coreCfg := loadCoreConfigOrDefault()
+		d.logger = logging.New(log.Writer(), logging.ParseLevel(coreCfg.LogLevel()))
 	}
 	api := &API{
 		Version: d.version,
@@ -122,6 +124,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	syncer := NewCodexSyncer(d.stores, d.logger)
 	api.Syncer = syncer
 	api.LiveCodex = NewCodexLiveManager(d.stores, d.logger)
+	approvalSync := NewApprovalResyncService(d.stores, d.logger)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
@@ -136,6 +139,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	go func() {
 		_ = syncer.SyncAll(context.Background())
+		_ = approvalSync.SyncAll(context.Background())
 	}()
 
 	errCh := make(chan error, 1)

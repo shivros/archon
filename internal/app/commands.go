@@ -343,6 +343,15 @@ func deleteWorkspaceCmd(api WorkspaceDeleteAPI, id string) tea.Cmd {
 	}
 }
 
+func updateWorktreeCmd(api WorktreeUpdateAPI, workspaceID, worktreeID, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		worktree, err := api.UpdateWorktree(ctx, workspaceID, worktreeID, &types.Worktree{Name: name})
+		return updateWorktreeMsg{workspaceID: workspaceID, worktree: worktree, err: err}
+	}
+}
+
 func createWorktreeCmd(api WorktreeCreateAPI, workspaceID string, req client.CreateWorktreeRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -396,33 +405,21 @@ func fetchHistoryCmd(api SessionHistoryAPI, id, key string, lines int) tea.Cmd {
 
 func openStreamCmd(api SessionTailStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancelCtx := context.WithCancel(context.Background())
-		ch, cancel, err := api.TailStream(ctx, id, "combined")
-		if err != nil {
-			cancelCtx()
-		}
+		ch, cancel, err := api.TailStream(context.Background(), id, "combined")
 		return streamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
 func openEventsCmd(api SessionEventStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancelCtx := context.WithCancel(context.Background())
-		ch, cancel, err := api.EventStream(ctx, id)
-		if err != nil {
-			cancelCtx()
-		}
+		ch, cancel, err := api.EventStream(context.Background(), id)
 		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
 func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancelCtx := context.WithCancel(context.Background())
-		ch, cancel, err := api.ItemsStream(ctx, id)
-		if err != nil {
-			cancelCtx()
-		}
+		ch, cancel, err := api.ItemsStream(context.Background(), id)
 		return itemsStreamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }

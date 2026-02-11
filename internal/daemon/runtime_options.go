@@ -2,16 +2,12 @@ package daemon
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
 	"control/internal/providers"
 	"control/internal/types"
 )
-
-const codexModelListEnv = "ARCHON_CODEX_MODELS"
-const claudeModelListEnv = "ARCHON_CLAUDE_MODELS"
 
 func providerOptionCatalog(provider string) *types.ProviderOptionCatalog {
 	name := providers.Normalize(provider)
@@ -26,11 +22,9 @@ func providerOptionCatalog(provider string) *types.ProviderOptionCatalog {
 }
 
 func codexProviderOptionCatalog() *types.ProviderOptionCatalog {
-	models := parseCodexModelList()
-	defaultModel := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
-	if defaultModel == "" {
-		defaultModel = defaultCodexModel
-	}
+	coreCfg := loadCoreConfigOrDefault()
+	models := coreCfg.CodexModels()
+	defaultModel := coreCfg.CodexDefaultModel()
 	if !slices.Contains(models, defaultModel) {
 		models = append([]string{defaultModel}, models...)
 	}
@@ -169,47 +163,10 @@ func codexProviderOptionCatalogFromModels(models []codexModelSummary) *types.Pro
 	return base
 }
 
-func parseCodexModelList() []string {
-	raw := strings.TrimSpace(os.Getenv(codexModelListEnv))
-	if raw == "" {
-		return []string{
-			"gpt-5.1-codex",
-			"gpt-5.2-codex",
-			"gpt-5.3-codex",
-			"gpt-5.1-codex-max",
-		}
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	seen := map[string]struct{}{}
-	for _, part := range parts {
-		model := strings.TrimSpace(part)
-		if model == "" {
-			continue
-		}
-		if _, ok := seen[model]; ok {
-			continue
-		}
-		out = append(out, model)
-		seen[model] = struct{}{}
-	}
-	if len(out) == 0 {
-		return []string{
-			"gpt-5.1-codex",
-			"gpt-5.2-codex",
-			"gpt-5.3-codex",
-			"gpt-5.1-codex-max",
-		}
-	}
-	return out
-}
-
 func claudeProviderOptionCatalog() *types.ProviderOptionCatalog {
-	models := parseClaudeModelList()
-	defaultModel := strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_MODEL"))
-	if defaultModel == "" {
-		defaultModel = "sonnet"
-	}
+	coreCfg := loadCoreConfigOrDefault()
+	models := coreCfg.ClaudeModels()
+	defaultModel := coreCfg.ClaudeDefaultModel()
 	if !slices.Contains(models, defaultModel) {
 		models = append([]string{defaultModel}, models...)
 	}
@@ -227,31 +184,6 @@ func claudeProviderOptionCatalog() *types.ProviderOptionCatalog {
 			Version: 1,
 		},
 	}
-}
-
-func parseClaudeModelList() []string {
-	raw := strings.TrimSpace(os.Getenv(claudeModelListEnv))
-	if raw == "" {
-		return []string{"sonnet", "opus"}
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	seen := map[string]struct{}{}
-	for _, part := range parts {
-		model := strings.TrimSpace(part)
-		if model == "" {
-			continue
-		}
-		if _, ok := seen[model]; ok {
-			continue
-		}
-		out = append(out, model)
-		seen[model] = struct{}{}
-	}
-	if len(out) == 0 {
-		return []string{"sonnet", "opus"}
-	}
-	return out
 }
 
 func resolveRuntimeOptions(provider string, base, patch *types.SessionRuntimeOptions, applyDefaults bool) (*types.SessionRuntimeOptions, error) {

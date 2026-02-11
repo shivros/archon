@@ -75,6 +75,7 @@ func (m *Model) noteRequestVisibleUpdate(sessionID string) {
 		return
 	}
 	now := time.Now()
+	m.noteSessionMetaActivity(sessionID, "", now.UTC())
 	m.requestActivity.lastEventAt = now
 	m.requestActivity.lastVisibleAt = now
 	m.requestActivity.visibleCount++

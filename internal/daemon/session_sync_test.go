@@ -197,41 +197,89 @@ func TestMigrateSkipsAlreadyRekeyedSessions(t *testing.T) {
 	}
 }
 
-func TestReviveExitedSessionRecord(t *testing.T) {
-	exitCode := 1
-	exitedAt := time.Now().UTC()
-	record := &types.SessionRecord{
-		Session: &types.Session{
-			ID:       "thread-1",
-			Provider: "codex",
-			Status:   types.SessionStatusExited,
-			PID:      1234,
-			ExitCode: &exitCode,
-			ExitedAt: &exitedAt,
+func TestIsSyncTombstonedStatus(t *testing.T) {
+	if !isSyncTombstonedStatus(types.SessionStatusOrphaned) {
+		t.Fatalf("expected orphaned status to be tombstoned")
+	}
+	for _, status := range []types.SessionStatus{
+		types.SessionStatusCreated,
+		types.SessionStatusStarting,
+		types.SessionStatusRunning,
+		types.SessionStatusInactive,
+		types.SessionStatusExited,
+		types.SessionStatusKilled,
+		types.SessionStatusFailed,
+	} {
+		if isSyncTombstonedStatus(status) {
+			t.Fatalf("expected %s not to be tombstoned", status)
+		}
+	}
+}
+
+func TestShouldSkipSyncOverwrite(t *testing.T) {
+	tests := []struct {
+		name   string
+		record *types.SessionRecord
+		meta   *types.SessionMeta
+		want   bool
+	}{
+		{
+			name: "nil record",
+			want: false,
 		},
-		Source: sessionSourceInternal,
+		{
+			name: "internal record should skip",
+			record: &types.SessionRecord{
+				Session: &types.Session{Status: types.SessionStatusInactive},
+				Source:  sessionSourceInternal,
+			},
+			want: true,
+		},
+		{
+			name: "orphaned codex should skip",
+			record: &types.SessionRecord{
+				Session: &types.Session{Status: types.SessionStatusOrphaned},
+				Source:  sessionSourceCodex,
+			},
+			want: true,
+		},
+		{
+			name: "exited codex should not skip",
+			record: &types.SessionRecord{
+				Session: &types.Session{Status: types.SessionStatusExited},
+				Source:  sessionSourceCodex,
+			},
+			want: false,
+		},
+		{
+			name: "dismissed meta should skip",
+			record: &types.SessionRecord{
+				Session: &types.Session{Status: types.SessionStatusInactive},
+				Source:  sessionSourceCodex,
+			},
+			meta: &types.SessionMeta{
+				SessionID:   "s1",
+				DismissedAt: func() *time.Time { t := time.Now().UTC(); return &t }(),
+			},
+			want: true,
+		},
+		{
+			name: "inactive codex should not skip",
+			record: &types.SessionRecord{
+				Session: &types.Session{Status: types.SessionStatusInactive},
+				Source:  sessionSourceCodex,
+			},
+			want: false,
+		},
 	}
 
-	revived, changed := reviveExitedSessionRecord(record)
-	if !changed {
-		t.Fatalf("expected exited session to be revived")
-	}
-	if revived == nil || revived.Session == nil {
-		t.Fatalf("expected revived record")
-	}
-	if revived.Session.Status != types.SessionStatusInactive {
-		t.Fatalf("expected inactive status, got %s", revived.Session.Status)
-	}
-	if revived.Session.PID != 0 {
-		t.Fatalf("expected pid cleared, got %d", revived.Session.PID)
-	}
-	if revived.Session.ExitedAt != nil {
-		t.Fatalf("expected exited_at cleared")
-	}
-	if revived.Session.ExitCode != nil {
-		t.Fatalf("expected exit_code cleared")
-	}
-	if revived.Source != sessionSourceInternal {
-		t.Fatalf("expected source preserved, got %q", revived.Source)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldSkipSyncOverwrite(tc.record, tc.meta)
+			if got != tc.want {
+				t.Fatalf("shouldSkipSyncOverwrite() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

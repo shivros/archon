@@ -12,9 +12,12 @@ import (
 )
 
 type SidebarController struct {
-	list     list.Model
-	delegate *sidebarDelegate
-	selected map[string]struct{}
+	list                  list.Model
+	delegate              *sidebarDelegate
+	selected              map[string]struct{}
+	viewedSessionActivity map[string]string
+	unreadSessions        map[string]struct{}
+	unreadInitialized     bool
 }
 
 const sidebarScrollbarWidth = 1
@@ -31,9 +34,11 @@ func NewSidebarController() *SidebarController {
 	mlist.SetShowStatusBar(false)
 	mlist.Styles.Title = headerStyle
 	return &SidebarController{
-		list:     mlist,
-		delegate: delegate,
-		selected: map[string]struct{}{},
+		list:                  mlist,
+		delegate:              delegate,
+		selected:              map[string]struct{}{},
+		viewedSessionActivity: map[string]string{},
+		unreadSessions:        map[string]struct{}{},
 	}
 }
 
@@ -52,6 +57,7 @@ func (c *SidebarController) View() string {
 func (c *SidebarController) Update(msg tea.Msg) tea.Cmd {
 	updated, cmd := c.list.Update(msg)
 	c.list = updated
+	c.markSelectedSessionViewed()
 	return cmd
 }
 
@@ -69,10 +75,12 @@ func (c *SidebarController) SetSize(width, height int) {
 
 func (c *SidebarController) CursorDown() {
 	c.list.CursorDown()
+	c.markSelectedSessionViewed()
 }
 
 func (c *SidebarController) CursorUp() {
 	c.list.CursorUp()
+	c.markSelectedSessionViewed()
 }
 
 func (c *SidebarController) Scroll(lines int) bool {
@@ -93,11 +101,13 @@ func (c *SidebarController) Scroll(lines int) bool {
 			c.list.CursorDown()
 		}
 	}
+	c.markSelectedSessionViewed()
 	return true
 }
 
 func (c *SidebarController) Select(idx int) {
 	c.list.Select(idx)
+	c.markSelectedSessionViewed()
 }
 
 func (c *SidebarController) SelectBySessionID(id string) bool {
@@ -111,6 +121,7 @@ func (c *SidebarController) SelectBySessionID(id string) bool {
 		}
 		if entry.session.ID == id {
 			c.list.Select(i)
+			c.markSelectedSessionViewed()
 			return true
 		}
 	}
@@ -163,6 +174,7 @@ func (c *SidebarController) SelectByRow(row int) {
 		target = 0
 	}
 	c.list.Select(target)
+	c.markSelectedSessionViewed()
 }
 
 func (c *SidebarController) ItemAtRow(row int) *sidebarItem {
@@ -271,6 +283,7 @@ func (c *SidebarController) ScrollbarSelect(row int) bool {
 		targetStart = maxStart
 	}
 	c.list.Select(targetStart)
+	c.markSelectedSessionViewed()
 	return true
 }
 
@@ -475,6 +488,7 @@ func (c *SidebarController) AdvanceToNextSession() bool {
 			continue
 		}
 		c.list.Select(i)
+		c.markSelectedSessionViewed()
 		return true
 	}
 	return false
@@ -485,10 +499,12 @@ func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[s
 	selectedKey := c.SelectedKey()
 	c.list.SetItems(items)
 	if len(items) == 0 {
+		c.updateUnreadSessions(sessions, meta)
 		return nil
 	}
 	selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
 	c.list.Select(selectedIdx)
+	c.updateUnreadSessions(sessions, meta)
 	return c.SelectedItem()
 }
 
@@ -510,7 +526,98 @@ func (c *SidebarController) SetProviderBadges(overrides map[string]*types.Provid
 func (c *SidebarController) syncDelegate() {
 	if c.delegate != nil {
 		c.delegate.selectedSessions = c.selected
+		c.delegate.unreadSessions = c.unreadSessions
 	}
+}
+
+func (c *SidebarController) markSelectedSessionViewed() {
+	if c == nil {
+		return
+	}
+	id, marker := c.selectedSessionActivity()
+	if id == "" || marker == "" {
+		return
+	}
+	c.viewedSessionActivity[id] = marker
+	delete(c.unreadSessions, id)
+	c.syncDelegate()
+}
+
+func (c *SidebarController) updateUnreadSessions(sessions []*types.Session, meta map[string]*types.SessionMeta) {
+	if c == nil {
+		return
+	}
+	if c.viewedSessionActivity == nil {
+		c.viewedSessionActivity = map[string]string{}
+	}
+	if c.unreadSessions == nil {
+		c.unreadSessions = map[string]struct{}{}
+	}
+	if !c.unreadInitialized {
+		for _, session := range sessions {
+			if session == nil || session.ID == "" {
+				continue
+			}
+			marker := sessionActivityMarker(meta[session.ID])
+			if marker == "" {
+				continue
+			}
+			c.viewedSessionActivity[session.ID] = marker
+		}
+		c.unreadInitialized = true
+	}
+	selectedID, selectedMarker := c.selectedSessionActivity()
+	present := make(map[string]struct{}, len(sessions))
+	for _, session := range sessions {
+		if session == nil || session.ID == "" {
+			continue
+		}
+		id := session.ID
+		present[id] = struct{}{}
+		marker := sessionActivityMarker(meta[id])
+		if id == selectedID {
+			if selectedMarker != "" {
+				c.viewedSessionActivity[id] = selectedMarker
+			}
+			delete(c.unreadSessions, id)
+			continue
+		}
+		if marker == "" {
+			delete(c.unreadSessions, id)
+			continue
+		}
+		viewed, ok := c.viewedSessionActivity[id]
+		if !ok {
+			// Treat first-seen activity as already viewed to avoid unread noise on initial discovery.
+			c.viewedSessionActivity[id] = marker
+			delete(c.unreadSessions, id)
+			continue
+		}
+		if viewed != marker {
+			c.unreadSessions[id] = struct{}{}
+		} else {
+			delete(c.unreadSessions, id)
+		}
+	}
+	for id := range c.unreadSessions {
+		if _, ok := present[id]; !ok {
+			delete(c.unreadSessions, id)
+		}
+	}
+	for id := range c.viewedSessionActivity {
+		if _, ok := present[id]; !ok {
+			delete(c.viewedSessionActivity, id)
+		}
+	}
+	c.syncDelegate()
+}
+
+func (c *SidebarController) selectedSessionActivity() (string, string) {
+	item := c.SelectedItem()
+	if item == nil || !item.isSession() || item.session == nil {
+		return "", ""
+	}
+	return item.session.ID, sessionActivityMarker(item.meta)
 }
 
 func selectSidebarIndex(items []list.Item, selectedKey, activeWorkspaceID, activeWorktreeID string) int {

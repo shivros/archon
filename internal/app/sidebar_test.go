@@ -26,8 +26,8 @@ func TestBuildSidebarItemsGroupsSessions(t *testing.T) {
 	}
 
 	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
-	if len(items) != 6 {
-		t.Fatalf("expected 6 items, got %d", len(items))
+	if len(items) != 7 {
+		t.Fatalf("expected 7 items, got %d", len(items))
 	}
 
 	ws1 := items[0].(*sidebarItem)
@@ -53,6 +53,10 @@ func TestBuildSidebarItemsGroupsSessions(t *testing.T) {
 	s4 := items[5].(*sidebarItem)
 	if !s4.isSession() || s4.session.ID != "s4" {
 		t.Fatalf("expected s4 session under unassigned")
+	}
+	s2 := items[6].(*sidebarItem)
+	if !s2.isSession() || s2.session.ID != "s2" {
+		t.Fatalf("expected exited session s2 under unassigned")
 	}
 }
 
@@ -112,11 +116,12 @@ func TestBuildSidebarItemsShowDismissedToggle(t *testing.T) {
 	}
 	sessions := []*types.Session{
 		{ID: "active", Status: types.SessionStatusInactive, CreatedAt: now.Add(-2 * time.Minute)},
-		{ID: "dismissed", Status: types.SessionStatusOrphaned, CreatedAt: now.Add(-1 * time.Minute)},
+		{ID: "dismissed", Status: types.SessionStatusExited, CreatedAt: now.Add(-1 * time.Minute)},
 	}
+	dismissedAt := now.Add(-30 * time.Second)
 	meta := map[string]*types.SessionMeta{
 		"active":    {SessionID: "active", WorkspaceID: "ws1"},
-		"dismissed": {SessionID: "dismissed", WorkspaceID: "ws1"},
+		"dismissed": {SessionID: "dismissed", WorkspaceID: "ws1", DismissedAt: &dismissedAt},
 	}
 
 	hidden := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)

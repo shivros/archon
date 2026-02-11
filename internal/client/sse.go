@@ -12,18 +12,29 @@ import (
 	"sync"
 	"time"
 
+	"control/internal/config"
 	"control/internal/types"
 
 	"log"
 )
 
 func streamDebugEnabled() bool {
-	return strings.TrimSpace(os.Getenv("ARCHON_STREAM_DEBUG")) == "1"
+	streamDebugOnce.Do(func() {
+		coreCfg, err := config.LoadCoreConfig()
+		if err != nil {
+			streamDebug = false
+			return
+		}
+		streamDebug = coreCfg.StreamDebugEnabled()
+	})
+	return streamDebug
 }
 
 var (
 	streamLogger     *log.Logger
 	streamLoggerOnce sync.Once
+	streamDebug      bool
+	streamDebugOnce  sync.Once
 )
 
 func streamDebugLogger() *log.Logger {

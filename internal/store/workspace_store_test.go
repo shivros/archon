@@ -139,6 +139,18 @@ func TestWorktreeStoreCRUD(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected 1 worktree, got %d", len(list))
 	}
+	time.Sleep(10 * time.Millisecond)
+	wt.Name = "Renamed Worktree"
+	updated, err := store.UpdateWorktree(ctx, ws.ID, wt)
+	if err != nil {
+		t.Fatalf("update worktree: %v", err)
+	}
+	if updated.Name != "Renamed Worktree" {
+		t.Fatalf("expected updated worktree name")
+	}
+	if !updated.UpdatedAt.After(updated.CreatedAt) {
+		t.Fatalf("expected worktree updated_at to advance")
+	}
 
 	if err := store.DeleteWorktree(ctx, ws.ID, wt.ID); err != nil {
 		t.Fatalf("delete worktree: %v", err)

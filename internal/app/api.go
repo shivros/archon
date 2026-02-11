@@ -55,6 +55,10 @@ type WorktreeCreateAPI interface {
 	CreateWorktree(ctx context.Context, workspaceID string, req client.CreateWorktreeRequest) (*types.Worktree, error)
 }
 
+type WorktreeUpdateAPI interface {
+	UpdateWorktree(ctx context.Context, workspaceID, worktreeID string, worktree *types.Worktree) (*types.Worktree, error)
+}
+
 type WorktreeDeleteAPI interface {
 	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
 }
@@ -72,6 +76,7 @@ type WorkspaceAPI interface {
 	AvailableWorktreeListAPI
 	WorktreeAddAPI
 	WorktreeCreateAPI
+	WorktreeUpdateAPI
 	WorktreeDeleteAPI
 }
 
@@ -272,6 +277,10 @@ func (a *ClientAPI) AddWorktree(ctx context.Context, workspaceID string, worktre
 
 func (a *ClientAPI) CreateWorktree(ctx context.Context, workspaceID string, req client.CreateWorktreeRequest) (*types.Worktree, error) {
 	return a.client.CreateWorktree(ctx, workspaceID, req)
+}
+
+func (a *ClientAPI) UpdateWorktree(ctx context.Context, workspaceID, worktreeID string, worktree *types.Worktree) (*types.Worktree, error) {
+	return a.client.UpdateWorktree(ctx, workspaceID, worktreeID, worktree)
 }
 
 func (a *ClientAPI) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {

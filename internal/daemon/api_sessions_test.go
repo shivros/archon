@@ -111,7 +111,7 @@ func TestAPISessionSendUnsupported(t *testing.T) {
 	}
 }
 
-func TestAPISessionExitHidesFromList(t *testing.T) {
+func TestAPISessionExitRemainsVisibleInDefaultList(t *testing.T) {
 	store := storeSessionsIndex(t)
 	now := time.Now().UTC()
 	_, err := store.UpsertRecord(context.Background(), &types.SessionRecord{
@@ -144,8 +144,8 @@ func TestAPISessionExitHidesFromList(t *testing.T) {
 	}
 
 	list = listSessions(t, server)
-	if len(list.Sessions) != 0 {
-		t.Fatalf("expected 0 sessions after exit, got %d", len(list.Sessions))
+	if len(list.Sessions) != 1 {
+		t.Fatalf("expected exited session to remain visible, got %d", len(list.Sessions))
 	}
 }
 
@@ -308,9 +308,10 @@ func TestAPISessionsRefreshSyncError(t *testing.T) {
 }
 
 func TestAPIDismissAndUndismissSession(t *testing.T) {
-	store := storeSessionsIndex(t)
+	sessionStore := storeSessionsIndex(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
 	now := time.Now().UTC()
-	_, err := store.UpsertRecord(context.Background(), &types.SessionRecord{
+	_, err := sessionStore.UpsertRecord(context.Background(), &types.SessionRecord{
 		Session: &types.Session{
 			ID:        "sess-dismiss",
 			Provider:  "codex",
@@ -324,14 +325,21 @@ func TestAPIDismissAndUndismissSession(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	server := newTestServerWithStores(t, nil, &Stores{Sessions: store})
+	server := newTestServerWithStores(t, nil, &Stores{Sessions: sessionStore, SessionMeta: metaStore})
 	defer server.Close()
 
 	dismissSession(t, server, "sess-dismiss")
 
 	got := getSession(t, server, "sess-dismiss")
-	if got.Status != types.SessionStatusOrphaned {
-		t.Fatalf("expected orphaned status after dismiss, got %s", got.Status)
+	if got.Status != types.SessionStatusInactive {
+		t.Fatalf("expected status unchanged after dismiss, got %s", got.Status)
+	}
+	meta, ok, err := metaStore.Get(context.Background(), "sess-dismiss")
+	if err != nil {
+		t.Fatalf("get meta after dismiss: %v", err)
+	}
+	if !ok || meta == nil || meta.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at after dismiss")
 	}
 
 	list := listSessions(t, server)
@@ -347,6 +355,13 @@ func TestAPIDismissAndUndismissSession(t *testing.T) {
 	got = getSession(t, server, "sess-dismiss")
 	if got.Status != types.SessionStatusInactive {
 		t.Fatalf("expected inactive status after undismiss, got %s", got.Status)
+	}
+	meta, ok, err = metaStore.Get(context.Background(), "sess-dismiss")
+	if err != nil {
+		t.Fatalf("get meta after undismiss: %v", err)
+	}
+	if !ok || meta == nil || meta.DismissedAt != nil {
+		t.Fatalf("expected dismissed_at cleared after undismiss")
 	}
 	list = listSessions(t, server)
 	if len(list.Sessions) != 1 || list.Sessions[0].ID != "sess-dismiss" {

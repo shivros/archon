@@ -77,6 +77,11 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		if m.renameInput != nil {
 			bodyText = m.renameInput.View()
 		}
+	case uiModeRenameWorktree:
+		headerText = "Rename Worktree"
+		if m.renameInput != nil {
+			bodyText = m.renameInput.View()
+		}
 	case uiModeRenameSession:
 		headerText = "Rename Session"
 		if m.renameInput != nil {

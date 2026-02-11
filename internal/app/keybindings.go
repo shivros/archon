@@ -12,6 +12,7 @@ import (
 
 const (
 	KeyCommandMenu                 = "ui.menu"
+	KeyCommandRename               = "ui.rename"
 	KeyCommandQuit                 = "ui.quit"
 	KeyCommandToggleSidebar        = "ui.toggleSidebar"
 	KeyCommandToggleNotesPanel     = "ui.toggleNotesPanel"
@@ -53,7 +54,8 @@ const (
 )
 
 var defaultKeybindingByCommand = map[string]string{
-	KeyCommandMenu:                 "m",
+	KeyCommandMenu:                 "ctrl+m",
+	KeyCommandRename:               "m",
 	KeyCommandQuit:                 "q",
 	KeyCommandToggleSidebar:        "ctrl+b",
 	KeyCommandToggleNotesPanel:     "ctrl+o",
@@ -181,6 +183,15 @@ func (k *Keybindings) KeyFor(command, fallback string) string {
 	return fallback
 }
 
+func (k *Keybindings) Bindings() map[string]string {
+	out := make(map[string]string, len(defaultKeybindingByCommand))
+	commands := KnownKeybindingCommands()
+	for _, command := range commands {
+		out[command] = k.KeyFor(command, defaultKeybindingByCommand[command])
+	}
+	return out
+}
+
 func (k *Keybindings) Remap(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -260,4 +271,13 @@ func parseKeybindingOverrides(data []byte) (map[string]string, error) {
 		out[command] = key
 	}
 	return out, nil
+}
+
+func KnownKeybindingCommands() []string {
+	keys := make([]string, 0, len(defaultKeybindingByCommand))
+	for command := range defaultKeybindingByCommand {
+		keys = append(keys, command)
+	}
+	sort.Strings(keys)
+	return keys
 }

@@ -28,7 +28,36 @@ func TestLoadCoreConfigFromTOML(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	content := []byte("[daemon]\naddress = \"http://127.0.0.1:9999/\"\n")
+	content := []byte(`
+[daemon]
+address = "http://127.0.0.1:9999/"
+
+[logging]
+level = "debug"
+
+[debug]
+stream_debug = true
+
+[providers.codex]
+command = "/usr/local/bin/codex"
+default_model = "gpt-5.3-codex"
+models = ["gpt-5.3-codex", "gpt-5.2-codex"]
+approval_policy = "on-request"
+sandbox_policy = "workspace-write"
+network_access = false
+
+[providers.claude]
+command = "/usr/local/bin/claude"
+default_model = "opus"
+models = ["opus", "sonnet"]
+include_partial = true
+
+[providers.opencode]
+command = "/usr/local/bin/opencode"
+
+[providers.gemini]
+command = "/usr/local/bin/gemini"
+`)
 	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -42,6 +71,48 @@ func TestLoadCoreConfigFromTOML(t *testing.T) {
 	}
 	if cfg.DaemonBaseURL() != "http://127.0.0.1:9999" {
 		t.Fatalf("unexpected daemon base url: %q", cfg.DaemonBaseURL())
+	}
+	if got := cfg.LogLevel(); got != "debug" {
+		t.Fatalf("unexpected log level: %q", got)
+	}
+	if !cfg.StreamDebugEnabled() {
+		t.Fatalf("expected stream_debug=true")
+	}
+	if got := cfg.ProviderCommand("codex"); got != "/usr/local/bin/codex" {
+		t.Fatalf("unexpected codex command: %q", got)
+	}
+	if got := cfg.ProviderCommand("claude"); got != "/usr/local/bin/claude" {
+		t.Fatalf("unexpected claude command: %q", got)
+	}
+	if got := cfg.ProviderCommand("opencode"); got != "/usr/local/bin/opencode" {
+		t.Fatalf("unexpected opencode command: %q", got)
+	}
+	if got := cfg.ProviderCommand("gemini"); got != "/usr/local/bin/gemini" {
+		t.Fatalf("unexpected gemini command: %q", got)
+	}
+	if got := cfg.CodexDefaultModel(); got != "gpt-5.3-codex" {
+		t.Fatalf("unexpected codex default model: %q", got)
+	}
+	if got := cfg.ClaudeDefaultModel(); got != "opus" {
+		t.Fatalf("unexpected claude default model: %q", got)
+	}
+	if got := cfg.CodexModels(); len(got) != 2 || got[0] != "gpt-5.3-codex" {
+		t.Fatalf("unexpected codex models: %#v", got)
+	}
+	if got := cfg.ClaudeModels(); len(got) != 2 || got[0] != "opus" {
+		t.Fatalf("unexpected claude models: %#v", got)
+	}
+	if !cfg.ClaudeIncludePartial() {
+		t.Fatalf("expected include_partial=true")
+	}
+	if got := cfg.CodexApprovalPolicy(); got != "on-request" {
+		t.Fatalf("unexpected codex approval policy: %q", got)
+	}
+	if got := cfg.CodexSandboxPolicy(); got != "workspace-write" {
+		t.Fatalf("unexpected codex sandbox policy: %q", got)
+	}
+	if value, ok := cfg.CodexNetworkAccess(); !ok || value {
+		t.Fatalf("unexpected codex network_access: value=%v ok=%v", value, ok)
 	}
 }
 
@@ -65,5 +136,227 @@ func TestUIConfigResolveKeybindingsPath(t *testing.T) {
 	}
 	if want := filepath.Join(home, ".archon", "ui", "keys.json"); path != want {
 		t.Fatalf("unexpected relative path: got=%q want=%q", path, want)
+	}
+}
+
+func TestCoreConfigProviderDefaults(t *testing.T) {
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	cfg, err := LoadCoreConfig()
+	if err != nil {
+		t.Fatalf("LoadCoreConfig: %v", err)
+	}
+	if cfg.CodexDefaultModel() == "" || len(cfg.CodexModels()) == 0 {
+		t.Fatalf("expected codex defaults")
+	}
+	if cfg.ClaudeDefaultModel() == "" || len(cfg.ClaudeModels()) == 0 {
+		t.Fatalf("expected claude defaults")
+	}
+	if _, ok := cfg.CodexNetworkAccess(); ok {
+		t.Fatalf("expected codex network access unset by default")
+	}
+	if got := cfg.LogLevel(); got != "info" {
+		t.Fatalf("expected default log level info, got %q", got)
+	}
+	if cfg.StreamDebugEnabled() {
+		t.Fatalf("expected stream debug disabled by default")
+	}
+}
+
+func TestLoadUIConfigDefaults(t *testing.T) {
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	cfg, err := LoadUIConfig()
+	if err != nil {
+		t.Fatalf("LoadUIConfig: %v", err)
+	}
+	path, err := cfg.ResolveKeybindingsPath()
+	if err != nil {
+		t.Fatalf("ResolveKeybindingsPath: %v", err)
+	}
+	if want := filepath.Join(os.Getenv("HOME"), ".archon", "keybindings.json"); path != want {
+		t.Fatalf("unexpected keybindings path: got=%q want=%q", path, want)
+	}
+}
+
+func TestLoadUIConfigFromTOML(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n")
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadUIConfig()
+	if err != nil {
+		t.Fatalf("LoadUIConfig: %v", err)
+	}
+	path, err := cfg.ResolveKeybindingsPath()
+	if err != nil {
+		t.Fatalf("ResolveKeybindingsPath: %v", err)
+	}
+	if want := filepath.Join(home, "custom-keys.json"); path != want {
+		t.Fatalf("unexpected keybindings path: got=%q want=%q", path, want)
+	}
+}
+
+func TestLoadUIConfigInvalidTOML(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), []byte("[keybindings\npath = \"x\""), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := LoadUIConfig(); err == nil {
+		t.Fatalf("expected invalid TOML error")
+	}
+}
+
+func TestLoadCoreConfigInvalidTOML(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("[daemon\naddress = \"bad\""), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := LoadCoreConfig(); err == nil {
+		t.Fatalf("expected invalid TOML error")
+	}
+}
+
+func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
+	networkAccess := true
+	cfg := CoreConfig{
+		Daemon: CoreDaemonConfig{
+			Address: " https://127.0.0.1:9001/ ",
+		},
+		Logging: CoreLoggingConfig{
+			Level: " debug ",
+		},
+		Debug: CoreDebugConfig{
+			StreamDebug: true,
+		},
+		Providers: CoreProvidersConfig{
+			Codex: CoreCodexProviderConfig{
+				Command:        " codex-bin ",
+				DefaultModel:   " gpt-5.2-codex ",
+				Models:         []string{" gpt-5.2-codex ", "", "gpt-5.2-codex", "gpt-5.3-codex"},
+				ApprovalPolicy: " on-request ",
+				SandboxPolicy:  " workspace-write ",
+				NetworkAccess:  &networkAccess,
+			},
+			Claude: CoreClaudeProviderConfig{
+				Command:      " claude-bin ",
+				DefaultModel: " opus ",
+				Models:       []string{" opus ", "sonnet", "opus"},
+			},
+			OpenCode: CoreCommandProviderConfig{Command: " opencode "},
+			Gemini:   CoreCommandProviderConfig{Command: " gemini "},
+		},
+	}
+
+	if got := cfg.DaemonAddress(); got != "127.0.0.1:9001" {
+		t.Fatalf("unexpected daemon address: %q", got)
+	}
+	if got := cfg.DaemonBaseURL(); got != "http://127.0.0.1:9001" {
+		t.Fatalf("unexpected daemon base url: %q", got)
+	}
+	if got := cfg.LogLevel(); got != "debug" {
+		t.Fatalf("unexpected log level: %q", got)
+	}
+	if !cfg.StreamDebugEnabled() {
+		t.Fatalf("expected stream debug to be enabled")
+	}
+	if got := cfg.ProviderCommand("  CODEX "); got != "codex-bin" {
+		t.Fatalf("unexpected codex command: %q", got)
+	}
+	if got := cfg.ProviderCommand("claude"); got != "claude-bin" {
+		t.Fatalf("unexpected claude command: %q", got)
+	}
+	if got := cfg.ProviderCommand("opencode"); got != "opencode" {
+		t.Fatalf("unexpected opencode command: %q", got)
+	}
+	if got := cfg.ProviderCommand("gemini"); got != "gemini" {
+		t.Fatalf("unexpected gemini command: %q", got)
+	}
+	if got := cfg.ProviderCommand("unknown"); got != "" {
+		t.Fatalf("unexpected unknown provider command: %q", got)
+	}
+	if got := cfg.CodexDefaultModel(); got != "gpt-5.2-codex" {
+		t.Fatalf("unexpected codex default model: %q", got)
+	}
+	if got := cfg.ClaudeDefaultModel(); got != "opus" {
+		t.Fatalf("unexpected claude default model: %q", got)
+	}
+	if got := cfg.CodexModels(); len(got) != 2 || got[0] != "gpt-5.2-codex" || got[1] != "gpt-5.3-codex" {
+		t.Fatalf("unexpected codex models: %#v", got)
+	}
+	if got := cfg.ClaudeModels(); len(got) != 2 || got[0] != "opus" || got[1] != "sonnet" {
+		t.Fatalf("unexpected claude models: %#v", got)
+	}
+	if got := cfg.CodexApprovalPolicy(); got != "on-request" {
+		t.Fatalf("unexpected approval policy: %q", got)
+	}
+	if got := cfg.CodexSandboxPolicy(); got != "workspace-write" {
+		t.Fatalf("unexpected sandbox policy: %q", got)
+	}
+	if got, ok := cfg.CodexNetworkAccess(); !ok || !got {
+		t.Fatalf("expected network access true, got value=%v ok=%v", got, ok)
+	}
+}
+
+func TestUIConfigResolveKeybindingsAbsolutePath(t *testing.T) {
+	absolute := filepath.Join(t.TempDir(), "keys.json")
+	cfg := UIConfig{
+		Keybindings: UIKeybindingsConfig{
+			Path: absolute,
+		},
+	}
+	path, err := cfg.ResolveKeybindingsPath()
+	if err != nil {
+		t.Fatalf("ResolveKeybindingsPath: %v", err)
+	}
+	if path != absolute {
+		t.Fatalf("expected absolute path to remain unchanged, got %q", path)
+	}
+}
+
+func TestReadTOMLValidationAndEmptyFile(t *testing.T) {
+	var cfg CoreConfig
+	if err := readTOML("", &cfg); err == nil {
+		t.Fatalf("expected path validation error")
+	}
+
+	path := filepath.Join(t.TempDir(), "empty.toml")
+	if err := os.WriteFile(path, []byte(" \n "), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := readTOML(path, &cfg); err != nil {
+		t.Fatalf("expected blank file to load as default, got %v", err)
+	}
+}
+
+func TestResolveConfigPathValidation(t *testing.T) {
+	if _, err := resolveConfigPath("   "); err == nil {
+		t.Fatalf("expected validation error")
+	}
+}
+
+func TestCoreConfigLogLevelDefaultsWhenBlank(t *testing.T) {
+	cfg := CoreConfig{
+		Logging: CoreLoggingConfig{
+			Level: "   ",
+		},
+	}
+	if got := cfg.LogLevel(); got != "info" {
+		t.Fatalf("expected info default, got %q", got)
 	}
 }

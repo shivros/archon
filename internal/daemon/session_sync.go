@@ -129,27 +129,18 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 				continue
 			}
 			seen[thread.ID] = struct{}{}
+			var existingMeta *types.SessionMeta
+			if meta, ok, err := s.meta.Get(ctx, thread.ID); err == nil && ok {
+				existingMeta = meta
+			}
 			if existing, ok, err := s.sessions.GetRecord(ctx, thread.ID); err == nil && ok && existing != nil && existing.Session != nil {
-				if revived, changed := reviveExitedSessionRecord(existing); changed {
-					if _, err := s.sessions.UpsertRecord(ctx, revived); err != nil {
+				// Tombstoned sessions are user-dismissed and must only be restored
+				// through explicit undismiss; sync should never revive them.
+				// Internal sessions are authoritative and should not be overwritten.
+				if shouldSkipSyncOverwrite(existing, existingMeta) {
+					if err := s.upsertSyncedMeta(ctx, thread, workspaceID, worktreeID, time.Now().UTC()); err != nil {
 						return err
 					}
-					existing = revived
-				}
-				// If a re-keyed internal session already owns this thread ID,
-				// only refresh syncer-owned metadata; don't overwrite the record.
-				if existing.Source == sessionSourceInternal {
-					lastActive := time.Unix(thread.UpdatedAt, 0).UTC()
-					if thread.UpdatedAt == 0 {
-						lastActive = time.Now().UTC()
-					}
-					_, _ = s.meta.Upsert(ctx, &types.SessionMeta{
-						SessionID:    thread.ID,
-						WorkspaceID:  workspaceID,
-						WorktreeID:   worktreeID,
-						ThreadID:     thread.ID,
-						LastActiveAt: &lastActive,
-					})
 					continue
 				}
 			}
@@ -159,7 +150,7 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 			}
 			title := sanitizeTitle(thread.Preview)
 			titleLocked := false
-			if existingMeta, ok, err := s.meta.Get(ctx, thread.ID); err == nil && ok && existingMeta != nil && existingMeta.TitleLocked && strings.TrimSpace(existingMeta.Title) != "" {
+			if existingMeta != nil && existingMeta.TitleLocked && strings.TrimSpace(existingMeta.Title) != "" {
 				title = existingMeta.Title
 				titleLocked = true
 			}
@@ -183,10 +174,7 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 			if err != nil {
 				return err
 			}
-			lastActive := time.Unix(thread.UpdatedAt, 0).UTC()
-			if thread.UpdatedAt == 0 {
-				lastActive = createdAt
-			}
+			lastActive := syncThreadLastActive(thread, createdAt)
 			meta := &types.SessionMeta{
 				SessionID:    thread.ID,
 				WorkspaceID:  workspaceID,
@@ -250,22 +238,46 @@ func (s *CodexSyncer) removeStale(ctx context.Context, workspaceID, worktreeID s
 
 var ErrCodexSyncUnavailable = errors.New("codex sync unavailable")
 
-func reviveExitedSessionRecord(record *types.SessionRecord) (*types.SessionRecord, bool) {
+func syncThreadLastActive(thread codexThreadSummary, fallback time.Time) time.Time {
+	lastActive := time.Unix(thread.UpdatedAt, 0).UTC()
+	if thread.UpdatedAt == 0 {
+		lastActive = fallback
+	}
+	return lastActive
+}
+
+func (s *CodexSyncer) upsertSyncedMeta(ctx context.Context, thread codexThreadSummary, workspaceID, worktreeID string, fallback time.Time) error {
+	lastActive := syncThreadLastActive(thread, fallback)
+	_, err := s.meta.Upsert(ctx, &types.SessionMeta{
+		SessionID:    thread.ID,
+		WorkspaceID:  workspaceID,
+		WorktreeID:   worktreeID,
+		ThreadID:     thread.ID,
+		LastActiveAt: &lastActive,
+	})
+	return err
+}
+
+func isSyncTombstonedStatus(status types.SessionStatus) bool {
+	switch status {
+	case types.SessionStatusOrphaned:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldSkipSyncOverwrite(record *types.SessionRecord, meta *types.SessionMeta) bool {
 	if record == nil || record.Session == nil {
-		return nil, false
+		return false
 	}
-	if record.Session.Status != types.SessionStatusExited {
-		return record, false
+	if meta != nil && meta.DismissedAt != nil {
+		return true
 	}
-	revived := *record.Session
-	revived.Status = types.SessionStatusInactive
-	revived.PID = 0
-	revived.ExitedAt = nil
-	revived.ExitCode = nil
-	return &types.SessionRecord{
-		Session: &revived,
-		Source:  record.Source,
-	}, true
+	if isSyncTombstonedStatus(record.Session.Status) {
+		return true
+	}
+	return strings.TrimSpace(record.Source) == sessionSourceInternal
 }
 
 func pathMatchesWorkspace(cwd, root string) bool {

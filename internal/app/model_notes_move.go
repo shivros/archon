@@ -510,6 +510,9 @@ func (m *Model) noteMoveSessionOptions(workspaceID string) []selectOption {
 			continue
 		}
 		meta := m.sessionMeta[sessionID]
+		if isDismissedSession(session, meta) {
+			continue
+		}
 		if meta == nil || strings.TrimSpace(meta.WorkspaceID) != workspaceID {
 			continue
 		}

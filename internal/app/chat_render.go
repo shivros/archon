@@ -864,6 +864,9 @@ func reasoningPreviewText(text string, maxLines int, maxChars int) (string, bool
 
 func renderChatText(role ChatRole, text string, width int) string {
 	rendered := renderMarkdown(text, width)
+	if role == ChatRoleReasoning {
+		return strings.TrimLeft(rendered, "\r\n")
+	}
 	if role == ChatRoleUser {
 		// Keep markdown layout but remove ANSI styling so the user bubble background
 		// remains uniform under the text glyphs.

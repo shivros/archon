@@ -127,7 +127,7 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 			args = append(args, "--permission-mode", mode)
 		}
 	}
-	if strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_INCLUDE_PARTIAL")) == "1" {
+	if loadCoreConfigOrDefault().ClaudeIncludePartial() {
 		args = append(args, "--include-partial-messages")
 	}
 	sessionID := r.getSessionID()

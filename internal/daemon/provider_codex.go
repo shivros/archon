@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	defaultCodexModel = "gpt-5.1-codex"
-	codexInitTimeout  = 5 * time.Second
+	codexInitTimeout = 5 * time.Second
 )
 
 type codexProvider struct {
@@ -30,10 +29,7 @@ func newCodexProvider(cmdName string) (Provider, error) {
 	if strings.TrimSpace(cmdName) == "" {
 		return nil, errors.New("command name is required")
 	}
-	model := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
-	if model == "" {
-		model = defaultCodexModel
-	}
+	model := loadCoreConfigOrDefault().CodexDefaultModel()
 	return &codexProvider{
 		cmdName: cmdName,
 		model:   model,

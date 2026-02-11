@@ -462,8 +462,8 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get session: %v", err)
 			}
-			if got.Status != types.SessionStatusOrphaned {
-				t.Fatalf("expected orphaned status, got %s", got.Status)
+			if got.Status != types.SessionStatusInactive {
+				t.Fatalf("expected status unchanged after dismiss, got %s", got.Status)
 			}
 		})
 	}
@@ -545,8 +545,8 @@ func TestUIDismissBulkSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session 2: %v", err)
 	}
-	if got1.Status != types.SessionStatusOrphaned || got2.Status != types.SessionStatusOrphaned {
-		t.Fatalf("expected orphaned status, got %s/%s", got1.Status, got2.Status)
+	if got1.Status != types.SessionStatusInactive || got2.Status != types.SessionStatusInactive {
+		t.Fatalf("expected status unchanged after dismiss, got %s/%s", got1.Status, got2.Status)
 	}
 }
 

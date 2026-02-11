@@ -383,6 +383,9 @@ func (m *Model) reduceNotesPanelLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 		}
 		return true
 	}
+	if m.deleteNotesPanelByViewportPosition(col, line) {
+		return true
+	}
 	return m.copyNotesPanelByViewportPosition(col, line)
 }
 
@@ -416,6 +419,39 @@ func (m *Model) copyNotesPanelBlockByIndex(index int) bool {
 		return true
 	}
 	m.copyWithStatus(text, "note copied")
+	return true
+}
+
+func (m *Model) deleteNotesPanelByViewportPosition(col, line int) bool {
+	if col < 0 || line < 0 || len(m.notesPanelBlocks) == 0 || len(m.notesPanelSpans) == 0 {
+		return false
+	}
+	absolute := m.notesPanelViewport.YOffset + line
+	for _, span := range m.notesPanelSpans {
+		if !isNoteRole(span.Role) {
+			continue
+		}
+		if span.DeleteLine != absolute {
+			continue
+		}
+		if span.DeleteStart < 0 || span.DeleteEnd < span.DeleteStart {
+			continue
+		}
+		if col < span.DeleteStart || col > span.DeleteEnd {
+			continue
+		}
+		return m.confirmDeleteNoteByPanelBlockIndex(span.BlockIndex)
+	}
+	return false
+}
+
+func (m *Model) confirmDeleteNoteByPanelBlockIndex(index int) bool {
+	noteID := m.noteIDByPanelBlockIndex(index)
+	if noteID == "" {
+		m.setValidationStatus("select a note to delete")
+		return true
+	}
+	m.confirmDeleteNote(noteID)
 	return true
 }
 

@@ -1,0 +1,138 @@
+package app
+
+import (
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"control/internal/types"
+)
+
+func TestRenameHotkeyRoutesWorkspaceSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected rename hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for entering rename")
+	}
+	if m.mode != uiModeRenameWorkspace {
+		t.Fatalf("expected workspace rename mode, got %v", m.mode)
+	}
+	if m.renameWorkspaceID != "ws1" {
+		t.Fatalf("expected workspace id ws1, got %q", m.renameWorkspaceID)
+	}
+}
+
+func TestRenameHotkeyRoutesWorktreeSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree", Path: "/tmp/ws1/wt1"},
+		},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorktree)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected rename hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for entering rename")
+	}
+	if m.mode != uiModeRenameWorktree {
+		t.Fatalf("expected worktree rename mode, got %v", m.mode)
+	}
+	if m.renameWorktreeID != "wt1" || m.renameWorktreeWorkspaceID != "ws1" {
+		t.Fatalf("expected worktree target ws1/wt1, got %q/%q", m.renameWorktreeWorkspaceID, m.renameWorktreeID)
+	}
+}
+
+func TestRenameHotkeyRoutesSessionSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected rename hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for entering rename")
+	}
+	if m.mode != uiModeRenameSession {
+		t.Fatalf("expected session rename mode, got %v", m.mode)
+	}
+	if m.renameSessionID != "s1" {
+		t.Fatalf("expected session id s1, got %q", m.renameSessionID)
+	}
+}
+
+func TestRenameHotkeyRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected rename hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command when selection is missing")
+	}
+	if m.status != "select an item to rename" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestMenuKeyUsesCtrlMCanonicalBinding(t *testing.T) {
+	m := NewModel(nil)
+	handled, _ := m.reduceMenuAndAppKeys(keyRune('m'))
+	if handled {
+		t.Fatalf("expected plain m to not trigger menu with default bindings")
+	}
+
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandMenu: "m",
+	}))
+	handled, _ = m.reduceMenuAndAppKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected menu override key to be handled")
+	}
+	if m.menu == nil || !m.menu.IsActive() {
+		t.Fatalf("expected menu to open")
+	}
+}
+
+func selectSidebarItemKind(t *testing.T, m *Model, kind sidebarItemKind) {
+	t.Helper()
+	if m == nil || m.sidebar == nil {
+		t.Fatalf("missing sidebar")
+	}
+	for i, item := range m.sidebar.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if entry.kind == kind {
+			m.sidebar.Select(i)
+			return
+		}
+	}
+	t.Fatalf("did not find sidebar item kind %v", kind)
+}
+
+func keyRune(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+}

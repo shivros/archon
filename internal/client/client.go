@@ -282,6 +282,24 @@ func (c *Client) CreateWorktree(ctx context.Context, workspaceID string, req Cre
 	return &resp, nil
 }
 
+func (c *Client) UpdateWorktree(ctx context.Context, workspaceID, worktreeID string, worktree *types.Worktree) (*types.Worktree, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, errors.New("workspace id is required")
+	}
+	if strings.TrimSpace(worktreeID) == "" {
+		return nil, errors.New("worktree id is required")
+	}
+	if worktree == nil {
+		return nil, errors.New("worktree is required")
+	}
+	var resp types.Worktree
+	path := fmt.Sprintf("/v1/workspaces/%s/worktrees/%s", workspaceID, worktreeID)
+	if err := c.doJSON(ctx, http.MethodPatch, path, worktree, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {
 	if strings.TrimSpace(workspaceID) == "" {
 		return errors.New("workspace id is required")

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"control/internal/types"
@@ -170,5 +172,96 @@ func TestResolveRuntimeOptionsValidatesClaudeAccess(t *testing.T) {
 	}, true)
 	if err == nil {
 		t.Fatalf("expected invalid access level to fail")
+	}
+}
+
+func TestProviderOptionCatalogUsesConfigModels(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte(`
+[providers.codex]
+default_model = "gpt-5.3-codex"
+models = ["gpt-5.2-codex"]
+
+[providers.claude]
+default_model = "opus"
+models = ["sonnet"]
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	codex := providerOptionCatalog("codex")
+	if len(codex.Models) < 2 || codex.Models[0] != "gpt-5.3-codex" {
+		t.Fatalf("expected codex default model injected first, got %#v", codex.Models)
+	}
+	if codex.Defaults.Model != "gpt-5.3-codex" {
+		t.Fatalf("unexpected codex default model: %q", codex.Defaults.Model)
+	}
+
+	claude := providerOptionCatalog("claude")
+	if len(claude.Models) < 2 || claude.Models[0] != "opus" {
+		t.Fatalf("expected claude default model injected first, got %#v", claude.Models)
+	}
+	if claude.Defaults.Model != "opus" {
+		t.Fatalf("unexpected claude default model: %q", claude.Defaults.Model)
+	}
+}
+
+func TestResolveRuntimeOptionsAllowsModelForExecProviderWithoutCatalogModels(t *testing.T) {
+	t.Parallel()
+	options, err := resolveRuntimeOptions("opencode", nil, &types.SessionRuntimeOptions{
+		Model: "made-up-model",
+	}, true)
+	if err != nil {
+		t.Fatalf("resolveRuntimeOptions: %v", err)
+	}
+	if options == nil || options.Model != "made-up-model" {
+		t.Fatalf("expected model to pass through when provider has no catalog models, got %#v", options)
+	}
+}
+
+func TestResolveRuntimeOptionsNormalizesReasoningAndAccess(t *testing.T) {
+	t.Parallel()
+	options, err := resolveRuntimeOptions("codex", nil, &types.SessionRuntimeOptions{
+		Reasoning: "extra-high",
+		Access:    "on-request",
+	}, true)
+	if err != nil {
+		t.Fatalf("resolveRuntimeOptions: %v", err)
+	}
+	if options.Reasoning != types.ReasoningExtraHigh {
+		t.Fatalf("expected extra_high reasoning, got %q", options.Reasoning)
+	}
+	if options.Access != types.AccessOnRequest {
+		t.Fatalf("expected on_request access, got %q", options.Access)
+	}
+}
+
+func TestResolveRuntimeOptionsReturnsNilWhenPatchEmptyAndNoDefaults(t *testing.T) {
+	t.Parallel()
+	options, err := resolveRuntimeOptions("codex", nil, &types.SessionRuntimeOptions{}, false)
+	if err != nil {
+		t.Fatalf("resolveRuntimeOptions: %v", err)
+	}
+	if options != nil {
+		t.Fatalf("expected nil options when nothing set and defaults disabled")
+	}
+}
+
+func TestResolveRuntimeOptionsNormalizesEmptyProviderMap(t *testing.T) {
+	t.Parallel()
+	options, err := resolveRuntimeOptions("codex", nil, &types.SessionRuntimeOptions{
+		Provider: map[string]any{},
+	}, true)
+	if err != nil {
+		t.Fatalf("resolveRuntimeOptions: %v", err)
+	}
+	if options.Provider != nil {
+		t.Fatalf("expected empty provider map to normalize to nil")
 	}
 }

@@ -36,7 +36,7 @@ func TestToggleNotesPanelOpensAndFetchesCurrentScope(t *testing.T) {
 func TestReduceStateMessagesNotesMsgUpdatesNotesPanel(t *testing.T) {
 	m := NewModel(nil)
 	m.notesPanelOpen = true
-	m.resize(120, 40)
+	m.resize(240, 40)
 	scope := noteScopeTarget{Scope: types.NoteScopeSession, SessionID: "s1"}
 	m.setNotesRootScope(scope)
 
@@ -174,6 +174,54 @@ func TestMouseReducerNotesPanelMoveClickOpensMovePicker(t *testing.T) {
 	}
 	if m.mode != uiModePickNoteMoveWorktree {
 		t.Fatalf("expected worktree picker mode, got %v", m.mode)
+	}
+}
+
+func TestMouseReducerNotesPanelDeleteClickOpensConfirm(t *testing.T) {
+	m := NewModel(nil)
+	m.notesPanelOpen = true
+	m.resize(120, 40)
+	m.notes = []*types.Note{
+		{
+			ID:        "n1",
+			Scope:     types.NoteScopeSession,
+			SessionID: "s1",
+			Title:     "delete me",
+		},
+	}
+	m.notesPanelBlocks = []ChatBlock{
+		{ID: "n1", Role: ChatRoleSessionNote, Text: "delete me"},
+	}
+	m.notesPanelViewport.Width = 80
+	m.notesPanelWidth = 80
+	m.renderNotesPanel()
+	if len(m.notesPanelSpans) != 1 {
+		t.Fatalf("expected notes panel spans, got %d", len(m.notesPanelSpans))
+	}
+	span := m.notesPanelSpans[0]
+	if span.DeleteLine < 0 || span.DeleteStart < 0 {
+		t.Fatalf("expected delete hitbox on panel block, got %#v", span)
+	}
+	layout := m.resolveMouseLayout()
+	if !layout.panelVisible {
+		t.Fatalf("expected panel to be visible")
+	}
+	x := layout.panelStart + span.DeleteStart
+	y := span.DeleteLine - m.notesPanelViewport.YOffset + 1
+	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      y,
+	}, layout)
+	if !handled {
+		t.Fatalf("expected panel delete click to be handled")
+	}
+	if m.pendingConfirm.kind != confirmDeleteNote || m.pendingConfirm.noteID != "n1" {
+		t.Fatalf("unexpected pending confirm: %#v", m.pendingConfirm)
+	}
+	if m.confirm == nil || !m.confirm.IsOpen() {
+		t.Fatalf("expected confirm dialog to open")
 	}
 }
 

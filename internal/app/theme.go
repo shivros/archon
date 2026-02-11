@@ -12,6 +12,7 @@ var (
 	worktreeStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("110"))
 	worktreeActiveStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Bold(true)
 	sessionStyle                = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	sessionUnreadStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
 	activeSessionStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("70"))
 	sessionSelectedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("238"))
 	selectedStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("236"))

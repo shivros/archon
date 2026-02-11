@@ -36,11 +36,43 @@ Archon now separates core/daemon config, UI config, and UI keybindings:
 - `~/.archon/ui.toml` (UI config)
 - `~/.archon/keybindings.json` (UI hotkey overrides)
 
+Configuration is file-based:
+
+- `config.toml` controls daemon/core behavior (daemon address, provider defaults, logging/debug settings).
+- `ui.toml` controls UI-level settings.
+- `keybindings.json` overrides UI hotkeys.
+
 Example `config.toml`:
 
 ```toml
 [daemon]
 address = "127.0.0.1:7777"
+
+[logging]
+level = "info" # debug | info | warn | error
+
+[debug]
+stream_debug = false
+
+[providers.codex]
+command = "codex"
+default_model = "gpt-5.1-codex"
+models = ["gpt-5.1-codex", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.1-codex-max"]
+approval_policy = "on-request"
+sandbox_policy = "workspace-write"
+network_access = false
+
+[providers.claude]
+command = "claude"
+default_model = "sonnet"
+models = ["sonnet", "opus"]
+include_partial = false
+
+[providers.opencode]
+command = "opencode"
+
+[providers.gemini]
+command = "gemini"
 ```
 
 Example `ui.toml`:
@@ -58,3 +90,71 @@ Example `keybindings.json` (VS Code-style array):
   { "command": "ui.refresh", "key": "F5" }
 ]
 ```
+
+You can inspect the resolved/effective config at any time:
+
+```bash
+archon config
+```
+
+`archon config` prints configuration to stdout. It does not generate or modify config files.
+
+Useful options:
+
+- `--default`: print built-in defaults (ignores local config files)
+- `--format json|toml`: output format (default: `json`)
+- `--scope core|ui|keybindings|all`: print one scope or multiple scopes (repeatable)
+
+Examples:
+
+```bash
+archon config --scope core
+archon config --scope ui --format toml
+archon config --scope keybindings --default
+archon config --scope core --scope keybindings --format json
+```
+
+Clipboard copy always tries the system clipboard first, then OSC52 as fallback.
+
+## Keybinding Command IDs
+The following command IDs are supported in `keybindings.json`:
+
+- `ui.menu`
+- `ui.quit`
+- `ui.toggleSidebar`
+- `ui.toggleNotesPanel`
+- `ui.copySessionID`
+- `ui.openSearch`
+- `ui.viewportTop`
+- `ui.viewportBottom`
+- `ui.sectionPrev`
+- `ui.sectionNext`
+- `ui.searchPrev`
+- `ui.searchNext`
+- `ui.newSession`
+- `ui.addWorkspace`
+- `ui.addWorktree`
+- `ui.compose`
+- `ui.openNotes`
+- `ui.openChat`
+- `ui.refresh`
+- `ui.killSession`
+- `ui.interruptSession`
+- `ui.dismissSession`
+- `ui.undismissSession`
+- `ui.toggleDismissed`
+- `ui.toggleNotesWorkspace`
+- `ui.toggleNotesWorktree`
+- `ui.toggleNotesSession`
+- `ui.toggleNotesAll`
+- `ui.pauseFollow`
+- `ui.toggleReasoning`
+- `ui.toggleMessageSelect`
+- `ui.toggleSelection`
+- `ui.composeClearInput`
+- `ui.composeModel`
+- `ui.composeReasoning`
+- `ui.composeAccess`
+- `ui.approve`
+- `ui.decline`
+- `ui.notesNew`

@@ -188,6 +188,12 @@ type addWorktreeMsg struct {
 	err         error
 }
 
+type updateWorktreeMsg struct {
+	workspaceID string
+	worktree    *types.Worktree
+	err         error
+}
+
 type worktreeDeletedMsg struct {
 	workspaceID string
 	worktreeID  string

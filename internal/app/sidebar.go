@@ -147,6 +147,7 @@ type sidebarDelegate struct {
 	activeWorkspaceID string
 	activeWorktreeID  string
 	selectedSessions  map[string]struct{}
+	unreadSessions    map[string]struct{}
 	providerBadges    map[string]*types.ProviderBadgeConfig
 }
 
@@ -206,7 +207,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if entry.session != nil && isActiveStatus(entry.session.Status) {
 			indicator = activeDot
 		}
-		if entry.session != nil && isDismissedStatus(entry.session.Status) {
+		if isDismissedSession(entry.session, entry.meta) {
 			indicator = dismissedDot
 		}
 		badgeConfig := resolveProviderBadge(entry.sessionProvider(), d.providerBadges)
@@ -219,7 +220,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if strings.TrimSpace(since) != "" {
 			suffix = fmt.Sprintf(" • %s", since)
 		}
-		if entry.session != nil && isDismissedStatus(entry.session.Status) {
+		if isDismissedSession(entry.session, entry.meta) {
 			suffix += " • dismissed"
 		}
 		available := maxWidth - ansi.StringWidth(prefix) - ansi.StringWidth(suffix)
@@ -229,21 +230,32 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 			title = truncateToWidth(title, available)
 		}
 		main := title + suffix
-		line := prefix + main
-		if ansi.StringWidth(line) > maxWidth {
+		if ansi.StringWidth(prefix)+ansi.StringWidth(main) > maxWidth {
 			mainWidth := maxWidth - ansi.StringWidth(prefix)
 			if mainWidth <= 0 {
-				main = ""
+				title = ""
+				suffix = ""
 			} else {
-				main = truncateToWidth(main, mainWidth)
+				titleWidth := ansi.StringWidth(title)
+				if titleWidth > mainWidth {
+					title = truncateToWidth(title, mainWidth)
+					suffix = ""
+				} else {
+					suffix = truncateToWidth(suffix, mainWidth-titleWidth)
+				}
 			}
 		}
+		isMarkedSelected := entry.session != nil && d.isSelected(entry.session.ID)
 		style := sessionStyle
-		if entry.session != nil && d.isSelected(entry.session.ID) {
+		if isMarkedSelected {
 			style = sessionSelectedStyle
 		}
 		if isSelected {
 			style = selectedStyle
+		}
+		titleStyle := style
+		if entry.session != nil && d.isUnread(entry.session.ID) && !isMarkedSelected && !isSelected {
+			titleStyle = sessionUnreadStyle
 		}
 
 		rendered := style.Render(fmt.Sprintf(" %s ", indicator))
@@ -252,7 +264,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 			rendered += badgeStyle.Render(badgeText)
 			rendered += style.Render(" ")
 		}
-		rendered += style.Render(main)
+		rendered += titleStyle.Render(title)
+		rendered += style.Render(suffix)
 		fmt.Fprint(w, rendered)
 	}
 }
@@ -262,6 +275,14 @@ func (d *sidebarDelegate) isSelected(id string) bool {
 		return false
 	}
 	_, ok := d.selectedSessions[id]
+	return ok
+}
+
+func (d *sidebarDelegate) isUnread(id string) bool {
+	if d == nil || d.unreadSessions == nil {
+		return false
+	}
+	_, ok := d.unreadSessions[id]
 	return ok
 }
 
@@ -333,7 +354,7 @@ func normalizeProviderBadgeOverrides(overrides map[string]*types.ProviderBadgeCo
 }
 
 func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []list.Item {
-	visibleSessions := filterVisibleSessions(sessions, showDismissed)
+	visibleSessions := filterVisibleSessions(sessions, meta, showDismissed)
 	knownWorkspaces := make(map[string]struct{}, len(workspaces))
 	for _, workspace := range workspaces {
 		if workspace == nil {
@@ -441,13 +462,20 @@ func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*ty
 	return items
 }
 
-func filterVisibleSessions(sessions []*types.Session, showDismissed bool) []*types.Session {
+func filterVisibleSessions(sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []*types.Session {
 	out := make([]*types.Session, 0, len(sessions))
 	for _, session := range sessions {
 		if session == nil {
 			continue
 		}
-		if isVisibleStatus(session.Status) || (showDismissed && isDismissedStatus(session.Status)) {
+		dismissed := isDismissedSession(session, meta[session.ID])
+		if dismissed {
+			if showDismissed {
+				out = append(out, session)
+			}
+			continue
+		}
+		if isVisibleStatus(session.Status) {
 			out = append(out, session)
 		}
 	}
@@ -473,20 +501,19 @@ func isActiveStatus(status types.SessionStatus) bool {
 
 func isVisibleStatus(status types.SessionStatus) bool {
 	switch status {
-	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive:
+	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive, types.SessionStatusExited:
 		return true
 	default:
 		return false
 	}
 }
 
-func isDismissedStatus(status types.SessionStatus) bool {
-	switch status {
-	case types.SessionStatusOrphaned, types.SessionStatusExited:
+func isDismissedSession(session *types.Session, meta *types.SessionMeta) bool {
+	if meta != nil && meta.DismissedAt != nil {
 		return true
-	default:
-		return false
 	}
+	// Legacy fallback while orphaned records are being migrated.
+	return session != nil && session.Status == types.SessionStatusOrphaned
 }
 
 func sessionTitle(session *types.Session, meta *types.SessionMeta) string {
@@ -543,6 +570,19 @@ func sessionLastActive(session *types.Session, meta *types.SessionMeta) *time.Ti
 		return &session.CreatedAt
 	}
 	return nil
+}
+
+func sessionActivityMarker(meta *types.SessionMeta) string {
+	if meta == nil {
+		return ""
+	}
+	if turnID := strings.TrimSpace(meta.LastTurnID); turnID != "" {
+		return "turn:" + turnID
+	}
+	if meta.LastActiveAt != nil {
+		return fmt.Sprintf("active:%d", meta.LastActiveAt.UTC().UnixNano())
+	}
+	return ""
 }
 
 func formatSince(last *time.Time) string {

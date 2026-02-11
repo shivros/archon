@@ -166,6 +166,10 @@ func newSessionMetaFile() *sessionMetaFile {
 
 func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) *types.SessionMeta {
 	normalized := *meta
+	clearDismissedAt := normalized.DismissedAt != nil && normalized.DismissedAt.IsZero()
+	if clearDismissedAt {
+		normalized.DismissedAt = nil
+	}
 	if existing != nil {
 		if normalized.Title == "" {
 			normalized.Title = existing.Title
@@ -175,6 +179,10 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		}
 		if normalized.InitialInput == "" {
 			normalized.InitialInput = existing.InitialInput
+		}
+		if !clearDismissedAt && normalized.DismissedAt == nil && existing.DismissedAt != nil {
+			ts := existing.DismissedAt.UTC()
+			normalized.DismissedAt = &ts
 		}
 		if normalized.WorkspaceID == "" {
 			normalized.WorkspaceID = existing.WorkspaceID

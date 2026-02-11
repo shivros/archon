@@ -2,6 +2,8 @@ package app
 
 import (
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -88,21 +90,18 @@ func TestCopyTextToClipboardHelpfulErrorWhenDisplayMissing(t *testing.T) {
 	}
 }
 
-func TestShouldAttemptOSC52RespectsTerminalAndDisableEnv(t *testing.T) {
-	t.Setenv("TERM", "xterm-256color")
-	t.Setenv("ARCHON_DISABLE_OSC52", "")
-	if !shouldAttemptOSC52() {
-		t.Fatalf("expected OSC52 to be enabled with terminal")
+func TestWriteOSC52ClipboardReportsTTYError(t *testing.T) {
+	origOpenTTY := openTTYForWrite
+	t.Cleanup(func() { openTTYForWrite = origOpenTTY })
+	openTTYForWrite = func() (io.WriteCloser, error) {
+		return nil, os.ErrNotExist
 	}
 
-	t.Setenv("ARCHON_DISABLE_OSC52", "true")
-	if shouldAttemptOSC52() {
-		t.Fatalf("expected OSC52 to be disabled by env flag")
+	err := writeOSC52Clipboard("hello")
+	if err == nil {
+		t.Fatalf("expected writeOSC52Clipboard to fail without /dev/tty in test process")
 	}
-
-	t.Setenv("ARCHON_DISABLE_OSC52", "")
-	t.Setenv("TERM", "dumb")
-	if shouldAttemptOSC52() {
-		t.Fatalf("expected OSC52 to be disabled for dumb terminal")
+	if !strings.Contains(err.Error(), "open /dev/tty") {
+		t.Fatalf("expected /dev/tty error, got %q", err.Error())
 	}
 }

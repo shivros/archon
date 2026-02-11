@@ -12,6 +12,7 @@ Usage:
 
 Commands:
   daemon   run background daemon
+  config   print configuration (effective or defaults)
   ps       list sessions
   start    start a session
   kill     kill a session
@@ -29,6 +30,7 @@ Daemon flags:
 
 Examples:
   archon ps
+  archon config --scope core --format toml
   archon start --provider codex --cwd . -- --help
   archon tail <id> --lines 200
 `

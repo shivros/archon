@@ -9,14 +9,12 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 	tests := []struct {
 		name         string
 		runtime      Runtime
-		commandEnv   string
 		candidates   []string
 		capabilities Capabilities
 	}{
 		{
 			name:       "codex",
 			runtime:    RuntimeCodex,
-			commandEnv: "ARCHON_CODEX_CMD",
 			candidates: []string{"codex"},
 			capabilities: Capabilities{
 				SupportsEvents:    true,
@@ -27,7 +25,6 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 		{
 			name:       "claude",
 			runtime:    RuntimeClaude,
-			commandEnv: "ARCHON_CLAUDE_CMD",
 			candidates: []string{"claude"},
 			capabilities: Capabilities{
 				UsesItems: true,
@@ -37,19 +34,16 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 		{
 			name:       "opencode",
 			runtime:    RuntimeExec,
-			commandEnv: "ARCHON_OPENCODE_CMD",
 			candidates: []string{"opencode", "opencode-cli"},
 		},
 		{
 			name:       "gemini",
 			runtime:    RuntimeExec,
-			commandEnv: "ARCHON_GEMINI_CMD",
 			candidates: []string{"gemini"},
 		},
 		{
 			name:       "custom",
 			runtime:    RuntimeCustom,
-			commandEnv: "",
 			candidates: nil,
 		},
 	}
@@ -65,9 +59,6 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			}
 			if def.Runtime != tt.runtime {
 				t.Fatalf("expected runtime %q, got %q", tt.runtime, def.Runtime)
-			}
-			if def.CommandEnv != tt.commandEnv {
-				t.Fatalf("expected command env %q, got %q", tt.commandEnv, def.CommandEnv)
 			}
 			if !reflect.DeepEqual(def.CommandCandidates, tt.candidates) {
 				t.Fatalf("expected candidates %#v, got %#v", tt.candidates, def.CommandCandidates)
@@ -98,5 +89,34 @@ func TestProviderRegistryUnknown(t *testing.T) {
 	}
 	if caps := CapabilitiesFor("unknown-provider"); caps != (Capabilities{}) {
 		t.Fatalf("expected empty capabilities for unknown provider, got %#v", caps)
+	}
+}
+
+func TestProviderRegistryAllReturnsClones(t *testing.T) {
+	defs := All()
+	if len(defs) == 0 {
+		t.Fatalf("expected providers from registry")
+	}
+	defs[0].Name = "changed"
+	if len(defs[0].CommandCandidates) > 0 {
+		defs[0].CommandCandidates[0] = "changed-cmd"
+	}
+
+	original, ok := Lookup("codex")
+	if !ok {
+		t.Fatalf("expected codex definition")
+	}
+	if original.Name != "codex" {
+		t.Fatalf("registry should not be mutated by All() clone edits")
+	}
+	if len(original.CommandCandidates) == 0 || original.CommandCandidates[0] != "codex" {
+		t.Fatalf("command candidates should remain unchanged, got %#v", original.CommandCandidates)
+	}
+}
+
+func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
+	caps := CapabilitiesFor("codex")
+	if !caps.SupportsEvents || !caps.SupportsApprovals || !caps.SupportsInterrupt {
+		t.Fatalf("unexpected codex capabilities: %#v", caps)
 	}
 }

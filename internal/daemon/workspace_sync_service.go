@@ -52,6 +52,15 @@ func (s *WorkspaceSyncService) AddWorktree(ctx context.Context, workspaceID stri
 	return wt, nil
 }
 
+func (s *WorkspaceSyncService) UpdateWorktree(ctx context.Context, workspaceID, worktreeID string, req *types.Worktree) (*types.Worktree, error) {
+	wt, err := s.base.UpdateWorktree(ctx, workspaceID, worktreeID, req)
+	if err != nil {
+		return nil, err
+	}
+	s.syncWorkspace(&types.Workspace{ID: workspaceID})
+	return wt, nil
+}
+
 func (s *WorkspaceSyncService) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {
 	return s.base.DeleteWorktree(ctx, workspaceID, worktreeID)
 }

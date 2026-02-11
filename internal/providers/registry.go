@@ -23,7 +23,6 @@ type Definition struct {
 	Name              string
 	Label             string
 	Runtime           Runtime
-	CommandEnv        string
 	CommandCandidates []string
 	Capabilities      Capabilities
 }
@@ -33,7 +32,6 @@ var registry = []Definition{
 		Name:              "codex",
 		Label:             "codex",
 		Runtime:           RuntimeCodex,
-		CommandEnv:        "ARCHON_CODEX_CMD",
 		CommandCandidates: []string{"codex"},
 		Capabilities: Capabilities{
 			SupportsEvents:    true,
@@ -45,7 +43,6 @@ var registry = []Definition{
 		Name:              "claude",
 		Label:             "claude",
 		Runtime:           RuntimeClaude,
-		CommandEnv:        "ARCHON_CLAUDE_CMD",
 		CommandCandidates: []string{"claude"},
 		Capabilities: Capabilities{
 			UsesItems: true,
@@ -56,21 +53,18 @@ var registry = []Definition{
 		Name:              "opencode",
 		Label:             "opencode",
 		Runtime:           RuntimeExec,
-		CommandEnv:        "ARCHON_OPENCODE_CMD",
 		CommandCandidates: []string{"opencode", "opencode-cli"},
 	},
 	{
 		Name:              "gemini",
 		Label:             "gemini",
 		Runtime:           RuntimeExec,
-		CommandEnv:        "ARCHON_GEMINI_CMD",
 		CommandCandidates: []string{"gemini"},
 	},
 	{
-		Name:       "custom",
-		Label:      "custom",
-		Runtime:    RuntimeCustom,
-		CommandEnv: "",
+		Name:    "custom",
+		Label:   "custom",
+		Runtime: RuntimeCustom,
 	},
 }
 

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 type execProvider struct {
@@ -67,29 +66,9 @@ func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items
 	}, nil
 }
 
-func findCommand(envKey, fallback string) (string, error) {
-	if override := strings.TrimSpace(os.Getenv(envKey)); override != "" {
-		return lookupCommand(override)
-	}
-	return lookupCommand(fallback)
-}
-
 func lookupCommand(cmdName string) (string, error) {
 	if _, err := exec.LookPath(cmdName); err != nil {
 		return "", fmt.Errorf("command not found: %s", cmdName)
 	}
 	return cmdName, nil
-}
-
-func findOpenCodeCommand() (string, error) {
-	if override := strings.TrimSpace(os.Getenv("ARCHON_OPENCODE_CMD")); override != "" {
-		return lookupCommand(override)
-	}
-	if _, err := exec.LookPath("opencode"); err == nil {
-		return "opencode", nil
-	}
-	if _, err := exec.LookPath("opencode-cli"); err == nil {
-		return "opencode-cli", nil
-	}
-	return "", errors.New("command not found: opencode or opencode-cli")
 }

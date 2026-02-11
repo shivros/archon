@@ -14,12 +14,13 @@ import (
 )
 
 type SessionService struct {
-	manager     *SessionManager
-	stores      *Stores
-	live        *CodexLiveManager
-	logger      logging.Logger
-	adapters    *conversationAdapterRegistry
-	migrateOnce sync.Once
+	manager      *SessionManager
+	stores       *Stores
+	live         *CodexLiveManager
+	logger       logging.Logger
+	adapters     *conversationAdapterRegistry
+	approvalSync *ApprovalResyncService
+	migrateOnce  sync.Once
 }
 
 func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger) *SessionService {
@@ -27,11 +28,12 @@ func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveM
 		logger = logging.Nop()
 	}
 	return &SessionService{
-		manager:  manager,
-		stores:   stores,
-		live:     live,
-		logger:   logger,
-		adapters: newConversationAdapterRegistry(),
+		manager:      manager,
+		stores:       stores,
+		live:         live,
+		logger:       logger,
+		adapters:     newConversationAdapterRegistry(),
+		approvalSync: NewApprovalResyncService(stores, logger),
 	}
 }
 
@@ -49,7 +51,10 @@ func (s *SessionService) ListWithMetaIncludingDismissed(ctx context.Context) ([]
 }
 
 func (s *SessionService) listWithMeta(ctx context.Context, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
-	s.migrateOnce.Do(func() { s.migrateCodexDualEntries(ctx) })
+	s.migrateOnce.Do(func() {
+		s.migrateCodexDualEntries(ctx)
+		s.migrateLegacyDismissedSessions(ctx)
+	})
 
 	sessionMap := make(map[string]*types.Session)
 	sourceByID := make(map[string]string)
@@ -214,14 +219,68 @@ func (s *SessionService) migrateCodexDualEntries(ctx context.Context) {
 	}
 }
 
+// migrateLegacyDismissedSessions migrates older "dismissed as orphaned status"
+// records to metadata-driven dismissal so runtime status can remain independent.
+func (s *SessionService) migrateLegacyDismissedSessions(ctx context.Context) {
+	if s.stores == nil || s.stores.Sessions == nil || s.stores.SessionMeta == nil {
+		return
+	}
+	records, err := s.stores.Sessions.ListRecords(ctx)
+	if err != nil {
+		return
+	}
+	for _, record := range records {
+		if record == nil || record.Session == nil {
+			continue
+		}
+		if record.Session.Status != types.SessionStatusOrphaned {
+			continue
+		}
+		sessionID := strings.TrimSpace(record.Session.ID)
+		if sessionID == "" {
+			continue
+		}
+		meta, ok, err := s.stores.SessionMeta.Get(ctx, sessionID)
+		if err == nil && ok && meta != nil && meta.DismissedAt == nil {
+			dismissedAt := time.Now().UTC()
+			if record.Session.ExitedAt != nil && !record.Session.ExitedAt.IsZero() {
+				dismissedAt = record.Session.ExitedAt.UTC()
+			}
+			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+				SessionID:   sessionID,
+				DismissedAt: &dismissedAt,
+			})
+		}
+
+		next := *record.Session
+		next.PID = 0
+		next.ExitCode = nil
+		if next.ExitedAt != nil && !next.ExitedAt.IsZero() {
+			next.Status = types.SessionStatusExited
+		} else {
+			next.Status = types.SessionStatusInactive
+			next.ExitedAt = nil
+		}
+		if _, err := s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
+			Session: &next,
+			Source:  record.Source,
+		}); err != nil {
+			continue
+		}
+	}
+}
+
 func dedupeSessionsForList(sessionMap map[string]*types.Session, sourceByID map[string]string, liveIDs map[string]struct{}, metaBySessionID map[string]*types.SessionMeta, includeDismissed bool) []*types.Session {
 	chosenByKey := map[string]*types.Session{}
 	chosenIDByKey := map[string]string{}
 	for id, session := range sessionMap {
-		if session == nil || !isListableStatus(session.Status, includeDismissed) {
+		if session == nil || !isListableStatus(session.Status) {
 			continue
 		}
 		meta := metaBySessionID[id]
+		if !includeDismissed && isSessionDismissed(meta, session.Status) {
+			continue
+		}
 		key := listDedupKey(session, meta)
 		current, ok := chosenByKey[key]
 		if !ok {
@@ -485,6 +544,19 @@ func (s *SessionService) ListApprovals(ctx context.Context, id string) ([]*types
 	if strings.TrimSpace(id) == "" {
 		return nil, invalidError("session id is required", nil)
 	}
+	if s.approvalSync != nil {
+		session, _, err := s.getSessionRecord(ctx, id)
+		if err == nil && session != nil {
+			meta := s.getSessionMeta(ctx, session.ID)
+			if syncErr := s.approvalSync.SyncSession(ctx, session, meta); syncErr != nil && s.logger != nil {
+				s.logger.Warn("approval_resync_session_failed",
+					logging.F("session_id", id),
+					logging.F("provider", session.Provider),
+					logging.F("error", syncErr),
+				)
+			}
+		}
+	}
 	if s.stores == nil || s.stores.Approvals == nil {
 		return []*types.Approval{}, nil
 	}
@@ -667,14 +739,14 @@ func (s *SessionService) Dismiss(ctx context.Context, id string) error {
 			return invalidError("session is active; kill it first", nil)
 		}
 	}
-	copy := *record.Session
 	now := time.Now().UTC()
-	copy.Status = types.SessionStatusOrphaned
-	copy.PID = 0
-	copy.ExitCode = nil
-	copy.ExitedAt = &now
-	record.Session = &copy
-	if _, err := s.stores.Sessions.UpsertRecord(ctx, record); err != nil {
+	if s.stores == nil || s.stores.SessionMeta == nil {
+		return unavailableError("session metadata store not available", nil)
+	}
+	if _, err := s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+		SessionID:   id,
+		DismissedAt: &now,
+	}); err != nil {
 		return unavailableError(err.Error(), err)
 	}
 	return nil
@@ -701,16 +773,15 @@ func (s *SessionService) Undismiss(ctx context.Context, id string) error {
 	if !ok || record == nil || record.Session == nil {
 		return notFoundError("session not found", ErrSessionNotFound)
 	}
-	if record.Session.Status == types.SessionStatusOrphaned || record.Session.Status == types.SessionStatusExited {
-		copy := *record.Session
-		copy.Status = types.SessionStatusInactive
-		copy.PID = 0
-		copy.ExitCode = nil
-		copy.ExitedAt = nil
-		record.Session = &copy
-		if _, err := s.stores.Sessions.UpsertRecord(ctx, record); err != nil {
-			return unavailableError(err.Error(), err)
-		}
+	if s.stores == nil || s.stores.SessionMeta == nil {
+		return unavailableError("session metadata store not available", nil)
+	}
+	clear := time.Time{}
+	if _, err := s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+		SessionID:   id,
+		DismissedAt: &clear,
+	}); err != nil {
+		return unavailableError(err.Error(), err)
 	}
 	return nil
 }
@@ -979,13 +1050,23 @@ func extractTextInput(input []map[string]any) string {
 	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
-func isListableStatus(status types.SessionStatus, includeDismissed bool) bool {
+func isListableStatus(status types.SessionStatus) bool {
 	switch status {
-	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive:
+	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive, types.SessionStatusExited:
 		return true
-	case types.SessionStatusExited, types.SessionStatusOrphaned:
-		return includeDismissed
+	case types.SessionStatusOrphaned:
+		// Legacy status; include only when a migrated record has not been
+		// normalized yet. Current dismissal state should come from metadata.
+		return true
 	default:
 		return false
 	}
+}
+
+func isSessionDismissed(meta *types.SessionMeta, status types.SessionStatus) bool {
+	if meta != nil && meta.DismissedAt != nil {
+		return true
+	}
+	// Legacy fallback while orphaned records are being migrated.
+	return status == types.SessionStatusOrphaned
 }

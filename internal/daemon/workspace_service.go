@@ -165,6 +165,69 @@ func (s *WorkspaceService) AddWorktree(ctx context.Context, workspaceID string, 
 	return wt, nil
 }
 
+func (s *WorkspaceService) UpdateWorktree(ctx context.Context, workspaceID, worktreeID string, req *types.Worktree) (*types.Worktree, error) {
+	if s.worktrees == nil {
+		return nil, unavailableError("worktree store not available", nil)
+	}
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, invalidError("workspace id is required", nil)
+	}
+	if strings.TrimSpace(worktreeID) == "" {
+		return nil, invalidError("worktree id is required", nil)
+	}
+	if req == nil {
+		return nil, invalidError("worktree payload is required", nil)
+	}
+
+	worktrees, err := s.worktrees.ListWorktrees(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, store.ErrWorkspaceNotFound) {
+			return nil, notFoundError("workspace not found", err)
+		}
+		return nil, invalidError(err.Error(), err)
+	}
+	var existing *types.Worktree
+	for _, candidate := range worktrees {
+		if candidate != nil && candidate.ID == worktreeID {
+			existing = candidate
+			break
+		}
+	}
+	if existing == nil {
+		return nil, notFoundError("worktree not found", store.ErrWorktreeNotFound)
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = existing.Name
+	}
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		path = existing.Path
+	}
+	if strings.TrimSpace(req.Path) != "" {
+		if err := validateWorkspacePath(path); err != nil {
+			return nil, invalidError(err.Error(), err)
+		}
+	}
+
+	wt, err := s.worktrees.UpdateWorktree(ctx, workspaceID, &types.Worktree{
+		ID:   worktreeID,
+		Name: name,
+		Path: path,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrWorkspaceNotFound) {
+			return nil, notFoundError("workspace not found", err)
+		}
+		if errors.Is(err, store.ErrWorktreeNotFound) {
+			return nil, notFoundError("worktree not found", err)
+		}
+		return nil, invalidError(err.Error(), err)
+	}
+	return wt, nil
+}
+
 func (s *WorkspaceService) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {
 	if s.worktrees == nil {
 		return unavailableError("worktree store not available", nil)

@@ -42,6 +42,8 @@ const (
 	statusLinePadding         = 1
 	requestStaleRefreshDelay  = 4 * time.Second
 	requestRefreshCooldown    = 3 * time.Second
+	sessionMetaRefreshDelay   = 15 * time.Second
+	sessionMetaSyncDelay      = 2 * time.Minute
 )
 
 type uiMode int
@@ -57,6 +59,7 @@ const (
 	uiModeCompose
 	uiModeSearch
 	uiModeRenameWorkspace
+	uiModeRenameWorktree
 	uiModeRenameSession
 	uiModeEditWorkspaceGroups
 	uiModePickWorkspaceRename
@@ -94,6 +97,8 @@ type Model struct {
 	composeOptionPicker        *SelectPicker
 	noteInput                  *ChatInput
 	renameWorkspaceID          string
+	renameWorktreeWorkspaceID  string
+	renameWorktreeID           string
 	renameSessionID            string
 	editWorkspaceID            string
 	renameGroupID              string
@@ -152,6 +157,10 @@ type Model struct {
 	lastSidebarWheelAt         time.Time
 	pendingSidebarWheel        bool
 	sidebarDragging            bool
+	lastSessionMetaRefreshAt   time.Time
+	lastSessionMetaSyncAt      time.Time
+	sessionMetaRefreshPending  bool
+	sessionMetaSyncPending     bool
 	menu                       *MenuController
 	hotkeys                    *HotkeyRenderer
 	keybindings                *Keybindings
@@ -257,6 +266,7 @@ func NewModel(client *client.Client) Model {
 	loader.Style = lipgloss.NewStyle()
 	keybindings := DefaultKeybindings()
 	hotkeyRenderer := NewHotkeyRenderer(ResolveHotkeys(DefaultHotkeys(), keybindings), DefaultHotkeyResolver{})
+	now := time.Now().UTC()
 
 	return Model{
 		workspaceAPI:               api,
@@ -305,6 +315,8 @@ func NewModel(client *client.Client) Model {
 		sessionApprovals:           map[string][]*ApprovalRequest{},
 		sessionApprovalResolutions: map[string][]*ApprovalResolution{},
 		loader:                     loader,
+		lastSessionMetaRefreshAt:   now,
+		lastSessionMetaSyncAt:      now,
 		hotkeys:                    hotkeyRenderer,
 		keybindings:                keybindings,
 		pendingSends:               map[int]pendingSend{},
@@ -1292,6 +1304,9 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if cmd := m.maybeAutoRefreshHistory(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	if cmd := m.maybeAutoRefreshSessionMeta(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	cmds = append(cmds, m.tickCmd())
 	return tea.Batch(cmds...)
 }
@@ -1436,6 +1451,49 @@ func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
 		opts.workspaceID = m.refreshWorkspaceID()
 	}
 	return fetchSessionsWithMetaCmd(m.sessionAPI, opts)
+}
+
+func (m *Model) maybeAutoRefreshSessionMeta(now time.Time) tea.Cmd {
+	if m == nil || m.sessionAPI == nil {
+		return nil
+	}
+	if m.sessionMetaSyncPending || m.sessionMetaRefreshPending {
+		return nil
+	}
+	if now.Sub(m.lastSessionMetaSyncAt) >= sessionMetaSyncDelay {
+		m.sessionMetaSyncPending = true
+		m.lastSessionMetaSyncAt = now
+		return m.fetchSessionsCmd(true)
+	}
+	if now.Sub(m.lastSessionMetaRefreshAt) >= sessionMetaRefreshDelay {
+		m.sessionMetaRefreshPending = true
+		m.lastSessionMetaRefreshAt = now
+		return m.fetchSessionsCmd(false)
+	}
+	return nil
+}
+
+func (m *Model) noteSessionMetaActivity(sessionID, turnID string, at time.Time) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	if m.sessionMeta == nil {
+		m.sessionMeta = map[string]*types.SessionMeta{}
+	}
+	entry := m.sessionMeta[sessionID]
+	if entry == nil {
+		entry = &types.SessionMeta{SessionID: sessionID}
+		m.sessionMeta[sessionID] = entry
+	}
+	if !at.IsZero() {
+		ts := at.UTC()
+		entry.LastActiveAt = &ts
+	}
+	turnID = strings.TrimSpace(turnID)
+	if turnID != "" {
+		entry.LastTurnID = turnID
+	}
 }
 
 func (m *Model) refreshWorkspaceID() string {
@@ -2555,6 +2613,36 @@ func (m *Model) exitAddWorktree(status string) {
 	}
 }
 
+func (m *Model) enterRenameForSelection() {
+	item := m.selectedItem()
+	if item == nil {
+		m.setValidationStatus("select an item to rename")
+		return
+	}
+	switch item.kind {
+	case sidebarWorkspace:
+		if item.workspace == nil || item.workspace.ID == "" || item.workspace.ID == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace to rename")
+			return
+		}
+		m.enterRenameWorkspace(item.workspace.ID)
+	case sidebarWorktree:
+		if item.worktree == nil || item.worktree.ID == "" || item.worktree.WorkspaceID == "" {
+			m.setValidationStatus("select a worktree to rename")
+			return
+		}
+		m.enterRenameWorktree(item.worktree.WorkspaceID, item.worktree.ID)
+	case sidebarSession:
+		if item.session == nil || item.session.ID == "" {
+			m.setValidationStatus("select a session to rename")
+			return
+		}
+		m.enterRenameSession(item.session.ID)
+	default:
+		m.setValidationStatus("select an item to rename")
+	}
+}
+
 func (m *Model) enterRenameWorkspace(id string) {
 	m.mode = uiModeRenameWorkspace
 	m.renameWorkspaceID = id
@@ -2579,6 +2667,40 @@ func (m *Model) exitRenameWorkspace(status string) {
 		m.renameInput.Blur()
 	}
 	m.renameWorkspaceID = ""
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	if status != "" {
+		m.setStatusMessage(status)
+	}
+}
+
+func (m *Model) enterRenameWorktree(workspaceID, id string) {
+	m.mode = uiModeRenameWorktree
+	m.renameWorktreeWorkspaceID = workspaceID
+	m.renameWorktreeID = id
+	if m.renameInput != nil {
+		name := ""
+		if wt := m.worktreeByID(id); wt != nil {
+			name = wt.Name
+		}
+		m.renameInput.SetValue(name)
+		m.renameInput.Focus()
+	}
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
+	m.setStatusMessage("rename worktree")
+}
+
+func (m *Model) exitRenameWorktree(status string) {
+	m.mode = uiModeNormal
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+		m.renameInput.Blur()
+	}
+	m.renameWorktreeWorkspaceID = ""
+	m.renameWorktreeID = ""
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}

@@ -141,6 +141,26 @@ func TestWorktreeEndpoints(t *testing.T) {
 	if err := json.NewDecoder(wtResp.Body).Decode(&wt); err != nil {
 		t.Fatalf("decode wt: %v", err)
 	}
+	renameBody, _ := json.Marshal(types.Worktree{Name: "Renamed Worktree"})
+	renameReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID+"/worktrees/"+wt.ID, bytes.NewReader(renameBody))
+	renameReq.Header.Set("Authorization", "Bearer token")
+	renameReq.Header.Set("Content-Type", "application/json")
+	renameResp, err := http.DefaultClient.Do(renameReq)
+	if err != nil {
+		t.Fatalf("rename worktree: %v", err)
+	}
+	defer renameResp.Body.Close()
+	if renameResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(renameResp.Body)
+		t.Fatalf("expected 200, got %d: %s", renameResp.StatusCode, string(body))
+	}
+	var renamed types.Worktree
+	if err := json.NewDecoder(renameResp.Body).Decode(&renamed); err != nil {
+		t.Fatalf("decode renamed wt: %v", err)
+	}
+	if renamed.Name != "Renamed Worktree" {
+		t.Fatalf("expected renamed worktree, got %q", renamed.Name)
+	}
 
 	listReq, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workspaces/"+created.ID+"/worktrees", nil)
 	listReq.Header.Set("Authorization", "Bearer token")

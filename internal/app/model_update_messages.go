@@ -100,6 +100,19 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
 		}
 		return true, tea.Batch(cmds...)
+	case updateWorktreeMsg:
+		if msg.err != nil {
+			m.setStatusError("update worktree error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo("worktree updated")
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
+		if msg.workspaceID != "" {
+			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
+		} else {
+			cmds = append(cmds, m.fetchWorktreesForWorkspaces())
+		}
+		return true, tea.Batch(cmds...)
 	case worktreeDeletedMsg:
 		if msg.err != nil {
 			m.setStatusError("delete worktree error: " + msg.err.Error())
@@ -149,6 +162,11 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionsWithMetaMsg:
+		m.sessionMetaRefreshPending = false
+		m.sessionMetaSyncPending = false
+		now := time.Now().UTC()
+		m.lastSessionMetaRefreshAt = now
+		m.lastSessionMetaSyncAt = now
 		if msg.err != nil {
 			m.setBackgroundError("error: " + msg.err.Error())
 			return true, nil
@@ -359,17 +377,25 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.stopRequestActivityFor(msg.id)
 			return true, nil
 		}
+		now := time.Now().UTC()
+		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
+		m.applySidebarItems()
 		m.startRequestActivity(msg.id, m.providerForSessionID(msg.id))
 		m.setStatusInfo("message sent")
 		m.clearPendingSend(msg.token)
+		m.sessionMetaRefreshPending = true
+		m.lastSessionMetaRefreshAt = now
 		provider := m.providerForSessionID(msg.id)
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
-			return true, openItemsCmd(m.sessionAPI, msg.id)
+			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.id))
+			return true, tea.Batch(cmds...)
 		}
 		if provider == "codex" && m.codexStream != nil && !m.codexStream.HasStream() {
-			return true, openEventsCmd(m.sessionAPI, msg.id)
+			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.id))
+			return true, tea.Batch(cmds...)
 		}
-		return true, nil
+		return true, tea.Batch(cmds...)
 	case approvalMsg:
 		if msg.err != nil {
 			m.setStatusError("approval error: " + msg.err.Error())

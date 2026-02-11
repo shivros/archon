@@ -541,33 +541,22 @@ func (m *SessionManager) DismissSession(id string) error {
 			return errors.New("session is active; kill it first")
 		}
 	}
-	now := time.Now().UTC()
-	state.session.Status = types.SessionStatusOrphaned
-	state.session.PID = 0
-	state.session.ExitCode = nil
-	state.session.ExitedAt = &now
 	m.mu.Unlock()
-	m.upsertSessionRecord(state.session, sessionSourceInternal)
+	now := time.Now().UTC()
+	m.upsertSessionDismissedAt(id, &now)
 	return nil
 }
 
 func (m *SessionManager) UndismissSession(id string) error {
 	m.mu.Lock()
-	state, ok := m.sessions[id]
+	_, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
 		return ErrSessionNotFound
 	}
-	if state.session.Status != types.SessionStatusOrphaned && state.session.Status != types.SessionStatusExited {
-		m.mu.Unlock()
-		return nil
-	}
-	state.session.Status = types.SessionStatusInactive
-	state.session.PID = 0
-	state.session.ExitCode = nil
-	state.session.ExitedAt = nil
 	m.mu.Unlock()
-	m.upsertSessionRecord(state.session, sessionSourceInternal)
+	clear := time.Time{}
+	m.upsertSessionDismissedAt(id, &clear)
 	return nil
 }
 
@@ -854,6 +843,24 @@ func (m *SessionManager) upsertSessionThreadID(sessionID, threadID string) {
 	meta := &types.SessionMeta{
 		SessionID: sessionID,
 		ThreadID:  threadID,
+	}
+	_, _ = store.Upsert(context.Background(), meta)
+}
+
+func (m *SessionManager) upsertSessionDismissedAt(sessionID string, dismissedAt *time.Time) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	m.mu.Lock()
+	store := m.metaStore
+	m.mu.Unlock()
+	if store == nil {
+		return
+	}
+	meta := &types.SessionMeta{
+		SessionID:   sessionID,
+		DismissedAt: dismissedAt,
 	}
 	_, _ = store.Upsert(context.Background(), meta)
 }

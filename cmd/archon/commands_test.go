@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -171,6 +174,364 @@ func TestStartCommandRequiresProvider(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider is required") {
 		t.Fatalf("expected provider validation error, got %v", err)
 	}
+}
+
+func TestConfigCommandPrintsEffectiveConfig(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	core := []byte(`
+[daemon]
+address = "127.0.0.1:8899"
+
+[logging]
+level = "debug"
+
+[debug]
+stream_debug = true
+
+[providers.codex]
+default_model = "gpt-5.3-codex"
+models = ["gpt-5.3-codex"]
+approval_policy = "on-request"
+sandbox_policy = "workspace-write"
+network_access = false
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), core, 0o600); err != nil {
+		t.Fatalf("WriteFile config.toml: %v", err)
+	}
+	ui := []byte("[keybindings]\npath = \"custom-keybindings.json\"\n")
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), ui, 0o600); err != nil {
+		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+	keybindings := []byte(`{"ui.toggleSidebar":"alt+b","ui.refresh":"F5"}`)
+	if err := os.WriteFile(filepath.Join(dataDir, "custom-keybindings.json"), keybindings, 0o600); err != nil {
+		t.Fatalf("WriteFile keybindings: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	daemon, _ := payload["daemon"].(map[string]any)
+	if daemon["address"] != "127.0.0.1:8899" {
+		t.Fatalf("unexpected daemon address: %#v", daemon["address"])
+	}
+	if daemon["base_url"] != "http://127.0.0.1:8899" {
+		t.Fatalf("unexpected daemon base_url: %#v", daemon["base_url"])
+	}
+	loggingCfg, _ := payload["logging"].(map[string]any)
+	if loggingCfg["level"] != "debug" {
+		t.Fatalf("unexpected logging level: %#v", loggingCfg["level"])
+	}
+	debugCfg, _ := payload["debug"].(map[string]any)
+	if debugCfg["stream_debug"] != true {
+		t.Fatalf("unexpected stream_debug: %#v", debugCfg["stream_debug"])
+	}
+	providers, _ := payload["providers"].(map[string]any)
+	codex, _ := providers["codex"].(map[string]any)
+	if codex["default_model"] != "gpt-5.3-codex" {
+		t.Fatalf("unexpected codex default model: %#v", codex["default_model"])
+	}
+	if codex["approval_policy"] != "on-request" {
+		t.Fatalf("unexpected codex approval policy: %#v", codex["approval_policy"])
+	}
+	keymap, _ := payload["keybindings"].(map[string]any)
+	if keymap["ui.toggleSidebar"] != "alt+b" {
+		t.Fatalf("unexpected keybinding override: %#v", keymap["ui.toggleSidebar"])
+	}
+}
+
+func TestConfigCommandFailsOnInvalidUIConfig(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), []byte("[keybindings\npath='x'"), 0o600); err != nil {
+		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+
+	cmd := NewConfigCommand(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := cmd.Run(nil); err == nil {
+		t.Fatalf("expected config command to fail on invalid ui.toml")
+	}
+}
+
+func TestConfigCommandFailsOnInvalidKeybindingsJSON(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	ui := []byte("[keybindings]\npath = \"broken.json\"\n")
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), ui, 0o600); err != nil {
+		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "broken.json"), []byte("{bad"), 0o600); err != nil {
+		t.Fatalf("WriteFile keybindings: %v", err)
+	}
+
+	cmd := NewConfigCommand(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := cmd.Run(nil); err == nil {
+		t.Fatalf("expected config command to fail on invalid keybindings json")
+	}
+}
+
+func TestConfigCommandRejectsUnknownFlag(t *testing.T) {
+	cmd := NewConfigCommand(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--unknown"}); err == nil {
+		t.Fatalf("expected unknown flag to fail")
+	}
+}
+
+func TestConfigCommandRejectsInvalidFormat(t *testing.T) {
+	cmd := NewConfigCommand(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--format", "yaml"}); err == nil {
+		t.Fatalf("expected invalid format to fail")
+	}
+}
+
+func TestConfigCommandPrintsTOML(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte("[daemon]\naddress = \"127.0.0.1:7777\"\n")
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile config.toml: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--format", "toml"}); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "[daemon]") || !strings.Contains(out, "address =") || !strings.Contains(out, "127.0.0.1:7777") {
+		t.Fatalf("expected daemon config in toml output, got %q", out)
+	}
+}
+
+func TestConfigCommandDefaultIgnoresInvalidUserFiles(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte("[daemon\naddress='bad'"), 0o600); err != nil {
+		t.Fatalf("WriteFile config.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), []byte("[keybindings\npath='bad'"), 0o600); err != nil {
+		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--default"}); err != nil {
+		t.Fatalf("expected --default to bypass malformed files, got %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	daemon, _ := payload["daemon"].(map[string]any)
+	if daemon["address"] != "127.0.0.1:7777" {
+		t.Fatalf("expected default daemon address, got %#v", daemon["address"])
+	}
+}
+
+func TestConfigCommandScopeCoreSkipsInvalidUI(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), []byte("[keybindings\npath='bad'"), 0o600); err != nil {
+		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--scope", "core"}); err != nil {
+		t.Fatalf("expected core scope to ignore ui parse errors, got %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	if _, ok := payload["daemon"]; !ok {
+		t.Fatalf("expected core daemon output")
+	}
+	if daemon, ok := payload["daemon"].(map[string]any); !ok || daemon["base_url"] != nil {
+		t.Fatalf("expected core-scope daemon output without base_url, got %#v", payload["daemon"])
+	}
+}
+
+func TestConfigCommandScopeUIOnly(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), []byte("[keybindings]\npath=\"keys.json\""), 0o600); err != nil {
+		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--scope", "ui"}); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	keybindings, ok := payload["keybindings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected keybindings object in ui-only output, got %#v", payload["keybindings"])
+	}
+	if path, _ := keybindings["path"].(string); path == "" {
+		t.Fatalf("expected keybindings.path in ui-only output")
+	}
+}
+
+func TestConfigCommandScopeKeybindingsDefault(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--scope", "keybindings", "--default"}); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	if payload["ui.toggleSidebar"] != "ctrl+b" {
+		t.Fatalf("expected top-level keybinding map, got %#v", payload["ui.toggleSidebar"])
+	}
+	if _, ok := payload["keybindings"]; ok {
+		t.Fatalf("did not expect nested keybindings object in keybindings-only output")
+	}
+	if _, ok := payload["keybindings_path"]; ok {
+		t.Fatalf("did not expect keybindings_path metadata in keybindings-only output")
+	}
+}
+
+func TestConfigCommandRejectsInvalidScope(t *testing.T) {
+	cmd := NewConfigCommand(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--scope", "notes"}); err == nil {
+		t.Fatalf("expected invalid scope to fail")
+	}
+}
+
+func TestConfigCommandOmitsUnsetNetworkAccess(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte(`
+[providers.codex]
+default_model = "gpt-5.2-codex"
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile config.toml: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	providersRaw, ok := payload["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("providers payload missing or invalid")
+	}
+	codexRaw, ok := providersRaw["codex"].(map[string]any)
+	if !ok {
+		t.Fatalf("codex payload missing or invalid")
+	}
+	if _, exists := codexRaw["network_access"]; exists {
+		t.Fatalf("expected network_access to be omitted when unset")
+	}
+}
+
+func TestConfigCommandPropagatesEncodeError(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	cmd := NewConfigCommand(errorWriter{}, &bytes.Buffer{})
+	if err := cmd.Run(nil); err == nil {
+		t.Fatalf("expected encoding error")
+	}
+}
+
+func TestBuildCommandsIncludesConfig(t *testing.T) {
+	wiring := commandWiring{
+		stdout:             &bytes.Buffer{},
+		stderr:             &bytes.Buffer{},
+		newClient:          fixedFactory(&fakeCommandClient{}),
+		runDaemon:          func(bool) error { return nil },
+		killDaemon:         func() error { return nil },
+		configureUILogging: func() {},
+		version:            "v-test",
+	}
+	commands := buildCommands(wiring)
+	required := []string{"daemon", "config", "ps", "start", "kill", "tail", "ui"}
+	for _, name := range required {
+		if commands[name] == nil {
+			t.Fatalf("expected %q command to be present", name)
+		}
+	}
+	if _, ok := commands["config"].(*ConfigCommand); !ok {
+		t.Fatalf("expected config command type")
+	}
+}
+
+func TestDefaultCommandWiringUsesStandardStreams(t *testing.T) {
+	wiring := defaultCommandWiring(nil, nil)
+	if wiring.stdout != os.Stdout {
+		t.Fatalf("expected stdout fallback to os.Stdout")
+	}
+	if wiring.stderr != os.Stderr {
+		t.Fatalf("expected stderr fallback to os.Stderr")
+	}
+	if wiring.newClient == nil || wiring.runDaemon == nil || wiring.killDaemon == nil || wiring.configureUILogging == nil {
+		t.Fatalf("expected default wiring to populate dependencies")
+	}
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, fmt.Errorf("write failure")
 }
 
 type fakeCommandClient struct {

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +19,9 @@ const (
 
 var clipboardWriteAll = clipboard.WriteAll
 var clipboardWriteOSC52 = writeOSC52Clipboard
+var openTTYForWrite = func() (io.WriteCloser, error) {
+	return os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+}
 
 func copyTextToClipboard(text string) (clipboardMethod, error) {
 	if err := clipboardWriteAll(text); err == nil {
@@ -44,10 +46,7 @@ func (m *Model) copyWithStatus(text, success string) bool {
 }
 
 func writeOSC52Clipboard(text string) error {
-	if !shouldAttemptOSC52() {
-		return errors.New("OSC52 unavailable for this terminal")
-	}
-	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	tty, err := openTTYForWrite()
 	if err != nil {
 		return fmt.Errorf("open /dev/tty: %w", err)
 	}
@@ -77,19 +76,6 @@ func writeOSC52Sequence(w io.Writer, text string) error {
 		return err
 	}
 	return nil
-}
-
-func shouldAttemptOSC52() bool {
-	disabled := strings.ToLower(strings.TrimSpace(os.Getenv("ARCHON_DISABLE_OSC52")))
-	switch disabled {
-	case "1", "true", "yes", "on":
-		return false
-	}
-	termName := strings.TrimSpace(os.Getenv("TERM"))
-	if termName == "" || strings.EqualFold(termName, "dumb") {
-		return false
-	}
-	return true
 }
 
 func combineClipboardErrors(systemErr, oscErr error) error {

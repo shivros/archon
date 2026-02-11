@@ -143,3 +143,85 @@ func TestSessionServiceListWithMetaNormalizesDetachedActiveSessions(t *testing.T
 		t.Fatalf("expected persisted session status to be inactive, got %s", record.Session.Status)
 	}
 }
+
+func TestSessionServiceListWithMetaKeepsExitedVisible(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+
+	sessionID := "sess-exited-visible"
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        sessionID,
+			Provider:  "codex",
+			Status:    types.SessionStatusExited,
+			CreatedAt: time.Now().UTC(),
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert exited session: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{Sessions: sessionStore}, nil, nil)
+	sessions, _, err := service.ListWithMeta(ctx)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != sessionID {
+		t.Fatalf("expected exited session in default list, got %#v", sessions)
+	}
+}
+
+func TestSessionServiceListWithMetaUsesDismissedMetaFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	sessionID := "sess-dismissed-meta"
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        sessionID,
+			Provider:  "codex",
+			Status:    types.SessionStatusExited,
+			CreatedAt: time.Now().UTC(),
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	dismissedAt := time.Now().UTC().Add(-time.Minute)
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   sessionID,
+		DismissedAt: &dismissedAt,
+	}); err != nil {
+		t.Fatalf("upsert meta: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+
+	defaultList, _, err := service.ListWithMeta(ctx)
+	if err != nil {
+		t.Fatalf("default list: %v", err)
+	}
+	if len(defaultList) != 0 {
+		t.Fatalf("expected dismissed session hidden from default list, got %#v", defaultList)
+	}
+
+	includeDismissedList, _, err := service.ListWithMetaIncludingDismissed(ctx)
+	if err != nil {
+		t.Fatalf("include dismissed list: %v", err)
+	}
+	if len(includeDismissedList) != 1 || includeDismissedList[0].ID != sessionID {
+		t.Fatalf("expected dismissed session in include_dismissed list, got %#v", includeDismissedList)
+	}
+}

@@ -381,6 +381,7 @@ func TestHelperProcess(t *testing.T) {
 	stderrLines := 0
 	var sleepMs int
 	exitCode := 0
+	argsFile := ""
 
 	for _, arg := range args {
 		switch {
@@ -402,7 +403,13 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Sscanf(strings.TrimPrefix(arg, "sleep_ms="), "%d", &sleepMs)
 		case strings.HasPrefix(arg, "exit="):
 			fmt.Sscanf(strings.TrimPrefix(arg, "exit="), "%d", &exitCode)
+		case strings.HasPrefix(arg, "args_file="):
+			argsFile = strings.TrimPrefix(arg, "args_file=")
 		}
+	}
+
+	if strings.TrimSpace(argsFile) != "" {
+		_ = os.WriteFile(argsFile, []byte(strings.Join(args, "\n")), 0o600)
 	}
 
 	for i := 0; i < stdoutLines; i++ {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"control/internal/config"
 	"control/internal/providers"
 )
 
@@ -78,10 +79,12 @@ func resolveProviderCommandName(def providers.Definition, customCmd string) (str
 		}
 		return lookupCommand(customCmd)
 	}
-	if cmd := strings.TrimSpace(def.CommandEnv); cmd != "" {
-		if envVal := strings.TrimSpace(os.Getenv(cmd)); envVal != "" {
-			return lookupCommand(envVal)
-		}
+	coreCfg, err := config.LoadCoreConfig()
+	if err != nil {
+		return "", err
+	}
+	if override := strings.TrimSpace(coreCfg.ProviderCommand(def.Name)); override != "" {
+		return lookupCommand(override)
 	}
 	candidates := def.CommandCandidates
 	if len(candidates) == 0 {

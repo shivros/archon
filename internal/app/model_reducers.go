@@ -39,6 +39,47 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			return true, m.renameInput.Update(keyMsg)
 		}
 		return true, nil
+	case uiModeRenameWorktree:
+		keyMsg, ok := msg.(tea.KeyMsg)
+		if !ok {
+			return true, nil
+		}
+		switch keyMsg.String() {
+		case "esc":
+			m.exitRenameWorktree("rename canceled")
+			return true, nil
+		case "enter":
+			if m.renameInput == nil {
+				return true, nil
+			}
+			name := strings.TrimSpace(m.renameInput.Value())
+			if name == "" {
+				m.setValidationStatus("name is required")
+				return true, nil
+			}
+			worktreeID := m.renameWorktreeID
+			if worktreeID == "" {
+				m.setValidationStatus("no worktree selected")
+				return true, nil
+			}
+			workspaceID := m.renameWorktreeWorkspaceID
+			if workspaceID == "" {
+				if wt := m.worktreeByID(worktreeID); wt != nil {
+					workspaceID = wt.WorkspaceID
+				}
+			}
+			if workspaceID == "" {
+				m.setValidationStatus("no worktree selected")
+				return true, nil
+			}
+			m.renameInput.SetValue("")
+			m.exitRenameWorktree("renaming worktree")
+			return true, updateWorktreeCmd(m.workspaceAPI, workspaceID, worktreeID, name)
+		}
+		if m.renameInput != nil {
+			return true, m.renameInput.Update(keyMsg)
+		}
+		return true, nil
 	case uiModeRenameSession:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {

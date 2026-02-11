@@ -43,7 +43,7 @@ func TestCodexAppServerIntegration(t *testing.T) {
 
 	model := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
 	if model == "" {
-		model = defaultCodexModel
+		model = loadCoreConfigOrDefault().CodexDefaultModel()
 	}
 
 	var threadResult struct {

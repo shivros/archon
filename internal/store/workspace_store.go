@@ -32,6 +32,7 @@ type WorkspaceStore interface {
 type WorktreeStore interface {
 	ListWorktrees(ctx context.Context, workspaceID string) ([]*types.Worktree, error)
 	AddWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
+	UpdateWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error)
 	DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error
 }
 
@@ -380,6 +381,50 @@ func (s *FileWorkspaceStore) AddWorktree(ctx context.Context, workspaceID string
 		}
 	}
 	file.Worktrees = append(file.Worktrees, wt)
+	if err := s.save(file); err != nil {
+		return nil, err
+	}
+	copy := *wt
+	return &copy, nil
+}
+
+func (s *FileWorkspaceStore) UpdateWorktree(ctx context.Context, workspaceID string, worktree *types.Worktree) (*types.Worktree, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	if !workspaceExists(file.Workspaces, workspaceID) {
+		return nil, ErrWorkspaceNotFound
+	}
+
+	wt, err := normalizeWorktree(workspaceID, worktree)
+	if err != nil {
+		return nil, err
+	}
+	for _, existing := range file.Worktrees {
+		if existing.ID == wt.ID {
+			continue
+		}
+		if existing.WorkspaceID == workspaceID && strings.EqualFold(existing.Path, wt.Path) {
+			return nil, errors.New("worktree path already added")
+		}
+	}
+	updated := false
+	for i, existing := range file.Worktrees {
+		if existing.ID == wt.ID && existing.WorkspaceID == workspaceID {
+			wt.CreatedAt = existing.CreatedAt
+			wt.UpdatedAt = time.Now().UTC()
+			file.Worktrees[i] = wt
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		return nil, ErrWorktreeNotFound
+	}
 	if err := s.save(file); err != nil {
 		return nil, err
 	}
