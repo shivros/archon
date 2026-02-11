@@ -10,8 +10,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"control/internal/providers"
 	"control/internal/types"
 )
 
@@ -20,8 +22,33 @@ const (
 	unassignedWorkspaceID  = "__unassigned__"
 	unassignedWorkspaceTag = "Unassigned"
 	activeDot              = "●"
+	dismissedDot           = "x"
 	inactiveDot            = " "
+	defaultBadgeColor      = "245"
 )
+
+var defaultProviderBadges = map[string]types.ProviderBadgeConfig{
+	"codex": {
+		Prefix: "[CDX]",
+		Color:  "15",
+	},
+	"claude": {
+		Prefix: "[CLD]",
+		Color:  "208",
+	},
+	"opencode": {
+		Prefix: "[OPN]",
+		Color:  "39",
+	},
+	"gemini": {
+		Prefix: "[GEM]",
+		Color:  "45",
+	},
+	"custom": {
+		Prefix: "[CST]",
+		Color:  "250",
+	},
+}
 
 type sidebarItemKind int
 
@@ -109,10 +136,18 @@ func (s *sidebarItem) isSession() bool {
 	return s.kind == sidebarSession && s.session != nil
 }
 
+func (s *sidebarItem) sessionProvider() string {
+	if s == nil || s.session == nil {
+		return ""
+	}
+	return s.session.Provider
+}
+
 type sidebarDelegate struct {
 	activeWorkspaceID string
 	activeWorktreeID  string
 	selectedSessions  map[string]struct{}
+	providerBadges    map[string]*types.ProviderBadgeConfig
 }
 
 func (d *sidebarDelegate) Height() int {
@@ -171,31 +206,54 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if entry.session != nil && isActiveStatus(entry.session.Status) {
 			indicator = activeDot
 		}
+		if entry.session != nil && isDismissedStatus(entry.session.Status) {
+			indicator = dismissedDot
+		}
+		badgeConfig := resolveProviderBadge(entry.sessionProvider(), d.providerBadges)
+		badgeText := strings.TrimSpace(badgeConfig.Prefix)
 		prefix := fmt.Sprintf(" %s ", indicator)
+		if badgeText != "" {
+			prefix += badgeText + " "
+		}
 		suffix := ""
 		if strings.TrimSpace(since) != "" {
 			suffix = fmt.Sprintf(" • %s", since)
 		}
-		available := maxWidth - ansi.StringWidth(prefix) - ansi.StringWidth(suffix)
-		if available < 0 {
-			available = 0
+		if entry.session != nil && isDismissedStatus(entry.session.Status) {
+			suffix += " • dismissed"
 		}
-		title = truncateToWidth(title, available)
-		line := prefix + title + suffix
+		available := maxWidth - ansi.StringWidth(prefix) - ansi.StringWidth(suffix)
+		if available <= 0 {
+			title = ""
+		} else {
+			title = truncateToWidth(title, available)
+		}
+		main := title + suffix
+		line := prefix + main
 		if ansi.StringWidth(line) > maxWidth {
-			line = truncateToWidth(line, maxWidth)
+			mainWidth := maxWidth - ansi.StringWidth(prefix)
+			if mainWidth <= 0 {
+				main = ""
+			} else {
+				main = truncateToWidth(main, mainWidth)
+			}
 		}
 		style := sessionStyle
-		if indicator == activeDot {
-			style = activeSessionStyle
-		}
 		if entry.session != nil && d.isSelected(entry.session.ID) {
 			style = sessionSelectedStyle
 		}
 		if isSelected {
 			style = selectedStyle
 		}
-		fmt.Fprint(w, style.Render(line))
+
+		rendered := style.Render(fmt.Sprintf(" %s ", indicator))
+		if badgeText != "" {
+			badgeStyle := style.Copy().Foreground(lipgloss.Color(strings.TrimSpace(badgeConfig.Color)))
+			rendered += badgeStyle.Render(badgeText)
+			rendered += style.Render(" ")
+		}
+		rendered += style.Render(main)
+		fmt.Fprint(w, rendered)
 	}
 }
 
@@ -207,8 +265,75 @@ func (d *sidebarDelegate) isSelected(id string) bool {
 	return ok
 }
 
-func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta) []list.Item {
-	visibleSessions := filterVisibleSessions(sessions)
+func resolveProviderBadge(provider string, overrides map[string]*types.ProviderBadgeConfig) types.ProviderBadgeConfig {
+	normalized := providers.Normalize(provider)
+	badge := defaultProviderBadge(normalized)
+	if override, ok := overrides[normalized]; ok && override != nil {
+		if prefix := strings.TrimSpace(override.Prefix); prefix != "" {
+			badge.Prefix = prefix
+		}
+		if color := strings.TrimSpace(override.Color); color != "" {
+			badge.Color = color
+		}
+	}
+	if strings.TrimSpace(badge.Color) == "" {
+		badge.Color = defaultBadgeColor
+	}
+	return badge
+}
+
+func defaultProviderBadge(provider string) types.ProviderBadgeConfig {
+	if badge, ok := defaultProviderBadges[provider]; ok {
+		return badge
+	}
+	return types.ProviderBadgeConfig{
+		Prefix: fallbackProviderBadgePrefix(provider),
+		Color:  defaultBadgeColor,
+	}
+}
+
+func fallbackProviderBadgePrefix(provider string) string {
+	name := providers.Normalize(provider)
+	if name == "" {
+		return "[???]"
+	}
+	abbr := make([]rune, 0, 3)
+	for _, r := range name {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+			continue
+		}
+		abbr = append(abbr, unicode.ToUpper(r))
+		if len(abbr) == 3 {
+			break
+		}
+	}
+	for len(abbr) < 3 {
+		abbr = append(abbr, '?')
+	}
+	return "[" + string(abbr) + "]"
+}
+
+func normalizeProviderBadgeOverrides(overrides map[string]*types.ProviderBadgeConfig) map[string]*types.ProviderBadgeConfig {
+	if len(overrides) == 0 {
+		return nil
+	}
+	normalized := make(map[string]*types.ProviderBadgeConfig, len(overrides))
+	for key, cfg := range overrides {
+		provider := providers.Normalize(key)
+		if provider == "" || cfg == nil {
+			continue
+		}
+		copy := *cfg
+		normalized[provider] = &copy
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []list.Item {
+	visibleSessions := filterVisibleSessions(sessions, showDismissed)
 	knownWorkspaces := make(map[string]struct{}, len(workspaces))
 	for _, workspace := range workspaces {
 		if workspace == nil {
@@ -316,13 +441,13 @@ func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*ty
 	return items
 }
 
-func filterVisibleSessions(sessions []*types.Session) []*types.Session {
+func filterVisibleSessions(sessions []*types.Session, showDismissed bool) []*types.Session {
 	out := make([]*types.Session, 0, len(sessions))
 	for _, session := range sessions {
 		if session == nil {
 			continue
 		}
-		if isVisibleStatus(session.Status) {
+		if isVisibleStatus(session.Status) || (showDismissed && isDismissedStatus(session.Status)) {
 			out = append(out, session)
 		}
 	}
@@ -349,6 +474,15 @@ func isActiveStatus(status types.SessionStatus) bool {
 func isVisibleStatus(status types.SessionStatus) bool {
 	switch status {
 	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive:
+		return true
+	default:
+		return false
+	}
+}
+
+func isDismissedStatus(status types.SessionStatus) bool {
+	switch status {
+	case types.SessionStatusOrphaned, types.SessionStatusExited:
 		return true
 	default:
 		return false

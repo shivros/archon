@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"control/internal/logging"
@@ -13,11 +14,12 @@ import (
 )
 
 type SessionService struct {
-	manager  *SessionManager
-	stores   *Stores
-	live     *CodexLiveManager
-	logger   logging.Logger
-	adapters *conversationAdapterRegistry
+	manager     *SessionManager
+	stores      *Stores
+	live        *CodexLiveManager
+	logger      logging.Logger
+	adapters    *conversationAdapterRegistry
+	migrateOnce sync.Once
 }
 
 func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger) *SessionService {
@@ -39,6 +41,16 @@ func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
 }
 
 func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return s.listWithMeta(ctx, false)
+}
+
+func (s *SessionService) ListWithMetaIncludingDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return s.listWithMeta(ctx, true)
+}
+
+func (s *SessionService) listWithMeta(ctx context.Context, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
+	s.migrateOnce.Do(func() { s.migrateCodexDualEntries(ctx) })
+
 	sessionMap := make(map[string]*types.Session)
 	sourceByID := make(map[string]string)
 	liveIDs := make(map[string]struct{})
@@ -91,7 +103,7 @@ func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []
 	}
 
 	s.normalizeSessionStatuses(ctx, sessionMap, sourceByID, liveIDs)
-	sessions := dedupeSessionsForList(sessionMap, sourceByID, liveIDs, metaBySessionID)
+	sessions := dedupeSessionsForList(sessionMap, sourceByID, liveIDs, metaBySessionID, includeDismissed)
 	sortSessionsByCreatedAt(sessions)
 	return sessions, meta, nil
 }
@@ -130,11 +142,83 @@ func (s *SessionService) normalizeSessionStatuses(ctx context.Context, sessionMa
 	}
 }
 
-func dedupeSessionsForList(sessionMap map[string]*types.Session, sourceByID map[string]string, liveIDs map[string]struct{}, metaBySessionID map[string]*types.SessionMeta) []*types.Session {
+// migrateCodexDualEntries reconciles old-format codex sessions where an
+// internal session (random ID) and a codex-synced session (thread ID) exist
+// for the same conversation. It merges them under the thread ID and removes
+// the old internal entry.
+func (s *SessionService) migrateCodexDualEntries(ctx context.Context) {
+	if s.stores == nil || s.stores.Sessions == nil || s.stores.SessionMeta == nil {
+		return
+	}
+	metaEntries, err := s.stores.SessionMeta.List(ctx)
+	if err != nil {
+		return
+	}
+	metaByID := make(map[string]*types.SessionMeta, len(metaEntries))
+	for _, m := range metaEntries {
+		if m != nil {
+			metaByID[m.SessionID] = m
+		}
+	}
+	records, err := s.stores.Sessions.ListRecords(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, record := range records {
+		if record == nil || record.Session == nil || record.Source != sessionSourceInternal {
+			continue
+		}
+		if providers.Normalize(record.Session.Provider) != "codex" {
+			continue
+		}
+		meta := metaByID[record.Session.ID]
+		if meta == nil {
+			continue
+		}
+		threadID := strings.TrimSpace(meta.ThreadID)
+		if threadID == "" || threadID == record.Session.ID {
+			continue // Already re-keyed or no thread ID.
+		}
+
+		// This is an old-format internal codex session whose ID differs
+		// from its thread ID. Merge it under the thread ID.
+		merged := *record.Session
+		merged.ID = threadID
+
+		_, _ = s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
+			Session: &merged,
+			Source:  sessionSourceInternal,
+		})
+
+		// Merge meta, preserving the internal session's title/lock.
+		mergedMeta := *meta
+		mergedMeta.SessionID = threadID
+		if mergedMeta.ThreadID == "" {
+			mergedMeta.ThreadID = threadID
+		}
+		// Carry over workspace/worktree from the codex-synced entry if present.
+		if codexMeta := metaByID[threadID]; codexMeta != nil {
+			if mergedMeta.WorkspaceID == "" {
+				mergedMeta.WorkspaceID = codexMeta.WorkspaceID
+			}
+			if mergedMeta.WorktreeID == "" {
+				mergedMeta.WorktreeID = codexMeta.WorktreeID
+			}
+		}
+		_, _ = s.stores.SessionMeta.Upsert(ctx, &mergedMeta)
+
+		// Remove the old internal entry.
+		_ = s.stores.Sessions.DeleteRecord(ctx, record.Session.ID)
+		_ = s.stores.SessionMeta.Delete(ctx, record.Session.ID)
+	}
+}
+
+func dedupeSessionsForList(sessionMap map[string]*types.Session, sourceByID map[string]string, liveIDs map[string]struct{}, metaBySessionID map[string]*types.SessionMeta, includeDismissed bool) []*types.Session {
 	chosenByKey := map[string]*types.Session{}
 	chosenIDByKey := map[string]string{}
 	for id, session := range sessionMap {
-		if session == nil || !isListableStatus(session.Status) {
+		if session == nil || !isListableStatus(session.Status, includeDismissed) {
 			continue
 		}
 		meta := metaBySessionID[id]
@@ -329,7 +413,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		return nil, invalidError(err.Error(), err)
 	}
 	if hasProviderDef && providerDef.Runtime == providers.RuntimeClaude && initialText != "" && s.manager != nil {
-		payload := buildClaudeUserPayload(initialText)
+		payload := buildClaudeUserPayloadWithRuntime(initialText, runtimeOptions)
 		go func(sessionID string) {
 			if err := s.manager.SendInput(sessionID, payload); err != nil && s.logger != nil {
 				s.logger.Warn("claude_initial_send_failed",
@@ -553,6 +637,80 @@ func (s *SessionService) MarkExited(ctx context.Context, id string) error {
 	record.Session = &copy
 	if _, err := s.stores.Sessions.UpsertRecord(ctx, record); err != nil {
 		return unavailableError(err.Error(), err)
+	}
+	return nil
+}
+
+func (s *SessionService) Dismiss(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return invalidError("session id is required", nil)
+	}
+	if s.manager != nil {
+		if err := s.manager.DismissSession(id); err == nil {
+			return nil
+		} else if !errors.Is(err, ErrSessionNotFound) {
+			return invalidError(err.Error(), err)
+		}
+	}
+	if s.stores == nil || s.stores.Sessions == nil {
+		return notFoundError("session not found", ErrSessionNotFound)
+	}
+	record, ok, err := s.stores.Sessions.GetRecord(ctx, id)
+	if err != nil {
+		return unavailableError(err.Error(), err)
+	}
+	if !ok || record == nil || record.Session == nil {
+		return notFoundError("session not found", ErrSessionNotFound)
+	}
+	if isActiveStatus(record.Session.Status) {
+		if !providers.CapabilitiesFor(record.Session.Provider).NoProcess {
+			return invalidError("session is active; kill it first", nil)
+		}
+	}
+	copy := *record.Session
+	now := time.Now().UTC()
+	copy.Status = types.SessionStatusOrphaned
+	copy.PID = 0
+	copy.ExitCode = nil
+	copy.ExitedAt = &now
+	record.Session = &copy
+	if _, err := s.stores.Sessions.UpsertRecord(ctx, record); err != nil {
+		return unavailableError(err.Error(), err)
+	}
+	return nil
+}
+
+func (s *SessionService) Undismiss(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return invalidError("session id is required", nil)
+	}
+	if s.manager != nil {
+		if err := s.manager.UndismissSession(id); err == nil {
+			return nil
+		} else if !errors.Is(err, ErrSessionNotFound) {
+			return invalidError(err.Error(), err)
+		}
+	}
+	if s.stores == nil || s.stores.Sessions == nil {
+		return notFoundError("session not found", ErrSessionNotFound)
+	}
+	record, ok, err := s.stores.Sessions.GetRecord(ctx, id)
+	if err != nil {
+		return unavailableError(err.Error(), err)
+	}
+	if !ok || record == nil || record.Session == nil {
+		return notFoundError("session not found", ErrSessionNotFound)
+	}
+	if record.Session.Status == types.SessionStatusOrphaned || record.Session.Status == types.SessionStatusExited {
+		copy := *record.Session
+		copy.Status = types.SessionStatusInactive
+		copy.PID = 0
+		copy.ExitCode = nil
+		copy.ExitedAt = nil
+		record.Session = &copy
+		if _, err := s.stores.Sessions.UpsertRecord(ctx, record); err != nil {
+			return unavailableError(err.Error(), err)
+		}
 	}
 	return nil
 }
@@ -821,10 +979,12 @@ func extractTextInput(input []map[string]any) string {
 	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
-func isListableStatus(status types.SessionStatus) bool {
+func isListableStatus(status types.SessionStatus, includeDismissed bool) bool {
 	switch status {
 	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive:
 		return true
+	case types.SessionStatusExited, types.SessionStatusOrphaned:
+		return includeDismissed
 	default:
 		return false
 	}

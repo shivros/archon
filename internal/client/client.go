@@ -79,6 +79,31 @@ func (c *Client) ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []
 	return resp.Sessions, resp.SessionMeta, nil
 }
 
+func (c *Client) ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	var resp SessionsWithMetaResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/sessions?include_dismissed=1", nil, true, &resp); err != nil {
+		return nil, nil, err
+	}
+	return resp.Sessions, resp.SessionMeta, nil
+}
+
+func (c *Client) ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
+	query := url.Values{}
+	query.Set("refresh", "1")
+	if strings.TrimSpace(workspaceID) != "" {
+		query.Set("workspace_id", strings.TrimSpace(workspaceID))
+	}
+	if includeDismissed {
+		query.Set("include_dismissed", "1")
+	}
+	path := "/v1/sessions?" + query.Encode()
+	var resp SessionsWithMetaResponse
+	if err := c.doJSONWithTimeout(ctx, http.MethodGet, path, nil, true, &resp, 90*time.Second); err != nil {
+		return nil, nil, err
+	}
+	return resp.Sessions, resp.SessionMeta, nil
+}
+
 func (c *Client) GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error) {
 	provider = strings.TrimSpace(provider)
 	if provider == "" {
@@ -367,6 +392,14 @@ func (c *Client) KillSession(ctx context.Context, id string) error {
 
 func (c *Client) MarkSessionExited(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/sessions/"+id+"/exit", nil, true, nil)
+}
+
+func (c *Client) DismissSession(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/sessions/"+id+"/dismiss", nil, true, nil)
+}
+
+func (c *Client) UndismissSession(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/sessions/"+id+"/undismiss", nil, true, nil)
 }
 
 func (c *Client) TailItems(ctx context.Context, id string, lines int) (*TailItemsResponse, error) {

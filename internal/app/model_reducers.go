@@ -424,6 +424,8 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 	}
 	switch msg.String() {
+	case "ctrl+o":
+		return true, m.toggleNotesPanel()
 	case "ctrl+1":
 		if m.openComposeOptionPicker(composeOptionModel) {
 			m.setStatusMessage("select model")

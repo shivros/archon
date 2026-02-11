@@ -210,6 +210,104 @@ func TestUpdateSessionTitleUpdatesLiveSession(t *testing.T) {
 	waitForStatus(t, manager, session.ID, types.SessionStatusExited, 2*time.Second)
 }
 
+func TestRekeySessionMigratesStores(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	manager.SetMetaStore(metaStore)
+	manager.SetSessionStore(sessionStore)
+	ctx := context.Background()
+
+	oldID := "random-internal-id"
+	newID := "codex-thread-uuid"
+
+	// Seed initial data under the old ID.
+	session := &types.Session{
+		ID:       oldID,
+		Provider: "codex",
+		Title:    "My Session",
+		Status:   types.SessionStatusRunning,
+	}
+	state := &sessionRuntime{session: session, done: make(chan struct{})}
+	manager.mu.Lock()
+	manager.sessions[oldID] = state
+	manager.mu.Unlock()
+
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   oldID,
+		Title:       "My Session",
+		TitleLocked: true,
+		ThreadID:    newID,
+	})
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: session,
+		Source:  sessionSourceInternal,
+	})
+
+	// Create the old log directory.
+	oldDir := filepath.Join(manager.baseDir, oldID)
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Perform re-key.
+	manager.mu.Lock()
+	manager.rekeySession(oldID, newID, state)
+	manager.mu.Unlock()
+
+	// In-memory map should be re-keyed.
+	if _, ok := manager.sessions[oldID]; ok {
+		t.Fatalf("old ID should be removed from sessions map")
+	}
+	if _, ok := manager.sessions[newID]; !ok {
+		t.Fatalf("new ID should be in sessions map")
+	}
+	if session.ID != newID {
+		t.Fatalf("session.ID should be updated to %q, got %q", newID, session.ID)
+	}
+
+	// Meta store should have the new entry, not the old one.
+	_, oldExists, _ := metaStore.Get(ctx, oldID)
+	if oldExists {
+		t.Fatalf("old meta entry should be deleted")
+	}
+	newMeta, newExists, _ := metaStore.Get(ctx, newID)
+	if !newExists || newMeta == nil {
+		t.Fatalf("new meta entry should exist")
+	}
+	if newMeta.Title != "My Session" {
+		t.Fatalf("meta title should be preserved, got %q", newMeta.Title)
+	}
+	if !newMeta.TitleLocked {
+		t.Fatalf("meta title_locked should be preserved")
+	}
+	if newMeta.ThreadID != newID {
+		t.Fatalf("meta thread_id should be %q, got %q", newID, newMeta.ThreadID)
+	}
+
+	// Session index should have the new entry, not the old one.
+	_, oldRecordExists, _ := sessionStore.GetRecord(ctx, oldID)
+	if oldRecordExists {
+		t.Fatalf("old session record should be deleted")
+	}
+	newRecord, newRecordExists, _ := sessionStore.GetRecord(ctx, newID)
+	if !newRecordExists || newRecord.Session == nil {
+		t.Fatalf("new session record should exist")
+	}
+	if newRecord.Session.Title != "My Session" {
+		t.Fatalf("session record title should be preserved, got %q", newRecord.Session.Title)
+	}
+
+	// Log directory should be renamed.
+	newDir := filepath.Join(manager.baseDir, newID)
+	if _, err := os.Stat(newDir); err != nil {
+		t.Fatalf("new log directory should exist: %v", err)
+	}
+	if _, err := os.Stat(oldDir); err == nil {
+		t.Fatalf("old log directory should be gone")
+	}
+}
+
 func TestResolveProviderCustomPath(t *testing.T) {
 	provider, err := ResolveProvider("custom", os.Args[0])
 	if err != nil {

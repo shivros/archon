@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"control/internal/types"
 )
 
 func (m *Model) reducePendingApprovalKey(msg tea.KeyMsg) (bool, tea.Cmd) {
@@ -21,6 +23,7 @@ func (m *Model) reducePendingApprovalKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	default:
 		return false, nil
 	}
+	return false, nil
 }
 
 func (m *Model) reduceSidebarArrowKey(msg tea.KeyMsg) (bool, tea.Cmd) {
@@ -90,6 +93,8 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "ctrl+b":
 		m.toggleSidebar()
 		return true, m.saveAppStateCmd()
+	case "ctrl+o":
+		return true, m.toggleNotesPanel()
 	default:
 		return false, nil
 	}
@@ -182,7 +187,7 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
 	case "r":
 		m.setStatusMessage("refreshing")
-		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
+		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(true))
 	case "x":
 		id := m.selectedSessionID()
 		if id == "" {
@@ -207,6 +212,20 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		m.confirmDismissSessions(ids)
 		return true, nil
+	case "u":
+		ids := m.selectedSessionIDs()
+		if len(ids) == 0 {
+			m.setValidationStatus("no session selected")
+			return true, nil
+		}
+		if len(ids) == 1 {
+			m.setStatusMessage("undismissing " + ids[0])
+			return true, undismissSessionCmd(m.sessionAPI, ids[0])
+		}
+		m.setStatusMessage(fmt.Sprintf("undismissing %d sessions", len(ids)))
+		return true, undismissManySessionsCmd(m.sessionAPI, ids)
+	case "D":
+		return true, m.toggleShowDismissed()
 	default:
 		return false, nil
 	}
@@ -214,6 +233,22 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch msg.String() {
+	case "1":
+		if m.notesPanelOpen {
+			return true, m.toggleNotesFilterScope(types.NoteScopeWorkspace)
+		}
+	case "2":
+		if m.notesPanelOpen {
+			return true, m.toggleNotesFilterScope(types.NoteScopeWorktree)
+		}
+	case "3":
+		if m.notesPanelOpen {
+			return true, m.toggleNotesFilterScope(types.NoteScopeSession)
+		}
+	case "0":
+		if m.notesPanelOpen {
+			return true, m.enableAllNotesFilters()
+		}
 	case "p":
 		if m.follow {
 			m.pauseFollow(true)
@@ -233,6 +268,7 @@ func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	default:
 		return false, nil
 	}
+	return false, nil
 }
 
 func (m *Model) reduceSelectionKeys(msg tea.KeyMsg) (bool, tea.Cmd) {

@@ -27,6 +27,9 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	state.ComposeHistory = map[string][]string{
 		"s1": []string{"hello", "world"},
 	}
+	state.ProviderBadges = map[string]*types.ProviderBadgeConfig{
+		"codex": {Prefix: "[GPT]", Color: "231"},
+	}
 
 	if err := store.Save(ctx, state); err != nil {
 		t.Fatalf("save: %v", err)
@@ -41,6 +44,9 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	}
 	if len(loaded.ComposeHistory["s1"]) != 2 || loaded.ComposeHistory["s1"][0] != "hello" || loaded.ComposeHistory["s1"][1] != "world" {
 		t.Fatalf("expected compose history to round-trip")
+	}
+	if loaded.ProviderBadges["codex"] == nil || loaded.ProviderBadges["codex"].Prefix != "[GPT]" || loaded.ProviderBadges["codex"].Color != "231" {
+		t.Fatalf("expected provider badge overrides to round-trip")
 	}
 }
 

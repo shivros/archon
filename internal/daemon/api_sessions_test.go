@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,23 @@ type sessionsResponse struct {
 
 type itemsResponse struct {
 	Items []map[string]any `json:"items"`
+}
+
+type fakeSessionSyncer struct {
+	calls        int
+	workspaceIDs []string
+	err          error
+}
+
+func (f *fakeSessionSyncer) SyncAll(context.Context) error {
+	f.calls++
+	return f.err
+}
+
+func (f *fakeSessionSyncer) SyncWorkspace(_ context.Context, workspaceID string) error {
+	f.calls++
+	f.workspaceIDs = append(f.workspaceIDs, workspaceID)
+	return nil
 }
 
 func TestAPISessionEndpoints(t *testing.T) {
@@ -202,6 +220,140 @@ func TestAPISessionListOrder(t *testing.T) {
 	}
 }
 
+func TestAPISessionsRefreshTriggersSync(t *testing.T) {
+	store := storeSessionsIndex(t)
+	now := time.Now().UTC()
+	_, err := store.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-sync",
+			Provider:  "codex",
+			Cmd:       "codex app-server",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceCodex,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	syncer := &fakeSessionSyncer{}
+	api := &API{Version: "test", Stores: &Stores{Sessions: store}, Syncer: syncer}
+	server := newTestServerWithAPI(t, api)
+	defer server.Close()
+
+	list := listSessionsPath(t, server, "/v1/sessions?refresh=1")
+	if len(list.Sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(list.Sessions))
+	}
+	if syncer.calls != 1 {
+		t.Fatalf("expected one sync call, got %d", syncer.calls)
+	}
+}
+
+func TestAPISessionsRefreshTriggersWorkspaceSync(t *testing.T) {
+	store := storeSessionsIndex(t)
+	now := time.Now().UTC()
+	_, err := store.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-sync-ws",
+			Provider:  "codex",
+			Cmd:       "codex app-server",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceCodex,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	syncer := &fakeSessionSyncer{}
+	api := &API{Version: "test", Stores: &Stores{Sessions: store}, Syncer: syncer}
+	server := newTestServerWithAPI(t, api)
+	defer server.Close()
+
+	list := listSessionsPath(t, server, "/v1/sessions?refresh=1&workspace_id=ws-1")
+	if len(list.Sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(list.Sessions))
+	}
+	if syncer.calls != 1 {
+		t.Fatalf("expected one sync call, got %d", syncer.calls)
+	}
+	if len(syncer.workspaceIDs) != 1 || syncer.workspaceIDs[0] != "ws-1" {
+		t.Fatalf("expected workspace sync ws-1, got %+v", syncer.workspaceIDs)
+	}
+}
+
+func TestAPISessionsRefreshSyncError(t *testing.T) {
+	syncer := &fakeSessionSyncer{err: errors.New("sync failed")}
+	api := &API{Version: "test", Syncer: syncer}
+	server := newTestServerWithAPI(t, api)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions?refresh=1", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("refresh request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if syncer.calls != 1 {
+		t.Fatalf("expected one sync call, got %d", syncer.calls)
+	}
+}
+
+func TestAPIDismissAndUndismissSession(t *testing.T) {
+	store := storeSessionsIndex(t)
+	now := time.Now().UTC()
+	_, err := store.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-dismiss",
+			Provider:  "codex",
+			Cmd:       "codex app-server",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	server := newTestServerWithStores(t, nil, &Stores{Sessions: store})
+	defer server.Close()
+
+	dismissSession(t, server, "sess-dismiss")
+
+	got := getSession(t, server, "sess-dismiss")
+	if got.Status != types.SessionStatusOrphaned {
+		t.Fatalf("expected orphaned status after dismiss, got %s", got.Status)
+	}
+
+	list := listSessions(t, server)
+	if len(list.Sessions) != 0 {
+		t.Fatalf("expected dismissed session hidden from default list, got %d", len(list.Sessions))
+	}
+	list = listSessionsPath(t, server, "/v1/sessions?include_dismissed=1")
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != "sess-dismiss" {
+		t.Fatalf("expected dismissed session in include_dismissed list, got %+v", list.Sessions)
+	}
+
+	undismissSession(t, server, "sess-dismiss")
+	got = getSession(t, server, "sess-dismiss")
+	if got.Status != types.SessionStatusInactive {
+		t.Fatalf("expected inactive status after undismiss, got %s", got.Status)
+	}
+	list = listSessions(t, server)
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != "sess-dismiss" {
+		t.Fatalf("expected undismissed session in default list, got %+v", list.Sessions)
+	}
+}
+
 func newTestServer(t *testing.T, manager *SessionManager) *httptest.Server {
 	return newTestServerWithStores(t, manager, nil)
 }
@@ -209,6 +361,11 @@ func newTestServer(t *testing.T, manager *SessionManager) *httptest.Server {
 func newTestServerWithStores(t *testing.T, manager *SessionManager, stores *Stores) *httptest.Server {
 	t.Helper()
 	api := &API{Version: "test", Manager: manager, Stores: stores}
+	return newTestServerWithAPI(t, api)
+}
+
+func newTestServerWithAPI(t *testing.T, api *API) *httptest.Server {
+	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", api.Health)
 	mux.HandleFunc("/v1/sessions", api.Sessions)
@@ -243,7 +400,12 @@ func startSession(t *testing.T, server *httptest.Server, req StartSessionRequest
 
 func listSessions(t *testing.T, server *httptest.Server) sessionsResponse {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions", nil)
+	return listSessionsPath(t, server, "/v1/sessions")
+}
+
+func listSessionsPath(t *testing.T, server *httptest.Server, path string) sessionsResponse {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+path, nil)
 	req.Header.Set("Authorization", "Bearer token")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -376,6 +538,38 @@ func markExited(t *testing.T, server *httptest.Server, id string) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("exit session: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+}
+
+func dismissSession(t *testing.T, server *httptest.Server, id string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/sessions/"+id+"/dismiss", nil)
+	req.Header.Set("Authorization", "Bearer token")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("dismiss session: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
+	}
+}
+
+func undismissSession(t *testing.T, server *httptest.Server, id string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/sessions/"+id+"/undismiss", nil)
+	req.Header.Set("Authorization", "Bearer token")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("undismiss session: %v", err)
 	}
 	defer resp.Body.Close()
 

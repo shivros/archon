@@ -18,6 +18,12 @@ type noteScopeTarget struct {
 	SessionID   string
 }
 
+type notesFilterState struct {
+	ShowWorkspace bool
+	ShowWorktree  bool
+	ShowSession   bool
+}
+
 func (s noteScopeTarget) IsZero() bool {
 	return s.Scope == ""
 }
@@ -63,7 +69,7 @@ func (m *Model) enterNotesForSelection() tea.Cmd {
 }
 
 func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
-	m.notesScope = scope
+	m.setNotesRootScope(scope)
 	m.notesReturnMode = m.mode
 	if m.notesReturnMode != uiModeCompose {
 		m.notesReturnMode = uiModeNormal
@@ -79,7 +85,7 @@ func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
 	m.setContentText("Loading notes...")
 	m.setStatusMessage("loading notes for " + scope.Label())
 	m.resize(m.width, m.height)
-	return fetchNotesCmd(m.notesAPI, scope)
+	return m.refreshNotesForCurrentScope()
 }
 
 func (m *Model) enterAddNoteForScope(scope noteScopeTarget) tea.Cmd {
@@ -153,6 +159,16 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 	switch msg.String() {
+	case "ctrl+o":
+		return true, m.toggleNotesPanel()
+	case "1":
+		return true, m.toggleNotesFilterScope(types.NoteScopeWorkspace)
+	case "2":
+		return true, m.toggleNotesFilterScope(types.NoteScopeWorktree)
+	case "3":
+		return true, m.toggleNotesFilterScope(types.NoteScopeSession)
+	case "0":
+		return true, m.enableAllNotesFilters()
 	case "esc":
 		return true, m.exitNotes("notes closed")
 	case "n":
@@ -160,7 +176,7 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, nil
 	case "r":
 		m.setStatusMessage("refreshing notes")
-		return true, fetchNotesCmd(m.notesAPI, m.notesScope)
+		return true, m.refreshNotesForCurrentScope()
 	case "q":
 		return true, tea.Quit
 	default:
@@ -177,6 +193,8 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	switch keyMsg.String() {
+	case "ctrl+o":
+		return true, m.toggleNotesPanel()
 	case "esc":
 		m.exitAddNote("add note canceled")
 		return true, nil
@@ -258,12 +276,13 @@ func (m *Model) onNotesSelectionChanged() tea.Cmd {
 	if !ok {
 		m.setValidationStatus("selected item has no notes scope")
 		m.notes = nil
+		m.notesByScope = map[types.NoteScope][]*types.Note{}
 		m.setContentText("No notes scope for this selection.")
 		return nil
 	}
-	m.notesScope = scope
+	m.setNotesRootScope(scope)
 	m.setContentText("Loading notes...")
-	return fetchNotesCmd(m.notesAPI, scope)
+	return m.refreshNotesForCurrentScope()
 }
 
 func (m *Model) noteScopeForSession(sessionID, workspaceID, worktreeID string) noteScopeTarget {
@@ -284,11 +303,22 @@ func (m *Model) noteScopeForSession(sessionID, workspaceID, worktreeID string) n
 	return scope
 }
 
-func notesToBlocks(notes []*types.Note, scope noteScopeTarget) []ChatBlock {
+func notesToBlocks(notes []*types.Note, scope noteScopeTarget, filters notesFilterState) []ChatBlock {
+	filterSection := notesFilterSection(scope, filters)
 	header := ChatBlock{
 		ID:   "notes-scope",
 		Role: ChatRoleSystem,
-		Text: fmt.Sprintf("Notes\n\nScope: %s\n\nKeys: n add note, r refresh, esc back", scope.Label()),
+		Text: fmt.Sprintf("Notes\n\nScope: %s\n\n%s\n\nKeys: 1/2/3 toggle filters, 0 all, n add note, r refresh, esc back", scope.Label(), filterSection),
+	}
+	if !hasAnyNotesFilterEnabled(scope, filters) {
+		return []ChatBlock{
+			header,
+			{
+				ID:   "notes-empty",
+				Role: ChatRoleSystem,
+				Text: "No scopes selected.\n\nToggle a filter to view notes.",
+			},
+		}
 	}
 	if len(notes) == 0 {
 		return []ChatBlock{
@@ -315,6 +345,27 @@ func notesToBlocks(notes []*types.Note, scope noteScopeTarget) []ChatBlock {
 		})
 	}
 	return blocks
+}
+
+func notesFilterSection(scope noteScopeTarget, filters notesFilterState) string {
+	parts := []string{"Filters:"}
+	if isNotesScopeAvailable(scope, types.NoteScopeWorkspace) {
+		parts = append(parts, notesFilterToken("Workspace", filters.ShowWorkspace))
+	}
+	if isNotesScopeAvailable(scope, types.NoteScopeWorktree) {
+		parts = append(parts, notesFilterToken("Worktree", filters.ShowWorktree))
+	}
+	if isNotesScopeAvailable(scope, types.NoteScopeSession) {
+		parts = append(parts, notesFilterToken("Session", filters.ShowSession))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func notesFilterToken(label string, enabled bool) string {
+	if enabled {
+		return "[x] " + label
+	}
+	return "[ ] " + label
 }
 
 func chatRoleForNoteScope(scope types.NoteScope) ChatRole {
@@ -409,6 +460,16 @@ func (m *Model) noteByID(id string) *types.Note {
 		}
 		if strings.TrimSpace(note.ID) == id {
 			return note
+		}
+	}
+	for _, scope := range []types.NoteScope{types.NoteScopeWorkspace, types.NoteScopeWorktree, types.NoteScopeSession} {
+		for _, note := range m.notesByScope[scope] {
+			if note == nil {
+				continue
+			}
+			if strings.TrimSpace(note.ID) == id {
+				return note
+			}
 		}
 	}
 	return nil

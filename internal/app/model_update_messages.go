@@ -22,7 +22,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.hasAppState = true
 			m.updateDelegate()
 			m.exitAddWorkspace("workspace added: " + msg.workspace.Name)
-			return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), m.saveAppStateCmd())
+			return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(false), m.saveAppStateCmd())
 		}
 		m.exitAddWorkspace("workspace added")
 		return true, nil
@@ -84,7 +84,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.exitAddWorktree("worktree added")
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
 			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
 		}
@@ -95,7 +95,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.exitAddWorktree("worktree added")
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
 			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
 		}
@@ -110,7 +110,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.hasAppState = true
 		}
 		m.setStatusInfo("worktree deleted")
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI)}
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
 			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
 		}
@@ -121,14 +121,14 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.setStatusInfo("workspace updated")
-		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchWorkspaceGroupsCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI))
+		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchWorkspaceGroupsCmd(m.workspaceAPI), m.fetchSessionsCmd(false))
 	case updateSessionMsg:
 		if msg.err != nil {
 			m.setStatusError("update session error: " + msg.err.Error())
 			return true, nil
 		}
 		m.setStatusInfo("session updated")
-		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
+		return true, m.fetchSessionsCmd(false)
 	case deleteWorkspaceMsg:
 		if msg.err != nil {
 			m.setStatusError("delete workspace error: " + msg.err.Error())
@@ -140,7 +140,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.hasAppState = true
 		}
 		m.setStatusInfo("workspace deleted")
-		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchSessionsWithMetaCmd(m.sessionAPI), m.saveAppStateCmd())
+		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(false), m.saveAppStateCmd())
 	default:
 		return false, nil
 	}
@@ -185,15 +185,13 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case notesMsg:
 		if msg.err != nil {
 			m.setBackgroundError("notes error: " + msg.err.Error())
-			if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+			if (m.mode == uiModeNotes || m.mode == uiModeAddNote) && !m.notesScope.IsZero() {
 				m.setContentText("Error loading notes.")
 			}
 			return true, nil
 		}
-		m.notesScope = msg.scope
-		m.notes = msg.notes
-		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
-			m.setSnapshotBlocks(notesToBlocks(msg.notes, msg.scope))
+		if !m.applyNotesScopeResult(msg.scope, msg.notes) {
+			return true, nil
 		}
 		m.setBackgroundStatus("notes updated")
 		return true, nil
@@ -203,30 +201,37 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.setStatusInfo("note saved")
-		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
-			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
-		}
-		return true, nil
+		m.upsertNotesLive(msg.note)
+		return true, m.notesRefreshCmdForOpenViews()
 	case notePinnedMsg:
 		if msg.err != nil {
 			m.setStatusError("pin error: " + msg.err.Error())
 			return true, nil
 		}
 		m.setStatusInfo("message pinned")
-		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
-			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
-		}
-		return true, nil
+		m.upsertNotesLive(msg.note)
+		return true, m.notesRefreshCmdForOpenViews()
 	case noteDeletedMsg:
 		if msg.err != nil {
 			m.setStatusError("delete note error: " + msg.err.Error())
 			return true, nil
 		}
 		m.setStatusInfo("note deleted")
-		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
-			return true, fetchNotesCmd(m.notesAPI, m.notesScope)
+		m.removeNotesLive(msg.id)
+		return true, m.notesRefreshCmdForOpenViews()
+	case noteMovedMsg:
+		if msg.err != nil {
+			m.setStatusError("move note error: " + msg.err.Error())
+			return true, nil
 		}
-		return true, nil
+		if msg.previous != nil {
+			m.removeNotesLive(msg.previous.ID)
+		} else if msg.note != nil {
+			m.removeNotesLive(msg.note.ID)
+		}
+		m.upsertNotesLive(msg.note)
+		m.setStatusInfo("note moved")
+		return true, m.notesRefreshCmdForOpenViews()
 	case appStateMsg:
 		if msg.err != nil {
 			m.setBackgroundError("state error: " + msg.err.Error())
@@ -283,9 +288,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setBackgroundStatus("tail refreshed")
 			return true, nil
 		}
+		previous := m.currentBlocks()
 		blocks := itemsToBlocks(msg.items)
 		if provider == "codex" {
+			blocks = coalesceAdjacentReasoningBlocks(blocks)
 			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
+			blocks = preserveApprovalPositions(previous, blocks)
 		}
 		if shouldStreamItems(provider) && m.itemStream != nil {
 			m.itemStream.SetSnapshotBlocks(blocks)
@@ -325,9 +333,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setBackgroundStatus("history refreshed")
 			return true, nil
 		}
+		previous := m.currentBlocks()
 		blocks := itemsToBlocks(msg.items)
 		if provider == "codex" {
+			blocks = coalesceAdjacentReasoningBlocks(blocks)
 			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
+			blocks = preserveApprovalPositions(previous, blocks)
 		}
 		if shouldStreamItems(provider) && m.itemStream != nil {
 			m.itemStream.SetSnapshotBlocks(blocks)
@@ -476,7 +487,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.pendingSessionKey = key
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		m.setStatusInfo("session started")
-		cmds := []tea.Cmd{fetchSessionsWithMetaCmd(m.sessionAPI), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
 		if shouldStreamItems(msg.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
 		} else if msg.session.Provider == "codex" {
@@ -494,7 +505,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.setStatusInfo("killed " + msg.id)
-		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
+		return true, m.fetchSessionsCmd(false)
 	case exitMsg:
 		if msg.err != nil {
 			m.setStatusError("exit error: " + msg.err.Error())
@@ -504,7 +515,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.sidebar.RemoveSelection([]string{msg.id})
 		}
 		m.setStatusInfo("marked exited " + msg.id)
-		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
+		return true, m.fetchSessionsCmd(false)
 	case bulkExitMsg:
 		if msg.err != nil {
 			m.setStatusError("exit error: " + msg.err.Error())
@@ -514,7 +525,41 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.sidebar.RemoveSelection(msg.ids)
 		}
 		m.setStatusInfo(fmt.Sprintf("marked exited %d", len(msg.ids)))
-		return true, fetchSessionsWithMetaCmd(m.sessionAPI)
+		return true, m.fetchSessionsCmd(false)
+	case dismissMsg:
+		if msg.err != nil {
+			m.setStatusError("dismiss error: " + msg.err.Error())
+			return true, nil
+		}
+		if m.sidebar != nil {
+			m.sidebar.RemoveSelection([]string{msg.id})
+		}
+		m.setStatusInfo("dismissed " + msg.id)
+		return true, m.fetchSessionsCmd(false)
+	case bulkDismissMsg:
+		if msg.err != nil {
+			m.setStatusError("dismiss error: " + msg.err.Error())
+			return true, nil
+		}
+		if m.sidebar != nil {
+			m.sidebar.RemoveSelection(msg.ids)
+		}
+		m.setStatusInfo(fmt.Sprintf("dismissed %d", len(msg.ids)))
+		return true, m.fetchSessionsCmd(false)
+	case undismissMsg:
+		if msg.err != nil {
+			m.setStatusError("undismiss error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo("undismissed " + msg.id)
+		return true, m.fetchSessionsCmd(false)
+	case bulkUndismissMsg:
+		if msg.err != nil {
+			m.setStatusError("undismiss error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setStatusInfo(fmt.Sprintf("undismissed %d", len(msg.ids)))
+		return true, m.fetchSessionsCmd(false)
 	case streamMsg:
 		m.applyStreamMsg(msg)
 		return true, nil

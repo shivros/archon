@@ -10,7 +10,7 @@ import (
 	"control/internal/types"
 )
 
-func TestSessionServiceListWithMetaDedupesCodexAliases(t *testing.T) {
+func TestSessionServiceListWithMetaMigratesAndDedupesCodexAliases(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -76,10 +76,21 @@ func TestSessionServiceListWithMetaDedupesCodexAliases(t *testing.T) {
 		t.Fatalf("list sessions: %v", err)
 	}
 	if len(sessions) != 1 {
-		t.Fatalf("expected 1 deduped session, got %d", len(sessions))
+		t.Fatalf("expected 1 session after migration, got %d", len(sessions))
 	}
-	if sessions[0].ID != internalID {
-		t.Fatalf("expected internal session %q to win, got %q", internalID, sessions[0].ID)
+	// After migration, the dual entries are reconciled under the thread ID.
+	if sessions[0].ID != threadID {
+		t.Fatalf("expected session to be reconciled under thread ID %q, got %q", threadID, sessions[0].ID)
+	}
+	// The internal session's title should be preserved.
+	if sessions[0].Title != "Internal session" {
+		t.Fatalf("expected internal session title to be preserved, got %q", sessions[0].Title)
+	}
+
+	// The old internal entry should be gone from the store.
+	_, oldExists, _ := sessionStore.GetRecord(ctx, internalID)
+	if oldExists {
+		t.Fatalf("old internal session record should have been migrated away")
 	}
 }
 

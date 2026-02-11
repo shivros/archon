@@ -25,16 +25,23 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 
 	switch typ {
 	case "user":
-		text := extractClaudeMessageText(payload["message"])
-		if text == "" {
+		// Claude can emit internal user-role events (e.g. tool/result or thinking
+		// traces) that are not authored by the human user. Human user messages are
+		// already appended at send-time, so do not mirror plain user echoes here.
+		reasoningID, reasoning := extractClaudeReasoning(payload["message"])
+		if reasoning == "" {
 			return nil, "", nil
 		}
-		items = append(items, map[string]any{
-			"type": "userMessage",
+		reasoningItem := map[string]any{
+			"type": "reasoning",
 			"content": []map[string]any{
-				{"type": "text", "text": text},
+				{"type": "text", "text": reasoning},
 			},
-		})
+		}
+		if reasoningID != "" {
+			reasoningItem["id"] = reasoningID
+		}
+		items = append(items, reasoningItem)
 	case "assistant":
 		text := extractClaudeMessageText(payload["message"])
 		if text == "" {
@@ -173,4 +180,40 @@ func extractClaudeMessageText(raw any) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, ""))
+}
+
+func extractClaudeReasoning(raw any) (id string, reasoning string) {
+	payload, ok := raw.(map[string]any)
+	if !ok || payload == nil {
+		return "", ""
+	}
+	if messageID, _ := payload["id"].(string); strings.TrimSpace(messageID) != "" {
+		id = strings.TrimSpace(messageID)
+	}
+	content, ok := payload["content"].([]any)
+	if !ok || len(content) == 0 {
+		return id, ""
+	}
+	var parts []string
+	for _, entry := range content {
+		block, ok := entry.(map[string]any)
+		if !ok || block == nil {
+			continue
+		}
+		blockType, _ := block["type"].(string)
+		switch strings.ToLower(strings.TrimSpace(blockType)) {
+		case "thinking", "reasoning", "redacted_thinking":
+		default:
+			continue
+		}
+		if text, _ := block["thinking"].(string); strings.TrimSpace(text) != "" {
+			parts = append(parts, text)
+			continue
+		}
+		if text, _ := block["text"].(string); strings.TrimSpace(text) != "" {
+			parts = append(parts, text)
+			continue
+		}
+	}
+	return id, strings.TrimSpace(strings.Join(parts, "\n"))
 }

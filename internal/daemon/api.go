@@ -72,6 +72,14 @@ func parseLines(raw string) int {
 }
 
 func isFollowRequest(r *http.Request) bool {
-	follow := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("follow")))
-	return follow == "1" || follow == "true" || follow == "yes"
+	return parseBoolQueryValue(r.URL.Query().Get("follow"))
+}
+
+func isRefreshRequest(r *http.Request) bool {
+	return parseBoolQueryValue(r.URL.Query().Get("refresh"))
+}
+
+func parseBoolQueryValue(raw string) bool {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	return value == "1" || value == "true" || value == "yes"
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"control/internal/logging"
+	"control/internal/types"
 )
 
 func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
@@ -13,7 +14,30 @@ func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		sessions, meta, err := service.ListWithMeta(r.Context())
+		if isRefreshRequest(r) && a.Syncer != nil {
+			var err error
+			workspaceID := strings.TrimSpace(r.URL.Query().Get("workspace_id"))
+			if workspaceID != "" {
+				err = a.Syncer.SyncWorkspace(r.Context(), workspaceID)
+			} else {
+				err = a.Syncer.SyncAll(r.Context())
+			}
+			if err != nil {
+				writeServiceError(w, unavailableError("session sync failed", err))
+				return
+			}
+		}
+		includeDismissed := parseBoolQueryValue(r.URL.Query().Get("include_dismissed"))
+		var (
+			sessions []*types.Session
+			meta     []*types.SessionMeta
+			err      error
+		)
+		if includeDismissed {
+			sessions, meta, err = service.ListWithMetaIncludingDismissed(r.Context())
+		} else {
+			sessions, meta, err = service.ListWithMeta(r.Context())
+		}
 		if err != nil {
 			writeServiceError(w, err)
 			return
@@ -90,6 +114,32 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch parts[1] {
+	case "dismiss":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		if err := service.Dismiss(r.Context(), id); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	case "undismiss":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		if err := service.Undismiss(r.Context(), id); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
 	case "kill":
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{

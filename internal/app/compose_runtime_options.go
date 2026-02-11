@@ -57,6 +57,25 @@ func (m *Model) providerOptionCatalog(provider string) *types.ProviderOptionCata
 			},
 		}
 	}
+	if name == "claude" {
+		return &types.ProviderOptionCatalog{
+			Provider: "claude",
+			Models: []string{
+				"sonnet",
+				"opus",
+			},
+			AccessLevels: []types.AccessLevel{
+				types.AccessReadOnly,
+				types.AccessOnRequest,
+				types.AccessFull,
+			},
+			Defaults: types.SessionRuntimeOptions{
+				Model:   "sonnet",
+				Access:  types.AccessOnRequest,
+				Version: 1,
+			},
+		}
+	}
 	return nil
 }
 
@@ -133,6 +152,8 @@ func (m *Model) composeControlsLine() string {
 		m.composeControlSpans = nil
 		return ""
 	}
+	provider := m.composeProvider()
+	catalog := m.providerOptionCatalog(provider)
 	model := strings.TrimSpace(options.Model)
 	if model == "" {
 		model = "default"
@@ -150,8 +171,17 @@ func (m *Model) composeControlsLine() string {
 		text string
 	}{
 		{kind: composeOptionModel, text: "Model: " + model},
-		{kind: composeOptionReasoning, text: "Reasoning: " + reasoning},
 		{kind: composeOptionAccess, text: "Access: " + access},
+	}
+	if catalog != nil && len(m.modelReasoningLevels(provider, options.Model)) > 0 {
+		parts = []struct {
+			kind composeOptionKind
+			text string
+		}{
+			{kind: composeOptionModel, text: "Model: " + model},
+			{kind: composeOptionReasoning, text: "Reasoning: " + reasoning},
+			{kind: composeOptionAccess, text: "Access: " + access},
+		}
 	}
 	spans := make([]composeControlSpan, 0, len(parts))
 	var b strings.Builder

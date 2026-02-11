@@ -53,7 +53,7 @@ func TestReasoningTextContentTrimsLeadingNewlines(t *testing.T) {
 			map[string]any{"type": "text", "text": "\n\nfirst step"},
 		},
 	})
-	want := "Reasoning\nfirst step"
+	want := "first step"
 	if got != want {
 		t.Fatalf("expected content text %q, got %q", want, got)
 	}

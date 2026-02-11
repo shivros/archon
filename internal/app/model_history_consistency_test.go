@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
@@ -152,5 +155,167 @@ func TestHistoryMsgCoalescesAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	}
 	if blocks[0].Text != "First sentence.Second sentence." {
 		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
+	}
+}
+
+func TestHistoryMsgCodexCoalescesAdjacentReasoningIDs(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	msg := historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "reasoning", "id": "r1", "summary": []any{"first"}},
+			{"type": "reasoning", "id": "r2", "summary": []any{"second"}},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one coalesced reasoning block, got %d", len(blocks))
+	}
+	if blocks[0].Role != ChatRoleReasoning {
+		t.Fatalf("expected reasoning role, got %s", blocks[0].Role)
+	}
+	if blocks[0].Text != "- first\n\n- second" {
+		t.Fatalf("unexpected coalesced reasoning text %q", blocks[0].Text)
+	}
+}
+
+func TestHistoryMsgCodexKeepsApprovalsInRelativeOrder(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	m.setApprovalsForSession("s1", []*ApprovalRequest{
+		{
+			RequestID: 10,
+			SessionID: "s1",
+			Method:    "item/commandExecution/requestApproval",
+			Summary:   "command",
+			Detail:    "first",
+			CreatedAt: time.Date(2026, 2, 10, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			RequestID: 11,
+			SessionID: "s1",
+			Method:    "item/commandExecution/requestApproval",
+			Summary:   "command",
+			Detail:    "second",
+			CreatedAt: time.Date(2026, 2, 10, 10, 1, 0, 0, time.UTC),
+		},
+	})
+	m.setSnapshotBlocks([]ChatBlock{
+		{Role: ChatRoleUser, Text: "user one"},
+		{Role: ChatRoleAgent, Text: "agent one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(10), RequestID: 10, SessionID: "s1", Text: "Approval required: command"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(11), RequestID: 11, SessionID: "s1", Text: "Approval required: command"},
+		{Role: ChatRoleUser, Text: "user two"},
+	})
+
+	msg := historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "userMessage", "text": "user one"},
+			{"type": "agentMessage", "text": "agent one"},
+			{"type": "userMessage", "text": "user two"},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	blocks := m.currentBlocks()
+	expectedRoles := []ChatRole{ChatRoleUser, ChatRoleAgent, ChatRoleApproval, ChatRoleApproval, ChatRoleUser}
+	if len(blocks) != len(expectedRoles) {
+		t.Fatalf("expected %d blocks, got %#v", len(expectedRoles), blocks)
+	}
+	for i, want := range expectedRoles {
+		if blocks[i].Role != want {
+			t.Fatalf("unexpected role at %d: got %s want %s (blocks=%#v)", i, blocks[i].Role, want, blocks)
+		}
+	}
+	if blocks[2].RequestID != 10 || blocks[3].RequestID != 11 {
+		t.Fatalf("unexpected approval order: %#v", blocks)
+	}
+}
+
+func TestTailMsgCodexKeepsApprovalsInRelativeOrder(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	m.setApprovalsForSession("s1", []*ApprovalRequest{
+		{
+			RequestID: 20,
+			SessionID: "s1",
+			Method:    "item/commandExecution/requestApproval",
+			Summary:   "command",
+			Detail:    "first",
+			CreatedAt: time.Date(2026, 2, 10, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			RequestID: 21,
+			SessionID: "s1",
+			Method:    "item/commandExecution/requestApproval",
+			Summary:   "command",
+			Detail:    "second",
+			CreatedAt: time.Date(2026, 2, 10, 11, 1, 0, 0, time.UTC),
+		},
+	})
+	m.setSnapshotBlocks([]ChatBlock{
+		{Role: ChatRoleUser, Text: "user one"},
+		{Role: ChatRoleAgent, Text: "agent one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(20), RequestID: 20, SessionID: "s1", Text: "Approval required: command"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(21), RequestID: 21, SessionID: "s1", Text: "Approval required: command"},
+		{Role: ChatRoleUser, Text: "user two"},
+	})
+
+	msg := tailMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "userMessage", "text": "user one"},
+			{"type": "agentMessage", "text": "agent one"},
+			{"type": "userMessage", "text": "user two"},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected tail message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for tail message")
+	}
+
+	blocks := m.currentBlocks()
+	expectedRoles := []ChatRole{ChatRoleUser, ChatRoleAgent, ChatRoleApproval, ChatRoleApproval, ChatRoleUser}
+	if len(blocks) != len(expectedRoles) {
+		t.Fatalf("expected %d blocks, got %#v", len(expectedRoles), blocks)
+	}
+	for i, want := range expectedRoles {
+		if blocks[i].Role != want {
+			t.Fatalf("unexpected role at %d: got %s want %s (blocks=%#v)", i, blocks[i].Role, want, blocks)
+		}
+	}
+	if blocks[2].RequestID != 20 || blocks[3].RequestID != 21 {
+		t.Fatalf("unexpected approval order: %#v", blocks)
 	}
 }

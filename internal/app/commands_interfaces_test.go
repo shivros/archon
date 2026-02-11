@@ -58,6 +58,18 @@ func TestCommandsCompileWithNarrowMocks(t *testing.T) {
 	if pinAPI.lastRequest.SourceSnippet != longSnippet {
 		t.Fatalf("expected full snippet to be preserved, got len=%d want=%d", len(pinAPI.lastRequest.SourceSnippet), len(longSnippet))
 	}
+
+	moveCmd := moveNoteCmd(&noteUpdateMock{}, &types.Note{ID: "n1", Scope: types.NoteScopeSession, SessionID: "s1"}, noteScopeTarget{
+		Scope:       types.NoteScopeWorktree,
+		WorkspaceID: "ws1",
+		WorktreeID:  "wt1",
+	})
+	if moveCmd == nil {
+		t.Fatalf("expected move command")
+	}
+	if _, ok := moveCmd().(noteMovedMsg); !ok {
+		t.Fatalf("expected noteMovedMsg result")
+	}
 }
 
 type workspaceListMock struct{}
@@ -96,4 +108,15 @@ func (m *sessionPinMock) PinSessionMessage(_ context.Context, _ string, req clie
 			Snippet: req.SourceSnippet,
 		},
 	}, nil
+}
+
+type noteUpdateMock struct{}
+
+func (m *noteUpdateMock) UpdateNote(_ context.Context, id string, note *types.Note) (*types.Note, error) {
+	if note == nil {
+		return nil, nil
+	}
+	clone := *note
+	clone.ID = strings.TrimSpace(id)
+	return &clone, nil
 }

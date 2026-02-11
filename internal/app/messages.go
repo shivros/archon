@@ -107,6 +107,12 @@ type noteDeletedMsg struct {
 	err error
 }
 
+type noteMovedMsg struct {
+	note     *types.Note
+	previous *types.Note
+	err      error
+}
+
 type availableWorktreesMsg struct {
 	workspaceID   string
 	workspacePath string
@@ -146,6 +152,26 @@ type exitMsg struct {
 }
 
 type bulkExitMsg struct {
+	ids []string
+	err error
+}
+
+type dismissMsg struct {
+	id  string
+	err error
+}
+
+type bulkDismissMsg struct {
+	ids []string
+	err error
+}
+
+type undismissMsg struct {
+	id  string
+	err error
+}
+
+type bulkUndismissMsg struct {
 	ids []string
 	err error
 }

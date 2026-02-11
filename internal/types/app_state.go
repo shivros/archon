@@ -7,4 +7,10 @@ type AppState struct {
 	SidebarCollapsed          bool                              `json:"sidebar_collapsed"`
 	ComposeHistory            map[string][]string               `json:"compose_history,omitempty"`
 	ComposeDefaultsByProvider map[string]*SessionRuntimeOptions `json:"compose_defaults_by_provider,omitempty"`
+	ProviderBadges            map[string]*ProviderBadgeConfig   `json:"provider_badges,omitempty"`
+}
+
+type ProviderBadgeConfig struct {
+	Prefix string `json:"prefix,omitempty"`
+	Color  string `json:"color,omitempty"`
 }

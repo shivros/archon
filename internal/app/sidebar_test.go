@@ -25,7 +25,7 @@ func TestBuildSidebarItemsGroupsSessions(t *testing.T) {
 		"s4": {SessionID: "s4", WorkspaceID: "missing"},
 	}
 
-	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta)
+	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
 	if len(items) != 6 {
 		t.Fatalf("expected 6 items, got %d", len(items))
 	}
@@ -93,7 +93,7 @@ func TestSelectSidebarIndexPrefersSelectionAndActiveWorkspace(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
 		"s2": {SessionID: "s2", WorkspaceID: "ws2"},
 	}
-	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta)
+	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
 
 	selected := "sess:s1"
 	if idx := selectSidebarIndex(items, selected, "ws2", ""); idx != 1 {
@@ -102,5 +102,74 @@ func TestSelectSidebarIndexPrefersSelectionAndActiveWorkspace(t *testing.T) {
 
 	if idx := selectSidebarIndex(items, "", "ws2", ""); idx != 3 {
 		t.Fatalf("expected ws2 session index 3, got %d", idx)
+	}
+}
+
+func TestBuildSidebarItemsShowDismissedToggle(t *testing.T) {
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace One"},
+	}
+	sessions := []*types.Session{
+		{ID: "active", Status: types.SessionStatusInactive, CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "dismissed", Status: types.SessionStatusOrphaned, CreatedAt: now.Add(-1 * time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"active":    {SessionID: "active", WorkspaceID: "ws1"},
+		"dismissed": {SessionID: "dismissed", WorkspaceID: "ws1"},
+	}
+
+	hidden := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
+	if len(hidden) != 2 {
+		t.Fatalf("expected workspace + active session when dismissed hidden, got %d", len(hidden))
+	}
+
+	visible := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, true)
+	if len(visible) != 3 {
+		t.Fatalf("expected workspace + both sessions when dismissed shown, got %d", len(visible))
+	}
+}
+
+func TestResolveProviderBadgeUsesDefaults(t *testing.T) {
+	codex := resolveProviderBadge("codex", nil)
+	if codex.Prefix != "[CDX]" {
+		t.Fatalf("expected codex prefix [CDX], got %q", codex.Prefix)
+	}
+	if codex.Color != "15" {
+		t.Fatalf("expected codex color 15, got %q", codex.Color)
+	}
+
+	claude := resolveProviderBadge("claude", nil)
+	if claude.Prefix != "[CLD]" {
+		t.Fatalf("expected claude prefix [CLD], got %q", claude.Prefix)
+	}
+	if claude.Color != "208" {
+		t.Fatalf("expected claude color 208, got %q", claude.Color)
+	}
+}
+
+func TestResolveProviderBadgeAppliesOverrides(t *testing.T) {
+	overrides := normalizeProviderBadgeOverrides(map[string]*types.ProviderBadgeConfig{
+		" CoDeX ": {
+			Prefix: " [GPT] ",
+			Color:  " 231 ",
+		},
+	})
+	resolved := resolveProviderBadge("codex", overrides)
+	if resolved.Prefix != "[GPT]" {
+		t.Fatalf("expected override prefix [GPT], got %q", resolved.Prefix)
+	}
+	if resolved.Color != "231" {
+		t.Fatalf("expected override color 231, got %q", resolved.Color)
+	}
+}
+
+func TestResolveProviderBadgeUnknownProviderFallback(t *testing.T) {
+	resolved := resolveProviderBadge("open code", nil)
+	if resolved.Prefix != "[OPE]" {
+		t.Fatalf("expected fallback prefix [OPE], got %q", resolved.Prefix)
+	}
+	if resolved.Color != defaultBadgeColor {
+		t.Fatalf("expected fallback color %q, got %q", defaultBadgeColor, resolved.Color)
 	}
 }

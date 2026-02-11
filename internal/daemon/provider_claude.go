@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"control/internal/types"
 )
 
 type claudeProvider struct {
@@ -21,6 +23,7 @@ type claudeRunner struct {
 	env     []string
 	sink    ProviderLogSink
 	items   ProviderItemSink
+	options *types.SessionRuntimeOptions
 
 	mu        sync.Mutex
 	sessionID string
@@ -55,6 +58,7 @@ func (p *claudeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, ite
 		env:       append([]string{}, cfg.Env...),
 		sink:      sink,
 		items:     items,
+		options:   types.CloneRuntimeOptions(cfg.RuntimeOptions),
 		sessionID: strings.TrimSpace(cfg.ProviderSessionID),
 		onSession: cfg.OnProviderSessionID,
 	}
@@ -92,7 +96,7 @@ func (r *claudeRunner) Send(payload []byte) error {
 	if len(payload) == 0 {
 		return errors.New("payload is required")
 	}
-	text, err := extractClaudeUserText(payload)
+	text, runtimeOptions, err := extractClaudeSendRequest(payload)
 	if err != nil {
 		return err
 	}
@@ -100,19 +104,28 @@ func (r *claudeRunner) Send(payload []byte) error {
 		return errors.New("text is required")
 	}
 	r.appendUserItem(text)
-	return r.run(text)
+	return r.run(text, runtimeOptions)
 }
 
 func (r *claudeRunner) SendUser(text string) error {
-	payload := buildClaudeUserPayload(text)
+	payload := buildClaudeUserPayloadWithRuntime(text, r.options)
 	return r.Send(payload)
 }
 
-func (r *claudeRunner) run(text string) error {
+func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOptions) error {
+	effectiveOptions := types.MergeRuntimeOptions(r.options, runtimeOptions)
 	args := []string{
 		"--print",
 		"--verbose",
 		"--output-format", "stream-json",
+	}
+	if effectiveOptions != nil {
+		if model := strings.TrimSpace(effectiveOptions.Model); model != "" {
+			args = append(args, "--model", model)
+		}
+		if mode := claudeAccessToPermissionMode(effectiveOptions.Access); mode != "" {
+			args = append(args, "--permission-mode", mode)
+		}
 	}
 	if strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_INCLUDE_PARTIAL")) == "1" {
 		args = append(args, "--include-partial-messages")
@@ -233,6 +246,10 @@ func readClaudeStream(r io.Reader, sink ProviderLogSink, items ProviderItemSink,
 }
 
 func buildClaudeUserPayload(text string) []byte {
+	return buildClaudeUserPayloadWithRuntime(text, nil)
+}
+
+func buildClaudeUserPayloadWithRuntime(text string, runtimeOptions *types.SessionRuntimeOptions) []byte {
 	text = strings.TrimSpace(text)
 	payload := map[string]any{
 		"type": "user",
@@ -243,6 +260,9 @@ func buildClaudeUserPayload(text string) []byte {
 			},
 		},
 	}
+	if runtimeOptions != nil {
+		payload["runtime_options"] = runtimeOptions
+	}
 	data, _ := json.Marshal(payload)
 	return data
 }
@@ -250,13 +270,41 @@ func buildClaudeUserPayload(text string) []byte {
 // session_id is provided by the CLI in the first system init event.
 
 func extractClaudeUserText(payload []byte) (string, error) {
+	text, _, err := extractClaudeSendRequest(payload)
+	return text, err
+}
+
+func extractClaudeSendRequest(payload []byte) (string, *types.SessionRuntimeOptions, error) {
 	var body map[string]any
 	if err := json.Unmarshal(payload, &body); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if typ, _ := body["type"].(string); typ != "user" {
-		return "", errors.New("unsupported payload type")
+		return "", nil, errors.New("unsupported payload type")
 	}
 	text := extractClaudeMessageText(body["message"])
-	return text, nil
+	var runtimeOptions *types.SessionRuntimeOptions
+	if raw, ok := body["runtime_options"]; ok && raw != nil {
+		data, err := json.Marshal(raw)
+		if err == nil {
+			var parsed types.SessionRuntimeOptions
+			if err := json.Unmarshal(data, &parsed); err == nil {
+				runtimeOptions = &parsed
+			}
+		}
+	}
+	return text, runtimeOptions, nil
+}
+
+func claudeAccessToPermissionMode(level types.AccessLevel) string {
+	switch level {
+	case types.AccessReadOnly:
+		return "plan"
+	case types.AccessOnRequest:
+		return "default"
+	case types.AccessFull:
+		return "bypassPermissions"
+	default:
+		return ""
+	}
 }

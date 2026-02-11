@@ -129,8 +129,27 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 				continue
 			}
 			seen[thread.ID] = struct{}{}
-			if existing, ok, err := s.sessions.GetRecord(ctx, thread.ID); err == nil && ok {
-				if existing.Session != nil && existing.Session.Status == types.SessionStatusExited {
+			if existing, ok, err := s.sessions.GetRecord(ctx, thread.ID); err == nil && ok && existing != nil && existing.Session != nil {
+				if revived, changed := reviveExitedSessionRecord(existing); changed {
+					if _, err := s.sessions.UpsertRecord(ctx, revived); err != nil {
+						return err
+					}
+					existing = revived
+				}
+				// If a re-keyed internal session already owns this thread ID,
+				// only refresh syncer-owned metadata; don't overwrite the record.
+				if existing.Source == sessionSourceInternal {
+					lastActive := time.Unix(thread.UpdatedAt, 0).UTC()
+					if thread.UpdatedAt == 0 {
+						lastActive = time.Now().UTC()
+					}
+					_, _ = s.meta.Upsert(ctx, &types.SessionMeta{
+						SessionID:    thread.ID,
+						WorkspaceID:  workspaceID,
+						WorktreeID:   worktreeID,
+						ThreadID:     thread.ID,
+						LastActiveAt: &lastActive,
+					})
 					continue
 				}
 			}
@@ -139,8 +158,10 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 				createdAt = time.Now().UTC()
 			}
 			title := sanitizeTitle(thread.Preview)
+			titleLocked := false
 			if existingMeta, ok, err := s.meta.Get(ctx, thread.ID); err == nil && ok && existingMeta != nil && existingMeta.TitleLocked && strings.TrimSpace(existingMeta.Title) != "" {
 				title = existingMeta.Title
+				titleLocked = true
 			}
 			sessionCwd := cwd
 			if strings.TrimSpace(thread.Cwd) != "" {
@@ -171,6 +192,7 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 				WorkspaceID:  workspaceID,
 				WorktreeID:   worktreeID,
 				Title:        title,
+				TitleLocked:  titleLocked,
 				ThreadID:     thread.ID,
 				LastActiveAt: &lastActive,
 			}
@@ -227,6 +249,24 @@ func (s *CodexSyncer) removeStale(ctx context.Context, workspaceID, worktreeID s
 }
 
 var ErrCodexSyncUnavailable = errors.New("codex sync unavailable")
+
+func reviveExitedSessionRecord(record *types.SessionRecord) (*types.SessionRecord, bool) {
+	if record == nil || record.Session == nil {
+		return nil, false
+	}
+	if record.Session.Status != types.SessionStatusExited {
+		return record, false
+	}
+	revived := *record.Session
+	revived.Status = types.SessionStatusInactive
+	revived.PID = 0
+	revived.ExitedAt = nil
+	revived.ExitCode = nil
+	return &types.SessionRecord{
+		Session: &revived,
+		Source:  record.Source,
+	}, true
+}
 
 func pathMatchesWorkspace(cwd, root string) bool {
 	cwd = strings.TrimSpace(cwd)

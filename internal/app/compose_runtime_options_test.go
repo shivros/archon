@@ -26,6 +26,32 @@ func TestComposeControlsLineShowsRuntimeOptions(t *testing.T) {
 	}
 }
 
+func TestComposeControlsLineHidesReasoningWhenProviderDoesNotSupportIt(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "claude"}
+
+	line := m.composeControlsLine()
+	if !strings.Contains(line, "Model:") {
+		t.Fatalf("expected model control, got %q", line)
+	}
+	if strings.Contains(line, "Reasoning:") {
+		t.Fatalf("expected reasoning control to be hidden for claude, got %q", line)
+	}
+	if !strings.Contains(line, "Access:") {
+		t.Fatalf("expected access control, got %q", line)
+	}
+}
+
+func TestOpenComposeOptionPickerReasoningDisabledWhenProviderHasNoReasoningLevels(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "claude"}
+	if m.openComposeOptionPicker(composeOptionReasoning) {
+		t.Fatalf("expected reasoning picker to remain closed for claude")
+	}
+}
+
 func TestApplyComposeOptionSelectionUpdatesNewSessionDefaults(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeCompose

@@ -79,6 +79,14 @@ type SessionListWithMetaAPI interface {
 	ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 }
 
+type SessionListWithMetaIncludeDismissedAPI interface {
+	ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
+}
+
+type SessionListWithMetaRefreshAPI interface {
+	ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error)
+}
+
 type SessionProviderOptionsAPI interface {
 	GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error)
 }
@@ -109,6 +117,14 @@ type SessionKillAPI interface {
 
 type SessionMarkExitedAPI interface {
 	MarkSessionExited(ctx context.Context, id string) error
+}
+
+type SessionDismissAPI interface {
+	DismissSession(ctx context.Context, id string) error
+}
+
+type SessionUndismissAPI interface {
+	UndismissSession(ctx context.Context, id string) error
 }
 
 type SessionUpdateAPI interface {
@@ -173,6 +189,8 @@ type SessionAPI interface {
 	SessionItemsStreamAPI
 	SessionKillAPI
 	SessionMarkExitedAPI
+	SessionDismissAPI
+	SessionUndismissAPI
 	SessionUpdateAPI
 	SessionSendAPI
 	SessionApproveAPI
@@ -264,6 +282,14 @@ func (a *ClientAPI) ListSessionsWithMeta(ctx context.Context) ([]*types.Session,
 	return a.client.ListSessionsWithMeta(ctx)
 }
 
+func (a *ClientAPI) ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return a.client.ListSessionsWithMetaIncludeDismissed(ctx)
+}
+
+func (a *ClientAPI) ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
+	return a.client.ListSessionsWithMetaRefresh(ctx, workspaceID, includeDismissed)
+}
+
 func (a *ClientAPI) GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error) {
 	return a.client.GetProviderOptions(ctx, provider)
 }
@@ -294,6 +320,14 @@ func (a *ClientAPI) KillSession(ctx context.Context, id string) error {
 
 func (a *ClientAPI) MarkSessionExited(ctx context.Context, id string) error {
 	return a.client.MarkSessionExited(ctx, id)
+}
+
+func (a *ClientAPI) DismissSession(ctx context.Context, id string) error {
+	return a.client.DismissSession(ctx, id)
+}
+
+func (a *ClientAPI) UndismissSession(ctx context.Context, id string) error {
+	return a.client.UndismissSession(ctx, id)
 }
 
 func (a *ClientAPI) UpdateSession(ctx context.Context, id string, req client.UpdateSessionRequest) error {

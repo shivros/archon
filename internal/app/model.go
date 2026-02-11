@@ -64,6 +64,9 @@ const (
 	uiModePickWorkspaceGroupAssign
 	uiModePickWorkspaceGroupDelete
 	uiModeAssignGroupWorkspaces
+	uiModePickNoteMoveTarget
+	uiModePickNoteMoveWorktree
+	uiModePickNoteMoveSession
 )
 
 type Model struct {
@@ -100,6 +103,7 @@ type Model struct {
 	width                      int
 	height                     int
 	follow                     bool
+	showDismissed              bool
 	workspaces                 []*types.Workspace
 	groups                     []*types.WorkspaceGroup
 	worktrees                  map[string][]*types.Worktree
@@ -165,8 +169,19 @@ type Model struct {
 	pendingConfirm             confirmAction
 	scrollOnLoad               bool
 	notes                      []*types.Note
+	notesByScope               map[types.NoteScope][]*types.Note
+	notesFilters               notesFilterState
 	notesScope                 noteScopeTarget
 	notesReturnMode            uiMode
+	notesPanelOpen             bool
+	notesPanelVisible          bool
+	notesPanelWidth            int
+	notesPanelMainWidth        int
+	notesPanelBlocks           []ChatBlock
+	notesPanelSpans            []renderedBlockSpan
+	notesPanelViewport         viewport.Model
+	noteMoveNoteID             string
+	noteMoveReturnMode         uiMode
 }
 
 type newSessionTarget struct {
@@ -227,6 +242,8 @@ type confirmAction struct {
 func NewModel(client *client.Client) Model {
 	vp := viewport.New(minViewportWidth, minContentHeight-1)
 	vp.SetContent("No sessions.")
+	notesPanelVP := viewport.New(minViewportWidth, minContentHeight-1)
+	notesPanelVP.SetContent("No notes.")
 
 	api := NewClientAPI(client)
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
@@ -244,6 +261,7 @@ func NewModel(client *client.Client) Model {
 		stateAPI:                   api,
 		sidebar:                    NewSidebarController(),
 		viewport:                   vp,
+		notesPanelViewport:         notesPanelVP,
 		stream:                     stream,
 		codexStream:                codexStream,
 		itemStream:                 itemStream,
@@ -289,6 +307,7 @@ func NewModel(client *client.Client) Model {
 		menu:                       NewMenuController(),
 		contextMenu:                NewContextMenuController(),
 		confirm:                    NewConfirmController(),
+		notesByScope:               map[types.NoteScope][]*types.Note{},
 	}
 }
 
@@ -304,8 +323,9 @@ func (m *Model) Init() tea.Cmd {
 		fetchAppStateCmd(m.stateAPI),
 		fetchWorkspacesCmd(m.workspaceAPI),
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
-		fetchSessionsWithMetaCmd(m.sessionAPI),
+		m.fetchSessionsCmd(false),
 		fetchProviderOptionsCmd(m.sessionAPI, "codex"),
+		fetchProviderOptionsCmd(m.sessionAPI, "claude"),
 		m.tickCmd(),
 	)
 }
@@ -389,6 +409,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if handled, cmd := m.reduceWorkspaceEditModes(msg); handled {
+		return m, cmd
+	}
+	if handled, cmd := m.reduceNoteMovePickerMode(msg); handled {
 		return m, cmd
 	}
 	if handled, cmd := m.reducePickProviderMode(msg); handled {
@@ -478,8 +501,22 @@ func (m *Model) resize(width, height int) {
 		viewportWidth = max(minViewportWidth, width-listWidth-1)
 	}
 	contentWidth := viewportWidth
-	if m.usesViewport() && viewportWidth > minViewportWidth+viewportScrollbarWidth {
-		contentWidth = viewportWidth - viewportScrollbarWidth
+	mainViewportWidth := viewportWidth
+	panelWidth := 0
+	panelVisible := false
+	if m.notesPanelOpen {
+		panelWidth = clamp(viewportWidth/3, notesPanelMinWidth, notesPanelMaxWidth)
+		if viewportWidth-panelWidth-1 >= minViewportWidth {
+			panelVisible = true
+			mainViewportWidth = viewportWidth - panelWidth - 1
+			contentWidth = mainViewportWidth
+		}
+	}
+	m.notesPanelVisible = panelVisible
+	m.notesPanelWidth = panelWidth
+	m.notesPanelMainWidth = mainViewportWidth
+	if m.usesViewport() && mainViewportWidth > minViewportWidth+viewportScrollbarWidth {
+		contentWidth = mainViewportWidth - viewportScrollbarWidth
 	}
 
 	if m.sidebar != nil {
@@ -504,44 +541,52 @@ func (m *Model) resize(width, height int) {
 	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.Width = contentWidth
 	m.viewport.Height = vpHeight
+	if panelVisible {
+		m.notesPanelViewport.Width = panelWidth
+		m.notesPanelViewport.Height = max(1, contentHeight-1)
+	} else {
+		m.notesPanelViewport.Width = 0
+		m.notesPanelViewport.Height = 0
+	}
 	if m.addWorkspace != nil {
-		m.addWorkspace.Resize(viewportWidth)
+		m.addWorkspace.Resize(mainViewportWidth)
 	}
 	if m.addWorktree != nil {
-		m.addWorktree.Resize(viewportWidth)
+		m.addWorktree.Resize(mainViewportWidth)
 		m.addWorktree.SetListHeight(max(3, contentHeight-4))
 	}
 	if m.providerPicker != nil {
-		m.providerPicker.SetSize(viewportWidth, max(3, contentHeight-2))
+		m.providerPicker.SetSize(mainViewportWidth, max(3, contentHeight-2))
 	}
 	if m.compose != nil {
-		m.compose.Resize(viewportWidth)
+		m.compose.Resize(mainViewportWidth)
 	}
 	if m.groupPicker != nil {
-		m.groupPicker.SetSize(viewportWidth, max(3, contentHeight-2))
+		m.groupPicker.SetSize(mainViewportWidth, max(3, contentHeight-2))
 	}
 	if m.workspacePicker != nil {
-		m.workspacePicker.SetSize(viewportWidth, max(3, contentHeight-2))
+		m.workspacePicker.SetSize(mainViewportWidth, max(3, contentHeight-2))
 	}
 	if m.groupSelectPicker != nil {
-		m.groupSelectPicker.SetSize(viewportWidth, max(3, contentHeight-2))
+		m.groupSelectPicker.SetSize(mainViewportWidth, max(3, contentHeight-2))
 	}
 	if m.workspaceMulti != nil {
-		m.workspaceMulti.SetSize(viewportWidth, max(3, contentHeight-2))
+		m.workspaceMulti.SetSize(mainViewportWidth, max(3, contentHeight-2))
 	}
 	if m.composeOptionPicker != nil {
-		m.composeOptionPicker.SetSize(viewportWidth, 8)
+		m.composeOptionPicker.SetSize(mainViewportWidth, 8)
 	}
 	if m.chatInput != nil {
-		m.chatInput.Resize(viewportWidth)
+		m.chatInput.Resize(mainViewportWidth)
 	}
 	if m.searchInput != nil {
-		m.searchInput.Resize(viewportWidth)
+		m.searchInput.Resize(mainViewportWidth)
 	}
 	if m.noteInput != nil {
-		m.noteInput.Resize(viewportWidth)
+		m.noteInput.Resize(mainViewportWidth)
 	}
 	m.renderViewport()
+	m.renderNotesPanel()
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {
@@ -557,7 +602,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	if item == nil {
 		m.resetStream()
 		m.setContentText("No sessions.")
-		return nil
+		return m.batchWithNotesPanelSync(nil)
 	}
 	if item.kind == sidebarWorkspace {
 		stateChanged := false
@@ -579,9 +624,9 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		}
 		m.setStatusMessage("workspace selected")
 		if stateChanged {
-			return m.saveAppStateCmd()
+			return m.batchWithNotesPanelSync(m.saveAppStateCmd())
 		}
-		return nil
+		return m.batchWithNotesPanelSync(nil)
 	}
 	if item.kind == sidebarWorktree {
 		stateChanged := false
@@ -600,12 +645,12 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		}
 		m.setStatusMessage("worktree selected")
 		if stateChanged {
-			return m.saveAppStateCmd()
+			return m.batchWithNotesPanelSync(m.saveAppStateCmd())
 		}
-		return nil
+		return m.batchWithNotesPanelSync(nil)
 	}
 	if !item.isSession() {
-		return nil
+		return m.batchWithNotesPanelSync(nil)
 	}
 	if m.mode == uiModeCompose && m.compose != nil && item.session != nil {
 		m.compose.SetSession(item.session.ID, sessionTitle(item.session, item.meta))
@@ -638,9 +683,9 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		}
 	}
 	if stateChanged {
-		return tea.Batch(cmd, m.saveAppStateCmd())
+		return m.batchWithNotesPanelSync(tea.Batch(cmd, m.saveAppStateCmd()))
 	}
-	return cmd
+	return m.batchWithNotesPanelSync(cmd)
 }
 
 func (m *Model) scheduleSessionLoad(item *sidebarItem, delay time.Duration) tea.Cmd {
@@ -823,7 +868,7 @@ func (m *Model) applySidebarItems() {
 	}
 	workspaces := m.filteredWorkspaces()
 	sessions := m.filteredSessions(workspaces)
-	item := m.sidebar.Apply(workspaces, m.worktrees, sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID)
+	item := m.sidebar.Apply(workspaces, m.worktrees, sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
 	if item == nil {
 		m.resetStream()
 		m.setContentText("No sessions.")
@@ -968,11 +1013,11 @@ func (m *Model) handleConfirmChoice(choice confirmChoice) tea.Cmd {
 				return nil
 			}
 			if len(action.sessionIDs) == 1 {
-				m.setStatusMessage("marking exited " + action.sessionIDs[0])
-				return markExitedCmd(m.sessionAPI, action.sessionIDs[0])
+				m.setStatusMessage("dismissing " + action.sessionIDs[0])
+				return dismissSessionCmd(m.sessionAPI, action.sessionIDs[0])
 			}
-			m.setStatusMessage(fmt.Sprintf("marking exited %d sessions", len(action.sessionIDs)))
-			return markExitedManyCmd(m.sessionAPI, action.sessionIDs)
+			m.setStatusMessage(fmt.Sprintf("dismissing %d sessions", len(action.sessionIDs)))
+			return dismissManySessionsCmd(m.sessionAPI, action.sessionIDs)
 		}
 		m.setStatusMessage("confirmed")
 		return nil
@@ -1361,6 +1406,40 @@ func (m *Model) selectedSessionIDs() []string {
 		return nil
 	}
 	return m.sidebar.SelectedSessionIDs()
+}
+
+func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
+	opts := fetchSessionsOptions{
+		refresh:          refresh,
+		includeDismissed: m.showDismissed,
+	}
+	if refresh {
+		opts.workspaceID = m.refreshWorkspaceID()
+	}
+	return fetchSessionsWithMetaCmd(m.sessionAPI, opts)
+}
+
+func (m *Model) refreshWorkspaceID() string {
+	if item := m.selectedItem(); item != nil {
+		if workspaceID := strings.TrimSpace(item.workspaceID()); workspaceID != "" && workspaceID != unassignedWorkspaceID {
+			return workspaceID
+		}
+	}
+	workspaceID := strings.TrimSpace(m.appState.ActiveWorkspaceID)
+	if workspaceID == unassignedWorkspaceID {
+		return ""
+	}
+	return workspaceID
+}
+
+func (m *Model) toggleShowDismissed() tea.Cmd {
+	m.showDismissed = !m.showDismissed
+	if m.showDismissed {
+		m.setStatusMessage("showing dismissed sessions")
+	} else {
+		m.setStatusMessage("hiding dismissed sessions")
+	}
+	return m.fetchSessionsCmd(false)
 }
 
 func (m *Model) pruneSelection() {
@@ -1963,10 +2042,19 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceInputFocusLeftPressMouse(msg, layout) {
 		return true
 	}
+	if m.reduceNotesPanelLeftPressMouse(msg, layout) {
+		return true
+	}
 	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptPinLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceTranscriptNotesFilterLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceTranscriptMoveLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptDeleteLeftPressMouse(msg, layout) {
@@ -2194,6 +2282,7 @@ func (m *Model) applyAppState(state *types.AppState) {
 func (m *Model) updateDelegate() {
 	if m.sidebar != nil {
 		m.sidebar.SetActive(m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID)
+		m.sidebar.SetProviderBadges(m.appState.ProviderBadges)
 	}
 }
 

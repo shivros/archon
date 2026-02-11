@@ -11,12 +11,15 @@ import (
 )
 
 const codexModelListEnv = "ARCHON_CODEX_MODELS"
+const claudeModelListEnv = "ARCHON_CLAUDE_MODELS"
 
 func providerOptionCatalog(provider string) *types.ProviderOptionCatalog {
 	name := providers.Normalize(provider)
 	switch name {
 	case "codex":
 		return codexProviderOptionCatalog()
+	case "claude":
+		return claudeProviderOptionCatalog()
 	default:
 		return &types.ProviderOptionCatalog{Provider: name}
 	}
@@ -201,6 +204,56 @@ func parseCodexModelList() []string {
 	return out
 }
 
+func claudeProviderOptionCatalog() *types.ProviderOptionCatalog {
+	models := parseClaudeModelList()
+	defaultModel := strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_MODEL"))
+	if defaultModel == "" {
+		defaultModel = "sonnet"
+	}
+	if !slices.Contains(models, defaultModel) {
+		models = append([]string{defaultModel}, models...)
+	}
+	return &types.ProviderOptionCatalog{
+		Provider: "claude",
+		Models:   models,
+		AccessLevels: []types.AccessLevel{
+			types.AccessReadOnly,
+			types.AccessOnRequest,
+			types.AccessFull,
+		},
+		Defaults: types.SessionRuntimeOptions{
+			Model:   defaultModel,
+			Access:  types.AccessOnRequest,
+			Version: 1,
+		},
+	}
+}
+
+func parseClaudeModelList() []string {
+	raw := strings.TrimSpace(os.Getenv(claudeModelListEnv))
+	if raw == "" {
+		return []string{"sonnet", "opus"}
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		model := strings.TrimSpace(part)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		out = append(out, model)
+		seen[model] = struct{}{}
+	}
+	if len(out) == 0 {
+		return []string{"sonnet", "opus"}
+	}
+	return out
+}
+
 func resolveRuntimeOptions(provider string, base, patch *types.SessionRuntimeOptions, applyDefaults bool) (*types.SessionRuntimeOptions, error) {
 	merged := types.MergeRuntimeOptions(base, patch)
 	catalog := providerOptionCatalog(provider)
@@ -241,7 +294,8 @@ func resolveRuntimeOptions(provider string, base, patch *types.SessionRuntimeOpt
 			merged.Access = catalog.Defaults.Access
 		}
 	}
-	skipModelValidation := providers.Normalize(provider) == "codex"
+	normalizedProvider := providers.Normalize(provider)
+	skipModelValidation := normalizedProvider == "codex" || normalizedProvider == "claude"
 	if merged.Model != "" && len(catalog.Models) > 0 && !containsFolded(catalog.Models, merged.Model) && !skipModelValidation {
 		return nil, fmt.Errorf("invalid model: %s", merged.Model)
 	}

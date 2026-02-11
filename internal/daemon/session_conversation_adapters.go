@@ -268,7 +268,11 @@ func (claudeConversationAdapter) SendMessage(ctx context.Context, service *Sessi
 	if text == "" {
 		return "", invalidError("text input is required", nil)
 	}
-	payload := buildClaudeUserPayload(text)
+	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
+	if meta != nil {
+		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
+	}
+	payload := buildClaudeUserPayloadWithRuntime(text, runtimeOptions)
 	if err := service.manager.SendInput(session.ID, payload); err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
 			providerSessionID := ""
@@ -285,6 +289,7 @@ func (claudeConversationAdapter) SendMessage(ctx context.Context, service *Sessi
 				Provider:          session.Provider,
 				Cwd:               session.Cwd,
 				Env:               session.Env,
+				RuntimeOptions:    runtimeOptions,
 				Resume:            true,
 				ProviderSessionID: providerSessionID,
 			}, session)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ type CodexStreamController struct {
 	cancel           func()
 	maxEventsPerTick int
 	transcript       *ChatTranscript
+	reasoning        *codexReasoningAccumulator
+	reasoningSeq     int
 	pendingApproval  *ApprovalRequest
 	activeAgentID    string
 	agentDeltaSeen   bool
@@ -20,10 +23,12 @@ type CodexStreamController struct {
 }
 
 func NewCodexStreamController(maxLines, maxEventsPerTick int) *CodexStreamController {
-	return &CodexStreamController{
+	controller := &CodexStreamController{
 		maxEventsPerTick: maxEventsPerTick,
 		transcript:       NewChatTranscript(maxLines),
 	}
+	controller.resetReasoningAccumulator()
+	return controller
 }
 
 func (c *CodexStreamController) Reset() {
@@ -42,6 +47,9 @@ func (c *CodexStreamController) Reset() {
 	c.activeAgentID = ""
 	c.agentDeltaSeen = false
 	c.lastError = ""
+	c.reasoning = nil
+	c.reasoningSeq = 0
+	c.resetReasoningAccumulator()
 }
 
 func (c *CodexStreamController) HasStream() bool {
@@ -69,6 +77,7 @@ func (c *CodexStreamController) SetSnapshot(lines []string) {
 	if c.transcript != nil {
 		c.transcript.SetBlocks(nil)
 	}
+	c.resetReasoningAccumulator()
 }
 
 func (c *CodexStreamController) SetSnapshotBlocks(blocks []ChatBlock) {
@@ -78,12 +87,14 @@ func (c *CodexStreamController) SetSnapshotBlocks(blocks []ChatBlock) {
 	if c.transcript != nil {
 		c.transcript.SetBlocks(blocks)
 	}
+	c.resetReasoningAccumulator()
 }
 
 func (c *CodexStreamController) AppendUserMessage(text string) int {
 	if c == nil || c.transcript == nil {
 		return -1
 	}
+	c.resetReasoningAccumulator()
 	return c.transcript.AppendUserMessage(text)
 }
 
@@ -276,8 +287,28 @@ func (c *CodexStreamController) applyReasoningItem(item map[string]any) bool {
 	if strings.TrimSpace(text) == "" {
 		return false
 	}
+	if c.reasoning == nil {
+		c.resetReasoningAccumulator()
+	}
 	id := strings.TrimSpace(asString(item["id"]))
-	return c.transcript.UpsertReasoning(id, text)
+	aggregateID, aggregateText, _ := c.reasoning.Add(id, text)
+	if strings.TrimSpace(aggregateID) == "" || strings.TrimSpace(aggregateText) == "" {
+		return false
+	}
+	return c.transcript.UpsertReasoning(aggregateID, aggregateText)
+}
+
+func (c *CodexStreamController) resetReasoningAccumulator() {
+	if c == nil {
+		return
+	}
+	c.reasoningSeq++
+	groupID := fmt.Sprintf("codex-group-%d", c.reasoningSeq)
+	if c.reasoning == nil {
+		c.reasoning = newCodexReasoningAccumulator(groupID)
+		return
+	}
+	c.reasoning.Reset(groupID)
 }
 
 func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {

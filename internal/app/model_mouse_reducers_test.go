@@ -215,6 +215,45 @@ func TestMouseReducerTranscriptPinClickQueuesPinCommand(t *testing.T) {
 	}
 }
 
+func TestMouseReducerTranscriptMoveClickOpensMovePickerInNotesMode(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeNotes
+	m.notes = []*types.Note{
+		{
+			ID:          "n1",
+			Scope:       types.NoteScopeWorktree,
+			WorkspaceID: "ws1",
+			WorktreeID:  "wt1",
+			Title:       "Move me",
+		},
+	}
+	m.applyBlocks([]ChatBlock{
+		{ID: "n1", Role: ChatRoleWorktreeNote, Text: "remember this"},
+	})
+	if len(m.contentBlockSpans) != 1 {
+		t.Fatalf("expected rendered span metadata, got %d", len(m.contentBlockSpans))
+	}
+	span := m.contentBlockSpans[0]
+	if span.MoveLine < 0 || span.MoveStart < 0 {
+		t.Fatalf("expected move metadata, got %#v", span)
+	}
+	layout := m.resolveMouseLayout()
+	y := span.MoveLine - m.viewport.YOffset + 1
+	x := layout.rightStart + span.MoveStart
+
+	handled := m.reduceTranscriptMoveLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected move click to be handled in notes mode")
+	}
+	if m.mode != uiModePickNoteMoveTarget {
+		t.Fatalf("expected note move target picker mode, got %v", m.mode)
+	}
+	if m.noteMoveNoteID != "n1" {
+		t.Fatalf("expected move state to track note n1, got %q", m.noteMoveNoteID)
+	}
+}
+
 func TestMouseReducerTranscriptDeleteClickOpensConfirmInNotesMode(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
@@ -243,6 +282,48 @@ func TestMouseReducerTranscriptDeleteClickOpensConfirmInNotesMode(t *testing.T) 
 	}
 	if m.confirm == nil || !m.confirm.IsOpen() {
 		t.Fatalf("expected confirm dialog to open")
+	}
+}
+
+func TestMouseReducerTranscriptNotesFilterClickTogglesWorkspace(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeNotes
+	m.setNotesRootScope(noteScopeTarget{
+		Scope:       types.NoteScopeSession,
+		WorkspaceID: "ws1",
+		WorktreeID:  "wt1",
+		SessionID:   "s1",
+	})
+	m.renderNotesViewsFromState()
+	lines := m.currentLines()
+	targetLine := -1
+	targetCol := -1
+	for i, line := range lines {
+		idx := strings.Index(line, "Workspace")
+		if idx >= 0 {
+			targetLine = i
+			targetCol = idx
+			break
+		}
+	}
+	if targetLine < 0 {
+		t.Fatalf("expected filter token in notes header")
+	}
+	layout := m.resolveMouseLayout()
+	y := targetLine - m.viewport.YOffset + 1
+	x := layout.rightStart + targetCol
+	handled := m.reduceTranscriptNotesFilterLeftPressMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      y,
+	}, layout)
+	if !handled {
+		t.Fatalf("expected notes filter click to be handled")
+	}
+	if m.notesFilters.ShowWorkspace {
+		t.Fatalf("expected workspace filter to toggle off")
 	}
 }
 

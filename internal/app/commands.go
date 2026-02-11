@@ -13,11 +13,42 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI) tea.Cmd {
+type fetchSessionsOptions struct {
+	refresh          bool
+	workspaceID      string
+	includeDismissed bool
+}
+
+func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessionsOptions) tea.Cmd {
+	opts := fetchSessionsOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		timeout := 4 * time.Second
+		if opts.refresh {
+			timeout = 95 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		sessions, meta, err := api.ListSessionsWithMeta(ctx)
+		var (
+			sessions []*types.Session
+			meta     []*types.SessionMeta
+			err      error
+		)
+		if opts.refresh {
+			if refresher, ok := api.(SessionListWithMetaRefreshAPI); ok {
+				sessions, meta, err = refresher.ListSessionsWithMetaRefresh(ctx, opts.workspaceID, opts.includeDismissed)
+				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
+			}
+		}
+		if opts.includeDismissed {
+			if includer, ok := api.(SessionListWithMetaIncludeDismissedAPI); ok {
+				sessions, meta, err = includer.ListSessionsWithMetaIncludeDismissed(ctx)
+				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
+			}
+		}
+		sessions, meta, err = api.ListSessionsWithMeta(ctx)
 		return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
 	}
 }
@@ -92,6 +123,44 @@ func deleteNoteCmd(api NoteDeleteAPI, id string) tea.Cmd {
 		err := api.DeleteNote(ctx, id)
 		return noteDeletedMsg{id: id, err: err}
 	}
+}
+
+func moveNoteCmd(api NoteUpdateAPI, previous *types.Note, target noteScopeTarget) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		if previous == nil {
+			return noteMovedMsg{err: errors.New("note is required")}
+		}
+		noteID := strings.TrimSpace(previous.ID)
+		if noteID == "" {
+			return noteMovedMsg{err: errors.New("note id is required")}
+		}
+		patch := &types.Note{
+			Scope:       target.Scope,
+			WorkspaceID: strings.TrimSpace(target.WorkspaceID),
+			WorktreeID:  strings.TrimSpace(target.WorktreeID),
+			SessionID:   strings.TrimSpace(target.SessionID),
+		}
+		updated, err := api.UpdateNote(ctx, noteID, patch)
+		prev := cloneNoteForMessage(previous)
+		return noteMovedMsg{note: updated, previous: prev, err: err}
+	}
+}
+
+func cloneNoteForMessage(note *types.Note) *types.Note {
+	if note == nil {
+		return nil
+	}
+	cloned := *note
+	if note.Tags != nil {
+		cloned.Tags = append([]string(nil), note.Tags...)
+	}
+	if note.Source != nil {
+		source := *note.Source
+		cloned.Source = &source
+	}
+	return &cloned
 }
 
 func pinSessionNoteCmd(api SessionPinAPI, sessionID string, block ChatBlock, snippet string) tea.Cmd {
@@ -398,6 +467,56 @@ func markExitedManyCmd(api SessionMarkExitedAPI, ids []string) tea.Cmd {
 			}
 		}
 		return bulkExitMsg{ids: ids}
+	}
+}
+
+func dismissSessionCmd(api SessionDismissAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		err := api.DismissSession(ctx, id)
+		return dismissMsg{id: id, err: err}
+	}
+}
+
+func dismissManySessionsCmd(api SessionDismissAPI, ids []string) tea.Cmd {
+	return func() tea.Msg {
+		if len(ids) == 0 {
+			return bulkDismissMsg{ids: ids}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		for _, id := range ids {
+			if err := api.DismissSession(ctx, id); err != nil {
+				return bulkDismissMsg{ids: ids, err: err}
+			}
+		}
+		return bulkDismissMsg{ids: ids}
+	}
+}
+
+func undismissSessionCmd(api SessionUndismissAPI, id string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		err := api.UndismissSession(ctx, id)
+		return undismissMsg{id: id, err: err}
+	}
+}
+
+func undismissManySessionsCmd(api SessionUndismissAPI, ids []string) tea.Cmd {
+	return func() tea.Msg {
+		if len(ids) == 0 {
+			return bulkUndismissMsg{ids: ids}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		for _, id := range ids {
+			if err := api.UndismissSession(ctx, id); err != nil {
+				return bulkUndismissMsg{ids: ids, err: err}
+			}
+		}
+		return bulkUndismissMsg{ids: ids}
 	}
 }
 

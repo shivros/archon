@@ -302,6 +302,9 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		if text := reasoningText(item); text != "" {
 			t.UpsertReasoning(asString(item["id"]), text)
 		}
+	case "system":
+		// Internal metadata (init, session info, etc.) — not shown to users.
+		return
 	default:
 		if typ != "" {
 			if data, err := json.Marshal(item); err == nil {
@@ -333,8 +336,8 @@ func reasoningText(item map[string]any) string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	if text := strings.TrimLeft(extractContentText(item["content"]), "\n"); text != "" {
-		return "Reasoning\n" + text
+	if text := strings.TrimLeft(extractContentText(item["content"]), "\r\n"); text != "" {
+		return text
 	}
 	return ""
 }

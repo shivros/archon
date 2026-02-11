@@ -153,11 +153,14 @@ func TestRenderChatBlocksNotesShowDeleteControlAndHitbox(t *testing.T) {
 	}
 	rendered, spans := renderChatBlocks(blocks, 80, 2000)
 	plain := xansi.Strip(rendered)
-	if !strings.Contains(plain, "Session [Copy] [Delete]") {
-		t.Fatalf("expected delete control in rendered output: %q", plain)
+	if !strings.Contains(plain, "Session [Copy] [Move] [Delete]") {
+		t.Fatalf("expected move/delete controls in rendered output: %q", plain)
 	}
 	if len(spans) != 1 {
 		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if spans[0].MoveLine < 0 || spans[0].MoveStart < 0 || spans[0].MoveEnd < spans[0].MoveStart {
+		t.Fatalf("expected move hitbox metadata, got %#v", spans[0])
 	}
 	if spans[0].DeleteLine < 0 || spans[0].DeleteStart < 0 || spans[0].DeleteEnd < spans[0].DeleteStart {
 		t.Fatalf("expected delete hitbox metadata, got %#v", spans[0])
@@ -181,5 +184,40 @@ func TestRenderChatBlocksTranscriptShowsPinControlAndHitbox(t *testing.T) {
 	}
 	if spans[0].PinLine < 0 || spans[0].PinStart < 0 || spans[0].PinEnd < spans[0].PinStart {
 		t.Fatalf("expected pin hitbox metadata, got %#v", spans[0])
+	}
+}
+
+func TestRenderChatBlocksNotesScopeHeaderShowsFilterButtonsAndHitboxes(t *testing.T) {
+	blocks := []ChatBlock{
+		{
+			ID:   "notes-scope",
+			Role: ChatRoleSystem,
+			Text: "Notes\n\nScope: session s1\n\nFilters:\n[x] Workspace\n[ ] Worktree\n[x] Session",
+		},
+	}
+	rendered, spans := renderChatBlocks(blocks, 100, 2000)
+	plain := xansi.Strip(rendered)
+	if !strings.Contains(plain, "[Workspace]") || !strings.Contains(plain, "[Worktree]") || !strings.Contains(plain, "[Session]") {
+		t.Fatalf("expected filter buttons in notes scope header: %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.WorkspaceFilterLine < 0 || span.WorkspaceFilterStart < 0 || span.WorkspaceFilterEnd < span.WorkspaceFilterStart {
+		t.Fatalf("expected workspace filter hitbox metadata, got %#v", span)
+	}
+	if span.WorktreeFilterLine < 0 || span.WorktreeFilterStart < 0 || span.WorktreeFilterEnd < span.WorktreeFilterStart {
+		t.Fatalf("expected worktree filter hitbox metadata, got %#v", span)
+	}
+	if span.SessionFilterLine < 0 || span.SessionFilterStart < 0 || span.SessionFilterEnd < span.SessionFilterStart {
+		t.Fatalf("expected session filter hitbox metadata, got %#v", span)
+	}
+}
+
+func TestRenderChatTextUserStripsANSIStyling(t *testing.T) {
+	got := renderChatText(ChatRoleUser, "**bold** and `code`", 80)
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("expected user chat text to omit ANSI sequences, got %q", got)
 	}
 }

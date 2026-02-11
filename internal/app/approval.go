@@ -404,6 +404,71 @@ func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolu
 	return out
 }
 
+func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlock {
+	if len(previous) == 0 || len(next) == 0 {
+		return next
+	}
+	anchorByID := map[int]int{}
+	nonApprovalCount := 0
+	for _, block := range previous {
+		if block.Role != ChatRoleApproval && block.Role != ChatRoleApprovalResolved {
+			nonApprovalCount++
+			continue
+		}
+		requestID, ok := approvalRequestIDFromBlock(block)
+		if !ok {
+			continue
+		}
+		if _, exists := anchorByID[requestID]; !exists {
+			anchorByID[requestID] = nonApprovalCount
+		}
+	}
+	if len(anchorByID) == 0 {
+		return next
+	}
+
+	nonApproval := make([]ChatBlock, 0, len(next))
+	anchored := map[int][]ChatBlock{}
+	unanchored := make([]ChatBlock, 0, len(next))
+	for _, block := range next {
+		if block.Role != ChatRoleApproval && block.Role != ChatRoleApprovalResolved {
+			nonApproval = append(nonApproval, block)
+			continue
+		}
+		requestID, ok := approvalRequestIDFromBlock(block)
+		if !ok {
+			unanchored = append(unanchored, block)
+			continue
+		}
+		anchor, exists := anchorByID[requestID]
+		if !exists {
+			unanchored = append(unanchored, block)
+			continue
+		}
+		if anchor < 0 {
+			anchor = 0
+		}
+		if anchor > len(nonApproval) {
+			anchor = len(nonApproval)
+		}
+		anchored[anchor] = append(anchored[anchor], block)
+	}
+
+	out := make([]ChatBlock, 0, len(next))
+	for pos := 0; pos <= len(nonApproval); pos++ {
+		if blocks := anchored[pos]; len(blocks) > 0 {
+			out = append(out, blocks...)
+		}
+		if pos < len(nonApproval) {
+			out = append(out, nonApproval[pos])
+		}
+	}
+	if len(unanchored) > 0 {
+		out = append(out, unanchored...)
+	}
+	return out
+}
+
 func approvalRequestToBlock(req *ApprovalRequest) ChatBlock {
 	summary := strings.TrimSpace(req.Summary)
 	title := "Approval required"

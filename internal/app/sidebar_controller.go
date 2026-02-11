@@ -480,8 +480,8 @@ func (c *SidebarController) AdvanceToNextSession() bool {
 	return false
 }
 
-func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string) *sidebarItem {
-	items := buildSidebarItems(workspaces, worktrees, sessions, meta)
+func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string, showDismissed bool) *sidebarItem {
+	items := buildSidebarItems(workspaces, worktrees, sessions, meta, showDismissed)
 	selectedKey := c.SelectedKey()
 	c.list.SetItems(items)
 	if len(items) == 0 {
@@ -498,6 +498,13 @@ func (c *SidebarController) SetActive(activeWorkspaceID, activeWorktreeID string
 		c.delegate.activeWorktreeID = activeWorktreeID
 	}
 	c.syncDelegate()
+}
+
+func (c *SidebarController) SetProviderBadges(overrides map[string]*types.ProviderBadgeConfig) {
+	if c == nil || c.delegate == nil {
+		return
+	}
+	c.delegate.providerBadges = normalizeProviderBadgeOverrides(overrides)
 }
 
 func (c *SidebarController) syncDelegate() {

@@ -28,6 +28,21 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		if m.groupSelectPicker != nil {
 			bodyText = m.groupSelectPicker.View()
 		}
+	case uiModePickNoteMoveTarget:
+		headerText = "Move Note"
+		if m.groupSelectPicker != nil {
+			bodyText = m.groupSelectPicker.View()
+		}
+	case uiModePickNoteMoveWorktree:
+		headerText = "Select Worktree"
+		if m.groupSelectPicker != nil {
+			bodyText = m.groupSelectPicker.View()
+		}
+	case uiModePickNoteMoveSession:
+		headerText = "Select Session"
+		if m.groupSelectPicker != nil {
+			bodyText = m.groupSelectPicker.View()
+		}
 	case uiModeEditWorkspaceGroups:
 		headerText = "Edit Workspace Groups"
 		if m.groupPicker != nil {

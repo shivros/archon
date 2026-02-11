@@ -8,10 +8,13 @@ import (
 )
 
 type mouseLayout struct {
-	listWidth  int
-	barWidth   int
-	barStart   int
-	rightStart int
+	listWidth    int
+	barWidth     int
+	barStart     int
+	rightStart   int
+	panelVisible bool
+	panelStart   int
+	panelWidth   int
 }
 
 func (m *Model) resolveMouseLayout() mouseLayout {
@@ -31,6 +34,11 @@ func (m *Model) resolveMouseLayout() mouseLayout {
 	}
 	if layout.listWidth > 0 {
 		layout.rightStart = layout.listWidth + 1
+	}
+	if m.notesPanelVisible && m.notesPanelWidth > 0 {
+		layout.panelVisible = true
+		layout.panelWidth = m.notesPanelWidth
+		layout.panelStart = layout.rightStart + m.notesPanelMainWidth + 1
 	}
 	return layout
 }
@@ -222,6 +230,9 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 			return true
 		}
 	}
+	if m.reduceNotesPanelWheelMouse(msg, layout, delta) {
+		return true
+	}
 	if m.reduceModeWheelMouse(msg, layout, delta) {
 		return true
 	}
@@ -262,6 +273,11 @@ func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta
 	}
 	if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil && msg.X >= layout.rightStart {
 		if m.groupPicker.Move(delta) {
+			return true
+		}
+	}
+	if m.noteMovePickerModeActive() && m.groupSelectPicker != nil && msg.X >= layout.rightStart {
+		if m.groupSelectPicker.Move(delta) {
 			return true
 		}
 	}
@@ -432,6 +448,46 @@ func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouse
 	return true
 }
 
+func (m *Model) reduceTranscriptNotesFilterLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if msg.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeNotes && m.mode != uiModeAddNote {
+		return false
+	}
+	if msg.Y < 1 || msg.Y > m.viewport.Height {
+		return false
+	}
+	handled, cmd := m.toggleNotesFilterByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	if !handled {
+		return false
+	}
+	if cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
+	return true
+}
+
+func (m *Model) reduceTranscriptMoveLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if msg.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeNotes && m.mode != uiModeAddNote {
+		return false
+	}
+	if msg.Y < 1 || msg.Y > m.viewport.Height {
+		return false
+	}
+	handled, cmd := m.moveNoteByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	if !handled {
+		return false
+	}
+	if cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
+	return true
+}
+
 func (m *Model) reduceTranscriptDeleteLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
 	if msg.X < layout.rightStart {
 		return false
@@ -528,6 +584,17 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 					return true
 				}
 				m.enterAssignGroupWorkspaces(id)
+				return true
+			}
+		}
+	}
+	if m.noteMovePickerModeActive() && m.groupSelectPicker != nil {
+		if msg.X >= layout.rightStart {
+			row := msg.Y - 1
+			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
+				if cmd := m.handleNoteMovePickerSelection(); cmd != nil {
+					m.pendingMouseCmd = cmd
+				}
 				return true
 			}
 		}

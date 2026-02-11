@@ -33,7 +33,17 @@ func (m *Model) renderRightPaneView() string {
 		}
 		rightLines = append(rightLines, inputLine)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, rightLines...)
+	mainView := lipgloss.JoinVertical(lipgloss.Left, rightLines...)
+	if !m.notesPanelVisible || m.notesPanelWidth <= 0 {
+		return mainView
+	}
+	panelView := m.renderNotesPanelView()
+	height := max(lipgloss.Height(mainView), lipgloss.Height(panelView))
+	if height < 1 {
+		height = 1
+	}
+	divider := strings.Repeat("│\n", height-1) + "│"
+	return lipgloss.JoinHorizontal(lipgloss.Top, mainView, dividerStyle.Render(divider), panelView)
 }
 
 func (m *Model) renderBodyWithSidebar(rightView string) string {

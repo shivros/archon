@@ -462,8 +462,8 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get session: %v", err)
 			}
-			if got.Status != types.SessionStatusExited {
-				t.Fatalf("expected exited status, got %s", got.Status)
+			if got.Status != types.SessionStatusOrphaned {
+				t.Fatalf("expected orphaned status, got %s", got.Status)
 			}
 		})
 	}
@@ -545,8 +545,78 @@ func TestUIDismissBulkSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session 2: %v", err)
 	}
-	if got1.Status != types.SessionStatusExited || got2.Status != types.SessionStatusExited {
-		t.Fatalf("expected exited status, got %s/%s", got1.Status, got2.Status)
+	if got1.Status != types.SessionStatusOrphaned || got2.Status != types.SessionStatusOrphaned {
+		t.Fatalf("expected orphaned status, got %s/%s", got1.Status, got2.Status)
+	}
+}
+
+func TestUIShowDismissedAndUndismissSession(t *testing.T) {
+	requireUIIntegration(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	server, _, stores := newUITestServer(t)
+	defer server.Close()
+
+	api := client.NewWithBaseURL(server.URL, "token")
+
+	ws, err := api.CreateWorkspace(ctx, &types.Workspace{
+		Name:     "dismiss-ui-show-undismiss",
+		RepoPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	now := time.Now().UTC()
+	sessionID := "sess-dismiss-show-undismiss"
+	insertSessionWithMeta(t, stores, &types.Session{
+		ID:        sessionID,
+		Provider:  "codex",
+		Cmd:       "codex app-server",
+		Status:    types.SessionStatusInactive,
+		CreatedAt: now,
+	}, &types.SessionMeta{
+		SessionID:   sessionID,
+		WorkspaceID: ws.ID,
+		Title:       "Dismiss and undismiss",
+	})
+
+	model := NewModel(api)
+	model.tickFn = func() tea.Cmd { return nil }
+
+	h := newUIHarness(t, &model)
+	defer h.Close()
+	h.Init()
+	h.Resize(120, 40)
+	h.SelectWorkspace(ws.ID)
+	h.SelectSession(sessionID)
+
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+	h.WaitFor(func() bool {
+		return !sidebarHasSession(h.model, sessionID)
+	}, 2*time.Second)
+
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+
+	h.WaitFor(func() bool {
+		return sidebarHasSession(h.model, sessionID)
+	}, 2*time.Second)
+
+	h.SelectSession(sessionID)
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+
+	h.WaitFor(func() bool {
+		got, err := api.GetSession(ctx, sessionID)
+		return err == nil && got.Status == types.SessionStatusInactive
+	}, 2*time.Second)
+
+	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	if !sidebarHasSession(h.model, sessionID) {
+		t.Fatalf("expected undismissed session to remain visible when dismissed are hidden")
 	}
 }
 
