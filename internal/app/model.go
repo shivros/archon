@@ -173,6 +173,8 @@ type Model struct {
 	sendSeq                    int
 	pendingSends               map[int]pendingSend
 	composeHistory             map[string]*composeHistoryState
+	composeDrafts              map[string]string
+	noteDrafts                 map[string]string
 	requestActivity            requestActivity
 	tickFn                     func() tea.Cmd
 	pendingConfirm             confirmAction
@@ -293,7 +295,7 @@ func NewModel(client *client.Client) Model {
 		workspacePicker:            NewSelectPicker(minViewportWidth, minContentHeight-1),
 		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
 		workspaceMulti:             NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
-		noteInput:                  NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
+		noteInput:                  NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		status:                     "",
 		toastLevel:                 toastLevelInfo,
 		follow:                     true,
@@ -319,6 +321,8 @@ func NewModel(client *client.Client) Model {
 		keybindings:                keybindings,
 		pendingSends:               map[int]pendingSend{},
 		composeHistory:             map[string]*composeHistoryState{},
+		composeDrafts:              map[string]string{},
+		noteDrafts:                 map[string]string{},
 		menu:                       NewMenuController(),
 		contextMenu:                NewContextMenuController(),
 		confirm:                    NewConfirmController(),
@@ -332,6 +336,7 @@ func Run(client *client.Client) error {
 	if err != nil {
 		return err
 	}
+	model.applyUIConfig(uiConfig)
 	keybindingsPath, err := uiConfig.ResolveKeybindingsPath()
 	if err != nil {
 		return err
@@ -517,6 +522,34 @@ func (m *Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, body, statusLine)
 }
 
+func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
+	minHeight, maxHeight := uiConfig.SharedMultilineInputHeights()
+	cfg := DefaultTextInputConfig()
+	cfg.Height = minHeight
+	cfg.MinHeight = minHeight
+	cfg.MaxHeight = maxHeight
+	cfg.AutoGrow = true
+	if m.chatInput != nil {
+		m.chatInput.SetConfig(cfg)
+	}
+	if m.noteInput != nil {
+		m.noteInput.SetConfig(cfg)
+	}
+	if m.consumeInputHeightChanges(m.chatInput, m.noteInput) && m.width > 0 && m.height > 0 {
+		m.resize(m.width, m.height)
+	}
+}
+
+func (m *Model) consumeInputHeightChanges(inputs ...*TextInput) bool {
+	changed := false
+	for _, input := range inputs {
+		if input != nil && input.ConsumeHeightChanged() {
+			changed = true
+		}
+	}
+	return changed
+}
+
 func (m *Model) resize(width, height int) {
 	m.width = width
 	m.height = height
@@ -683,9 +716,26 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	if !item.isSession() {
 		return m.batchWithNotesPanelSync(nil)
 	}
+	draftChanged := false
 	if m.mode == uiModeCompose && m.compose != nil && item.session != nil {
-		m.compose.SetSession(item.session.ID, sessionTitle(item.session, item.meta))
+		nextSessionID := strings.TrimSpace(item.session.ID)
+		previousSessionID := strings.TrimSpace(m.composeSessionID())
+		sessionChanged := previousSessionID != nextSessionID
+		if sessionChanged {
+			draftChanged = m.saveCurrentComposeDraft() || draftChanged
+			m.closeComposeOptionPicker()
+		}
+		m.compose.SetSession(nextSessionID, sessionTitle(item.session, item.meta))
 		m.resetComposeHistoryCursor()
+		if m.chatInput != nil {
+			m.chatInput.SetPlaceholder("message")
+			if sessionChanged {
+				m.restoreComposeDraft(nextSessionID)
+			}
+		}
+		if m.consumeInputHeightChanges(m.chatInput) {
+			m.resize(m.width, m.height)
+		}
 	}
 	stateChanged := false
 	if wsID := item.workspaceID(); wsID != "" && wsID != unassignedWorkspaceID && wsID != m.appState.ActiveWorkspaceID {
@@ -713,7 +763,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 			cmd = fetchProviderCmd
 		}
 	}
-	if stateChanged {
+	if stateChanged || draftChanged {
 		return m.batchWithNotesPanelSync(tea.Batch(cmd, m.saveAppStateCmd()))
 	}
 	return m.batchWithNotesPanelSync(cmd)
@@ -1429,20 +1479,6 @@ func (m *Model) consumeItemTick() {
 	}
 }
 
-func (m *Model) toggleSelection() bool {
-	if m.sidebar == nil {
-		return false
-	}
-	return m.sidebar.ToggleSelection()
-}
-
-func (m *Model) selectedSessionIDs() []string {
-	if m.sidebar == nil {
-		return nil
-	}
-	return m.sidebar.SelectedSessionIDs()
-}
-
 func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
 	opts := fetchSessionsOptions{
 		refresh:          refresh,
@@ -1518,13 +1554,6 @@ func (m *Model) toggleShowDismissed() tea.Cmd {
 		m.setStatusMessage("hiding dismissed sessions")
 	}
 	return m.fetchSessionsCmd(false)
-}
-
-func (m *Model) pruneSelection() {
-	if m.sidebar == nil {
-		return
-	}
-	m.sidebar.PruneSelection(m.sessions)
 }
 
 func (m *Model) workspaceByID(id string) *types.Workspace {
@@ -2345,6 +2374,8 @@ func (m *Model) applyAppState(state *types.AppState) {
 	}
 	m.appState = *state
 	m.composeHistory = importComposeHistory(state.ComposeHistory)
+	m.composeDrafts = importDraftMap(state.ComposeDrafts, composeHistoryMaxSessions)
+	m.noteDrafts = importDraftMap(state.NoteDrafts, composeHistoryMaxSessions)
 	m.hasAppState = true
 	if m.menu != nil {
 		if state.ActiveWorkspaceGroupIDs == nil {
@@ -2369,6 +2400,7 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 		return nil
 	}
 	m.syncAppStateComposeHistory()
+	m.syncAppStateInputDrafts()
 	state := m.appState
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -2644,6 +2676,36 @@ func (m *Model) enterRenameForSelection() {
 	}
 }
 
+func (m *Model) enterDismissOrDeleteForSelection() {
+	item := m.selectedItem()
+	if item == nil {
+		m.setValidationStatus("select an item to dismiss or delete")
+		return
+	}
+	switch item.kind {
+	case sidebarWorkspace:
+		if item.workspace == nil || item.workspace.ID == "" || item.workspace.ID == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace to delete")
+			return
+		}
+		m.confirmDeleteWorkspace(item.workspace.ID)
+	case sidebarWorktree:
+		if item.worktree == nil || item.worktree.ID == "" || item.worktree.WorkspaceID == "" {
+			m.setValidationStatus("select a worktree to delete")
+			return
+		}
+		m.confirmDeleteWorktree(item.worktree.WorkspaceID, item.worktree.ID)
+	case sidebarSession:
+		if item.session == nil || item.session.ID == "" {
+			m.setValidationStatus("select a session to dismiss")
+			return
+		}
+		m.confirmDismissSessions([]string{item.session.ID})
+	default:
+		m.setValidationStatus("select an item to dismiss or delete")
+	}
+}
+
 func (m *Model) enterRenameWorkspace(id string) {
 	m.mode = uiModeRenameWorkspace
 	m.renameWorkspaceID = id
@@ -2748,6 +2810,9 @@ func (m *Model) exitRenameSession(status string) {
 }
 
 func (m *Model) enterCompose(sessionID string) {
+	if m.mode == uiModeCompose {
+		m.saveCurrentComposeDraft()
+	}
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
 	label := m.selectedSessionLabel()
@@ -2757,6 +2822,7 @@ func (m *Model) enterCompose(sessionID string) {
 	m.resetComposeHistoryCursor()
 	if m.chatInput != nil {
 		m.chatInput.SetPlaceholder("message")
+		m.restoreComposeDraft(sessionID)
 		m.chatInput.Focus()
 	}
 	if m.input != nil {
@@ -2767,6 +2833,7 @@ func (m *Model) enterCompose(sessionID string) {
 }
 
 func (m *Model) exitCompose(status string) {
+	m.saveCurrentComposeDraft()
 	m.mode = uiModeNormal
 	m.closeComposeOptionPicker()
 	if m.compose != nil {

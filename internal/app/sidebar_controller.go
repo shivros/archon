@@ -14,7 +14,6 @@ import (
 type SidebarController struct {
 	list                  list.Model
 	delegate              *sidebarDelegate
-	selected              map[string]struct{}
 	viewedSessionActivity map[string]string
 	unreadSessions        map[string]struct{}
 	unreadInitialized     bool
@@ -36,7 +35,6 @@ func NewSidebarController() *SidebarController {
 	return &SidebarController{
 		list:                  mlist,
 		delegate:              delegate,
-		selected:              map[string]struct{}{},
 		viewedSessionActivity: map[string]string{},
 		unreadSessions:        map[string]struct{}{},
 	}
@@ -411,71 +409,6 @@ func (c *SidebarController) SelectedSessionID() string {
 	return item.session.ID
 }
 
-func (c *SidebarController) SelectionCount() int {
-	return len(c.selected)
-}
-
-func (c *SidebarController) SelectedSessionIDs() []string {
-	if len(c.selected) == 0 {
-		if id := c.SelectedSessionID(); id != "" {
-			return []string{id}
-		}
-		return nil
-	}
-	var ids []string
-	for _, item := range c.list.Items() {
-		entry, ok := item.(*sidebarItem)
-		if !ok || entry == nil || entry.session == nil {
-			continue
-		}
-		if _, ok := c.selected[entry.session.ID]; ok {
-			ids = append(ids, entry.session.ID)
-		}
-	}
-	return ids
-}
-
-func (c *SidebarController) ToggleSelection() bool {
-	item := c.SelectedItem()
-	if item == nil || !item.isSession() || item.session == nil {
-		return false
-	}
-	id := item.session.ID
-	if _, ok := c.selected[id]; ok {
-		delete(c.selected, id)
-	} else {
-		c.selected[id] = struct{}{}
-	}
-	c.syncDelegate()
-	return true
-}
-
-func (c *SidebarController) RemoveSelection(ids []string) {
-	if len(ids) == 0 {
-		return
-	}
-	for _, id := range ids {
-		delete(c.selected, id)
-	}
-	c.syncDelegate()
-}
-
-func (c *SidebarController) PruneSelection(sessions []*types.Session) {
-	keep := make(map[string]struct{}, len(sessions))
-	for _, session := range sessions {
-		if session == nil {
-			continue
-		}
-		keep[session.ID] = struct{}{}
-	}
-	for id := range c.selected {
-		if _, ok := keep[id]; !ok {
-			delete(c.selected, id)
-		}
-	}
-	c.syncDelegate()
-}
-
 func (c *SidebarController) AdvanceToNextSession() bool {
 	items := c.list.Items()
 	if len(items) == 0 {
@@ -525,7 +458,6 @@ func (c *SidebarController) SetProviderBadges(overrides map[string]*types.Provid
 
 func (c *SidebarController) syncDelegate() {
 	if c.delegate != nil {
-		c.delegate.selectedSessions = c.selected
 		c.delegate.unreadSessions = c.unreadSessions
 	}
 }

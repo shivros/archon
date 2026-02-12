@@ -65,6 +65,9 @@ func (m *Model) syncNotesPanelToCurrentSelection(force bool) tea.Cmd {
 }
 
 func (m *Model) setNotesRootScope(scope noteScopeTarget) {
+	if m.mode == uiModeAddNote && !noteScopeEqual(scope, m.notesScope) {
+		m.saveCurrentNoteDraft()
+	}
 	m.notesScope = scope
 	m.notesByScope = map[types.NoteScope][]*types.Note{}
 	m.notes = nil

@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"control/internal/types"
@@ -218,25 +216,16 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.setStatusMessage("interrupting " + id)
 		return true, interruptSessionCmd(m.sessionAPI, id)
 	case "d":
-		ids := m.selectedSessionIDs()
-		if len(ids) == 0 {
-			m.setValidationStatus("no session selected")
-			return true, nil
-		}
-		m.confirmDismissSessions(ids)
+		m.enterDismissOrDeleteForSelection()
 		return true, nil
 	case "u":
-		ids := m.selectedSessionIDs()
-		if len(ids) == 0 {
+		id := m.selectedSessionID()
+		if id == "" {
 			m.setValidationStatus("no session selected")
 			return true, nil
 		}
-		if len(ids) == 1 {
-			m.setStatusMessage("undismissing " + ids[0])
-			return true, undismissSessionCmd(m.sessionAPI, ids[0])
-		}
-		m.setStatusMessage(fmt.Sprintf("undismissing %d sessions", len(ids)))
-		return true, undismissManySessionsCmd(m.sessionAPI, ids)
+		m.setStatusMessage("undismissing " + id)
+		return true, undismissSessionCmd(m.sessionAPI, id)
 	case "D":
 		return true, m.toggleShowDismissed()
 	default:
@@ -287,16 +276,7 @@ func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 func (m *Model) reduceSelectionKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch m.keyString(msg) {
 	case " ", "space":
-		if m.toggleSelection() {
-			count := 0
-			if m.sidebar != nil {
-				count = m.sidebar.SelectionCount()
-			}
-			m.setStatusMessage(fmt.Sprintf("selected %d", count))
-			if m.advanceToNextSession() {
-				return true, m.onSelectionChanged()
-			}
-		}
+		// Session multiselect is temporarily disabled.
 		return true, nil
 	case "j":
 		m.sidebar.CursorDown()

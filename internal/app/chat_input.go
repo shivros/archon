@@ -14,6 +14,10 @@ type TextInput struct {
 	input       textarea.Model
 	height      int
 	width       int
+	minHeight   int
+	maxHeight   int
+	autoGrow    bool
+	heightDirty bool
 	singleLine  bool
 	allSelected bool
 	undoHistory []string
@@ -22,11 +26,19 @@ type TextInput struct {
 
 type TextInputConfig struct {
 	Height     int
+	MinHeight  int
+	MaxHeight  int
+	AutoGrow   bool
 	SingleLine bool
 }
 
 func DefaultTextInputConfig() TextInputConfig {
-	return TextInputConfig{Height: 3}
+	return TextInputConfig{
+		Height:    3,
+		MinHeight: 3,
+		MaxHeight: 8,
+		AutoGrow:  true,
+	}
 }
 
 func NewTextInput(width int, cfg TextInputConfig) *TextInput {
@@ -35,17 +47,20 @@ func NewTextInput(width int, cfg TextInputConfig) *TextInput {
 	input.ShowLineNumbers = false
 	input.CharLimit = 0
 	applyWordNavigationAliases(&input)
-	height := cfg.Height
-	if height <= 0 {
-		height = 1
-	}
-	input.SetHeight(height)
 	inputWidth := setTextareaWidth(&input, width)
-	return &TextInput{input: input, height: height, width: inputWidth, singleLine: cfg.SingleLine}
+	c := &TextInput{input: input, width: inputWidth}
+	c.SetConfig(cfg)
+	return c
 }
 
 func (c *TextInput) Resize(width int) {
+	if c == nil {
+		return
+	}
 	c.width = setTextareaWidth(&c.input, width)
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
 	c.input.SetHeight(c.height)
 }
 
@@ -62,8 +77,14 @@ func (c *TextInput) SetPlaceholder(value string) {
 }
 
 func (c *TextInput) SetValue(value string) {
+	if c == nil {
+		return
+	}
 	c.input.SetValue(value)
 	c.sanitize()
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
 	c.allSelected = false
 }
 
@@ -72,7 +93,13 @@ func (c *TextInput) Value() string {
 }
 
 func (c *TextInput) Clear() {
+	if c == nil {
+		return
+	}
 	c.input.SetValue("")
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
 	c.allSelected = false
 }
 
@@ -87,6 +114,9 @@ func (c *TextInput) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	c.input, cmd = c.input.Update(msg)
 	c.sanitize()
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
 	return cmd
 }
 
@@ -198,6 +228,9 @@ func (c *TextInput) Undo() bool {
 	c.pushRedoHistory(current)
 	c.input.SetValue(prev)
 	c.sanitize()
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
 	c.allSelected = false
 	return true
 }
@@ -212,8 +245,36 @@ func (c *TextInput) Redo() bool {
 	c.pushUndoHistory(current)
 	c.input.SetValue(next)
 	c.sanitize()
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
 	c.allSelected = false
 	return true
+}
+
+func (c *TextInput) SetConfig(cfg TextInputConfig) {
+	if c == nil {
+		return
+	}
+	cfg = normalizeTextInputConfig(cfg)
+	c.singleLine = cfg.SingleLine
+	c.autoGrow = cfg.AutoGrow
+	c.minHeight = cfg.MinHeight
+	c.maxHeight = cfg.MaxHeight
+	c.height = cfg.Height
+	if c.applyHeightPolicy() {
+		c.heightDirty = true
+	}
+	c.input.SetHeight(c.height)
+}
+
+func (c *TextInput) ConsumeHeightChanged() bool {
+	if c == nil {
+		return false
+	}
+	changed := c.heightDirty
+	c.heightDirty = false
+	return changed
 }
 
 const textInputHistoryLimit = 200
@@ -234,6 +295,9 @@ func (c *TextInput) preprocessKeyMsg(msg tea.KeyMsg) (tea.KeyMsg, bool) {
 			c.input.SetValue("")
 			c.allSelected = false
 			c.sanitize()
+			if c.applyHeightPolicy() {
+				c.heightDirty = true
+			}
 			return msg, true
 		case isMutationKey(msg):
 			c.recordMutationSnapshot()
@@ -333,6 +397,60 @@ func isNewlineKey(msg tea.KeyMsg) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeTextInputConfig(cfg TextInputConfig) TextInputConfig {
+	if cfg.SingleLine {
+		cfg.Height = 1
+		cfg.MinHeight = 1
+		cfg.MaxHeight = 1
+		cfg.AutoGrow = false
+		return cfg
+	}
+	if cfg.Height <= 0 {
+		cfg.Height = 1
+	}
+	if cfg.AutoGrow {
+		if cfg.MinHeight <= 0 {
+			cfg.MinHeight = cfg.Height
+		}
+		if cfg.MinHeight <= 0 {
+			cfg.MinHeight = 1
+		}
+		if cfg.MaxHeight <= 0 {
+			cfg.MaxHeight = cfg.MinHeight
+		}
+		if cfg.MaxHeight < cfg.MinHeight {
+			cfg.MaxHeight = cfg.MinHeight
+		}
+		cfg.Height = cfg.MinHeight
+		return cfg
+	}
+	cfg.MinHeight = cfg.Height
+	cfg.MaxHeight = cfg.Height
+	return cfg
+}
+
+func (c *TextInput) applyHeightPolicy() bool {
+	if c == nil {
+		return false
+	}
+	nextHeight := c.height
+	if c.autoGrow {
+		lines := wrappedLineCount(c.input.Value(), c.width)
+		nextHeight = clamp(lines, c.minHeight, c.maxHeight)
+	} else {
+		nextHeight = clamp(c.height, c.minHeight, c.maxHeight)
+	}
+	if nextHeight <= 0 {
+		nextHeight = 1
+	}
+	if nextHeight == c.height {
+		return false
+	}
+	c.height = nextHeight
+	c.input.SetHeight(nextHeight)
+	return true
 }
 
 func setTextareaWidth(input *textarea.Model, width int) int {

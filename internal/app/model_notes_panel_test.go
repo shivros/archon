@@ -291,3 +291,33 @@ func TestMouseReducerNotesPanelFilterToggleHandled(t *testing.T) {
 		t.Fatalf("expected workspace filter to toggle off")
 	}
 }
+
+func TestUpdateNotesMsgWhileAddNoteModeUpdatesNotesPanel(t *testing.T) {
+	m := NewModel(nil)
+	m.notesPanelOpen = true
+	m.resize(240, 40)
+	m.mode = uiModeAddNote
+	scope := noteScopeTarget{
+		Scope:     types.NoteScopeSession,
+		SessionID: "s1",
+	}
+	m.setNotesRootScope(scope)
+
+	_, _ = m.Update(notesMsg{
+		scope: scope,
+		notes: []*types.Note{
+			{ID: "n1", Scope: types.NoteScopeSession, SessionID: "s1", Body: "panel while composing"},
+		},
+	})
+
+	found := false
+	for _, block := range m.notesPanelBlocks {
+		if block.ID == "n1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected notes panel blocks to include n1 in add note mode, got %#v", m.notesPanelBlocks)
+	}
+}

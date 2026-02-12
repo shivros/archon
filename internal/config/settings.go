@@ -72,10 +72,16 @@ type CoreClaudeProviderConfig struct {
 
 type UIConfig struct {
 	Keybindings UIKeybindingsConfig `toml:"keybindings"`
+	Input       UIInputConfig       `toml:"input"`
 }
 
 type UIKeybindingsConfig struct {
 	Path string `toml:"path"`
+}
+
+type UIInputConfig struct {
+	MultilineMinHeight int `toml:"multiline_min_height"`
+	MultilineMaxHeight int `toml:"multiline_max_height"`
 }
 
 func DefaultCoreConfig() CoreConfig {
@@ -205,7 +211,27 @@ func (c CoreConfig) CodexNetworkAccess() (bool, bool) {
 }
 
 func DefaultUIConfig() UIConfig {
-	return UIConfig{}
+	return UIConfig{
+		Input: UIInputConfig{
+			MultilineMinHeight: 3,
+			MultilineMaxHeight: 8,
+		},
+	}
+}
+
+func (c UIConfig) SharedMultilineInputHeights() (minHeight, maxHeight int) {
+	minHeight = c.Input.MultilineMinHeight
+	maxHeight = c.Input.MultilineMaxHeight
+	if minHeight <= 0 {
+		minHeight = 3
+	}
+	if maxHeight <= 0 {
+		maxHeight = 8
+	}
+	if maxHeight < minHeight {
+		maxHeight = minHeight
+	}
+	return minHeight, maxHeight
 }
 
 func LoadUIConfig() (UIConfig, error) {

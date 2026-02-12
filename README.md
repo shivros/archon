@@ -150,7 +150,6 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.pauseFollow`
 - `ui.toggleReasoning`
 - `ui.toggleMessageSelect`
-- `ui.toggleSelection`
 - `ui.composeClearInput`
 - `ui.composeModel`
 - `ui.composeReasoning`

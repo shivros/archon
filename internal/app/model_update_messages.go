@@ -173,7 +173,6 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.sessions = msg.sessions
 		m.sessionMeta = normalizeSessionMeta(msg.meta)
-		m.pruneSelection()
 		m.applySidebarItems()
 		if m.pendingSelectID != "" && m.sidebar != nil {
 			if m.sidebar.SelectBySessionID(m.pendingSelectID) {
@@ -509,18 +508,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setStatusError("exit error: " + msg.err.Error())
 			return true, nil
 		}
-		if m.sidebar != nil {
-			m.sidebar.RemoveSelection([]string{msg.id})
-		}
 		m.setStatusInfo("marked exited " + msg.id)
 		return true, m.fetchSessionsCmd(false)
 	case bulkExitMsg:
 		if msg.err != nil {
 			m.setStatusError("exit error: " + msg.err.Error())
 			return true, nil
-		}
-		if m.sidebar != nil {
-			m.sidebar.RemoveSelection(msg.ids)
 		}
 		m.setStatusInfo(fmt.Sprintf("marked exited %d", len(msg.ids)))
 		return true, m.fetchSessionsCmd(false)
@@ -529,18 +522,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setStatusError("dismiss error: " + msg.err.Error())
 			return true, nil
 		}
-		if m.sidebar != nil {
-			m.sidebar.RemoveSelection([]string{msg.id})
-		}
 		m.setStatusInfo("dismissed " + msg.id)
 		return true, m.fetchSessionsCmd(false)
 	case bulkDismissMsg:
 		if msg.err != nil {
 			m.setStatusError("dismiss error: " + msg.err.Error())
 			return true, nil
-		}
-		if m.sidebar != nil {
-			m.sidebar.RemoveSelection(msg.ids)
 		}
 		m.setStatusInfo(fmt.Sprintf("dismissed %d", len(msg.ids)))
 		return true, m.fetchSessionsCmd(false)

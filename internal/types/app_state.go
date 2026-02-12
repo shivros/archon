@@ -6,6 +6,8 @@ type AppState struct {
 	ActiveWorkspaceGroupIDs   []string                          `json:"active_workspace_group_ids"`
 	SidebarCollapsed          bool                              `json:"sidebar_collapsed"`
 	ComposeHistory            map[string][]string               `json:"compose_history,omitempty"`
+	ComposeDrafts             map[string]string                 `json:"compose_drafts,omitempty"`
+	NoteDrafts                map[string]string                 `json:"note_drafts,omitempty"`
 	ComposeDefaultsByProvider map[string]*SessionRuntimeOptions `json:"compose_defaults_by_provider,omitempty"`
 	ProviderBadges            map[string]*ProviderBadgeConfig   `json:"provider_badges,omitempty"`
 }

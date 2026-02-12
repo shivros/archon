@@ -334,7 +334,11 @@ func (m *Model) reduceSearchModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		},
 		m.submitSearchInput,
 	)
-	return controller.Update(msg)
+	handled, cmd := controller.Update(msg)
+	if handled && m.consumeInputHeightChanges(m.searchInput) {
+		m.resize(m.width, m.height)
+	}
+	return handled, cmd
 }
 
 func (m *Model) newSingleLineInputController(input *TextInput, onCancel func() tea.Cmd, onSubmit func(text string) tea.Cmd) textInputModeController {
@@ -535,13 +539,17 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			return false, nil
 		},
 	}
-	return controller.Update(msg)
+	handled, cmd := controller.Update(msg)
+	if handled && m.consumeInputHeightChanges(m.chatInput) {
+		m.resize(m.width, m.height)
+	}
+	return handled, cmd
 }
 
 func (m *Model) cancelComposeInput() tea.Cmd {
 	m.closeComposeOptionPicker()
 	m.exitCompose("compose canceled")
-	return nil
+	return m.saveAppStateCmd()
 }
 
 func (m *Model) submitComposeInput(text string) tea.Cmd {
@@ -567,6 +575,7 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 		m.setValidationStatus("select a session to chat")
 		return nil
 	}
+	m.clearComposeDraft(sessionID)
 	m.recordComposeHistory(sessionID, text)
 	saveHistoryCmd := m.saveAppStateCmd()
 	provider := m.providerForSessionID(sessionID)

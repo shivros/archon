@@ -312,3 +312,41 @@ func TestNotesToBlocksWithCustomNotesNewKey(t *testing.T) {
 		t.Fatalf("expected custom add note key in empty text, got %#v", blocks)
 	}
 }
+
+func TestReduceAddNoteModePassesNonKeyMessagesThrough(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddNote
+
+	handled, cmd := m.reduceAddNoteMode(notesMsg{})
+	if handled {
+		t.Fatalf("expected non-key messages to pass through in add note mode")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+}
+
+func TestUpdateNotesMsgWhileAddNoteModeRendersNotes(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeAddNote
+	scope := noteScopeTarget{
+		Scope:     types.NoteScopeSession,
+		SessionID: "s1",
+	}
+	m.setNotesRootScope(scope)
+
+	_, _ = m.Update(notesMsg{
+		scope: scope,
+		notes: []*types.Note{
+			{ID: "n1", Scope: types.NoteScopeSession, SessionID: "s1", Body: "hello while composing"},
+		},
+	})
+
+	if len(m.contentBlocks) < 2 {
+		t.Fatalf("expected notes blocks to render in add note mode, got %#v", m.contentBlocks)
+	}
+	if m.contentBlocks[1].ID != "n1" {
+		t.Fatalf("expected note block id n1, got %q", m.contentBlocks[1].ID)
+	}
+}

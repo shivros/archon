@@ -469,7 +469,7 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 	}
 }
 
-func TestUIDismissBulkSessions(t *testing.T) {
+func TestUISpaceDoesNotEnableBulkDismiss(t *testing.T) {
 	requireUIIntegration(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -523,18 +523,12 @@ func TestUIDismissBulkSessions(t *testing.T) {
 	h.SelectSession("sess-bulk-1")
 
 	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	if h.model.sidebar.SelectionCount() != 1 {
-		t.Fatalf("expected 1 selected, got %d", h.model.sidebar.SelectionCount())
-	}
 	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	if h.model.sidebar.SelectionCount() != 2 {
-		t.Fatalf("expected 2 selected, got %d", h.model.sidebar.SelectionCount())
-	}
 	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 
 	h.WaitFor(func() bool {
-		return !sidebarHasSession(h.model, "sess-bulk-1") && !sidebarHasSession(h.model, "sess-bulk-2")
+		return !sidebarHasSession(h.model, "sess-bulk-1")
 	}, 2*time.Second)
 
 	got1, err := api.GetSession(ctx, "sess-bulk-1")
@@ -545,8 +539,14 @@ func TestUIDismissBulkSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session 2: %v", err)
 	}
-	if got1.Status != types.SessionStatusInactive || got2.Status != types.SessionStatusInactive {
-		t.Fatalf("expected status unchanged after dismiss, got %s/%s", got1.Status, got2.Status)
+	if got1.Status != types.SessionStatusInactive {
+		t.Fatalf("expected session 1 status unchanged after dismiss, got %s", got1.Status)
+	}
+	if got2.Status != types.SessionStatusInactive {
+		t.Fatalf("expected session 2 status unchanged without dismiss, got %s", got2.Status)
+	}
+	if !sidebarHasSession(h.model, "sess-bulk-2") {
+		t.Fatalf("expected session 2 to remain visible")
 	}
 }
 

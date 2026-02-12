@@ -168,6 +168,10 @@ func TestLoadUIConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadUIConfig: %v", err)
 	}
+	minHeight, maxHeight := cfg.SharedMultilineInputHeights()
+	if minHeight != 3 || maxHeight != 8 {
+		t.Fatalf("unexpected shared multiline input defaults: min=%d max=%d", minHeight, maxHeight)
+	}
 	path, err := cfg.ResolveKeybindingsPath()
 	if err != nil {
 		t.Fatalf("ResolveKeybindingsPath: %v", err)
@@ -184,7 +188,7 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n")
+	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n\n[input]\nmultiline_min_height = 4\nmultiline_max_height = 10\n")
 	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -199,6 +203,10 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	}
 	if want := filepath.Join(home, "custom-keys.json"); path != want {
 		t.Fatalf("unexpected keybindings path: got=%q want=%q", path, want)
+	}
+	minHeight, maxHeight := cfg.SharedMultilineInputHeights()
+	if minHeight != 4 || maxHeight != 10 {
+		t.Fatalf("unexpected shared multiline input values: min=%d max=%d", minHeight, maxHeight)
 	}
 }
 
@@ -326,6 +334,19 @@ func TestUIConfigResolveKeybindingsAbsolutePath(t *testing.T) {
 	}
 	if path != absolute {
 		t.Fatalf("expected absolute path to remain unchanged, got %q", path)
+	}
+}
+
+func TestUIConfigSharedMultilineInputHeightsClampsInvalidValues(t *testing.T) {
+	cfg := UIConfig{
+		Input: UIInputConfig{
+			MultilineMinHeight: -3,
+			MultilineMaxHeight: 2,
+		},
+	}
+	minHeight, maxHeight := cfg.SharedMultilineInputHeights()
+	if minHeight != 3 || maxHeight != 3 {
+		t.Fatalf("unexpected clamped multiline input heights: min=%d max=%d", minHeight, maxHeight)
 	}
 }
 

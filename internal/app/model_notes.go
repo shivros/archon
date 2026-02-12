@@ -78,6 +78,13 @@ func (m *Model) enterAddNoteForSelection() tea.Cmd {
 }
 
 func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
+	draftsChanged := false
+	if m.mode == uiModeCompose {
+		draftsChanged = m.saveCurrentComposeDraft() || draftsChanged
+	}
+	if m.mode == uiModeAddNote {
+		draftsChanged = m.saveCurrentNoteDraft() || draftsChanged
+	}
 	m.setNotesRootScope(scope)
 	m.notesReturnMode = m.mode
 	if m.notesReturnMode != uiModeCompose {
@@ -94,7 +101,15 @@ func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
 	m.setContentText("Loading notes...")
 	m.setStatusMessage("loading notes for " + scope.Label())
 	m.resize(m.width, m.height)
-	return m.refreshNotesForCurrentScope()
+	refreshCmd := m.refreshNotesForCurrentScope()
+	if !draftsChanged {
+		return refreshCmd
+	}
+	saveCmd := m.saveAppStateCmd()
+	if saveCmd == nil {
+		return refreshCmd
+	}
+	return tea.Batch(refreshCmd, saveCmd)
 }
 
 func (m *Model) enterAddNoteForScope(scope noteScopeTarget) tea.Cmd {
@@ -104,6 +119,10 @@ func (m *Model) enterAddNoteForScope(scope noteScopeTarget) tea.Cmd {
 }
 
 func (m *Model) exitNotes(status string) tea.Cmd {
+	draftsChanged := false
+	if m.mode == uiModeAddNote {
+		draftsChanged = m.saveCurrentNoteDraft() || draftsChanged
+	}
 	next := m.notesReturnMode
 	if next != uiModeCompose {
 		next = uiModeNormal
@@ -118,6 +137,7 @@ func (m *Model) exitNotes(status string) tea.Cmd {
 		if next == uiModeCompose {
 			m.input.FocusChatInput()
 			if m.chatInput != nil {
+				m.restoreComposeDraft(m.composeSessionID())
 				m.chatInput.Focus()
 			}
 		} else {
@@ -128,7 +148,15 @@ func (m *Model) exitNotes(status string) tea.Cmd {
 		m.setStatusMessage(status)
 	}
 	m.resize(m.width, m.height)
-	return m.onSelectionChangedImmediate()
+	nextCmd := m.onSelectionChangedImmediate()
+	if !draftsChanged {
+		return nextCmd
+	}
+	saveCmd := m.saveAppStateCmd()
+	if saveCmd == nil {
+		return nextCmd
+	}
+	return tea.Batch(nextCmd, saveCmd)
 }
 
 func (m *Model) enterAddNote() {
@@ -139,7 +167,7 @@ func (m *Model) enterAddNote() {
 	m.mode = uiModeAddNote
 	if m.noteInput != nil {
 		m.noteInput.SetPlaceholder("note")
-		m.noteInput.SetValue("")
+		m.restoreNoteDraft(m.notesScope)
 		m.noteInput.Focus()
 	}
 	if m.input != nil {
@@ -150,6 +178,7 @@ func (m *Model) enterAddNote() {
 }
 
 func (m *Model) exitAddNote(status string) {
+	m.saveCurrentNoteDraft()
 	m.mode = uiModeNotes
 	if m.noteInput != nil {
 		m.noteInput.Blur()
@@ -200,7 +229,7 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 	}
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
-		return true, nil
+		return false, nil
 	}
 	switch m.keyString(keyMsg) {
 	case "ctrl+o":
@@ -214,11 +243,15 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 		keyMatchesCommand: m.keyMatchesCommand,
 		onCancel: func() tea.Cmd {
 			m.exitAddNote("add note canceled")
-			return nil
+			return m.saveAppStateCmd()
 		},
 		onSubmit: m.submitAddNoteInput,
 	}
-	return controller.Update(keyMsg)
+	handled, cmd := controller.Update(keyMsg)
+	if handled && m.consumeInputHeightChanges(m.noteInput) {
+		m.resize(m.width, m.height)
+	}
+	return handled, cmd
 }
 
 func (m *Model) submitAddNoteInput(body string) tea.Cmd {
@@ -226,11 +259,17 @@ func (m *Model) submitAddNoteInput(body string) tea.Cmd {
 		m.setValidationStatus("note is required")
 		return nil
 	}
+	m.clearNoteDraft(m.notesScope)
 	if m.noteInput != nil {
 		m.noteInput.Clear()
 	}
 	m.exitAddNote("saving note")
-	return createNoteCmd(m.notesAPI, m.notesScope, body)
+	createCmd := createNoteCmd(m.notesAPI, m.notesScope, body)
+	saveCmd := m.saveAppStateCmd()
+	if saveCmd == nil {
+		return createCmd
+	}
+	return tea.Batch(createCmd, saveCmd)
 }
 
 func (m *Model) currentNoteScope() (noteScopeTarget, bool) {

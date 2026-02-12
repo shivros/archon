@@ -146,7 +146,6 @@ func (s *sidebarItem) sessionProvider() string {
 type sidebarDelegate struct {
 	activeWorkspaceID string
 	activeWorktreeID  string
-	selectedSessions  map[string]struct{}
 	unreadSessions    map[string]struct{}
 	providerBadges    map[string]*types.ProviderBadgeConfig
 }
@@ -245,16 +244,12 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 				}
 			}
 		}
-		isMarkedSelected := entry.session != nil && d.isSelected(entry.session.ID)
 		style := sessionStyle
-		if isMarkedSelected {
-			style = sessionSelectedStyle
-		}
 		if isSelected {
 			style = selectedStyle
 		}
 		titleStyle := style
-		if entry.session != nil && d.isUnread(entry.session.ID) && !isMarkedSelected && !isSelected {
+		if entry.session != nil && d.isUnread(entry.session.ID) && !isSelected {
 			titleStyle = sessionUnreadStyle
 		}
 
@@ -268,14 +263,6 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		rendered += style.Render(suffix)
 		fmt.Fprint(w, rendered)
 	}
-}
-
-func (d *sidebarDelegate) isSelected(id string) bool {
-	if d == nil || d.selectedSessions == nil {
-		return false
-	}
-	_, ok := d.selectedSessions[id]
-	return ok
 }
 
 func (d *sidebarDelegate) isUnread(id string) bool {

@@ -194,6 +194,40 @@ func TestSingleLineTextInputSanitizesAndBlocksNewline(t *testing.T) {
 	}
 }
 
+func TestDefaultTextInputConfigAutoGrowsToMaxAndShrinks(t *testing.T) {
+	input := NewTextInput(40, DefaultTextInputConfig())
+	if got := input.Height(); got != 3 {
+		t.Fatalf("expected default min height 3, got %d", got)
+	}
+
+	input.SetValue("1\n2\n3\n4\n5\n6\n7\n8\n9")
+	if got := input.Height(); got != 8 {
+		t.Fatalf("expected auto-grow to clamp at max height 8, got %d", got)
+	}
+
+	input.SetValue("short")
+	if got := input.Height(); got != 3 {
+		t.Fatalf("expected auto-grow to shrink back to min height 3, got %d", got)
+	}
+}
+
+func TestTextInputConfigAutoGrowRespectsCustomBounds(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{
+		Height:    2,
+		MinHeight: 2,
+		MaxHeight: 5,
+		AutoGrow:  true,
+	})
+	if got := input.Height(); got != 2 {
+		t.Fatalf("expected custom min height 2, got %d", got)
+	}
+
+	input.SetValue("1\n2\n3\n4\n5\n6")
+	if got := input.Height(); got != 5 {
+		t.Fatalf("expected custom max height 5, got %d", got)
+	}
+}
+
 func assertHasKeyBinding(t *testing.T, keys []string, want string) {
 	t.Helper()
 	for _, key := range keys {
