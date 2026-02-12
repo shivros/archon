@@ -4,18 +4,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 type addWorkspaceHost interface {
 	createWorkspaceCmd(path, name string) tea.Cmd
 	exitAddWorkspace(status string)
+	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
+	keyString(msg tea.KeyMsg) string
 	setStatus(status string)
 }
 
 type AddWorkspaceController struct {
-	input textinput.Model
+	input *TextInput
 	step  int
 	path  string
 	name  string
@@ -23,12 +24,14 @@ type AddWorkspaceController struct {
 
 func NewAddWorkspaceController(width int) *AddWorkspaceController {
 	input := newAddInput(width)
-	input.Placeholder = "/path/to/repo"
+	input.SetPlaceholder("/path/to/repo")
 	return &AddWorkspaceController{input: input}
 }
 
 func (c *AddWorkspaceController) Resize(width int) {
-	resizeAddInput(&c.input, width)
+	if c.input != nil {
+		c.input.Resize(width)
+	}
 }
 
 func (c *AddWorkspaceController) Enter() {
@@ -36,39 +39,52 @@ func (c *AddWorkspaceController) Enter() {
 	c.path = ""
 	c.name = ""
 	c.prepareInput()
-	c.input.Focus()
+	if c.input != nil {
+		c.input.Focus()
+	}
 }
 
 func (c *AddWorkspaceController) Exit() {
 	c.step = 0
 	c.path = ""
 	c.name = ""
-	c.input.SetValue("")
-	c.input.Blur()
+	if c.input != nil {
+		c.input.SetValue("")
+		c.input.Blur()
+	}
 }
 
 func (c *AddWorkspaceController) Update(msg tea.Msg, host addWorkspaceHost) (bool, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch keyMsg.String() {
-		case "esc":
-			host.exitAddWorkspace("add workspace canceled")
-			return true, nil
-		case "enter":
-			return true, c.advance(host)
-		case "ctrl+b":
+		if host.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b") {
 			// Swallow global hotkey while typing.
 			return true, nil
 		}
+		switch host.keyString(keyMsg) {
+		case "esc":
+			host.exitAddWorkspace("add workspace canceled")
+			return true, nil
+		}
+		controller := textInputModeController{
+			input:             c.input,
+			keyString:         host.keyString,
+			keyMatchesCommand: host.keyMatchesCommand,
+			onSubmit: func(string) tea.Cmd {
+				return c.advance(host)
+			},
+		}
+		return controller.Update(keyMsg)
 	}
-	var cmd tea.Cmd
-	c.input, cmd = c.input.Update(msg)
-	return true, cmd
+	if c.input != nil {
+		return true, c.input.Update(msg)
+	}
+	return true, nil
 }
 
 func (c *AddWorkspaceController) View() string {
 	lines := []string{
-		renderAddField(&c.input, c.step, "Path", c.path, 0),
-		renderAddField(&c.input, c.step, "Name", c.name, 1),
+		renderAddField(c.input, c.step, "Path", c.path, 0),
+		renderAddField(c.input, c.step, "Name", c.name, 1),
 		"",
 		"Enter to continue • Esc to cancel",
 	}
@@ -78,7 +94,7 @@ func (c *AddWorkspaceController) View() string {
 func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 	switch c.step {
 	case 0:
-		path := strings.TrimSpace(c.input.Value())
+		path := strings.TrimSpace(c.value())
 		if path == "" {
 			host.setStatus("path is required")
 			return nil
@@ -89,7 +105,7 @@ func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 		host.setStatus("add workspace: name (optional)")
 		return nil
 	case 1:
-		c.name = strings.TrimSpace(c.input.Value())
+		c.name = strings.TrimSpace(c.value())
 		host.setStatus("creating workspace")
 		return host.createWorkspaceCmd(c.path, c.name)
 	default:
@@ -98,18 +114,24 @@ func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 }
 
 func (c *AddWorkspaceController) prepareInput() {
+	if c.input == nil {
+		return
+	}
 	switch c.step {
 	case 0:
-		c.input.Placeholder = "/path/to/repo"
+		c.input.SetPlaceholder("/path/to/repo")
 		c.input.SetValue(c.path)
 	case 1:
-		c.input.Placeholder = "optional name"
+		c.input.SetPlaceholder("optional name")
 		c.input.SetValue(c.name)
 	}
 }
 
-func renderAddField(input *textinput.Model, currentStep int, label, value string, step int) string {
+func renderAddField(input *TextInput, currentStep int, label, value string, step int) string {
 	if currentStep == step {
+		if input == nil {
+			return fmt.Sprintf("%s: <empty>", label)
+		}
 		return fmt.Sprintf("%s: %s", label, input.View())
 	}
 	if strings.TrimSpace(value) == "" {
@@ -118,16 +140,13 @@ func renderAddField(input *textinput.Model, currentStep int, label, value string
 	return fmt.Sprintf("%s: %s", label, value)
 }
 
-func newAddInput(width int) textinput.Model {
-	input := textinput.New()
-	input.Prompt = ""
-	input.CharLimit = 0
-	input.Width = max(0, width-4)
-	return input
+func (c *AddWorkspaceController) value() string {
+	if c.input == nil {
+		return ""
+	}
+	return c.input.Value()
 }
 
-func resizeAddInput(input *textinput.Model, width int) {
-	if width > 4 {
-		input.Width = width - 4
-	}
+func newAddInput(width int) *TextInput {
+	return NewTextInput(width, TextInputConfig{Height: 1, SingleLine: true})
 }

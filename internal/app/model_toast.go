@@ -15,6 +15,11 @@ const (
 	toastLevelError
 )
 
+type queuedToast struct {
+	level   toastLevel
+	message string
+}
+
 func (m *Model) showInfoToast(message string) {
 	m.showToast(toastLevelInfo, message)
 }
@@ -41,6 +46,28 @@ func (m *Model) clearToast() {
 	m.toastText = ""
 	m.toastLevel = toastLevelInfo
 	m.toastUntil = time.Time{}
+}
+
+func (m *Model) enqueueStartupToast(level toastLevel, message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	m.startupToasts = append(m.startupToasts, queuedToast{level: level, message: message})
+	m.maybeShowNextStartupToast(time.Now())
+}
+
+func (m *Model) maybeShowNextStartupToast(at time.Time) {
+	if len(m.startupToasts) == 0 {
+		return
+	}
+	if m.toastActive(at) {
+		return
+	}
+	next := m.startupToasts[0]
+	m.startupToasts = m.startupToasts[1:]
+	m.status = next.message
+	m.showToast(next.level, next.message)
 }
 
 func (m *Model) toastActive(at time.Time) bool {

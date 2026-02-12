@@ -8,7 +8,6 @@ import (
 	"control/internal/client"
 	"control/internal/types"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -25,11 +24,13 @@ type addWorktreeHost interface {
 	createWorktreeCmd(workspaceID string, req client.CreateWorktreeRequest) tea.Cmd
 	exitAddWorktree(status string)
 	fetchAvailableWorktreesCmd(workspaceID, workspacePath string) tea.Cmd
+	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
+	keyString(msg tea.KeyMsg) string
 	setStatus(status string)
 }
 
 type AddWorktreeController struct {
-	input         textinput.Model
+	input         *TextInput
 	step          int
 	mode          worktreeAddMode
 	choice        int
@@ -46,7 +47,7 @@ type AddWorktreeController struct {
 
 func NewAddWorktreeController(width int) *AddWorktreeController {
 	input := newAddInput(width)
-	input.Placeholder = ""
+	input.SetPlaceholder("")
 	return &AddWorktreeController{
 		input:      input,
 		mode:       worktreeModeUnset,
@@ -55,7 +56,9 @@ func NewAddWorktreeController(width int) *AddWorktreeController {
 }
 
 func (c *AddWorktreeController) Resize(width int) {
-	resizeAddInput(&c.input, width)
+	if c.input != nil {
+		c.input.Resize(width)
+	}
 }
 
 func (c *AddWorktreeController) SetListHeight(height int) {
@@ -79,7 +82,9 @@ func (c *AddWorktreeController) Enter(workspaceID, workspacePath string) {
 	c.name = ""
 	c.available = nil
 	c.prepareInput()
-	c.input.Blur()
+	if c.input != nil {
+		c.input.Blur()
+	}
 }
 
 func (c *AddWorktreeController) Exit() {
@@ -94,8 +99,10 @@ func (c *AddWorktreeController) Exit() {
 	c.branch = ""
 	c.name = ""
 	c.available = nil
-	c.input.SetValue("")
-	c.input.Blur()
+	if c.input != nil {
+		c.input.SetValue("")
+		c.input.Blur()
+	}
 }
 
 func (c *AddWorktreeController) SetAvailable(available []*types.GitWorktree, existing []*types.Worktree, workspacePath string) int {
@@ -112,13 +119,26 @@ func (c *AddWorktreeController) Update(msg tea.Msg, host addWorktreeHost) (bool,
 		if handled, cmd := c.handleKey(keyMsg, host); handled {
 			return true, cmd
 		}
+		if c.mode == worktreeModeExisting && c.step == 0 {
+			return true, nil
+		}
+		controller := textInputModeController{
+			input:             c.input,
+			keyString:         host.keyString,
+			keyMatchesCommand: host.keyMatchesCommand,
+			onSubmit: func(string) tea.Cmd {
+				return c.advance(host)
+			},
+		}
+		return controller.Update(keyMsg)
 	}
 	if c.mode == worktreeModeExisting && c.step == 0 {
 		return true, nil
 	}
-	var cmd tea.Cmd
-	c.input, cmd = c.input.Update(msg)
-	return true, cmd
+	if c.input != nil {
+		return true, c.input.Update(msg)
+	}
+	return true, nil
 }
 
 func (c *AddWorktreeController) View() string {
@@ -131,15 +151,17 @@ func (c *AddWorktreeController) View() string {
 }
 
 func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHost) (bool, tea.Cmd) {
-	switch keyMsg.String() {
+	if host.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b") {
+		// Swallow global hotkey while typing.
+		return true, nil
+	}
+
+	switch host.keyString(keyMsg) {
 	case "esc":
 		host.exitAddWorktree("add worktree canceled")
 		return true, nil
 	case "enter":
 		return true, c.advance(host)
-	case "ctrl+b":
-		// Swallow global hotkey while typing.
-		return true, nil
 	case "ctrl+r":
 		if c.mode == worktreeModeExisting && c.step == 0 {
 			return true, host.fetchAvailableWorktreesCmd(c.workspaceID, c.workspacePath)
@@ -203,34 +225,37 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 }
 
 func (c *AddWorktreeController) prepareInput() {
+	if c.input == nil {
+		return
+	}
 	c.input.SetValue("")
 	switch c.mode {
 	case worktreeModeUnset:
-		c.input.Placeholder = ""
+		c.input.SetPlaceholder("")
 		c.input.Blur()
 	case worktreeModeNew:
 		c.input.Focus()
 		switch c.step {
 		case 0:
-			c.input.Placeholder = "/path/to/worktree"
+			c.input.SetPlaceholder("/path/to/worktree")
 		case 1:
-			c.input.Placeholder = "(optional) branch name"
+			c.input.SetPlaceholder("(optional) branch name")
 		case 2:
-			c.input.Placeholder = "(optional) display name"
+			c.input.SetPlaceholder("(optional) display name")
 		}
 	case worktreeModeExisting:
 		c.input.Focus()
 		switch c.step {
 		case 0:
-			c.input.Placeholder = "number"
+			c.input.SetPlaceholder("number")
 		case 1:
-			c.input.Placeholder = "(optional) display name"
+			c.input.SetPlaceholder("(optional) display name")
 		}
 	}
 }
 
 func (c *AddWorktreeController) advance(host addWorktreeHost) tea.Cmd {
-	value := strings.TrimSpace(c.input.Value())
+	value := strings.TrimSpace(c.value())
 	switch c.mode {
 	case worktreeModeUnset:
 		switch strings.ToLower(value) {
@@ -315,6 +340,13 @@ func (c *AddWorktreeController) advance(host addWorktreeHost) tea.Cmd {
 	return nil
 }
 
+func (c *AddWorktreeController) value() string {
+	if c.input == nil {
+		return ""
+	}
+	return c.input.Value()
+}
+
 func (c *AddWorktreeController) renderStep() string {
 	switch c.mode {
 	case worktreeModeUnset:
@@ -331,9 +363,9 @@ func (c *AddWorktreeController) renderStep() string {
 		return strings.Join(lines, "\n")
 	case worktreeModeNew:
 		return strings.Join([]string{
-			renderAddField(&c.input, c.step, "Path", c.path, 0),
-			renderAddField(&c.input, c.step, "Branch", c.branch, 1),
-			renderAddField(&c.input, c.step, "Name", c.name, 2),
+			renderAddField(c.input, c.step, "Path", c.path, 0),
+			renderAddField(c.input, c.step, "Branch", c.branch, 1),
+			renderAddField(c.input, c.step, "Name", c.name, 2),
 		}, "\n")
 	case worktreeModeExisting:
 		lines := []string{"Worktrees:"}
@@ -363,7 +395,7 @@ func (c *AddWorktreeController) renderStep() string {
 			if selected != "" {
 				lines = append(lines, fmt.Sprintf("Selected: %s", selected))
 			}
-			lines = append(lines, renderAddField(&c.input, c.step, "Name", c.name, 1))
+			lines = append(lines, renderAddField(c.input, c.step, "Name", c.name, 1))
 		}
 		return strings.Join(lines, "\n")
 	}

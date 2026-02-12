@@ -49,3 +49,24 @@ func TestViewShowsToastOverlay(t *testing.T) {
 		t.Fatalf("expected toast text in view output: %q", plain)
 	}
 }
+
+func TestStartupToastQueueAdvancesAfterExpiry(t *testing.T) {
+	m := NewModel(nil)
+	m.enqueueStartupToast(toastLevelError, "conflict one")
+	m.enqueueStartupToast(toastLevelError, "conflict two")
+
+	if m.toastText != "conflict one" {
+		t.Fatalf("expected first startup toast, got %q", m.toastText)
+	}
+	if len(m.startupToasts) != 1 {
+		t.Fatalf("expected one queued startup toast, got %d", len(m.startupToasts))
+	}
+
+	m.handleTick(tickMsg(time.Now().Add(toastDuration + time.Millisecond)))
+	if m.toastText != "conflict two" {
+		t.Fatalf("expected second startup toast after expiry, got %q", m.toastText)
+	}
+	if len(m.startupToasts) != 0 {
+		t.Fatalf("expected startup toast queue to be empty, got %d", len(m.startupToasts))
+	}
+}

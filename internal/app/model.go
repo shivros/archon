@@ -107,6 +107,7 @@ type Model struct {
 	toastText                  string
 	toastLevel                 toastLevel
 	toastUntil                 time.Time
+	startupToasts              []queuedToast
 	width                      int
 	height                     int
 	follow                     bool
@@ -285,9 +286,9 @@ func NewModel(client *client.Client) Model {
 		compose:                    NewComposeController(minViewportWidth),
 		chatAddonController:        NewChatInputAddonController(chatAddon),
 		chatInput:                  NewTextInput(minViewportWidth, DefaultTextInputConfig()),
-		searchInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
-		renameInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
-		groupInput:                 NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
+		searchInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
+		renameInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
+		groupInput:                 NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
 		groupPicker:                NewGroupPicker(minViewportWidth, minContentHeight-1),
 		workspacePicker:            NewSelectPicker(minViewportWidth, minContentHeight-1),
 		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
@@ -340,6 +341,8 @@ func Run(client *client.Client) error {
 		log.Printf("keybindings: load %s: %v", keybindingsPath, err)
 	} else {
 		model.applyKeybindings(keybindings)
+		conflicts := DetectKeybindingConflicts(keybindings)
+		model.enqueueStartupKeybindingConflictToasts(conflicts)
 	}
 	p := tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	_, err = p.Run()
@@ -1289,6 +1292,7 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if m.toastText != "" && !m.toastActive(now) {
 		m.clearToast()
 	}
+	m.maybeShowNextStartupToast(now)
 	cmds := make([]tea.Cmd, 0, 3)
 	if m.pendingSidebarWheel {
 		if time.Since(m.lastSidebarWheelAt) >= sidebarWheelSettle {

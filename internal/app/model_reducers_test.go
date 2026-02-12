@@ -25,6 +25,32 @@ func TestSearchReducerEscExitsSearchMode(t *testing.T) {
 	}
 }
 
+func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputSubmit: "f6",
+	}))
+	m.enterSearch()
+	if m.searchInput == nil {
+		t.Fatalf("expected search input")
+	}
+	m.searchInput.SetValue("hello")
+
+	handled, cmd := m.reduceSearchModeKey(tea.KeyMsg{Type: tea.KeyF6})
+	if !handled {
+		t.Fatalf("expected search reducer to handle remapped submit")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for search submit")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected search submit to exit search mode, got %v", m.mode)
+	}
+	if m.searchQuery != "hello" {
+		t.Fatalf("expected search query to be applied, got %q", m.searchQuery)
+	}
+}
+
 func TestComposeReducerEnterEmptyShowsValidation(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("")
@@ -166,6 +192,30 @@ func TestWorkspaceEditReducerRenameSessionEnterReturnsCommand(t *testing.T) {
 	}
 	if m.renameSessionID != "" {
 		t.Fatalf("expected rename session id to clear")
+	}
+}
+
+func TestWorkspaceEditReducerRenameSessionSupportsRemappedSubmit(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputSubmit: "f6",
+	}))
+	m.mode = uiModeRenameSession
+	m.renameSessionID = "s1"
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Session")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyF6})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle remapped submit")
+	}
+	if cmd == nil {
+		t.Fatalf("expected update session command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
 	}
 }
 

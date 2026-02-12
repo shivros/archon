@@ -3,7 +3,6 @@ package app
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -14,34 +13,40 @@ type composeHost interface {
 }
 
 type ComposeController struct {
-	input      textinput.Model
+	input      *TextInput
 	sessionID  string
 	sessionTag string
 }
 
 func NewComposeController(width int) *ComposeController {
-	input := newAddInput(width)
-	input.Placeholder = "type a message"
+	input := NewTextInput(width, TextInputConfig{Height: 1, SingleLine: true})
+	input.SetPlaceholder("type a message")
 	return &ComposeController{input: input}
 }
 
 func (c *ComposeController) Resize(width int) {
-	resizeAddInput(&c.input, width)
+	if c.input != nil {
+		c.input.Resize(width)
+	}
 }
 
 func (c *ComposeController) Enter(sessionID, sessionTag string) {
 	c.sessionID = sessionID
 	c.sessionTag = sessionTag
-	c.input.SetValue("")
-	c.input.Placeholder = "type a message"
-	c.input.Focus()
+	if c.input != nil {
+		c.input.SetValue("")
+		c.input.SetPlaceholder("type a message")
+		c.input.Focus()
+	}
 }
 
 func (c *ComposeController) Exit() {
 	c.sessionID = ""
 	c.sessionTag = ""
-	c.input.SetValue("")
-	c.input.Blur()
+	if c.input != nil {
+		c.input.SetValue("")
+		c.input.Blur()
+	}
 }
 
 func (c *ComposeController) SetSession(sessionID, sessionTag string) {
@@ -56,7 +61,7 @@ func (c *ComposeController) Update(msg tea.Msg, host composeHost) (bool, tea.Cmd
 			host.exitCompose("compose canceled")
 			return true, nil
 		case "enter":
-			text := strings.TrimSpace(c.input.Value())
+			text := strings.TrimSpace(c.value())
 			if text == "" {
 				host.setStatus("message is required")
 				return true, nil
@@ -67,9 +72,10 @@ func (c *ComposeController) Update(msg tea.Msg, host composeHost) (bool, tea.Cmd
 			return true, host.sendMessageCmd(sessionID, text)
 		}
 	}
-	var cmd tea.Cmd
-	c.input, cmd = c.input.Update(msg)
-	return true, cmd
+	if c.input != nil {
+		return true, c.input.Update(msg)
+	}
+	return true, nil
 }
 
 func (c *ComposeController) View() string {
@@ -79,9 +85,23 @@ func (c *ComposeController) View() string {
 	}
 	lines := []string{
 		label,
-		c.input.View(),
+		c.viewInput(),
 		"",
 		"Enter to send • Esc to cancel",
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (c *ComposeController) value() string {
+	if c.input == nil {
+		return ""
+	}
+	return c.input.Value()
+}
+
+func (c *ComposeController) viewInput() string {
+	if c.input == nil {
+		return ""
+	}
+	return c.input.View()
 }

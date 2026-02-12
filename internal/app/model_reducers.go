@@ -13,130 +13,57 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		if !ok {
 			return true, nil
 		}
-		switch keyMsg.String() {
-		case "esc":
-			m.exitRenameWorkspace("rename canceled")
-			return true, nil
-		case "enter":
-			if m.renameInput == nil {
-				return true, nil
-			}
-			name := strings.TrimSpace(m.renameInput.Value())
-			if name == "" {
-				m.setValidationStatus("name is required")
-				return true, nil
-			}
-			id := m.renameWorkspaceID
-			if id == "" {
-				m.setValidationStatus("no workspace selected")
-				return true, nil
-			}
-			m.renameInput.SetValue("")
-			m.exitRenameWorkspace("renaming workspace")
-			return true, updateWorkspaceCmd(m.workspaceAPI, id, name)
-		}
-		if m.renameInput != nil {
-			return true, m.renameInput.Update(keyMsg)
-		}
-		return true, nil
+		controller := m.newSingleLineInputController(
+			m.renameInput,
+			func() tea.Cmd {
+				m.exitRenameWorkspace("rename canceled")
+				return nil
+			},
+			m.submitRenameWorkspaceInput,
+		)
+		return controller.Update(keyMsg)
 	case uiModeRenameWorktree:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
 			return true, nil
 		}
-		switch keyMsg.String() {
-		case "esc":
-			m.exitRenameWorktree("rename canceled")
-			return true, nil
-		case "enter":
-			if m.renameInput == nil {
-				return true, nil
-			}
-			name := strings.TrimSpace(m.renameInput.Value())
-			if name == "" {
-				m.setValidationStatus("name is required")
-				return true, nil
-			}
-			worktreeID := m.renameWorktreeID
-			if worktreeID == "" {
-				m.setValidationStatus("no worktree selected")
-				return true, nil
-			}
-			workspaceID := m.renameWorktreeWorkspaceID
-			if workspaceID == "" {
-				if wt := m.worktreeByID(worktreeID); wt != nil {
-					workspaceID = wt.WorkspaceID
-				}
-			}
-			if workspaceID == "" {
-				m.setValidationStatus("no worktree selected")
-				return true, nil
-			}
-			m.renameInput.SetValue("")
-			m.exitRenameWorktree("renaming worktree")
-			return true, updateWorktreeCmd(m.workspaceAPI, workspaceID, worktreeID, name)
-		}
-		if m.renameInput != nil {
-			return true, m.renameInput.Update(keyMsg)
-		}
-		return true, nil
+		controller := m.newSingleLineInputController(
+			m.renameInput,
+			func() tea.Cmd {
+				m.exitRenameWorktree("rename canceled")
+				return nil
+			},
+			m.submitRenameWorktreeInput,
+		)
+		return controller.Update(keyMsg)
 	case uiModeRenameSession:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
 			return true, nil
 		}
-		switch keyMsg.String() {
-		case "esc":
-			m.exitRenameSession("rename canceled")
-			return true, nil
-		case "enter":
-			if m.renameInput == nil {
-				return true, nil
-			}
-			name := strings.TrimSpace(m.renameInput.Value())
-			if name == "" {
-				m.setValidationStatus("name is required")
-				return true, nil
-			}
-			id := m.renameSessionID
-			if id == "" {
-				m.setValidationStatus("no session selected")
-				return true, nil
-			}
-			m.renameInput.SetValue("")
-			m.exitRenameSession("renaming session")
-			return true, updateSessionCmd(m.sessionAPI, id, name)
-		}
-		if m.renameInput != nil {
-			return true, m.renameInput.Update(keyMsg)
-		}
-		return true, nil
+		controller := m.newSingleLineInputController(
+			m.renameInput,
+			func() tea.Cmd {
+				m.exitRenameSession("rename canceled")
+				return nil
+			},
+			m.submitRenameSessionInput,
+		)
+		return controller.Update(keyMsg)
 	case uiModeAddWorkspaceGroup:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
 			return true, nil
 		}
-		switch keyMsg.String() {
-		case "esc":
-			m.exitAddWorkspaceGroup("add group canceled")
-			return true, nil
-		case "enter":
-			if m.groupInput == nil {
-				return true, nil
-			}
-			name := strings.TrimSpace(m.groupInput.Value())
-			if name == "" {
-				m.setValidationStatus("name is required")
-				return true, nil
-			}
-			m.groupInput.SetValue("")
-			m.exitAddWorkspaceGroup("creating group")
-			return true, createWorkspaceGroupCmd(m.workspaceAPI, name)
-		}
-		if m.groupInput != nil {
-			return true, m.groupInput.Update(keyMsg)
-		}
-		return true, nil
+		controller := m.newSingleLineInputController(
+			m.groupInput,
+			func() tea.Cmd {
+				m.exitAddWorkspaceGroup("add group canceled")
+				return nil
+			},
+			m.submitAddWorkspaceGroupInput,
+		)
+		return controller.Update(keyMsg)
 	case uiModePickWorkspaceRename, uiModePickWorkspaceGroupEdit:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
@@ -252,32 +179,15 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		if !ok {
 			return true, nil
 		}
-		switch keyMsg.String() {
-		case "esc":
-			m.exitRenameWorkspaceGroup("rename canceled")
-			return true, nil
-		case "enter":
-			if m.groupInput == nil {
-				return true, nil
-			}
-			name := strings.TrimSpace(m.groupInput.Value())
-			if name == "" {
-				m.setValidationStatus("name is required")
-				return true, nil
-			}
-			id := m.renameGroupID
-			if id == "" {
-				m.setValidationStatus("no group selected")
-				return true, nil
-			}
-			m.groupInput.SetValue("")
-			m.exitRenameWorkspaceGroup("renaming group")
-			return true, updateWorkspaceGroupCmd(m.workspaceAPI, id, name)
-		}
-		if m.groupInput != nil {
-			return true, m.groupInput.Update(keyMsg)
-		}
-		return true, nil
+		controller := m.newSingleLineInputController(
+			m.groupInput,
+			func() tea.Cmd {
+				m.exitRenameWorkspaceGroup("rename canceled")
+				return nil
+			},
+			m.submitRenameWorkspaceGroupInput,
+		)
+		return controller.Update(keyMsg)
 	case uiModeAssignGroupWorkspaces:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
@@ -416,22 +326,126 @@ func (m *Model) reduceSearchModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.mode != uiModeSearch {
 		return false, nil
 	}
-	switch msg.String() {
-	case "esc":
-		m.exitSearch("search canceled")
-		return true, nil
-	case "enter":
-		if m.searchInput != nil {
-			query := m.searchInput.Value()
-			m.applySearch(query)
+	controller := m.newSingleLineInputController(
+		m.searchInput,
+		func() tea.Cmd {
+			m.exitSearch("search canceled")
+			return nil
+		},
+		m.submitSearchInput,
+	)
+	return controller.Update(msg)
+}
+
+func (m *Model) newSingleLineInputController(input *TextInput, onCancel func() tea.Cmd, onSubmit func(text string) tea.Cmd) textInputModeController {
+	return textInputModeController{
+		input:             input,
+		keyString:         m.keyString,
+		keyMatchesCommand: m.keyMatchesCommand,
+		onCancel:          onCancel,
+		onSubmit:          onSubmit,
+	}
+}
+
+func (m *Model) submitSearchInput(query string) tea.Cmd {
+	m.applySearch(query)
+	m.exitSearch("")
+	return nil
+}
+
+func (m *Model) submitRenameWorkspaceInput(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.setValidationStatus("name is required")
+		return nil
+	}
+	id := m.renameWorkspaceID
+	if id == "" {
+		m.setValidationStatus("no workspace selected")
+		return nil
+	}
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+	}
+	m.exitRenameWorkspace("renaming workspace")
+	return updateWorkspaceCmd(m.workspaceAPI, id, name)
+}
+
+func (m *Model) submitRenameWorktreeInput(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.setValidationStatus("name is required")
+		return nil
+	}
+	worktreeID := m.renameWorktreeID
+	if worktreeID == "" {
+		m.setValidationStatus("no worktree selected")
+		return nil
+	}
+	workspaceID := m.renameWorktreeWorkspaceID
+	if workspaceID == "" {
+		if wt := m.worktreeByID(worktreeID); wt != nil {
+			workspaceID = wt.WorkspaceID
 		}
-		m.exitSearch("")
-		return true, nil
 	}
-	if m.searchInput != nil {
-		return true, m.searchInput.Update(msg)
+	if workspaceID == "" {
+		m.setValidationStatus("no worktree selected")
+		return nil
 	}
-	return true, nil
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+	}
+	m.exitRenameWorktree("renaming worktree")
+	return updateWorktreeCmd(m.workspaceAPI, workspaceID, worktreeID, name)
+}
+
+func (m *Model) submitRenameSessionInput(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.setValidationStatus("name is required")
+		return nil
+	}
+	id := m.renameSessionID
+	if id == "" {
+		m.setValidationStatus("no session selected")
+		return nil
+	}
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+	}
+	m.exitRenameSession("renaming session")
+	return updateSessionCmd(m.sessionAPI, id, name)
+}
+
+func (m *Model) submitAddWorkspaceGroupInput(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.setValidationStatus("name is required")
+		return nil
+	}
+	if m.groupInput != nil {
+		m.groupInput.SetValue("")
+	}
+	m.exitAddWorkspaceGroup("creating group")
+	return createWorkspaceGroupCmd(m.workspaceAPI, name)
+}
+
+func (m *Model) submitRenameWorkspaceGroupInput(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.setValidationStatus("name is required")
+		return nil
+	}
+	id := m.renameGroupID
+	if id == "" {
+		m.setValidationStatus("no group selected")
+		return nil
+	}
+	if m.groupInput != nil {
+		m.groupInput.SetValue("")
+	}
+	m.exitRenameWorkspaceGroup("renaming group")
+	return updateWorkspaceGroupCmd(m.workspaceAPI, id, name)
 }
 
 func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {

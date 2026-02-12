@@ -14,13 +14,15 @@ type TextInput struct {
 	input       textarea.Model
 	height      int
 	width       int
+	singleLine  bool
 	allSelected bool
 	undoHistory []string
 	redoHistory []string
 }
 
 type TextInputConfig struct {
-	Height int
+	Height     int
+	SingleLine bool
 }
 
 func DefaultTextInputConfig() TextInputConfig {
@@ -39,7 +41,7 @@ func NewTextInput(width int, cfg TextInputConfig) *TextInput {
 	}
 	input.SetHeight(height)
 	inputWidth := setTextareaWidth(&input, width)
-	return &TextInput{input: input, height: height, width: inputWidth}
+	return &TextInput{input: input, height: height, width: inputWidth, singleLine: cfg.SingleLine}
 }
 
 func (c *TextInput) Resize(width int) {
@@ -61,6 +63,7 @@ func (c *TextInput) SetPlaceholder(value string) {
 
 func (c *TextInput) SetValue(value string) {
 	c.input.SetValue(value)
+	c.sanitize()
 	c.allSelected = false
 }
 
@@ -219,6 +222,9 @@ func (c *TextInput) preprocessKeyMsg(msg tea.KeyMsg) (tea.KeyMsg, bool) {
 	if c == nil {
 		return msg, false
 	}
+	if c.singleLine && isNewlineKey(msg) {
+		return msg, true
+	}
 	recordedMutation := false
 	if c.allSelected {
 		switch {
@@ -317,6 +323,18 @@ func isNavigationKey(msg tea.KeyMsg) bool {
 	}
 }
 
+func isNewlineKey(msg tea.KeyMsg) bool {
+	if msg.Type == tea.KeyEnter {
+		return true
+	}
+	switch msg.String() {
+	case "shift+enter", "ctrl+enter":
+		return true
+	default:
+		return false
+	}
+}
+
 func setTextareaWidth(input *textarea.Model, width int) int {
 	if input == nil {
 		return 0
@@ -363,19 +381,23 @@ func (c *TextInput) sanitize() {
 	if value == "" {
 		return
 	}
-	cleaned := sanitizeChatInput(value)
+	cleaned := sanitizeChatInput(value, c.singleLine)
 	if cleaned != value {
 		c.input.SetValue(cleaned)
 	}
 }
 
-func sanitizeChatInput(value string) string {
+func sanitizeChatInput(value string, singleLine bool) string {
 	value = ansiEscapeRE.ReplaceAllString(value, "")
 	var b strings.Builder
 	b.Grow(len(value))
 	for _, r := range value {
 		if r == '\n' {
-			b.WriteRune(r)
+			if singleLine {
+				b.WriteRune(' ')
+			} else {
+				b.WriteRune(r)
+			}
 			continue
 		}
 		if r < 32 || r == 127 {

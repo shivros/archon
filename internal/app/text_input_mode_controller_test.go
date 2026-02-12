@@ -171,6 +171,29 @@ func TestNewTextInputAddsCtrlWordNavigationAliases(t *testing.T) {
 	assertHasKeyBinding(t, input.input.KeyMap.DeleteWordForward.Keys(), "ctrl+delete")
 }
 
+func TestSingleLineTextInputSanitizesAndBlocksNewline(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 1, SingleLine: true})
+	input.Focus()
+	input.SetValue("hello\nworld")
+	if got := input.Value(); got != "hello world" {
+		t.Fatalf("expected single-line SetValue to sanitize newlines, got %q", got)
+	}
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(tea.KeyMsg) string {
+			return "shift+enter"
+		},
+	}
+	handled, _ := controller.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected shift+enter to be handled for single-line input")
+	}
+	if got := input.Value(); got != "hello world" {
+		t.Fatalf("expected single-line input to ignore newline insertion, got %q", got)
+	}
+}
+
 func assertHasKeyBinding(t *testing.T, keys []string, want string) {
 	t.Helper()
 	for _, key := range keys {
