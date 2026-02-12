@@ -48,7 +48,7 @@ func TestConversationAdapterContractHistoryRequiresSession(t *testing.T) {
 	registry := newConversationAdapterRegistry()
 	service := NewSessionService(nil, nil, nil, nil)
 
-	for _, provider := range []string{"codex", "claude"} {
+	for _, provider := range []string{"codex", "claude", "opencode", "kilocode"} {
 		t.Run(provider, func(t *testing.T) {
 			adapter := registry.adapterFor(provider)
 			items, err := adapter.History(context.Background(), service, nil, nil, sessionSourceInternal, 10)
@@ -61,7 +61,7 @@ func TestConversationAdapterContractHistoryRequiresSession(t *testing.T) {
 }
 
 func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) {
-	for _, provider := range []string{"codex", "claude"} {
+	for _, provider := range []string{"codex", "claude", "opencode", "kilocode"} {
 		t.Run(provider, func(t *testing.T) {
 			store := &stubSessionIndexStore{
 				records: map[string]*types.SessionRecord{

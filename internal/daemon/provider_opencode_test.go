@@ -1,0 +1,211 @@
+package daemon
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"control/internal/config"
+	"control/internal/types"
+)
+
+func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
+	t.Setenv("CUSTOM_OPENCODE_TOKEN", "env-token")
+	t.Setenv("KILOCODE_TOKEN", "kilo-env-token")
+	coreCfg := config.CoreConfig{
+		Providers: config.CoreProvidersConfig{
+			OpenCode: config.CoreOpenCodeProviderConfig{
+				BaseURL:  "http://127.0.0.1:4096",
+				Token:    "config-token",
+				TokenEnv: "CUSTOM_OPENCODE_TOKEN",
+				Username: "archon",
+			},
+			KiloCode: config.CoreOpenCodeProviderConfig{
+				BaseURL:  "http://127.0.0.1:4097",
+				Token:    "config-kilo-token",
+				Username: "archon-kilo",
+			},
+		},
+	}
+
+	opencode := resolveOpenCodeClientConfig("opencode", coreCfg)
+	if opencode.Token != "env-token" {
+		t.Fatalf("expected opencode env token override, got %q", opencode.Token)
+	}
+	if opencode.Username != "archon" {
+		t.Fatalf("unexpected opencode username: %q", opencode.Username)
+	}
+
+	kilocode := resolveOpenCodeClientConfig("kilocode", coreCfg)
+	if kilocode.Token != "kilo-env-token" {
+		t.Fatalf("expected kilocode env token override, got %q", kilocode.Token)
+	}
+	if kilocode.Username != "archon-kilo" {
+		t.Fatalf("unexpected kilocode username: %q", kilocode.Username)
+	}
+}
+
+func TestOpenCodeProviderStartSendAndInterrupt(t *testing.T) {
+	var (
+		createCalls  atomic.Int32
+		promptCalls  atomic.Int32
+		abortCalls   atomic.Int32
+		lastAuthSeen atomic.Value
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastAuthSeen.Store(r.Header.Get("Authorization"))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			createCalls.Add(1)
+			writeJSON(w, http.StatusCreated, map[string]any{"id": "sess_123"})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/prompt":
+			promptCalls.Add(1)
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "assistant reply"},
+				},
+			})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/abort":
+			abortCalls.Add(1)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	home := filepath.Join(t.TempDir(), "home")
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte(`
+[providers.opencode]
+base_url = "` + server.URL + `"
+token = "config-token"
+token_env = "OPENCODE_TOKEN"
+username = "archon"
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE_TOKEN", "env-token")
+
+	provider, err := ResolveProvider("opencode", "")
+	if err != nil {
+		t.Fatalf("ResolveProvider(opencode): %v", err)
+	}
+	if provider.Name() != "opencode" {
+		t.Fatalf("unexpected provider name: %q", provider.Name())
+	}
+	if provider.Command() != server.URL {
+		t.Fatalf("expected provider command to be base url, got %q", provider.Command())
+	}
+
+	itemSink := &testItemSink{}
+	proc, err := provider.Start(StartSessionConfig{
+		Provider:    "opencode",
+		InitialText: "hello there",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: "anthropic/claude-sonnet-4-20250514",
+		},
+	}, &testProviderLogSink{}, itemSink)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if createCalls.Load() != 1 {
+		t.Fatalf("expected one session create call, got %d", createCalls.Load())
+	}
+	if promptCalls.Load() != 1 {
+		t.Fatalf("expected one prompt call for initial text, got %d", promptCalls.Load())
+	}
+	if proc.Send == nil {
+		t.Fatalf("expected send function")
+	}
+	if err := proc.Send(buildOpenCodeUserPayloadWithRuntime("again", nil)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if promptCalls.Load() != 2 {
+		t.Fatalf("expected second prompt call after send, got %d", promptCalls.Load())
+	}
+	if len(itemSink.items) < 4 {
+		t.Fatalf("expected user/assistant items to be appended, got %d", len(itemSink.items))
+	}
+
+	if proc.Interrupt == nil {
+		t.Fatalf("expected interrupt function")
+	}
+	if err := proc.Interrupt(); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if abortCalls.Load() != 1 {
+		t.Fatalf("expected one abort call, got %d", abortCalls.Load())
+	}
+
+	auth, _ := lastAuthSeen.Load().(string)
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("archon:env-token"))
+	if strings.TrimSpace(auth) != wantAuth {
+		t.Fatalf("unexpected auth header: %q", auth)
+	}
+}
+
+func TestOpenCodeProviderResumeRequiresProviderSessionID(t *testing.T) {
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: "http://127.0.0.1:4096"})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	provider := &openCodeProvider{
+		providerName: "opencode",
+		client:       client,
+	}
+	_, err = provider.Start(StartSessionConfig{
+		Provider: "opencode",
+		Resume:   true,
+	}, &testProviderLogSink{}, &testItemSink{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider session id") {
+		t.Fatalf("expected provider session id validation error, got %v", err)
+	}
+}
+
+func TestOpenCodePayloadValidation(t *testing.T) {
+	if _, _, err := extractOpenCodeSendRequest([]byte("{broken")); err == nil {
+		t.Fatalf("expected invalid json error")
+	}
+	if _, _, err := extractOpenCodeSendRequest([]byte(`{"type":"assistant"}`)); err == nil {
+		t.Fatalf("expected unsupported payload type error")
+	}
+	text, runtimeOptions, err := extractOpenCodeSendRequest(buildOpenCodeUserPayloadWithRuntime("hello", &types.SessionRuntimeOptions{Model: "x"}))
+	if err != nil {
+		t.Fatalf("extractOpenCodeSendRequest: %v", err)
+	}
+	if text != "hello" {
+		t.Fatalf("unexpected text: %q", text)
+	}
+	if runtimeOptions == nil || runtimeOptions.Model != "x" {
+		t.Fatalf("unexpected runtime options: %#v", runtimeOptions)
+	}
+}
+
+func TestOpenCodeClientAbortValidation(t *testing.T) {
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: "http://127.0.0.1:4096"})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if err := client.AbortSession(context.Background(), "   "); err == nil {
+		t.Fatalf("expected session id validation error")
+	}
+}

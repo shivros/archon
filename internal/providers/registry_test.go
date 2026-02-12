@@ -33,8 +33,23 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 		},
 		{
 			name:       "opencode",
-			runtime:    RuntimeExec,
-			candidates: []string{"opencode", "opencode-cli"},
+			runtime:    RuntimeOpenCodeServer,
+			candidates: nil,
+			capabilities: Capabilities{
+				UsesItems:         true,
+				SupportsInterrupt: true,
+				NoProcess:         true,
+			},
+		},
+		{
+			name:       "kilocode",
+			runtime:    RuntimeOpenCodeServer,
+			candidates: nil,
+			capabilities: Capabilities{
+				UsesItems:         true,
+				SupportsInterrupt: true,
+				NoProcess:         true,
+			},
 		},
 		{
 			name:       "gemini",

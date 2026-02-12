@@ -73,12 +73,22 @@ type effectiveDebugConfig struct {
 type effectiveProvidersConfig struct {
 	Codex    effectiveCodexProviderConfig   `json:"codex" toml:"codex"`
 	Claude   effectiveClaudeProviderConfig  `json:"claude" toml:"claude"`
-	OpenCode effectiveCommandProviderConfig `json:"opencode" toml:"opencode"`
+	OpenCode effectiveServerProviderConfig  `json:"opencode" toml:"opencode"`
+	KiloCode effectiveServerProviderConfig  `json:"kilocode" toml:"kilocode"`
 	Gemini   effectiveCommandProviderConfig `json:"gemini" toml:"gemini"`
 }
 
 type effectiveCommandProviderConfig struct {
 	Command string `json:"command,omitempty" toml:"command,omitempty"`
+}
+
+type effectiveServerProviderConfig struct {
+	Command        string `json:"command,omitempty" toml:"command,omitempty"`
+	BaseURL        string `json:"base_url,omitempty" toml:"base_url,omitempty"`
+	TokenEnv       string `json:"token_env,omitempty" toml:"token_env,omitempty"`
+	TokenSet       bool   `json:"token_set,omitempty" toml:"token_set,omitempty"`
+	Username       string `json:"username,omitempty" toml:"username,omitempty"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" toml:"timeout_seconds,omitempty"`
 }
 
 type effectiveCodexProviderConfig struct {
@@ -206,8 +216,21 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 				Models:         coreCfg.ClaudeModels(),
 				IncludePartial: coreCfg.ClaudeIncludePartial(),
 			},
-			OpenCode: effectiveCommandProviderConfig{
-				Command: coreCfg.ProviderCommand("opencode"),
+			OpenCode: effectiveServerProviderConfig{
+				Command:        coreCfg.ProviderCommand("opencode"),
+				BaseURL:        coreCfg.OpenCodeBaseURL("opencode"),
+				TokenEnv:       coreCfg.OpenCodeTokenEnv("opencode"),
+				TokenSet:       strings.TrimSpace(coreCfg.OpenCodeToken("opencode")) != "",
+				Username:       coreCfg.OpenCodeUsername("opencode"),
+				TimeoutSeconds: coreCfg.OpenCodeTimeoutSeconds("opencode"),
+			},
+			KiloCode: effectiveServerProviderConfig{
+				Command:        coreCfg.ProviderCommand("kilocode"),
+				BaseURL:        coreCfg.OpenCodeBaseURL("kilocode"),
+				TokenEnv:       coreCfg.OpenCodeTokenEnv("kilocode"),
+				TokenSet:       strings.TrimSpace(coreCfg.OpenCodeToken("kilocode")) != "",
+				Username:       coreCfg.OpenCodeUsername("kilocode"),
+				TimeoutSeconds: coreCfg.OpenCodeTimeoutSeconds("kilocode"),
 			},
 			Gemini: effectiveCommandProviderConfig{
 				Command: coreCfg.ProviderCommand("gemini"),

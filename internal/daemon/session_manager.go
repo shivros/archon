@@ -507,6 +507,21 @@ func (m *SessionManager) KillSession(id string) error {
 	return nil
 }
 
+func (m *SessionManager) InterruptSession(id string) error {
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return ErrSessionNotFound
+	}
+	interrupt := state.interrupt
+	m.mu.Unlock()
+	if interrupt == nil {
+		return errors.New("session does not support interrupt")
+	}
+	return interrupt()
+}
+
 func (m *SessionManager) MarkExited(id string) error {
 	m.mu.Lock()
 	state, ok := m.sessions[id]

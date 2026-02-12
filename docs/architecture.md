@@ -21,6 +21,7 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 6. `SessionService` and `SessionManager` orchestrate provider adapters:
    - codex provider (`provider_codex.go`)
    - claude provider (`provider_claude.go`)
+   - opencode/kilocode server provider (`provider_opencode.go`)
    - generic process provider (`provider_exec.go`)
 
 ## Streaming and Persistence

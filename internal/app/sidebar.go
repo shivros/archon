@@ -40,6 +40,10 @@ var defaultProviderBadges = map[string]types.ProviderBadgeConfig{
 		Prefix: "[OPN]",
 		Color:  "39",
 	},
+	"kilocode": {
+		Prefix: "[KIL]",
+		Color:  "81",
+	},
 	"gemini": {
 		Prefix: "[GEM]",
 		Color:  "45",

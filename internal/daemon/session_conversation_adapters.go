@@ -59,6 +59,8 @@ func defaultConversationAdapterFor(def providers.Definition, fallback defaultCon
 		return codexConversationAdapter{fallback: fallback}
 	case providers.RuntimeClaude:
 		return claudeConversationAdapter{fallback: fallback}
+	case providers.RuntimeOpenCodeServer:
+		return openCodeConversationAdapter{providerName: providers.Normalize(def.Name), fallback: fallback}
 	default:
 		return nil
 	}
@@ -323,4 +325,117 @@ func (claudeConversationAdapter) Approve(context.Context, *SessionService, *type
 
 func (claudeConversationAdapter) Interrupt(context.Context, *SessionService, *types.Session, *types.SessionMeta) error {
 	return invalidError("provider does not support interrupt", nil)
+}
+
+type openCodeConversationAdapter struct {
+	providerName string
+	fallback     defaultConversationAdapter
+}
+
+func (a openCodeConversationAdapter) Provider() string {
+	return a.providerName
+}
+
+func (a openCodeConversationAdapter) History(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, source string, lines int) ([]map[string]any, error) {
+	return a.fallback.History(ctx, service, session, meta, source, lines)
+}
+
+func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error) {
+	if session == nil {
+		return "", invalidError("session is required", nil)
+	}
+	if service.manager == nil {
+		return "", unavailableError("session manager not available", nil)
+	}
+	text := extractTextInput(input)
+	if text == "" {
+		return "", invalidError("text input is required", nil)
+	}
+	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
+	if meta != nil {
+		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
+	}
+	payload := buildOpenCodeUserPayloadWithRuntime(text, runtimeOptions)
+	if err := service.manager.SendInput(session.ID, payload); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			providerSessionID := ""
+			if meta != nil {
+				providerSessionID = meta.ProviderSessionID
+			}
+			if strings.TrimSpace(providerSessionID) == "" {
+				return "", invalidError("provider session id not available", nil)
+			}
+			_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
+				Provider:          session.Provider,
+				Cwd:               session.Cwd,
+				Env:               session.Env,
+				RuntimeOptions:    runtimeOptions,
+				Resume:            true,
+				ProviderSessionID: providerSessionID,
+			}, session)
+			if resumeErr != nil {
+				return "", invalidError(resumeErr.Error(), resumeErr)
+			}
+			if err := service.manager.SendInput(session.ID, payload); err != nil {
+				return "", invalidError(err.Error(), err)
+			}
+		} else {
+			return "", invalidError(err.Error(), err)
+		}
+	}
+	now := time.Now().UTC()
+	if service.stores != nil && service.stores.SessionMeta != nil {
+		_, _ = service.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+			SessionID:    session.ID,
+			LastActiveAt: &now,
+		})
+	}
+	return "", nil
+}
+
+func (openCodeConversationAdapter) SubscribeEvents(context.Context, *SessionService, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+	return nil, nil, invalidError("provider does not support events", nil)
+}
+
+func (openCodeConversationAdapter) Approve(context.Context, *SessionService, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
+	return invalidError("provider does not support approvals", nil)
+}
+
+func (openCodeConversationAdapter) Interrupt(_ context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) error {
+	if session == nil {
+		return invalidError("session is required", nil)
+	}
+	if service == nil || service.manager == nil {
+		return unavailableError("session manager not available", nil)
+	}
+	if err := service.manager.InterruptSession(session.ID); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			providerSessionID := ""
+			runtimeOptions := (*types.SessionRuntimeOptions)(nil)
+			if meta != nil {
+				providerSessionID = meta.ProviderSessionID
+				runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
+			}
+			if strings.TrimSpace(providerSessionID) == "" {
+				return notFoundError("session not found", err)
+			}
+			_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
+				Provider:          session.Provider,
+				Cwd:               session.Cwd,
+				Env:               session.Env,
+				RuntimeOptions:    runtimeOptions,
+				Resume:            true,
+				ProviderSessionID: providerSessionID,
+			}, session)
+			if resumeErr != nil {
+				return invalidError(resumeErr.Error(), resumeErr)
+			}
+			if interruptErr := service.manager.InterruptSession(session.ID); interruptErr != nil {
+				return invalidError(interruptErr.Error(), interruptErr)
+			}
+			return nil
+		}
+		return invalidError(err.Error(), err)
+	}
+	return nil
 }

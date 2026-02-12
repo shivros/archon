@@ -25,6 +25,11 @@ command = "` + os.Args[0] + `"
 
 [providers.opencode]
 command = "` + os.Args[0] + `"
+base_url = "http://127.0.0.1:4096"
+
+[providers.kilocode]
+command = "` + os.Args[0] + `"
+base_url = "http://127.0.0.1:4097"
 
 [providers.gemini]
 command = "` + os.Args[0] + `"
@@ -40,6 +45,7 @@ command = "` + os.Args[0] + `"
 		{name: "codex"},
 		{name: "claude"},
 		{name: "opencode"},
+		{name: "kilocode"},
 		{name: "gemini"},
 		{name: "custom", customCmd: os.Args[0]},
 	}
@@ -83,25 +89,28 @@ func TestResolveProviderConfigLoadError(t *testing.T) {
 	}
 }
 
-func TestResolveProviderFallsBackToCandidates(t *testing.T) {
+func TestResolveProviderOpenCodeDoesNotRequireCommandLookup(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", home)
-	binDir := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	script := filepath.Join(binDir, "opencode-cli")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	content := []byte(`
+[providers.opencode]
+base_url = "http://127.0.0.1:4096"
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	t.Setenv("PATH", binDir)
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing-bin"))
 
 	provider, err := ResolveProvider("opencode", "")
 	if err != nil {
 		t.Fatalf("ResolveProvider(opencode): %v", err)
 	}
-	if provider.Command() != "opencode-cli" {
-		t.Fatalf("expected fallback candidate opencode-cli, got %q", provider.Command())
+	if provider.Command() != "http://127.0.0.1:4096" {
+		t.Fatalf("expected server base url command view, got %q", provider.Command())
 	}
 }
 

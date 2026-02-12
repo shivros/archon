@@ -22,7 +22,8 @@ Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD
   "provider_badges": {
     "codex": { "prefix": "[GPT]", "color": "15" },
     "claude": { "prefix": "[CLD]", "color": "208" },
-    "opencode": { "prefix": "[OPN]", "color": "39" }
+    "opencode": { "prefix": "[OPN]", "color": "39" },
+    "kilocode": { "prefix": "[KIL]", "color": "81" }
   }
 }
 ```
@@ -69,7 +70,18 @@ models = ["sonnet", "opus"]
 include_partial = false
 
 [providers.opencode]
-command = "opencode"
+base_url = "http://127.0.0.1:4096"
+token = ""
+token_env = "OPENCODE_TOKEN"
+username = "opencode"
+timeout_seconds = 30
+
+[providers.kilocode]
+base_url = "http://127.0.0.1:4097"
+token = ""
+token_env = "KILOCODE_TOKEN"
+username = "kilocode"
+timeout_seconds = 30
 
 [providers.gemini]
 command = "gemini"

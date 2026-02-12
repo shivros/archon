@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"control/internal/providers"
 	"control/internal/types"
 )
 
@@ -34,6 +35,11 @@ func (a *API) providerOptionsForRequest(ctx context.Context, provider, cwd, work
 	provider = strings.TrimSpace(provider)
 	if strings.EqualFold(provider, "codex") {
 		if dynamic := a.loadCodexDynamicOptionCatalog(ctx, cwd, workspaceID); dynamic != nil {
+			return dynamic
+		}
+	}
+	if strings.EqualFold(provider, "opencode") || strings.EqualFold(provider, "kilocode") {
+		if dynamic := a.loadOpenCodeDynamicOptionCatalog(ctx, provider); dynamic != nil {
 			return dynamic
 		}
 	}
@@ -76,4 +82,31 @@ func (a *API) loadCodexDynamicOptionCatalog(ctx context.Context, cwd, workspaceI
 		return nil
 	}
 	return codexProviderOptionCatalogFromModels(all)
+}
+
+func (a *API) loadOpenCodeDynamicOptionCatalog(ctx context.Context, provider string) *types.ProviderOptionCatalog {
+	coreCfg := loadCoreConfigOrDefault()
+	client, err := newOpenCodeClient(resolveOpenCodeClientConfig(provider, coreCfg))
+	if err != nil {
+		return nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	catalog, err := client.ListModels(callCtx)
+	if err != nil || catalog == nil {
+		return nil
+	}
+	name := providers.Normalize(provider)
+	out := &types.ProviderOptionCatalog{
+		Provider: name,
+		Models:   append([]string{}, catalog.Models...),
+		Defaults: types.SessionRuntimeOptions{
+			Model:   strings.TrimSpace(catalog.DefaultModel),
+			Version: 1,
+		},
+	}
+	if out.Defaults.Model == "" && len(out.Models) > 0 {
+		out.Defaults.Model = out.Models[0]
+	}
+	return out
 }

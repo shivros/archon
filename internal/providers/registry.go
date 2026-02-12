@@ -13,10 +13,11 @@ type Capabilities struct {
 type Runtime string
 
 const (
-	RuntimeCodex  Runtime = "codex"
-	RuntimeClaude Runtime = "claude"
-	RuntimeExec   Runtime = "exec"
-	RuntimeCustom Runtime = "custom"
+	RuntimeCodex          Runtime = "codex"
+	RuntimeClaude         Runtime = "claude"
+	RuntimeExec           Runtime = "exec"
+	RuntimeOpenCodeServer Runtime = "opencode_server"
+	RuntimeCustom         Runtime = "custom"
 )
 
 type Definition struct {
@@ -50,10 +51,24 @@ var registry = []Definition{
 		},
 	},
 	{
-		Name:              "opencode",
-		Label:             "opencode",
-		Runtime:           RuntimeExec,
-		CommandCandidates: []string{"opencode", "opencode-cli"},
+		Name:    "opencode",
+		Label:   "opencode",
+		Runtime: RuntimeOpenCodeServer,
+		Capabilities: Capabilities{
+			UsesItems:         true,
+			SupportsInterrupt: true,
+			NoProcess:         true,
+		},
+	},
+	{
+		Name:    "kilocode",
+		Label:   "kilocode",
+		Runtime: RuntimeOpenCodeServer,
+		Capabilities: Capabilities{
+			UsesItems:         true,
+			SupportsInterrupt: true,
+			NoProcess:         true,
+		},
 	},
 	{
 		Name:              "gemini",

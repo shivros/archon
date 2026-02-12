@@ -47,6 +47,9 @@ var providerFactories = map[providers.Runtime]providerFactory{
 	providers.RuntimeExec: func(def providers.Definition, commandName string) (Provider, error) {
 		return newExecProvider(def.Name, commandName, nil)
 	},
+	providers.RuntimeOpenCodeServer: func(def providers.Definition, _ string) (Provider, error) {
+		return newOpenCodeProvider(def.Name)
+	},
 	providers.RuntimeCustom: func(def providers.Definition, commandName string) (Provider, error) {
 		return newExecProvider(def.Name, commandName, nil)
 	},
@@ -61,15 +64,28 @@ func ResolveProvider(provider, customCmd string) (Provider, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
-	cmdName, err := resolveProviderCommandName(def, customCmd)
-	if err != nil {
-		return nil, err
+	cmdName := ""
+	if runtimeRequiresCommand(def.Runtime) {
+		var err error
+		cmdName, err = resolveProviderCommandName(def, customCmd)
+		if err != nil {
+			return nil, err
+		}
 	}
 	factory, ok := providerFactories[def.Runtime]
 	if !ok || factory == nil {
 		return nil, fmt.Errorf("provider runtime is not supported: %s", def.Runtime)
 	}
 	return factory(def, cmdName)
+}
+
+func runtimeRequiresCommand(runtime providers.Runtime) bool {
+	switch runtime {
+	case providers.RuntimeOpenCodeServer:
+		return false
+	default:
+		return true
+	}
 }
 
 func resolveProviderCommandName(def providers.Definition, customCmd string) (string, error) {

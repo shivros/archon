@@ -44,14 +44,24 @@ type CoreDebugConfig struct {
 }
 
 type CoreProvidersConfig struct {
-	Codex    CoreCodexProviderConfig   `toml:"codex"`
-	Claude   CoreClaudeProviderConfig  `toml:"claude"`
-	OpenCode CoreCommandProviderConfig `toml:"opencode"`
-	Gemini   CoreCommandProviderConfig `toml:"gemini"`
+	Codex    CoreCodexProviderConfig    `toml:"codex"`
+	Claude   CoreClaudeProviderConfig   `toml:"claude"`
+	OpenCode CoreOpenCodeProviderConfig `toml:"opencode"`
+	KiloCode CoreOpenCodeProviderConfig `toml:"kilocode"`
+	Gemini   CoreCommandProviderConfig  `toml:"gemini"`
 }
 
 type CoreCommandProviderConfig struct {
 	Command string `toml:"command"`
+}
+
+type CoreOpenCodeProviderConfig struct {
+	Command        string `toml:"command"`
+	BaseURL        string `toml:"base_url"`
+	Token          string `toml:"token"`
+	TokenEnv       string `toml:"token_env"`
+	Username       string `toml:"username"`
+	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
 
 type CoreCodexProviderConfig struct {
@@ -152,10 +162,57 @@ func (c CoreConfig) ProviderCommand(provider string) string {
 		return strings.TrimSpace(c.Providers.Claude.Command)
 	case "opencode":
 		return strings.TrimSpace(c.Providers.OpenCode.Command)
+	case "kilocode":
+		return strings.TrimSpace(c.Providers.KiloCode.Command)
 	case "gemini":
 		return strings.TrimSpace(c.Providers.Gemini.Command)
 	default:
 		return ""
+	}
+}
+
+func (c CoreConfig) OpenCodeBaseURL(provider string) string {
+	cfg := c.openCodeProviderConfig(provider)
+	return strings.TrimSpace(cfg.BaseURL)
+}
+
+func (c CoreConfig) OpenCodeToken(provider string) string {
+	cfg := c.openCodeProviderConfig(provider)
+	return strings.TrimSpace(cfg.Token)
+}
+
+func (c CoreConfig) OpenCodeTokenEnv(provider string) string {
+	cfg := c.openCodeProviderConfig(provider)
+	return strings.TrimSpace(cfg.TokenEnv)
+}
+
+func (c CoreConfig) OpenCodeUsername(provider string) string {
+	name := strings.ToLower(strings.TrimSpace(provider))
+	cfg := c.openCodeProviderConfig(name)
+	username := strings.TrimSpace(cfg.Username)
+	if username != "" {
+		return username
+	}
+	if name == "kilocode" {
+		return "kilocode"
+	}
+	return "opencode"
+}
+
+func (c CoreConfig) OpenCodeTimeoutSeconds(provider string) int {
+	cfg := c.openCodeProviderConfig(provider)
+	if cfg.TimeoutSeconds > 0 {
+		return cfg.TimeoutSeconds
+	}
+	return 30
+}
+
+func (c CoreConfig) openCodeProviderConfig(provider string) CoreOpenCodeProviderConfig {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "kilocode":
+		return c.Providers.KiloCode
+	default:
+		return c.Providers.OpenCode
 	}
 }
 

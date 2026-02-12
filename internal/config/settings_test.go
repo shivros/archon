@@ -54,6 +54,19 @@ include_partial = true
 
 [providers.opencode]
 command = "/usr/local/bin/opencode"
+base_url = "http://127.0.0.1:4096"
+token = "config-open"
+token_env = "OPENCODE_TOKEN"
+username = "archon"
+timeout_seconds = 15
+
+[providers.kilocode]
+command = "/usr/local/bin/kilocode"
+base_url = "http://127.0.0.1:4097"
+token = "config-kilo"
+token_env = "KILOCODE_TOKEN"
+username = "archon-kilo"
+timeout_seconds = 16
 
 [providers.gemini]
 command = "/usr/local/bin/gemini"
@@ -87,8 +100,41 @@ command = "/usr/local/bin/gemini"
 	if got := cfg.ProviderCommand("opencode"); got != "/usr/local/bin/opencode" {
 		t.Fatalf("unexpected opencode command: %q", got)
 	}
+	if got := cfg.ProviderCommand("kilocode"); got != "/usr/local/bin/kilocode" {
+		t.Fatalf("unexpected kilocode command: %q", got)
+	}
 	if got := cfg.ProviderCommand("gemini"); got != "/usr/local/bin/gemini" {
 		t.Fatalf("unexpected gemini command: %q", got)
+	}
+	if got := cfg.OpenCodeBaseURL("opencode"); got != "http://127.0.0.1:4096" {
+		t.Fatalf("unexpected opencode base url: %q", got)
+	}
+	if got := cfg.OpenCodeBaseURL("kilocode"); got != "http://127.0.0.1:4097" {
+		t.Fatalf("unexpected kilocode base url: %q", got)
+	}
+	if got := cfg.OpenCodeToken("opencode"); got != "config-open" {
+		t.Fatalf("unexpected opencode token: %q", got)
+	}
+	if got := cfg.OpenCodeToken("kilocode"); got != "config-kilo" {
+		t.Fatalf("unexpected kilocode token: %q", got)
+	}
+	if got := cfg.OpenCodeTokenEnv("opencode"); got != "OPENCODE_TOKEN" {
+		t.Fatalf("unexpected opencode token env: %q", got)
+	}
+	if got := cfg.OpenCodeTokenEnv("kilocode"); got != "KILOCODE_TOKEN" {
+		t.Fatalf("unexpected kilocode token env: %q", got)
+	}
+	if got := cfg.OpenCodeUsername("opencode"); got != "archon" {
+		t.Fatalf("unexpected opencode username: %q", got)
+	}
+	if got := cfg.OpenCodeUsername("kilocode"); got != "archon-kilo" {
+		t.Fatalf("unexpected kilocode username: %q", got)
+	}
+	if got := cfg.OpenCodeTimeoutSeconds("opencode"); got != 15 {
+		t.Fatalf("unexpected opencode timeout: %d", got)
+	}
+	if got := cfg.OpenCodeTimeoutSeconds("kilocode"); got != 16 {
+		t.Fatalf("unexpected kilocode timeout: %d", got)
 	}
 	if got := cfg.CodexDefaultModel(); got != "gpt-5.3-codex" {
 		t.Fatalf("unexpected codex default model: %q", got)
@@ -159,6 +205,15 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	}
 	if cfg.StreamDebugEnabled() {
 		t.Fatalf("expected stream debug disabled by default")
+	}
+	if got := cfg.OpenCodeUsername("opencode"); got != "opencode" {
+		t.Fatalf("unexpected default opencode username: %q", got)
+	}
+	if got := cfg.OpenCodeUsername("kilocode"); got != "kilocode" {
+		t.Fatalf("unexpected default kilocode username: %q", got)
+	}
+	if got := cfg.OpenCodeTimeoutSeconds("opencode"); got != 30 {
+		t.Fatalf("unexpected default opencode timeout: %d", got)
 	}
 }
 
@@ -266,8 +321,23 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 				DefaultModel: " opus ",
 				Models:       []string{" opus ", "sonnet", "opus"},
 			},
-			OpenCode: CoreCommandProviderConfig{Command: " opencode "},
-			Gemini:   CoreCommandProviderConfig{Command: " gemini "},
+			OpenCode: CoreOpenCodeProviderConfig{
+				Command:        " opencode ",
+				BaseURL:        " http://127.0.0.1:4096/ ",
+				Token:          " config-open ",
+				TokenEnv:       " OPENCODE_TOKEN ",
+				Username:       " opencode-user ",
+				TimeoutSeconds: 33,
+			},
+			KiloCode: CoreOpenCodeProviderConfig{
+				Command:        " kilocode ",
+				BaseURL:        " http://127.0.0.1:4097/ ",
+				Token:          " config-kilo ",
+				TokenEnv:       " KILOCODE_TOKEN ",
+				Username:       " kilocode-user ",
+				TimeoutSeconds: 34,
+			},
+			Gemini: CoreCommandProviderConfig{Command: " gemini "},
 		},
 	}
 
@@ -292,8 +362,41 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	if got := cfg.ProviderCommand("opencode"); got != "opencode" {
 		t.Fatalf("unexpected opencode command: %q", got)
 	}
+	if got := cfg.ProviderCommand("kilocode"); got != "kilocode" {
+		t.Fatalf("unexpected kilocode command: %q", got)
+	}
 	if got := cfg.ProviderCommand("gemini"); got != "gemini" {
 		t.Fatalf("unexpected gemini command: %q", got)
+	}
+	if got := cfg.OpenCodeBaseURL("opencode"); got != "http://127.0.0.1:4096/" {
+		t.Fatalf("unexpected opencode base url: %q", got)
+	}
+	if got := cfg.OpenCodeBaseURL("kilocode"); got != "http://127.0.0.1:4097/" {
+		t.Fatalf("unexpected kilocode base url: %q", got)
+	}
+	if got := cfg.OpenCodeToken("opencode"); got != "config-open" {
+		t.Fatalf("unexpected opencode token: %q", got)
+	}
+	if got := cfg.OpenCodeToken("kilocode"); got != "config-kilo" {
+		t.Fatalf("unexpected kilocode token: %q", got)
+	}
+	if got := cfg.OpenCodeTokenEnv("opencode"); got != "OPENCODE_TOKEN" {
+		t.Fatalf("unexpected opencode token env: %q", got)
+	}
+	if got := cfg.OpenCodeTokenEnv("kilocode"); got != "KILOCODE_TOKEN" {
+		t.Fatalf("unexpected kilocode token env: %q", got)
+	}
+	if got := cfg.OpenCodeUsername("opencode"); got != "opencode-user" {
+		t.Fatalf("unexpected opencode username: %q", got)
+	}
+	if got := cfg.OpenCodeUsername("kilocode"); got != "kilocode-user" {
+		t.Fatalf("unexpected kilocode username: %q", got)
+	}
+	if got := cfg.OpenCodeTimeoutSeconds("opencode"); got != 33 {
+		t.Fatalf("unexpected opencode timeout: %d", got)
+	}
+	if got := cfg.OpenCodeTimeoutSeconds("kilocode"); got != 34 {
+		t.Fatalf("unexpected kilocode timeout: %d", got)
 	}
 	if got := cfg.ProviderCommand("unknown"); got != "" {
 		t.Fatalf("unexpected unknown provider command: %q", got)
