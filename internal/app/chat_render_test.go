@@ -228,3 +228,14 @@ func TestRenderChatTextReasoningTrimsLeadingNewlines(t *testing.T) {
 		t.Fatalf("expected reasoning chat text to trim leading newlines, got %q", got)
 	}
 }
+
+func TestTrimLeadingRenderedBlankLinesDropsANSIOnlyLines(t *testing.T) {
+	raw := "\x1b[38;5;245m\x1b[0m\n\x1b[38;5;245mhello\x1b[0m"
+	got := trimLeadingRenderedBlankLines(raw)
+	if strings.HasPrefix(got, "\n") {
+		t.Fatalf("expected no leading newline, got %q", got)
+	}
+	if plain := xansi.Strip(got); plain != "hello" {
+		t.Fatalf("expected trimmed content to keep visible text, got %q", plain)
+	}
+}

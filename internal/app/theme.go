@@ -2,6 +2,11 @@ package app
 
 import "github.com/charmbracelet/lipgloss"
 
+const (
+	chatBubblePaddingVertical   = 0
+	chatBubblePaddingHorizontal = 1
+)
+
 var (
 	headerStyle                 = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
 	helpStyle                   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
@@ -23,12 +28,12 @@ var (
 	menuBarActiveStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("239")).Bold(true)
 	menuDropStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235"))
 	contextMenuHeaderStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Background(lipgloss.Color("235")).Bold(true)
-	userBubbleStyle             = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Background(lipgloss.Color("236")).Padding(0, 1)
-	agentBubbleStyle            = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1)
-	systemBubbleStyle           = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(0, 1)
-	reasoningBubbleStyle        = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("244")).Faint(true).Padding(0, 1)
-	approvalBubbleStyle         = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("179")).Foreground(lipgloss.Color("230")).Padding(0, 1)
-	approvalResolvedBubbleStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("108")).Foreground(lipgloss.Color("251")).Padding(0, 1)
+	userBubbleStyle             = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Background(lipgloss.Color("236")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
+	agentBubbleStyle            = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
+	systemBubbleStyle           = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
+	reasoningBubbleStyle        = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("244")).Faint(true).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
+	approvalBubbleStyle         = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("179")).Foreground(lipgloss.Color("230")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
+	approvalResolvedBubbleStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("108")).Foreground(lipgloss.Color("251")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
 	userStatusStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true)
 	chatMetaStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true)
 	chatMetaSelectedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
