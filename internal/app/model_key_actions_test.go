@@ -115,6 +115,34 @@ func TestMenuKeyUsesCtrlMCanonicalBinding(t *testing.T) {
 	}
 }
 
+func TestNotesNewOverrideWorksFromSidebarSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandNotesNew:   "ctrl+n",
+		KeyCommandNewSession: "ctrl+s",
+	}))
+
+	handled, cmd := m.reduceNormalModeKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if !handled {
+		t.Fatalf("expected notes-new override to be handled")
+	}
+	_ = cmd
+	if m.mode != uiModeAddNote {
+		t.Fatalf("expected add note mode, got %v", m.mode)
+	}
+	if m.notesScope.Scope != types.NoteScopeSession || m.notesScope.SessionID != "s1" {
+		t.Fatalf("unexpected note scope: %#v", m.notesScope)
+	}
+}
+
 func selectSidebarItemKind(t *testing.T, m *Model, kind sidebarItemKind) {
 	t.Helper()
 	if m == nil || m.sidebar == nil {

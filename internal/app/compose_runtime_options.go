@@ -143,69 +143,10 @@ func (m *Model) setSessionRuntimeOptionsLocal(sessionID string, runtimeOptions *
 }
 
 func (m *Model) composeControlsLine() string {
-	if m.mode != uiModeCompose {
-		m.composeControlSpans = nil
+	if m == nil || m.chatAddonController == nil {
 		return ""
 	}
-	options := m.composeRuntimeOptions()
-	if options == nil {
-		m.composeControlSpans = nil
-		return ""
-	}
-	provider := m.composeProvider()
-	catalog := m.providerOptionCatalog(provider)
-	model := strings.TrimSpace(options.Model)
-	if model == "" {
-		model = "default"
-	}
-	reasoning := string(options.Reasoning)
-	if reasoning == "" {
-		reasoning = "default"
-	}
-	access := string(options.Access)
-	if access == "" {
-		access = "default"
-	}
-	parts := []struct {
-		kind composeOptionKind
-		text string
-	}{
-		{kind: composeOptionModel, text: "Model: " + model},
-		{kind: composeOptionAccess, text: "Access: " + access},
-	}
-	if catalog != nil && len(m.modelReasoningLevels(provider, options.Model)) > 0 {
-		parts = []struct {
-			kind composeOptionKind
-			text string
-		}{
-			{kind: composeOptionModel, text: "Model: " + model},
-			{kind: composeOptionReasoning, text: "Reasoning: " + reasoning},
-			{kind: composeOptionAccess, text: "Access: " + access},
-		}
-	}
-	spans := make([]composeControlSpan, 0, len(parts))
-	var b strings.Builder
-	col := 0
-	for i, part := range parts {
-		if i > 0 {
-			b.WriteString("  |  ")
-			col += 5
-		}
-		label := part.text
-		if m.composeOptionTarget == part.kind {
-			label = "[" + label + "]"
-		}
-		start := col
-		b.WriteString(label)
-		col += len(label)
-		spans = append(spans, composeControlSpan{
-			kind:  part.kind,
-			start: start,
-			end:   col - 1,
-		})
-	}
-	m.composeControlSpans = spans
-	return b.String()
+	return m.chatAddonController.composeControlsLine(m)
 }
 
 func (m *Model) modelReasoningLevels(provider, model string) []types.ReasoningLevel {
@@ -283,158 +224,64 @@ func (m *Model) composeControlsRow() int {
 }
 
 func (m *Model) openComposeOptionPicker(target composeOptionKind) bool {
-	if target == composeOptionNone || m.composeOptionPicker == nil {
+	if m == nil || m.chatAddonController == nil {
 		return false
 	}
-	provider := m.composeProvider()
-	if provider == "" {
-		return false
-	}
-	catalog := m.providerOptionCatalog(provider)
-	if catalog == nil {
-		return false
-	}
-	options := make([]selectOption, 0, 8)
-	selectedID := ""
-	current := m.composeRuntimeOptions()
-	switch target {
-	case composeOptionModel:
-		for _, model := range catalog.Models {
-			value := strings.TrimSpace(model)
-			if value == "" {
-				continue
-			}
-			options = append(options, selectOption{id: value, label: value})
-		}
-		if current != nil {
-			selectedID = strings.TrimSpace(current.Model)
-		}
-	case composeOptionReasoning:
-		model := ""
-		if current != nil {
-			model = current.Model
-		}
-		for _, level := range m.modelReasoningLevels(provider, model) {
-			value := strings.TrimSpace(string(level))
-			if value == "" {
-				continue
-			}
-			options = append(options, selectOption{id: value, label: value})
-		}
-		if current != nil {
-			selectedID = strings.TrimSpace(string(current.Reasoning))
-		}
-	case composeOptionAccess:
-		for _, level := range catalog.AccessLevels {
-			value := strings.TrimSpace(string(level))
-			if value == "" {
-				continue
-			}
-			options = append(options, selectOption{id: value, label: value})
-		}
-		if current != nil {
-			selectedID = strings.TrimSpace(string(current.Access))
-		}
-	}
-	if len(options) == 0 {
-		return false
-	}
-	m.composeOptionPicker.SetOptions(options)
-	m.composeOptionPicker.SelectID(selectedID)
-	m.composeOptionTarget = target
-	m.composeOptionSessionID = strings.TrimSpace(m.composeSessionID())
-	m.composeOptionProvider = provider
-	height := len(options)
-	if height < 3 {
-		height = 3
-	}
-	if height > 8 {
-		height = 8
-	}
-	width := m.viewport.Width
-	if width <= 0 {
-		width = minViewportWidth
-	}
-	m.composeOptionPicker.SetSize(width, height)
-	return true
+	return m.chatAddonController.openComposeOptionPicker(m, target)
 }
 
 func (m *Model) closeComposeOptionPicker() {
-	m.composeOptionTarget = composeOptionNone
-	m.composeOptionSessionID = ""
-	m.composeOptionProvider = ""
+	if m == nil || m.chatAddonController == nil {
+		return
+	}
+	m.chatAddonController.closeComposeOptionPicker()
 }
 
 func (m *Model) composeOptionPickerOpen() bool {
-	return m.composeOptionTarget != composeOptionNone
+	if m == nil || m.chatAddonController == nil {
+		return false
+	}
+	return m.chatAddonController.composeOptionPickerOpen()
 }
 
 func (m *Model) applyComposeOptionSelection(value string) tea.Cmd {
-	target := m.composeOptionTarget
-	if target == composeOptionNone {
+	if m == nil || m.chatAddonController == nil {
 		return nil
 	}
-	options := m.composeRuntimeOptions()
-	if options == nil {
-		return nil
-	}
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	switch target {
-	case composeOptionModel:
-		options.Model = value
-		m.normalizeComposeRuntimeOptionsForModel(m.composeProvider(), options)
-	case composeOptionReasoning:
-		options.Reasoning = types.ReasoningLevel(value)
-	case composeOptionAccess:
-		options.Access = types.AccessLevel(value)
-	}
-	provider := m.composeProvider()
-	m.setComposeDefaultForProvider(provider, options)
-	saveDefaults := m.saveAppStateCmd()
-	if m.newSession != nil {
-		m.newSession.runtimeOptions = types.CloneRuntimeOptions(options)
-		m.setStatusMessage("session options updated")
-		return saveDefaults
-	}
-	sessionID := strings.TrimSpace(m.composeSessionID())
-	if sessionID == "" {
-		if saveDefaults != nil {
-			return saveDefaults
-		}
-		return nil
-	}
-	m.setSessionRuntimeOptionsLocal(sessionID, options)
-	update := updateSessionRuntimeCmd(m.sessionAPI, sessionID, options)
-	m.setStatusMessage("updating session options")
-	if saveDefaults != nil {
-		return tea.Batch(update, saveDefaults)
-	}
-	return update
+	return m.chatAddonController.applyComposeOptionSelection(m, value)
 }
 
 func (m *Model) composeOptionPopupView() (string, int) {
-	if !m.composeOptionPickerOpen() || m.composeOptionPicker == nil {
+	if m == nil || m.chatAddonController == nil {
 		return "", 0
 	}
-	view := m.composeOptionPicker.View()
-	if strings.TrimSpace(view) == "" {
-		return "", 0
+	return m.chatAddonController.composeOptionPopupView(m)
+}
+
+func (m *Model) composeOptionPickerSelectedID() string {
+	if m == nil || m.chatAddonController == nil {
+		return ""
 	}
-	if leftPad := m.sidebarWidth(); leftPad > 0 {
-		prefix := strings.Repeat(" ", leftPad+1)
-		lines := strings.Split(view, "\n")
-		for i := range lines {
-			lines[i] = prefix + lines[i]
-		}
-		view = strings.Join(lines, "\n")
+	return m.chatAddonController.composeOptionPickerSelectedID()
+}
+
+func (m *Model) moveComposeOptionPicker(delta int) {
+	if m == nil || m.chatAddonController == nil {
+		return
 	}
-	height := len(strings.Split(view, "\n"))
-	row := m.composeControlsRow() - height
-	if row < 1 {
-		row = 1
+	m.chatAddonController.moveComposeOptionPicker(delta)
+}
+
+func (m *Model) composeOptionPickerHandleClick(row int) bool {
+	if m == nil || m.chatAddonController == nil {
+		return false
 	}
-	return view, row
+	return m.chatAddonController.composeOptionPickerHandleClick(row)
+}
+
+func (m *Model) composeControlSpans() []composeControlSpan {
+	if m == nil || m.chatAddonController == nil {
+		return nil
+	}
+	return m.chatAddonController.composeControlSpans()
 }

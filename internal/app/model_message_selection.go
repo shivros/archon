@@ -16,8 +16,15 @@ func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.clearMessageSelection()
 		return false, nil
 	}
+	if m.keyMatchesCommand(msg, KeyCommandToggleMessageSelect, "v") {
+		m.exitMessageSelection("message selection cleared")
+		return true, nil
+	}
+	if m.keyMatchesCommand(msg, KeyCommandQuit, "q") {
+		return true, tea.Quit
+	}
 	switch msg.String() {
-	case "esc", "v":
+	case "esc":
 		m.exitMessageSelection("message selection cleared")
 		return true, nil
 	case "j", "down":
@@ -42,8 +49,6 @@ func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.setMessageSelectionStatus()
 		}
 		return true, nil
-	case "q":
-		return true, tea.Quit
 	default:
 		// Keep message selection modal so navigation keys don't trigger other actions.
 		return true, nil

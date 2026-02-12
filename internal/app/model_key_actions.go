@@ -57,6 +57,9 @@ func (m *Model) reduceNormalModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if handled, cmd := m.reduceClipboardAndSearchKeys(msg); handled {
 		return true, cmd
 	}
+	if handled, cmd := m.reduceNotesEntryKeys(msg); handled {
+		return true, cmd
+	}
 	if handled, cmd := m.reduceViewportNavigationKeys(msg); handled {
 		return true, cmd
 	}
@@ -71,6 +74,13 @@ func (m *Model) reduceNormalModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	}
 	if handled, cmd := m.reduceSelectionKeys(msg); handled {
 		return true, cmd
+	}
+	return false, nil
+}
+
+func (m *Model) reduceNotesEntryKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
+	if m.keyMatchesOverriddenCommand(msg, KeyCommandNotesNew, "n") {
+		return true, m.enterAddNoteForSelection()
 	}
 	return false, nil
 }
@@ -100,8 +110,7 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch m.keyString(msg) {
-	case "ctrl+y":
+	if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {
 		id := m.selectedSessionID()
 		if id == "" {
 			m.setCopyStatusWarning("no session selected")
@@ -109,6 +118,8 @@ func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		m.copyWithStatus(id, "copied session id")
 		return true, nil
+	}
+	switch m.keyString(msg) {
 	case "/":
 		m.enterSearch()
 		return true, nil

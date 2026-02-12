@@ -94,21 +94,14 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 func (m *Model) modeInputView() (line string, scrollable bool) {
 	switch m.mode {
 	case uiModeCompose:
-		if m.chatInput != nil {
-			controls := m.composeControlsLine()
-			if controls == "" {
-				return m.chatInput.View(), m.chatInput.CanScroll()
-			}
-			return m.chatInput.View() + "\n" + controls, m.chatInput.CanScroll()
-		}
+		return InputPanel{
+			Input:  m.chatInput,
+			Footer: InputFooterFunc(m.composeControlsLine),
+		}.View()
 	case uiModeAddNote:
-		if m.noteInput != nil {
-			return m.noteInput.View(), m.noteInput.CanScroll()
-		}
+		return InputPanel{Input: m.noteInput}.View()
 	case uiModeSearch:
-		if m.searchInput != nil {
-			return m.searchInput.View(), m.searchInput.CanScroll()
-		}
+		return InputPanel{Input: m.searchInput}.View()
 	}
 	return "", false
 }

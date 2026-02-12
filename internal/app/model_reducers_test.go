@@ -44,6 +44,65 @@ func TestComposeReducerEnterEmptyShowsValidation(t *testing.T) {
 	}
 }
 
+func TestComposeReducerNotesNewOverrideOpensAddNote(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandNotesNew:   "ctrl+n",
+		KeyCommandNewSession: "ctrl+s",
+	}))
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if !handled {
+		t.Fatalf("expected notes-new override to be handled from compose input")
+	}
+	if cmd == nil {
+		t.Fatalf("expected notes refresh command when entering add note")
+	}
+	if m.mode != uiModeAddNote {
+		t.Fatalf("expected add note mode, got %v", m.mode)
+	}
+	if m.notesScope.SessionID != "s1" {
+		t.Fatalf("expected notes scope to target compose session, got %#v", m.notesScope)
+	}
+}
+
+func TestReduceClipboardAndSearchKeysUsesCtrlGForCopySessionID(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if !handled {
+		t.Fatalf("expected ctrl+g to be handled for copy session id")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for copy session id")
+	}
+	if m.status != "no session selected" {
+		t.Fatalf("expected missing session status, got %q", m.status)
+	}
+}
+
+func TestReduceClipboardAndSearchKeysCtrlYNotReservedForCopyByDefault(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyMsg{Type: tea.KeyCtrlY})
+	if handled {
+		t.Fatalf("expected ctrl+y not to trigger copy session id by default")
+	}
+}
+
+func TestReduceClipboardAndSearchKeysCopySessionIDRemappable(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandCopySessionID: "ctrl+y",
+	}))
+
+	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyMsg{Type: tea.KeyCtrlY})
+	if !handled {
+		t.Fatalf("expected remapped copy session id command to be handled")
+	}
+}
+
 func TestMenuReducerEscClosesMenu(t *testing.T) {
 	m := NewModel(nil)
 	if m.menu == nil {

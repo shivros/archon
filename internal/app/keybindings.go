@@ -48,6 +48,15 @@ const (
 	KeyCommandComposeModel         = "ui.composeModel"
 	KeyCommandComposeReasoning     = "ui.composeReasoning"
 	KeyCommandComposeAccess        = "ui.composeAccess"
+	KeyCommandInputSubmit          = "ui.inputSubmit"
+	KeyCommandInputNewline         = "ui.inputNewline"
+	KeyCommandInputWordLeft        = "ui.inputWordLeft"
+	KeyCommandInputWordRight       = "ui.inputWordRight"
+	KeyCommandInputDeleteWordLeft  = "ui.inputDeleteWordLeft"
+	KeyCommandInputDeleteWordRight = "ui.inputDeleteWordRight"
+	KeyCommandInputSelectAll       = "ui.inputSelectAll"
+	KeyCommandInputUndo            = "ui.inputUndo"
+	KeyCommandInputRedo            = "ui.inputRedo"
 	KeyCommandApprove              = "ui.approve"
 	KeyCommandDecline              = "ui.decline"
 	KeyCommandNotesNew             = "ui.notesNew"
@@ -59,7 +68,7 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandQuit:                 "q",
 	KeyCommandToggleSidebar:        "ctrl+b",
 	KeyCommandToggleNotesPanel:     "ctrl+o",
-	KeyCommandCopySessionID:        "ctrl+y",
+	KeyCommandCopySessionID:        "ctrl+g",
 	KeyCommandOpenSearch:           "/",
 	KeyCommandViewportTop:          "g",
 	KeyCommandViewportBottom:       "G",
@@ -91,6 +100,15 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandComposeModel:         "ctrl+1",
 	KeyCommandComposeReasoning:     "ctrl+2",
 	KeyCommandComposeAccess:        "ctrl+3",
+	KeyCommandInputSubmit:          "enter",
+	KeyCommandInputNewline:         "shift+enter",
+	KeyCommandInputWordLeft:        "ctrl+left",
+	KeyCommandInputWordRight:       "ctrl+right",
+	KeyCommandInputDeleteWordLeft:  "ctrl+backspace",
+	KeyCommandInputDeleteWordRight: "ctrl+delete",
+	KeyCommandInputSelectAll:       "ctrl+a",
+	KeyCommandInputUndo:            "ctrl+z",
+	KeyCommandInputRedo:            "ctrl+y",
 	KeyCommandApprove:              "y",
 	KeyCommandDecline:              "x",
 	KeyCommandNotesNew:             "n",
@@ -126,6 +144,7 @@ func NewKeybindings(overrides map[string]string) *Keybindings {
 		byCommand[command] = key
 	}
 	remap := map[string]string{}
+	ambiguous := map[string]struct{}{}
 	commands := make([]string, 0, len(defaultKeybindingByCommand))
 	for command := range defaultKeybindingByCommand {
 		commands = append(commands, command)
@@ -135,6 +154,14 @@ func NewKeybindings(overrides map[string]string) *Keybindings {
 		defaultKey := defaultKeybindingByCommand[command]
 		key := byCommand[command]
 		if strings.TrimSpace(key) == "" || key == defaultKey {
+			continue
+		}
+		if _, bad := ambiguous[key]; bad {
+			continue
+		}
+		if existing, ok := remap[key]; ok && existing != defaultKey {
+			delete(remap, key)
+			ambiguous[key] = struct{}{}
 			continue
 		}
 		remap[key] = defaultKey
@@ -222,6 +249,31 @@ func (m *Model) keyString(msg tea.KeyMsg) string {
 		return key
 	}
 	return m.keybindings.Remap(key)
+}
+
+func (m *Model) keyForCommand(command, fallback string) string {
+	if m == nil || m.keybindings == nil {
+		return fallback
+	}
+	return m.keybindings.KeyFor(command, fallback)
+}
+
+func (m *Model) keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool {
+	bound := strings.TrimSpace(m.keyForCommand(command, fallback))
+	if bound != "" && strings.TrimSpace(msg.String()) == bound {
+		return true
+	}
+	canonical := strings.TrimSpace(fallback)
+	return canonical != "" && strings.TrimSpace(m.keyString(msg)) == canonical
+}
+
+func (m *Model) keyMatchesOverriddenCommand(msg tea.KeyMsg, command, fallback string) bool {
+	bound := strings.TrimSpace(m.keyForCommand(command, fallback))
+	canonical := strings.TrimSpace(fallback)
+	if bound == "" || bound == canonical {
+		return false
+	}
+	return strings.TrimSpace(msg.String()) == bound
 }
 
 func parseKeybindingOverrides(data []byte) (map[string]string, error) {

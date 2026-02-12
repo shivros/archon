@@ -56,7 +56,9 @@ func TestApplyComposeOptionSelectionUpdatesNewSessionDefaults(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeCompose
 	m.newSession = &newSessionTarget{provider: "codex"}
-	m.composeOptionTarget = composeOptionAccess
+	if !m.openComposeOptionPicker(composeOptionAccess) {
+		t.Fatalf("expected access option picker to open")
+	}
 
 	_ = m.applyComposeOptionSelection(string(types.AccessFull))
 	if m.newSession.runtimeOptions == nil {
@@ -100,7 +102,9 @@ func TestApplyComposeOptionSelectionModelAdjustsReasoningByModel(t *testing.T) {
 			Defaults:        types.SessionRuntimeOptions{Model: "gpt-5.2-codex", Reasoning: types.ReasoningLow, Access: types.AccessOnRequest},
 		},
 	}
-	m.composeOptionTarget = composeOptionModel
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected model option picker to open")
+	}
 
 	_ = m.applyComposeOptionSelection("gpt-5.2-codex")
 	if m.newSession.runtimeOptions == nil {

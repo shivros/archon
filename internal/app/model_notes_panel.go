@@ -157,7 +157,8 @@ func (m *Model) applyNotesScopeResult(scope noteScopeTarget, notes []*types.Note
 func (m *Model) renderNotesViewsFromState() {
 	m.notes = m.filteredNotesForCurrentScope()
 	if m.mode == uiModeNotes || m.mode == uiModeAddNote {
-		m.setSnapshotBlocks(notesToBlocks(m.notes, m.notesScope, m.notesFilters))
+		notesNewKey := m.keyForCommand(KeyCommandNotesNew, "n")
+		m.setSnapshotBlocks(notesToBlocksWithNewKey(m.notes, m.notesScope, m.notesFilters, notesNewKey))
 	}
 	if m.notesPanelOpen {
 		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters)

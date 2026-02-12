@@ -155,6 +155,15 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.composeModel`
 - `ui.composeReasoning`
 - `ui.composeAccess`
+- `ui.inputSubmit`
+- `ui.inputNewline`
+- `ui.inputWordLeft`
+- `ui.inputWordRight`
+- `ui.inputDeleteWordLeft`
+- `ui.inputDeleteWordRight`
+- `ui.inputSelectAll`
+- `ui.inputUndo`
+- `ui.inputRedo`
 - `ui.approve`
 - `ui.decline`
 - `ui.notesNew`

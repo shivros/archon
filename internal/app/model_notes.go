@@ -68,6 +68,15 @@ func (m *Model) enterNotesForSelection() tea.Cmd {
 	return m.openNotesScope(scope)
 }
 
+func (m *Model) enterAddNoteForSelection() tea.Cmd {
+	scope, ok := m.currentNoteScope()
+	if !ok {
+		m.setValidationStatus("select a workspace, worktree, or session")
+		return nil
+	}
+	return m.enterAddNoteForScope(scope)
+}
+
 func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
 	m.setNotesRootScope(scope)
 	m.notesReturnMode = m.mode
@@ -158,6 +167,10 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.mode != uiModeNotes {
 		return false, nil
 	}
+	if m.keyMatchesCommand(msg, KeyCommandNotesNew, "n") {
+		m.enterAddNote()
+		return true, nil
+	}
 	switch m.keyString(msg) {
 	case "ctrl+o":
 		return true, m.toggleNotesPanel()
@@ -171,9 +184,6 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, m.enableAllNotesFilters()
 	case "esc":
 		return true, m.exitNotes("notes closed")
-	case "n":
-		m.enterAddNote()
-		return true, nil
 	case "r":
 		m.setStatusMessage("refreshing notes")
 		return true, m.refreshNotesForCurrentScope()
@@ -195,29 +205,32 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 	switch m.keyString(keyMsg) {
 	case "ctrl+o":
 		return true, m.toggleNotesPanel()
-	case "esc":
-		m.exitAddNote("add note canceled")
-		return true, nil
-	case "enter":
-		if m.noteInput == nil {
-			return true, nil
-		}
-		body := strings.TrimSpace(m.noteInput.Value())
-		if body == "" {
-			m.setValidationStatus("note is required")
-			return true, nil
-		}
-		m.noteInput.Clear()
-		m.exitAddNote("saving note")
-		return true, createNoteCmd(m.notesAPI, m.notesScope, body)
 	case "q":
 		return true, tea.Quit
-	default:
-		if m.noteInput != nil {
-			return true, m.noteInput.Update(keyMsg)
-		}
-		return true, nil
 	}
+	controller := textInputModeController{
+		input:             m.noteInput,
+		keyString:         m.keyString,
+		keyMatchesCommand: m.keyMatchesCommand,
+		onCancel: func() tea.Cmd {
+			m.exitAddNote("add note canceled")
+			return nil
+		},
+		onSubmit: m.submitAddNoteInput,
+	}
+	return controller.Update(keyMsg)
+}
+
+func (m *Model) submitAddNoteInput(body string) tea.Cmd {
+	if strings.TrimSpace(body) == "" {
+		m.setValidationStatus("note is required")
+		return nil
+	}
+	if m.noteInput != nil {
+		m.noteInput.Clear()
+	}
+	m.exitAddNote("saving note")
+	return createNoteCmd(m.notesAPI, m.notesScope, body)
 }
 
 func (m *Model) currentNoteScope() (noteScopeTarget, bool) {
@@ -304,11 +317,19 @@ func (m *Model) noteScopeForSession(sessionID, workspaceID, worktreeID string) n
 }
 
 func notesToBlocks(notes []*types.Note, scope noteScopeTarget, filters notesFilterState) []ChatBlock {
+	return notesToBlocksWithNewKey(notes, scope, filters, "n")
+}
+
+func notesToBlocksWithNewKey(notes []*types.Note, scope noteScopeTarget, filters notesFilterState, notesNewKey string) []ChatBlock {
+	notesNewKey = strings.TrimSpace(notesNewKey)
+	if notesNewKey == "" {
+		notesNewKey = "n"
+	}
 	filterSection := notesFilterSection(scope, filters)
 	header := ChatBlock{
 		ID:   "notes-scope",
 		Role: ChatRoleSystem,
-		Text: fmt.Sprintf("Notes\n\nScope: %s\n\n%s\n\nKeys: 1/2/3 toggle filters, 0 all, n add note, r refresh, esc back", scope.Label(), filterSection),
+		Text: fmt.Sprintf("Notes\n\nScope: %s\n\n%s\n\nKeys: 1/2/3 toggle filters, 0 all, %s add note, r refresh, esc back", scope.Label(), filterSection, notesNewKey),
 	}
 	if !hasAnyNotesFilterEnabled(scope, filters) {
 		return []ChatBlock{
@@ -326,7 +347,7 @@ func notesToBlocks(notes []*types.Note, scope noteScopeTarget, filters notesFilt
 			{
 				ID:   "notes-empty",
 				Role: ChatRoleSystem,
-				Text: "No notes yet.\n\nUse Add Note from the context menu or press n.",
+				Text: fmt.Sprintf("No notes yet.\n\nUse Add Note from the context menu or press %s.", notesNewKey),
 			},
 		}
 	}

@@ -438,166 +438,174 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.input == nil || !m.input.IsChatFocused() {
 		return false, nil
 	}
-	if m.composeOptionPickerOpen() {
-		switch msg.String() {
-		case "esc":
-			m.closeComposeOptionPicker()
-			m.setStatusMessage("session options picker closed")
-			return true, nil
-		case "enter":
-			value := ""
-			if m.composeOptionPicker != nil {
-				value = m.composeOptionPicker.SelectedID()
+	controller := textInputModeController{
+		input:             m.chatInput,
+		keyString:         m.keyString,
+		keyMatchesCommand: m.keyMatchesCommand,
+		onCancel:          m.cancelComposeInput,
+		onSubmit:          m.submitComposeInput,
+		beforeInputUpdate: m.resetComposeHistoryCursor,
+		preHandle: func(key string, msg tea.KeyMsg) (bool, tea.Cmd) {
+			if m.composeOptionPickerOpen() {
+				switch msg.String() {
+				case "esc":
+					m.closeComposeOptionPicker()
+					m.setStatusMessage("session options picker closed")
+					return true, nil
+				case "enter":
+					value := m.composeOptionPickerSelectedID()
+					cmd := m.applyComposeOptionSelection(value)
+					m.closeComposeOptionPicker()
+					return true, cmd
+				case "j", "down":
+					m.moveComposeOptionPicker(1)
+					return true, nil
+				case "k", "up":
+					m.moveComposeOptionPicker(-1)
+					return true, nil
+				}
 			}
-			cmd := m.applyComposeOptionSelection(value)
-			m.closeComposeOptionPicker()
-			return true, cmd
-		case "j", "down":
-			if m.composeOptionPicker != nil {
-				m.composeOptionPicker.Move(1)
+			if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {
+				id := m.selectedSessionID()
+				if id == "" {
+					m.setCopyStatusWarning("no session selected")
+					return true, nil
+				}
+				m.copyWithStatus(id, "copied session id")
+				return true, nil
 			}
-			return true, nil
-		case "k", "up":
-			if m.composeOptionPicker != nil {
-				m.composeOptionPicker.Move(-1)
+			if m.keyMatchesOverriddenCommand(msg, KeyCommandNotesNew, "n") {
+				return true, m.enterAddNoteForSelection()
 			}
-			return true, nil
-		}
+			switch key {
+			case "ctrl+o":
+				return true, m.toggleNotesPanel()
+			case "ctrl+1":
+				if m.openComposeOptionPicker(composeOptionModel) {
+					m.setStatusMessage("select model")
+				}
+				return true, nil
+			case "ctrl+2":
+				if m.openComposeOptionPicker(composeOptionReasoning) {
+					m.setStatusMessage("select reasoning")
+				}
+				return true, nil
+			case "ctrl+3":
+				if m.openComposeOptionPicker(composeOptionAccess) {
+					m.setStatusMessage("select access")
+				}
+				return true, nil
+			case "up":
+				if m.chatInput != nil {
+					if value, ok := m.composeHistoryNavigate(-1, m.chatInput.Value()); ok {
+						m.chatInput.SetValue(value)
+						return true, nil
+					}
+				}
+				return true, nil
+			case "down":
+				if m.chatInput != nil {
+					if value, ok := m.composeHistoryNavigate(1, m.chatInput.Value()); ok {
+						m.chatInput.SetValue(value)
+						return true, nil
+					}
+				}
+				return true, nil
+			case "ctrl+c":
+				if m.chatInput != nil {
+					m.chatInput.Clear()
+					m.setStatusMessage("input cleared")
+				}
+				return true, nil
+			}
+			return false, nil
+		},
 	}
-	switch m.keyString(msg) {
-	case "ctrl+o":
-		return true, m.toggleNotesPanel()
-	case "ctrl+1":
-		if m.openComposeOptionPicker(composeOptionModel) {
-			m.setStatusMessage("select model")
+	return controller.Update(msg)
+}
+
+func (m *Model) cancelComposeInput() tea.Cmd {
+	m.closeComposeOptionPicker()
+	m.exitCompose("compose canceled")
+	return nil
+}
+
+func (m *Model) submitComposeInput(text string) tea.Cmd {
+	if strings.TrimSpace(text) == "" {
+		m.setValidationStatus("message is required")
+		return nil
+	}
+	if m.newSession != nil {
+		target := m.newSession
+		if strings.TrimSpace(target.provider) == "" {
+			m.setValidationStatus("provider is required")
+			return nil
 		}
-		return true, nil
-	case "ctrl+2":
-		if m.openComposeOptionPicker(composeOptionReasoning) {
-			m.setStatusMessage("select reasoning")
-		}
-		return true, nil
-	case "ctrl+3":
-		if m.openComposeOptionPicker(composeOptionAccess) {
-			m.setStatusMessage("select access")
-		}
-		return true, nil
-	case "esc":
-		m.closeComposeOptionPicker()
-		m.exitCompose("compose canceled")
-		return true, nil
-	case "up":
-		if m.chatInput != nil {
-			if value, ok := m.composeHistoryNavigate(-1, m.chatInput.Value()); ok {
-				m.chatInput.SetValue(value)
-				return true, nil
-			}
-		}
-		return true, nil
-	case "down":
-		if m.chatInput != nil {
-			if value, ok := m.composeHistoryNavigate(1, m.chatInput.Value()); ok {
-				m.chatInput.SetValue(value)
-				return true, nil
-			}
-		}
-		return true, nil
-	case "enter":
-		if m.chatInput == nil {
-			return true, nil
-		}
-		text := strings.TrimSpace(m.chatInput.Value())
-		if text == "" {
-			m.setValidationStatus("message is required")
-			return true, nil
-		}
-		if m.newSession != nil {
-			target := m.newSession
-			if strings.TrimSpace(target.provider) == "" {
-				m.setValidationStatus("provider is required")
-				return true, nil
-			}
-			m.enableFollow(false)
-			m.setStatusMessage("starting session")
-			m.chatInput.Clear()
-			return true, m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text, target.runtimeOptions)
-		}
-		sessionID := m.composeSessionID()
-		if sessionID == "" {
-			m.setValidationStatus("select a session to chat")
-			return true, nil
-		}
-		m.recordComposeHistory(sessionID, text)
-		saveHistoryCmd := m.saveAppStateCmd()
-		provider := m.providerForSessionID(sessionID)
 		m.enableFollow(false)
-		m.startRequestActivity(sessionID, provider)
-		token := m.nextSendToken()
-		m.registerPendingSend(token, sessionID, provider)
-		headerIndex := m.appendUserMessageLocal(provider, text)
-		m.setStatusMessage("sending message")
+		m.setStatusMessage("starting session")
+		if m.chatInput != nil {
+			m.chatInput.Clear()
+		}
+		return m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text, target.runtimeOptions)
+	}
+	sessionID := m.composeSessionID()
+	if sessionID == "" {
+		m.setValidationStatus("select a session to chat")
+		return nil
+	}
+	m.recordComposeHistory(sessionID, text)
+	saveHistoryCmd := m.saveAppStateCmd()
+	provider := m.providerForSessionID(sessionID)
+	m.enableFollow(false)
+	m.startRequestActivity(sessionID, provider)
+	token := m.nextSendToken()
+	m.registerPendingSend(token, sessionID, provider)
+	headerIndex := m.appendUserMessageLocal(provider, text)
+	m.setStatusMessage("sending message")
+	if m.chatInput != nil {
 		m.chatInput.Clear()
-		if headerIndex >= 0 {
-			m.registerPendingSendHeader(token, sessionID, provider, headerIndex)
+	}
+	if headerIndex >= 0 {
+		m.registerPendingSendHeader(token, sessionID, provider, headerIndex)
+	}
+	send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
+	if shouldStreamItems(provider) {
+		cmds := []tea.Cmd{send}
+		if m.itemStream == nil || !m.itemStream.HasStream() {
+			cmds = append([]tea.Cmd{openItemsCmd(m.sessionAPI, sessionID)}, cmds...)
 		}
-		send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
-		if shouldStreamItems(provider) {
-			cmds := []tea.Cmd{send}
-			if m.itemStream == nil || !m.itemStream.HasStream() {
-				cmds = append([]tea.Cmd{openItemsCmd(m.sessionAPI, sessionID)}, cmds...)
-			}
-			key := m.pendingSessionKey
-			if key == "" {
-				key = m.selectedKey()
-			}
-			if key != "" {
-				cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
-			}
-			if saveHistoryCmd != nil {
-				cmds = append(cmds, saveHistoryCmd)
-			}
-			return true, tea.Batch(cmds...)
+		key := m.pendingSessionKey
+		if key == "" {
+			key = m.selectedKey()
 		}
-		if provider == "codex" {
-			cmds := make([]tea.Cmd, 0, 4)
-			if m.codexStream == nil || !m.codexStream.HasStream() {
-				cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
-			}
-			cmds = append(cmds, send)
-			key := m.pendingSessionKey
-			if key == "" {
-				key = m.selectedKey()
-			}
-			if key != "" {
-				cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
-			}
-			if saveHistoryCmd != nil {
-				cmds = append(cmds, saveHistoryCmd)
-			}
-			return true, tea.Batch(cmds...)
+		if key != "" {
+			cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
 		}
 		if saveHistoryCmd != nil {
-			return true, tea.Batch(send, saveHistoryCmd)
+			cmds = append(cmds, saveHistoryCmd)
 		}
-		return true, send
-	case "ctrl+c":
-		if m.chatInput != nil {
-			m.chatInput.Clear()
-			m.setStatusMessage("input cleared")
-		}
-		return true, nil
-	case "ctrl+y":
-		id := m.selectedSessionID()
-		if id == "" {
-			m.setCopyStatusWarning("no session selected")
-			return true, nil
-		}
-		m.copyWithStatus(id, "copied session id")
-		return true, nil
+		return tea.Batch(cmds...)
 	}
-	if m.chatInput != nil {
-		m.resetComposeHistoryCursor()
-		return true, m.chatInput.Update(msg)
+	if provider == "codex" {
+		cmds := make([]tea.Cmd, 0, 4)
+		if m.codexStream == nil || !m.codexStream.HasStream() {
+			cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
+		}
+		cmds = append(cmds, send)
+		key := m.pendingSessionKey
+		if key == "" {
+			key = m.selectedKey()
+		}
+		if key != "" {
+			cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
+		}
+		if saveHistoryCmd != nil {
+			cmds = append(cmds, saveHistoryCmd)
+		}
+		return tea.Batch(cmds...)
 	}
-	return true, nil
+	if saveHistoryCmd != nil {
+		return tea.Batch(send, saveHistoryCmd)
+	}
+	return send
 }

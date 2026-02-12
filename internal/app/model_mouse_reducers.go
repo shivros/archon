@@ -49,6 +49,11 @@ func (m *Model) mouseOverInput(y int) bool {
 		end := start + m.chatInput.Height() - 1
 		return y >= start && y <= end
 	}
+	if m.mode == uiModeAddNote && m.noteInput != nil {
+		start := m.viewport.Height + 2
+		end := start + m.noteInput.Height() - 1
+		return y >= start && y <= end
+	}
 	if m.mode == uiModeSearch && m.searchInput != nil {
 		start := m.viewport.Height + 2
 		end := start + m.searchInput.Height() - 1
@@ -65,7 +70,7 @@ func (m *Model) mouseOverComposeControls(y int) bool {
 }
 
 func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if !m.composeOptionPickerOpen() || m.composeOptionPicker == nil {
+	if !m.composeOptionPickerOpen() {
 		return false
 	}
 	popup, row := m.composeOptionPopupView()
@@ -76,8 +81,8 @@ func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, layout
 	height := len(strings.Split(popup, "\n"))
 	if msg.X >= layout.rightStart {
 		if pickerRow, ok := composePickerRowForClick(msg.Y, row, height); ok {
-			if m.composeOptionPicker.HandleClick(pickerRow) {
-				cmd := m.applyComposeOptionSelection(m.composeOptionPicker.SelectedID())
+			if m.composeOptionPickerHandleClick(pickerRow) {
+				cmd := m.applyComposeOptionSelection(m.composeOptionPickerSelectedID())
 				m.closeComposeOptionPicker()
 				if cmd != nil {
 					m.pendingMouseCmd = cmd
@@ -115,7 +120,7 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 		return false
 	}
 	col := msg.X - layout.rightStart
-	for _, span := range m.composeControlSpans {
+	for _, span := range m.composeControlSpans() {
 		if col < span.start || col > span.end {
 			continue
 		}
@@ -259,6 +264,10 @@ func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta
 	if msg.X >= layout.rightStart && m.mouseOverInput(msg.Y) {
 		if m.mode == uiModeCompose && m.chatInput != nil {
 			m.pendingMouseCmd = m.chatInput.Scroll(delta)
+			return true
+		}
+		if m.mode == uiModeAddNote && m.noteInput != nil {
+			m.pendingMouseCmd = m.noteInput.Scroll(delta)
 			return true
 		}
 		if m.mode == uiModeSearch && m.searchInput != nil {

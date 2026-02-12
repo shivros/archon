@@ -86,16 +86,16 @@ type Model struct {
 	addWorktree                *AddWorktreeController
 	providerPicker             *ProviderPicker
 	compose                    *ComposeController
-	chatInput                  *ChatInput
-	searchInput                *ChatInput
-	renameInput                *ChatInput
-	groupInput                 *ChatInput
+	chatAddonController        *ChatInputAddonController
+	chatInput                  *TextInput
+	searchInput                *TextInput
+	renameInput                *TextInput
+	groupInput                 *TextInput
 	groupPicker                *GroupPicker
 	workspacePicker            *SelectPicker
 	groupSelectPicker          *SelectPicker
 	workspaceMulti             *MultiSelectPicker
-	composeOptionPicker        *SelectPicker
-	noteInput                  *ChatInput
+	noteInput                  *TextInput
 	renameWorkspaceID          string
 	renameWorktreeWorkspaceID  string
 	renameWorktreeID           string
@@ -173,10 +173,6 @@ type Model struct {
 	pendingSends               map[int]pendingSend
 	composeHistory             map[string]*composeHistoryState
 	requestActivity            requestActivity
-	composeControlSpans        []composeControlSpan
-	composeOptionTarget        composeOptionKind
-	composeOptionSessionID     string
-	composeOptionProvider      string
 	tickFn                     func() tea.Cmd
 	pendingConfirm             confirmAction
 	scrollOnLoad               bool
@@ -267,6 +263,7 @@ func NewModel(client *client.Client) Model {
 	keybindings := DefaultKeybindings()
 	hotkeyRenderer := NewHotkeyRenderer(ResolveHotkeys(DefaultHotkeys(), keybindings), DefaultHotkeyResolver{})
 	now := time.Now().UTC()
+	chatAddon := NewChatInputAddon(minViewportWidth, 8)
 
 	return Model{
 		workspaceAPI:               api,
@@ -286,16 +283,16 @@ func NewModel(client *client.Client) Model {
 		addWorktree:                NewAddWorktreeController(minViewportWidth),
 		providerPicker:             NewProviderPicker(minViewportWidth, minContentHeight-1),
 		compose:                    NewComposeController(minViewportWidth),
-		chatInput:                  NewChatInput(minViewportWidth, DefaultChatInputConfig()),
-		searchInput:                NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		renameInput:                NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
-		groupInput:                 NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		chatAddonController:        NewChatInputAddonController(chatAddon),
+		chatInput:                  NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		searchInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
+		renameInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
+		groupInput:                 NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
 		groupPicker:                NewGroupPicker(minViewportWidth, minContentHeight-1),
 		workspacePicker:            NewSelectPicker(minViewportWidth, minContentHeight-1),
 		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
 		workspaceMulti:             NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
-		composeOptionPicker:        NewSelectPicker(minViewportWidth, 8),
-		noteInput:                  NewChatInput(minViewportWidth, ChatInputConfig{Height: 1}),
+		noteInput:                  NewTextInput(minViewportWidth, TextInputConfig{Height: 1}),
 		status:                     "",
 		toastLevel:                 toastLevelInfo,
 		follow:                     true,
@@ -604,8 +601,8 @@ func (m *Model) resize(width, height int) {
 	if m.workspaceMulti != nil {
 		m.workspaceMulti.SetSize(mainViewportWidth, max(3, contentHeight-2))
 	}
-	if m.composeOptionPicker != nil {
-		m.composeOptionPicker.SetSize(mainViewportWidth, 8)
+	if m.chatAddonController != nil {
+		m.chatAddonController.setPickerSize(mainViewportWidth, 8)
 	}
 	if m.chatInput != nil {
 		m.chatInput.Resize(mainViewportWidth)

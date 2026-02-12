@@ -230,6 +230,12 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandRename, ""); got != "m" {
 		t.Fatalf("expected default rename key m, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "ctrl+g" {
+		t.Fatalf("expected default copy session key ctrl+g, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandInputRedo, ""); got != "ctrl+y" {
+		t.Fatalf("expected default input redo key ctrl+y, got %q", got)
+	}
 }
 
 func TestMenuOverrideRemapsToCanonicalCtrlM(t *testing.T) {
@@ -238,5 +244,41 @@ func TestMenuOverrideRemapsToCanonicalCtrlM(t *testing.T) {
 	})
 	if got := bindings.Remap("m"); got != "ctrl+m" {
 		t.Fatalf("expected menu override to map to ctrl+m, got %q", got)
+	}
+}
+
+func TestNewKeybindingsAmbiguousOverrideDoesNotRemap(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandToggleSidebar: "alt+b",
+		KeyCommandRefresh:       "alt+b",
+	})
+	if got := bindings.KeyFor(KeyCommandToggleSidebar, ""); got != "alt+b" {
+		t.Fatalf("unexpected sidebar binding: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandRefresh, ""); got != "alt+b" {
+		t.Fatalf("unexpected refresh binding: %q", got)
+	}
+	if got := bindings.Remap("alt+b"); got != "alt+b" {
+		t.Fatalf("expected ambiguous key to remain raw, got %q", got)
+	}
+}
+
+func TestKeyMatchesOverriddenCommandRequiresOverride(t *testing.T) {
+	model := &Model{}
+	model.applyKeybindings(DefaultKeybindings())
+
+	if model.keyMatchesOverriddenCommand(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, KeyCommandNotesNew, "n") {
+		t.Fatalf("expected default binding to not count as an override")
+	}
+}
+
+func TestKeyMatchesOverriddenCommandMatchesRawKey(t *testing.T) {
+	model := &Model{}
+	model.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandNotesNew: "ctrl+n",
+	}))
+
+	if !model.keyMatchesOverriddenCommand(tea.KeyMsg{Type: tea.KeyCtrlN}, KeyCommandNotesNew, "n") {
+		t.Fatalf("expected overridden notes key to match raw event")
 	}
 }

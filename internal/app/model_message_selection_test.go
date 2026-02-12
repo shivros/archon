@@ -92,3 +92,50 @@ func TestMessageSelectionRenderShowsVisibleMarker(t *testing.T) {
 		t.Fatalf("expected selected marker after entering mode: %q", after)
 	}
 }
+
+func TestMessageSelectionExitUsesRemappedToggleCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleUser, Text: "one"},
+		{Role: ChatRoleAgent, Text: "two"},
+	})
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandToggleMessageSelect: "ctrl+j",
+	}))
+	m.enterMessageSelection()
+
+	handled, cmd := m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if !handled {
+		t.Fatalf("expected remapped toggle command to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.messageSelectActive {
+		t.Fatalf("expected message selection to deactivate")
+	}
+}
+
+func TestMessageSelectionQuitUsesRemappedQuitCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleAgent, Text: "two"},
+	})
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandQuit: "ctrl+q",
+	}))
+	m.enterMessageSelection()
+
+	handled, cmd := m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyCtrlQ})
+	if !handled {
+		t.Fatalf("expected remapped quit command to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("expected tea.QuitMsg from command")
+	}
+}

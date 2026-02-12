@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"control/internal/types"
 )
 
@@ -254,5 +256,59 @@ func TestReduceStateMessagesNoteMovedRefreshesNotesMode(t *testing.T) {
 	}
 	if m.status != "note moved" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestReduceNotesModeKeyNotesNewDefault(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeNotes
+	m.setNotesRootScope(noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: "ws1"})
+
+	handled, cmd := m.reduceNotesModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if !handled {
+		t.Fatalf("expected notes key reducer to handle notes new")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command")
+	}
+	if m.mode != uiModeAddNote {
+		t.Fatalf("expected add note mode, got %v", m.mode)
+	}
+}
+
+func TestReduceNotesModeKeyNotesNewUsesCommandBindingEvenWithRemapCollision(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeNotes
+	m.setNotesRootScope(noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: "ws1"})
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandNotesNew:   "ctrl+j",
+		KeyCommandOpenSearch: "ctrl+j",
+	}))
+
+	handled, cmd := m.reduceNotesModeKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if !handled {
+		t.Fatalf("expected notes key reducer to handle notes new binding")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command")
+	}
+	if m.mode != uiModeAddNote {
+		t.Fatalf("expected add note mode, got %v", m.mode)
+	}
+}
+
+func TestNotesToBlocksWithCustomNotesNewKey(t *testing.T) {
+	blocks := notesToBlocksWithNewKey(nil, noteScopeTarget{
+		Scope:       types.NoteScopeWorkspace,
+		WorkspaceID: "ws1",
+	}, notesFilterState{ShowWorkspace: true}, "ctrl+j")
+	if len(blocks) == 0 {
+		t.Fatalf("expected header block")
+	}
+	if !strings.Contains(blocks[0].Text, "ctrl+j add note") {
+		t.Fatalf("expected custom add note key in header, got %q", blocks[0].Text)
+	}
+	if len(blocks) < 2 || !strings.Contains(blocks[1].Text, "press ctrl+j") {
+		t.Fatalf("expected custom add note key in empty text, got %#v", blocks)
 	}
 }
