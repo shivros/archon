@@ -26,6 +26,12 @@ type openCodeClient struct {
 	token      string
 	timeout    time.Duration
 	httpClient *http.Client
+
+	modelResolver     openCodeRuntimeModelResolver
+	catalogMu         sync.RWMutex
+	catalogFetchedAt  time.Time
+	catalogProviders  map[string]struct{}
+	catalogModelToPID map[string]string
 }
 
 type openCodeClientConfig struct {
@@ -61,6 +67,37 @@ type openCodeModelCatalog struct {
 	DefaultModel string
 }
 
+type openCodeParsedProviderCatalog struct {
+	ProviderIDs      map[string]struct{}
+	ModelToProvider  map[string]string
+	NormalizedModels []string
+	DefaultModel     string
+}
+
+type openCodeModelCatalogIndexProvider interface {
+	openCodeModelCatalogIndex(ctx context.Context) (map[string]struct{}, map[string]string, error)
+}
+
+type openCodeRuntimeModelResolver interface {
+	Resolve(ctx context.Context, runtimeOptions *types.SessionRuntimeOptions) map[string]string
+}
+
+type openCodeDefaultRuntimeModelResolver struct {
+	catalog openCodeModelCatalogIndexProvider
+}
+
+type openCodeSessionMessage struct {
+	Info    map[string]any   `json:"info"`
+	Parts   []map[string]any `json:"parts"`
+	Message map[string]any   `json:"message"`
+}
+
+type openCodeAssistantSnapshot struct {
+	MessageID string
+	Text      string
+	CreatedAt time.Time
+}
+
 type openCodePermission struct {
 	PermissionID string
 	SessionID    string
@@ -93,7 +130,7 @@ func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 	if username == "" {
 		username = "opencode"
 	}
-	return &openCodeClient{
+	client := &openCodeClient{
 		baseURL:  strings.TrimRight(parsed.String(), "/"),
 		username: username,
 		token:    strings.TrimSpace(cfg.Token),
@@ -101,7 +138,9 @@ func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-	}, nil
+	}
+	client.modelResolver = openCodeDefaultRuntimeModelResolver{catalog: client}
+	return client, nil
 }
 
 func cloneOpenCodeClientWithBaseURL(client *openCodeClient, baseURL string) (*openCodeClient, error) {
@@ -228,13 +267,13 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 			},
 		},
 	}
-	if model := openCodeModelFromRuntime(runtimeOptions); len(model) > 0 {
+	if model := c.resolveRuntimeModel(ctx, runtimeOptions); len(model) > 0 {
 		body["model"] = model
 	}
 
-	var result struct {
-		Parts []map[string]any `json:"parts"`
-	}
+	baseline := c.latestAssistantSnapshot(ctx, sessionID, directory)
+
+	var result openCodeSessionMessage
 	paths := []string{
 		appendOpenCodeDirectoryQuery(fmt.Sprintf("/session/%s/message", url.PathEscape(sessionID)), directory),
 		appendOpenCodeDirectoryQuery(fmt.Sprintf("/session/%s/prompt", url.PathEscape(sessionID)), directory),
@@ -243,7 +282,23 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 	for idx, path := range paths {
 		err := c.doJSON(ctx, http.MethodPost, path, body, &result)
 		if err == nil {
-			return extractOpenCodePartsText(result.Parts), nil
+			reply := extractOpenCodeSessionMessageText(result)
+			if reply != "" {
+				return reply, nil
+			}
+			// Some servers acknowledge the request before the assistant payload is available.
+			if recovered := c.waitForAssistantReply(ctx, sessionID, directory, baseline); recovered != "" {
+				return recovered, nil
+			}
+			return "", nil
+		}
+		if errors.Is(err, io.EOF) {
+			// Some server builds can acknowledge prompt/message with 2xx and an empty body.
+			// Attempt to recover the resulting assistant message from session history.
+			if recovered := c.waitForAssistantReply(ctx, sessionID, directory, baseline); recovered != "" {
+				return recovered, nil
+			}
+			return "", nil
 		}
 		lastErr = err
 		if idx == 0 && openCodeShouldFallbackLegacy(err) {
@@ -252,6 +307,119 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 		return "", err
 	}
 	return "", lastErr
+}
+
+func (c *openCodeClient) resolveRuntimeModel(ctx context.Context, runtimeOptions *types.SessionRuntimeOptions) map[string]string {
+	if c == nil || c.modelResolver == nil {
+		return nil
+	}
+	return c.modelResolver.Resolve(ctx, runtimeOptions)
+}
+
+func (r openCodeDefaultRuntimeModelResolver) Resolve(ctx context.Context, runtimeOptions *types.SessionRuntimeOptions) map[string]string {
+	if runtimeOptions == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(runtimeOptions.Model)
+	if raw == "" {
+		return nil
+	}
+	if !strings.Contains(raw, "/") {
+		return map[string]string{"modelID": raw}
+	}
+	parts := strings.SplitN(raw, "/", 2)
+	providerID := strings.TrimSpace(parts[0])
+	modelID := strings.TrimSpace(parts[1])
+	if providerID == "" || modelID == "" {
+		return map[string]string{"modelID": raw}
+	}
+
+	// Preferred format: provider-prefixed model id ("provider/model-id...").
+	if strings.Contains(modelID, "/") {
+		return map[string]string{
+			"providerID": providerID,
+			"modelID":    modelID,
+		}
+	}
+
+	// Legacy format from older Archon builds ("vendor/model-id") can be ambiguous.
+	// Resolve provider id from current server catalog when possible.
+	if r.catalog != nil {
+		providers, modelToProvider, err := r.catalog.openCodeModelCatalogIndex(ctx)
+		if err == nil {
+			if _, ok := providers[providerID]; ok {
+				return map[string]string{
+					"providerID": providerID,
+					"modelID":    modelID,
+				}
+			}
+			if resolvedProvider := strings.TrimSpace(modelToProvider[raw]); resolvedProvider != "" {
+				return map[string]string{
+					"providerID": resolvedProvider,
+					"modelID":    raw,
+				}
+			}
+		}
+	}
+
+	// Safe fallback: keep the full model id and let the server route it.
+	// This avoids sending invalid provider/model pairs when provider ids differ
+	// from model-id prefixes (for example, openrouter/google/...).
+	return map[string]string{"modelID": raw}
+}
+
+func (c *openCodeClient) openCodeModelCatalogIndex(ctx context.Context) (map[string]struct{}, map[string]string, error) {
+	if c == nil {
+		return nil, nil, errors.New("client is required")
+	}
+	c.catalogMu.RLock()
+	if c.catalogProviders != nil && c.catalogModelToPID != nil && time.Since(c.catalogFetchedAt) < 30*time.Second {
+		providers := cloneStringSet(c.catalogProviders)
+		modelToProvider := cloneStringMap(c.catalogModelToPID)
+		c.catalogMu.RUnlock()
+		return providers, modelToProvider, nil
+	}
+	c.catalogMu.RUnlock()
+
+	var payload struct {
+		Providers []map[string]any `json:"providers"`
+		Default   map[string]any   `json:"default"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/config/providers", nil, &payload); err != nil {
+		return nil, nil, err
+	}
+
+	parsed := openCodeParseProviderCatalog(payload.Providers, payload.Default)
+
+	c.catalogMu.Lock()
+	c.catalogProviders = cloneStringSet(parsed.ProviderIDs)
+	c.catalogModelToPID = cloneStringMap(parsed.ModelToProvider)
+	c.catalogFetchedAt = time.Now()
+	c.catalogMu.Unlock()
+
+	return parsed.ProviderIDs, parsed.ModelToProvider, nil
+}
+
+func cloneStringSet(src map[string]struct{}) map[string]struct{} {
+	if len(src) == 0 {
+		return map[string]struct{}{}
+	}
+	out := make(map[string]struct{}, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func (c *openCodeClient) AbortSession(ctx context.Context, sessionID, directory string) error {
@@ -263,6 +431,70 @@ func (c *openCodeClient) AbortSession(ctx context.Context, sessionID, directory 
 	return c.doJSON(ctx, http.MethodPost, path, map[string]any{}, nil)
 }
 
+func (c *openCodeClient) latestAssistantSnapshot(ctx context.Context, sessionID, directory string) openCodeAssistantSnapshot {
+	messages, err := c.listSessionMessages(ctx, sessionID, directory, 8)
+	if err != nil {
+		return openCodeAssistantSnapshot{}
+	}
+	return openCodeLatestAssistantSnapshot(messages)
+}
+
+func (c *openCodeClient) waitForAssistantReply(ctx context.Context, sessionID, directory string, baseline openCodeAssistantSnapshot) string {
+	deadline := time.Now().Add(12 * time.Second)
+	delay := 250 * time.Millisecond
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return ""
+		}
+		messages, err := c.listSessionMessages(ctx, sessionID, directory, 20)
+		if err == nil {
+			current := openCodeLatestAssistantSnapshot(messages)
+			if openCodeAssistantChanged(current, baseline) {
+				return current.Text
+			}
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ""
+		case <-timer.C:
+		}
+		if delay < time.Second {
+			delay *= 2
+		}
+	}
+	return ""
+}
+
+func (c *openCodeClient) listSessionMessages(ctx context.Context, sessionID, directory string, limit int) ([]openCodeSessionMessage, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
+	path := fmt.Sprintf("/session/%s/message", url.PathEscape(sessionID))
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if encoded := strings.TrimSpace(query.Encode()); encoded != "" {
+		path += "?" + encoded
+	}
+	pathWithDirectory := appendOpenCodeDirectoryQuery(path, directory)
+
+	var payload any
+	if err := c.doJSON(ctx, http.MethodGet, pathWithDirectory, nil, &payload); err != nil {
+		if strings.TrimSpace(directory) == "" || !openCodeShouldFallbackLegacy(err) {
+			return nil, err
+		}
+		payload = nil
+		if retryErr := c.doJSON(ctx, http.MethodGet, path, nil, &payload); retryErr != nil {
+			return nil, retryErr
+		}
+	}
+	return normalizeOpenCodeSessionMessages(payload), nil
+}
+
 func (c *openCodeClient) ListModels(ctx context.Context) (*openCodeModelCatalog, error) {
 	var payload struct {
 		Providers []map[string]any `json:"providers"`
@@ -272,49 +504,11 @@ func (c *openCodeClient) ListModels(ctx context.Context) (*openCodeModelCatalog,
 		return nil, err
 	}
 
-	out := &openCodeModelCatalog{}
-	seen := map[string]struct{}{}
-	defaults := payload.Default
-
-	for _, provider := range payload.Providers {
-		if provider == nil {
-			continue
-		}
-		providerID := strings.TrimSpace(asString(provider["id"]))
-		if providerID == "" {
-			providerID = strings.TrimSpace(asString(provider["providerID"]))
-		}
-		for _, entry := range openCodeModelEntries(provider["models"]) {
-			modelID := openCodeModelID(providerID, entry)
-			if modelID == "" {
-				continue
-			}
-			if _, ok := seen[modelID]; ok {
-				continue
-			}
-			seen[modelID] = struct{}{}
-			out.Models = append(out.Models, modelID)
-		}
-		if out.DefaultModel == "" {
-			if value, ok := defaults[providerID]; ok {
-				out.DefaultModel = openCodeNormalizedModelID(providerID, strings.TrimSpace(asString(value)))
-			}
-		}
-	}
-	if out.DefaultModel != "" {
-		sort.SliceStable(out.Models, func(i, j int) bool {
-			left := out.Models[i]
-			right := out.Models[j]
-			if left == out.DefaultModel {
-				return true
-			}
-			if right == out.DefaultModel {
-				return false
-			}
-			return i < j
-		})
-	}
-	return out, nil
+	parsed := openCodeParseProviderCatalog(payload.Providers, payload.Default)
+	return &openCodeModelCatalog{
+		Models:       parsed.NormalizedModels,
+		DefaultModel: parsed.DefaultModel,
+	}, nil
 }
 
 func (c *openCodeClient) ListPermissions(ctx context.Context, sessionID, directory string) ([]openCodePermission, error) {
@@ -806,28 +1000,6 @@ func openCodePermissionCreatedAt(raw map[string]any) time.Time {
 	return time.Time{}
 }
 
-func openCodeModelFromRuntime(runtimeOptions *types.SessionRuntimeOptions) map[string]string {
-	if runtimeOptions == nil {
-		return nil
-	}
-	raw := strings.TrimSpace(runtimeOptions.Model)
-	if raw == "" {
-		return nil
-	}
-	if strings.Contains(raw, "/") {
-		parts := strings.SplitN(raw, "/", 2)
-		providerID := strings.TrimSpace(parts[0])
-		modelID := strings.TrimSpace(parts[1])
-		if providerID != "" && modelID != "" {
-			return map[string]string{
-				"providerID": providerID,
-				"modelID":    modelID,
-			}
-		}
-	}
-	return map[string]string{"modelID": raw}
-}
-
 func openCodeModelID(providerID string, entry any) string {
 	switch value := entry.(type) {
 	case string:
@@ -838,6 +1010,21 @@ func openCodeModelID(providerID string, entry any) string {
 			modelID = strings.TrimSpace(asString(value["modelID"]))
 		}
 		return openCodeNormalizedModelID(providerID, modelID)
+	default:
+		return ""
+	}
+}
+
+func openCodeRawModelID(entry any) string {
+	switch value := entry.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case map[string]any:
+		modelID := strings.TrimSpace(asString(value["id"]))
+		if modelID == "" {
+			modelID = strings.TrimSpace(asString(value["modelID"]))
+		}
+		return modelID
 	default:
 		return ""
 	}
@@ -891,10 +1078,71 @@ func openCodeNormalizedModelID(providerID, modelID string) string {
 	if modelID == "" {
 		return ""
 	}
-	if strings.Contains(modelID, "/") || providerID == "" {
+	if providerID == "" {
+		return modelID
+	}
+	if strings.HasPrefix(modelID, providerID+"/") {
 		return modelID
 	}
 	return providerID + "/" + modelID
+}
+
+func openCodeParseProviderCatalog(providers []map[string]any, defaults map[string]any) openCodeParsedProviderCatalog {
+	out := openCodeParsedProviderCatalog{
+		ProviderIDs:      map[string]struct{}{},
+		ModelToProvider:  map[string]string{},
+		NormalizedModels: []string{},
+	}
+	seen := map[string]struct{}{}
+	for _, provider := range providers {
+		if provider == nil {
+			continue
+		}
+		providerID := strings.TrimSpace(asString(provider["id"]))
+		if providerID == "" {
+			providerID = strings.TrimSpace(asString(provider["providerID"]))
+		}
+		if providerID == "" {
+			continue
+		}
+		out.ProviderIDs[providerID] = struct{}{}
+		for _, entry := range openCodeModelEntries(provider["models"]) {
+			rawModelID := openCodeRawModelID(entry)
+			if rawModelID != "" {
+				if _, exists := out.ModelToProvider[rawModelID]; !exists {
+					out.ModelToProvider[rawModelID] = providerID
+				}
+			}
+			modelID := openCodeModelID(providerID, entry)
+			if modelID == "" {
+				continue
+			}
+			if _, exists := seen[modelID]; exists {
+				continue
+			}
+			seen[modelID] = struct{}{}
+			out.NormalizedModels = append(out.NormalizedModels, modelID)
+		}
+		if out.DefaultModel == "" {
+			if value, ok := defaults[providerID]; ok {
+				out.DefaultModel = openCodeNormalizedModelID(providerID, strings.TrimSpace(asString(value)))
+			}
+		}
+	}
+	if out.DefaultModel != "" {
+		sort.SliceStable(out.NormalizedModels, func(i, j int) bool {
+			left := out.NormalizedModels[i]
+			right := out.NormalizedModels[j]
+			if left == out.DefaultModel {
+				return true
+			}
+			if right == out.DefaultModel {
+				return false
+			}
+			return i < j
+		})
+	}
+	return out
 }
 
 func extractOpenCodePartsText(parts []map[string]any) string {
@@ -917,6 +1165,193 @@ func extractOpenCodePartsText(parts []map[string]any) string {
 		texts = append(texts, text)
 	}
 	return strings.TrimSpace(strings.Join(texts, "\n"))
+}
+
+func extractOpenCodeSessionMessageText(message openCodeSessionMessage) string {
+	if text := extractOpenCodePartsText(message.Parts); text != "" {
+		return text
+	}
+	if message.Message != nil {
+		if text := strings.TrimSpace(extractClaudeMessageText(message.Message)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func normalizeOpenCodeSessionMessages(payload any) []openCodeSessionMessage {
+	switch typed := payload.(type) {
+	case []any:
+		return toOpenCodeSessionMessageSlice(typed)
+	case map[string]any:
+		for _, key := range []string{"messages", "items", "data"} {
+			if list, ok := typed[key].([]any); ok {
+				return toOpenCodeSessionMessageSlice(list)
+			}
+		}
+		if parsed, ok := parseOpenCodeSessionMessage(typed); ok {
+			return []openCodeSessionMessage{parsed}
+		}
+	default:
+		return nil
+	}
+	return nil
+}
+
+func toOpenCodeSessionMessageSlice(values []any) []openCodeSessionMessage {
+	out := make([]openCodeSessionMessage, 0, len(values))
+	for _, value := range values {
+		entry, ok := value.(map[string]any)
+		if !ok || entry == nil {
+			continue
+		}
+		parsed, ok := parseOpenCodeSessionMessage(entry)
+		if !ok {
+			continue
+		}
+		out = append(out, parsed)
+	}
+	return out
+}
+
+func parseOpenCodeSessionMessage(raw map[string]any) (openCodeSessionMessage, bool) {
+	if raw == nil {
+		return openCodeSessionMessage{}, false
+	}
+	info, _ := raw["info"].(map[string]any)
+	message, _ := raw["message"].(map[string]any)
+	if info == nil {
+		info = map[string]any{}
+		if role := strings.TrimSpace(asString(raw["role"])); role != "" {
+			info["role"] = role
+		}
+		if id := strings.TrimSpace(asString(raw["id"])); id != "" {
+			info["id"] = id
+		}
+		if created := raw["createdAt"]; created != nil {
+			info["createdAt"] = created
+		}
+	}
+	parts := toOpenCodeMapSlice(openCodeModelEntries(raw["parts"]))
+	if len(parts) == 0 && message != nil {
+		parts = toOpenCodeMapSlice(openCodeModelEntries(message["content"]))
+	}
+	if len(parts) == 0 && len(info) == 0 && message == nil {
+		return openCodeSessionMessage{}, false
+	}
+	return openCodeSessionMessage{
+		Info:    info,
+		Parts:   parts,
+		Message: message,
+	}, true
+}
+
+func openCodeLatestAssistantSnapshot(messages []openCodeSessionMessage) openCodeAssistantSnapshot {
+	var (
+		best      openCodeAssistantSnapshot
+		bestSet   bool
+		bestIndex = -1
+	)
+	for i, message := range messages {
+		role := strings.ToLower(strings.TrimSpace(openCodeSessionMessageRole(message)))
+		if role != "assistant" && role != "model" {
+			continue
+		}
+		text := extractOpenCodeSessionMessageText(message)
+		if text == "" {
+			continue
+		}
+		candidate := openCodeAssistantSnapshot{
+			MessageID: openCodeSessionMessageID(message),
+			Text:      text,
+			CreatedAt: openCodeSessionMessageCreatedAt(message),
+		}
+		if !bestSet {
+			best = candidate
+			bestSet = true
+			bestIndex = i
+			continue
+		}
+		if candidate.CreatedAt.After(best.CreatedAt) {
+			best = candidate
+			bestIndex = i
+			continue
+		}
+		if candidate.CreatedAt.Equal(best.CreatedAt) && i > bestIndex {
+			best = candidate
+			bestIndex = i
+		}
+	}
+	return best
+}
+
+func openCodeSessionMessageRole(message openCodeSessionMessage) string {
+	if message.Info != nil {
+		if role := strings.TrimSpace(asString(message.Info["role"])); role != "" {
+			return role
+		}
+		if role := strings.TrimSpace(asString(message.Info["type"])); role != "" {
+			return role
+		}
+	}
+	if message.Message != nil {
+		if role := strings.TrimSpace(asString(message.Message["role"])); role != "" {
+			return role
+		}
+	}
+	return ""
+}
+
+func openCodeSessionMessageID(message openCodeSessionMessage) string {
+	if message.Info != nil {
+		if id := strings.TrimSpace(asString(message.Info["id"])); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(asString(message.Info["messageID"])); id != "" {
+			return id
+		}
+	}
+	if message.Message != nil {
+		if id := strings.TrimSpace(asString(message.Message["id"])); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func openCodeSessionMessageCreatedAt(message openCodeSessionMessage) time.Time {
+	if message.Info != nil {
+		if when := openCodeTimestamp(message.Info["createdAt"]); !when.IsZero() {
+			return when
+		}
+		if when := openCodeTimestamp(message.Info["ts"]); !when.IsZero() {
+			return when
+		}
+	}
+	if message.Message != nil {
+		if when := openCodeTimestamp(message.Message["createdAt"]); !when.IsZero() {
+			return when
+		}
+	}
+	return time.Time{}
+}
+
+func openCodeAssistantChanged(current, baseline openCodeAssistantSnapshot) bool {
+	if strings.TrimSpace(current.Text) == "" {
+		return false
+	}
+	currentID := strings.TrimSpace(current.MessageID)
+	baselineID := strings.TrimSpace(baseline.MessageID)
+	if currentID != "" && baselineID != "" {
+		return currentID != baselineID
+	}
+	if currentID != "" && baselineID == "" {
+		return true
+	}
+	if baseline.Text == "" {
+		return true
+	}
+	return current.Text != baseline.Text
 }
 
 func normalizeOpenCodePermissionList(payload any) []map[string]any {
