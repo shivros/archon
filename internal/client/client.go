@@ -452,7 +452,7 @@ func (c *Client) History(ctx context.Context, id string, lines int) (*TailItemsR
 func (c *Client) SendMessage(ctx context.Context, id string, req SendSessionRequest) (*SendSessionResponse, error) {
 	path := fmt.Sprintf("/v1/sessions/%s/send", strings.TrimSpace(id))
 	var resp SendSessionResponse
-	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &resp); err != nil {
+	if err := c.doJSONWithTimeout(ctx, http.MethodPost, path, req, true, &resp, 90*time.Second); err != nil {
 		return nil, err
 	}
 	return &resp, nil

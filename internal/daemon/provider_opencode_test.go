@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"control/internal/config"
 	"control/internal/types"
@@ -42,6 +43,9 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	if opencode.Username != "archon" {
 		t.Fatalf("unexpected opencode username: %q", opencode.Username)
 	}
+	if opencode.Timeout != 90*time.Second {
+		t.Fatalf("expected opencode timeout floor 90s, got %s", opencode.Timeout)
+	}
 
 	kilocode := resolveOpenCodeClientConfig("kilocode", coreCfg)
 	if kilocode.Token != "kilo-env-token" {
@@ -49,6 +53,9 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	}
 	if kilocode.Username != "archon-kilo" {
 		t.Fatalf("unexpected kilocode username: %q", kilocode.Username)
+	}
+	if kilocode.Timeout != 90*time.Second {
+		t.Fatalf("expected kilocode timeout floor 90s, got %s", kilocode.Timeout)
 	}
 }
 

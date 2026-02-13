@@ -90,6 +90,40 @@ func (s *SessionService) readSessionItems(id string, lines int) ([]map[string]an
 	return items, truncated, nil
 }
 
+func (s *SessionService) appendSessionItems(id string, items []map[string]any) error {
+	if strings.TrimSpace(id) == "" || len(items) == 0 {
+		return nil
+	}
+	baseDir, err := s.sessionsBaseDir()
+	if err != nil {
+		return err
+	}
+	sessionDir := filepath.Join(baseDir, id)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return err
+	}
+	itemsPath := filepath.Join(sessionDir, "items.jsonl")
+	file, err := os.OpenFile(itemsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		data, err := json.Marshal(item)
+		if err != nil {
+			continue
+		}
+		data = append(data, '\n')
+		if _, err := file.Write(data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *SessionService) sessionsBaseDir() (string, error) {
 	if s != nil && s.manager != nil {
 		if baseDir := s.manager.SessionsBaseDir(); baseDir != "" {

@@ -23,7 +23,7 @@ Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD
     "codex": { "prefix": "[GPT]", "color": "15" },
     "claude": { "prefix": "[CLD]", "color": "208" },
     "opencode": { "prefix": "[OPN]", "color": "39" },
-    "kilocode": { "prefix": "[KIL]", "color": "81" }
+    "kilocode": { "prefix": "[KLO]", "color": "226" }
   }
 }
 ```
@@ -74,18 +74,20 @@ base_url = "http://127.0.0.1:4096"
 token = ""
 token_env = "OPENCODE_TOKEN"
 username = "opencode"
-timeout_seconds = 30
+timeout_seconds = 90
 
 [providers.kilocode]
 base_url = "http://127.0.0.1:4097"
 token = ""
 token_env = "KILOCODE_TOKEN"
 username = "kilocode"
-timeout_seconds = 30
+timeout_seconds = 90
 
 [providers.gemini]
 command = "gemini"
 ```
+
+OpenCode/Kilo prompt requests are long-running by design; Archon enforces a runtime minimum of `90` seconds for these providers.
 
 Example `ui.toml`:
 

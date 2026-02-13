@@ -285,11 +285,17 @@ func resolveOpenCodeClientConfig(provider string, coreCfg config.CoreConfig) ope
 			break
 		}
 	}
+	timeoutSeconds := coreCfg.OpenCodeTimeoutSeconds(provider)
+	if timeoutSeconds < 90 {
+		// OpenCode/Kilo prompt endpoints can legitimately block while a turn
+		// executes. Keep provider HTTP timeout aligned with API-level send calls.
+		timeoutSeconds = 90
+	}
 	return openCodeClientConfig{
 		BaseURL:  baseURL,
 		Username: coreCfg.OpenCodeUsername(provider),
 		Token:    token,
-		Timeout:  time.Duration(coreCfg.OpenCodeTimeoutSeconds(provider)) * time.Second,
+		Timeout:  time.Duration(timeoutSeconds) * time.Second,
 	}
 }
 

@@ -338,6 +338,13 @@ func (a openCodeConversationAdapter) Provider() string {
 }
 
 func (a openCodeConversationAdapter) History(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, source string, lines int) ([]map[string]any, error) {
+	if session == nil {
+		return nil, invalidError("session is required", nil)
+	}
+	reconciler := newOpenCodeHistoryReconciler(service, session, meta)
+	if syncResult, err := reconciler.Sync(ctx, lines); err == nil && len(syncResult.items) > 0 {
+		return syncResult.items, nil
+	}
 	return a.fallback.History(ctx, service, session, meta, source, lines)
 }
 
@@ -356,6 +363,7 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 	if meta != nil {
 		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
 	}
+	reconciler := newOpenCodeHistoryReconciler(service, session, meta)
 	payload := buildOpenCodeUserPayloadWithRuntime(text, runtimeOptions)
 	if err := service.manager.SendInput(session.ID, payload); err != nil {
 		if errors.Is(err, ErrSessionNotFound) {
@@ -378,9 +386,11 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 				return "", invalidError(resumeErr.Error(), resumeErr)
 			}
 			if err := service.manager.SendInput(session.ID, payload); err != nil {
+				reconciler.ReconcileBestEffort(ctx, "send_after_resume_error")
 				return "", invalidError(err.Error(), err)
 			}
 		} else {
+			reconciler.ReconcileBestEffort(ctx, "send_error")
 			return "", invalidError(err.Error(), err)
 		}
 	}
@@ -421,16 +431,30 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 
 	out := make(chan types.CodexEvent, 256)
 	done := make(chan struct{})
+	reconciler := newOpenCodeHistoryReconciler(service, session, meta)
 	go func() {
 		defer close(done)
 		defer close(out)
+		sawTurnCompleted := false
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case event, ok := <-upstream:
 				if !ok {
+					if ctx.Err() == nil {
+						for _, recovered := range reconciler.RecoveredEvents(ctx, sawTurnCompleted) {
+							select {
+							case <-ctx.Done():
+								return
+							case out <- recovered:
+							}
+						}
+					}
 					return
+				}
+				if event.Method == "turn/completed" {
+					sawTurnCompleted = true
 				}
 				applyOpenCodeApprovalEvent(ctx, service, session, event)
 				select {

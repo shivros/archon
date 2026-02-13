@@ -372,6 +372,104 @@ func TestOpenCodeClientCreateSessionFallsBackWhenCreateReturnsEOF(t *testing.T) 
 	}
 }
 
+func TestOpenCodeClientCreateSessionFallbackWithoutTitleSelectsRecentSession(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(r.URL.Query().Get("search")); got != "" {
+				http.Error(w, "unexpected search", http.StatusBadRequest)
+				return
+			}
+			nowMs := time.Now().UnixMilli()
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"id": "sess_old",
+					"time": map[string]any{
+						"created": nowMs - 10*60*1000,
+					},
+				},
+				{
+					"id": "sess_new",
+					"time": map[string]any{
+						"created": nowMs,
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	sessionID, err := client.CreateSession(context.Background(), "", directory)
+	if err != nil {
+		t.Fatalf("CreateSession fallback (empty title): %v", err)
+	}
+	if sessionID != "sess_new" {
+		t.Fatalf("unexpected fallback session id: %q", sessionID)
+	}
+}
+
+func TestOpenCodeClientCreateSessionFallbackWithoutTitleDoesNotReuseStaleSession(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			oldMs := time.Now().Add(-10 * time.Minute).UnixMilli()
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"id": "sess_old_only",
+					"time": map[string]any{
+						"created": oldMs,
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if _, err := client.CreateSession(context.Background(), "", directory); err == nil {
+		t.Fatalf("expected create fallback error for stale-only sessions")
+	}
+}
+
 func TestOpenCodeClientPromptAllowsEOFResponse(t *testing.T) {
 	const directory = "/tmp/opencode-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -475,6 +573,90 @@ func TestOpenCodeClientPromptRecoversAssistantAfterEOF(t *testing.T) {
 	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
 	if err != nil {
 		t.Fatalf("Prompt EOF recovery: %v", err)
+	}
+	if strings.TrimSpace(reply) != "fresh reply" {
+		t.Fatalf("expected recovered assistant text, got %q", reply)
+	}
+}
+
+func TestOpenCodeClientPromptRecoversAssistantAfterRequestTimeout(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	var promptStarted atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			promptStarted.Store(true)
+			time.Sleep(200 * time.Millisecond)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "fresh reply"},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			if !promptStarted.Load() {
+				writeJSON(w, http.StatusOK, []map[string]any{
+					{
+						"info": map[string]any{
+							"id":        "assistant-old",
+							"role":      "assistant",
+							"createdAt": "2026-02-12T01:00:00Z",
+						},
+						"parts": []map[string]any{
+							{"type": "text", "text": "old reply"},
+						},
+					},
+				})
+				return
+			}
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "assistant-old",
+						"role":      "assistant",
+						"createdAt": "2026-02-12T01:00:00Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "old reply"},
+					},
+				},
+				{
+					"info": map[string]any{
+						"id":        "assistant-new",
+						"role":      "assistant",
+						"createdAt": "2026-02-12T01:00:05Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "fresh reply"},
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{
+		BaseURL: server.URL,
+		Timeout: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	if err != nil {
+		t.Fatalf("Prompt timeout recovery: %v", err)
 	}
 	if strings.TrimSpace(reply) != "fresh reply" {
 		t.Fatalf("expected recovered assistant text, got %q", reply)

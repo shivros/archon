@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,6 +293,528 @@ func TestOpenCodeConversationAdapterSubscribeEventsSyncsApprovals(t *testing.T) 
 	if len(approvals) != 0 {
 		t.Fatalf("expected approval store to be reconciled, got %#v", approvals)
 	}
+}
+
+func TestOpenCodeConversationAdapterHistoryFetchesRemoteMessages(t *testing.T) {
+	cases := []struct {
+		name        string
+		provider    string
+		baseURLVars []string
+	}{
+		{name: "opencode", provider: "opencode", baseURLVars: []string{"OPENCODE_BASE_URL"}},
+		{name: "kilocode", provider: "kilocode", baseURLVars: []string{"KILOCODE_BASE_URL"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			const directory = "/tmp/open-history-worktree"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/session/remote-s-1/message":
+					if r.Method != http.MethodGet {
+						http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+						return
+					}
+					if got := r.URL.Query().Get("directory"); got != directory {
+						http.Error(w, "missing directory", http.StatusBadRequest)
+						return
+					}
+					writeJSON(w, http.StatusOK, []map[string]any{
+						{
+							"info": map[string]any{
+								"id":        "msg-user-1",
+								"role":      "user",
+								"createdAt": "2026-02-13T01:00:00Z",
+							},
+							"parts": []map[string]any{
+								{"type": "text", "text": "hello remote"},
+							},
+						},
+						{
+							"info": map[string]any{
+								"id":        "msg-assistant-1",
+								"role":      "assistant",
+								"createdAt": "2026-02-13T01:00:01Z",
+							},
+							"parts": []map[string]any{
+								{"type": "text", "text": "remote reply"},
+							},
+						},
+					})
+					return
+				default:
+					http.NotFound(w, r)
+					return
+				}
+			}))
+			defer server.Close()
+
+			for _, envName := range tc.baseURLVars {
+				t.Setenv(envName, server.URL)
+			}
+
+			ctx := context.Background()
+			base := t.TempDir()
+			sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
+			metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+			session := &types.Session{
+				ID:        "s-open-history-" + tc.provider,
+				Provider:  tc.provider,
+				Cwd:       directory,
+				Status:    types.SessionStatusRunning,
+				CreatedAt: time.Now().UTC(),
+			}
+			_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+				Session: session,
+				Source:  sessionSourceInternal,
+			})
+			if err != nil {
+				t.Fatalf("seed session record: %v", err)
+			}
+			_, err = metaStore.Upsert(ctx, &types.SessionMeta{
+				SessionID:         session.ID,
+				ProviderSessionID: "remote-s-1",
+			})
+			if err != nil {
+				t.Fatalf("seed session meta: %v", err)
+			}
+
+			service := NewSessionService(nil, &Stores{
+				Sessions:    sessionStore,
+				SessionMeta: metaStore,
+			}, nil, nil)
+
+			items, err := service.History(ctx, session.ID, 200)
+			if err != nil {
+				t.Fatalf("History: %v", err)
+			}
+			if len(items) != 2 {
+				t.Fatalf("expected 2 remote items, got %#v", items)
+			}
+			if items[0]["type"] != "userMessage" {
+				t.Fatalf("expected first item to be userMessage, got %#v", items[0])
+			}
+			if items[1]["type"] != "assistant" {
+				t.Fatalf("expected second item to be assistant, got %#v", items[1])
+			}
+			msg, _ := items[1]["message"].(map[string]any)
+			if msg == nil || msg["content"] == nil {
+				t.Fatalf("expected assistant content, got %#v", items[1])
+			}
+		})
+	}
+}
+
+func TestOpenCodeConversationAdapterHistoryFallsBackWithoutDirectory(t *testing.T) {
+	var (
+		sawDirectoryAttempt bool
+		sawFallbackAttempt  bool
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session/remote-s-2/message":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if directory := strings.TrimSpace(r.URL.Query().Get("directory")); directory != "" {
+				sawDirectoryAttempt = true
+				http.NotFound(w, r)
+				return
+			}
+			sawFallbackAttempt = true
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "msg-assistant-2",
+						"role":      "assistant",
+						"createdAt": "2026-02-13T01:00:02Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "fallback reply"},
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	session := &types.Session{
+		ID:        "s-open-history-fallback",
+		Provider:  "opencode",
+		Cwd:       "/tmp/rejected-directory",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: session,
+		Source:  sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session record: %v", err)
+	}
+	_, err = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:         session.ID,
+		ProviderSessionID: "remote-s-2",
+	})
+	if err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+
+	items, err := service.History(ctx, session.ID, 50)
+	if err != nil {
+		t.Fatalf("History fallback: %v", err)
+	}
+	if !sawDirectoryAttempt || !sawFallbackAttempt {
+		t.Fatalf("expected directory and fallback attempts, got directory=%v fallback=%v", sawDirectoryAttempt, sawFallbackAttempt)
+	}
+	if len(items) != 1 || items[0]["type"] != "assistant" {
+		t.Fatalf("expected fallback assistant item, got %#v", items)
+	}
+}
+
+func TestOpenCodeConversationAdapterHistoryBackfillsMissingItemsWithoutDuplicates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session/remote-s-3/message":
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "msg-user-3",
+						"role":      "user",
+						"createdAt": "2026-02-13T01:05:00Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "hello backfill"},
+					},
+				},
+				{
+					"info": map[string]any{
+						"id":        "msg-assistant-3",
+						"role":      "assistant",
+						"createdAt": "2026-02-13T01:05:01Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "assistant backfill"},
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	session := &types.Session{
+		ID:        "s-open-history-backfill",
+		Provider:  "opencode",
+		Cwd:       "/tmp/open-backfill",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: session,
+		Source:  sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session record: %v", err)
+	}
+	_, err = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:         session.ID,
+		ProviderSessionID: "remote-s-3",
+	})
+	if err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	sessionsRoot := filepath.Join(home, ".archon", "sessions", session.ID)
+	if err := os.MkdirAll(sessionsRoot, 0o700); err != nil {
+		t.Fatalf("mkdir sessions root: %v", err)
+	}
+	initial := map[string]any{
+		"type":                "userMessage",
+		"provider_message_id": "msg-user-3",
+		"provider_created_at": "2026-02-13T01:05:00Z",
+		"content": []map[string]any{
+			{"type": "text", "text": "hello backfill"},
+		},
+	}
+	data, _ := json.Marshal(initial)
+	if err := os.WriteFile(filepath.Join(sessionsRoot, "items.jsonl"), append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("seed items file: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+
+	for i := 0; i < 2; i++ {
+		items, err := service.History(ctx, session.ID, 50)
+		if err != nil {
+			t.Fatalf("History pass %d: %v", i+1, err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("expected two remote items on pass %d, got %#v", i+1, items)
+		}
+	}
+
+	persisted, _, err := service.readSessionItems(session.ID, 50)
+	if err != nil {
+		t.Fatalf("readSessionItems: %v", err)
+	}
+	if len(persisted) != 2 {
+		t.Fatalf("expected backfilled items without duplicates, got %#v", persisted)
+	}
+}
+
+func TestOpenCodeConversationAdapterSendMessageReconcilesHistoryOnSendFailure(t *testing.T) {
+	const (
+		sessionID         = "s-open-send-reconcile"
+		providerSessionID = "remote-s-send"
+		directory         = "/tmp/open-send-reconcile"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session/" + providerSessionID + "/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "msg-user-send",
+						"role":      "user",
+						"createdAt": "2026-02-13T02:00:00Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "hello send"},
+					},
+				},
+				{
+					"info": map[string]any{
+						"id":        "msg-assistant-send",
+						"role":      "assistant",
+						"createdAt": "2026-02-13T02:00:01Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "recovered send reply"},
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	rememberOpenCodeRuntimeBaseURL("opencode", server.URL)
+	sessionsBaseDir := filepath.Join(home, ".archon", "sessions")
+	if err := os.MkdirAll(sessionsBaseDir, 0o700); err != nil {
+		t.Fatalf("mkdir sessions dir: %v", err)
+	}
+
+	ctx := context.Background()
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:         sessionID,
+		ProviderSessionID: providerSessionID,
+	}); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "opencode",
+		Cwd:       directory,
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	manager := &SessionManager{
+		baseDir: sessionsBaseDir,
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return errors.New("simulated send timeout")
+				},
+			},
+		},
+	}
+	service := NewSessionService(manager, &Stores{SessionMeta: metaStore}, nil, nil)
+
+	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello send"},
+	})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+
+	items, _, readErr := service.readSessionItems(sessionID, 50)
+	if readErr != nil {
+		t.Fatalf("readSessionItems: %v", readErr)
+	}
+	if len(items) == 0 {
+		t.Fatalf("expected reconciled items, got none")
+	}
+	foundAssistant := false
+	for _, item := range items {
+		if strings.ToLower(strings.TrimSpace(asString(item["type"]))) != "assistant" {
+			continue
+		}
+		if strings.TrimSpace(asString(item["provider_message_id"])) == "msg-assistant-send" {
+			foundAssistant = true
+			break
+		}
+	}
+	if !foundAssistant {
+		t.Fatalf("expected assistant recovery in items, got %#v", items)
+	}
+}
+
+func TestOpenCodeConversationAdapterSubscribeEventsRecoversMissedAssistantOnStreamClose(t *testing.T) {
+	const (
+		sessionID         = "s-open-event-reconcile"
+		providerSessionID = "remote-s-events"
+		directory         = "/tmp/open-event-reconcile"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/event":
+			if got := strings.TrimSpace(r.URL.Query().Get("parentID")); got != providerSessionID {
+				http.Error(w, "missing parentID", http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				_, _ = w.Write([]byte(":\n\n"))
+				flusher.Flush()
+			}
+			return
+		case "/session/" + providerSessionID + "/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "msg-user-event",
+						"role":      "user",
+						"createdAt": "2026-02-13T02:10:00Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "hello event"},
+					},
+				},
+				{
+					"info": map[string]any{
+						"id":        "msg-assistant-event",
+						"role":      "assistant",
+						"createdAt": "2026-02-13T02:10:01Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "recovered event reply"},
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	rememberOpenCodeRuntimeBaseURL("opencode", server.URL)
+	service := NewSessionService(nil, nil, nil, nil)
+	adapter := openCodeConversationAdapter{providerName: "opencode"}
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "opencode",
+		Cwd:       directory,
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	meta := &types.SessionMeta{
+		SessionID:         sessionID,
+		ProviderSessionID: providerSessionID,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, closeFn, err := adapter.SubscribeEvents(ctx, service, session, meta)
+	if err != nil {
+		t.Fatalf("SubscribeEvents: %v", err)
+	}
+	defer closeFn()
+
+	methods := make([]string, 0, 8)
+	for event := range events {
+		methods = append(methods, event.Method)
+	}
+	if len(methods) == 0 {
+		t.Fatalf("expected recovered events, got none")
+	}
+	if !containsString(methods, "item/agentMessage/delta") {
+		t.Fatalf("expected recovered assistant delta event, got %v", methods)
+	}
+	if !containsString(methods, "turn/completed") {
+		t.Fatalf("expected recovered turn completion event, got %v", methods)
+	}
+
+	items, _, readErr := service.readSessionItems(sessionID, 50)
+	if readErr != nil {
+		t.Fatalf("readSessionItems: %v", readErr)
+	}
+	if len(items) == 0 {
+		t.Fatalf("expected recovered items, got none")
+	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func expectServiceErrorKind(t *testing.T, err error, kind ServiceErrorKind) {
