@@ -59,14 +59,23 @@ func TestOpenCodeProviderStartSendAndInterrupt(t *testing.T) {
 		abortCalls   atomic.Int32
 		lastAuthSeen atomic.Value
 	)
+	const directory = "/tmp/opencode-provider-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lastAuthSeen.Store(r.Header.Get("Authorization"))
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			createCalls.Add(1)
 			writeJSON(w, http.StatusCreated, map[string]any{"id": "sess_123"})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/prompt":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			promptCalls.Add(1)
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -77,6 +86,10 @@ func TestOpenCodeProviderStartSendAndInterrupt(t *testing.T) {
 			})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/abort":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			abortCalls.Add(1)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
@@ -119,6 +132,7 @@ username = "archon"
 	itemSink := &testItemSink{}
 	proc, err := provider.Start(StartSessionConfig{
 		Provider:    "opencode",
+		Cwd:         directory,
 		InitialText: "hello there",
 		RuntimeOptions: &types.SessionRuntimeOptions{
 			Model: "anthropic/claude-sonnet-4-20250514",
@@ -205,7 +219,7 @@ func TestOpenCodeClientAbortValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	if err := client.AbortSession(context.Background(), "   "); err == nil {
+	if err := client.AbortSession(context.Background(), "   ", ""); err == nil {
 		t.Fatalf("expected session id validation error")
 	}
 }

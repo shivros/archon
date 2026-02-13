@@ -86,13 +86,14 @@ func (a *API) loadCodexDynamicOptionCatalog(ctx context.Context, cwd, workspaceI
 
 func (a *API) loadOpenCodeDynamicOptionCatalog(ctx context.Context, provider string) *types.ProviderOptionCatalog {
 	coreCfg := loadCoreConfigOrDefault()
-	client, err := newOpenCodeClient(resolveOpenCodeClientConfig(provider, coreCfg))
+	cfg := resolveOpenCodeClientConfig(provider, coreCfg)
+	client, err := newOpenCodeClient(cfg)
 	if err != nil {
 		return nil
 	}
-	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	catalog, err := client.ListModels(callCtx)
+	catalog, err := loadOpenCodeModelCatalog(callCtx, provider, client)
 	if err != nil || catalog == nil {
 		return nil
 	}
@@ -109,4 +110,42 @@ func (a *API) loadOpenCodeDynamicOptionCatalog(ctx context.Context, provider str
 		out.Defaults.Model = out.Models[0]
 	}
 	return out
+}
+
+func loadOpenCodeModelCatalog(ctx context.Context, provider string, client *openCodeClient) (*openCodeModelCatalog, error) {
+	if client == nil {
+		return nil, nil
+	}
+	catalog, err := client.ListModels(ctx)
+	if err == nil {
+		return catalog, nil
+	}
+	if !isOpenCodeUnreachable(err) {
+		return nil, err
+	}
+	startedBaseURL, startErr := maybeAutoStartOpenCodeServer(provider, client.baseURL, client.token, nil)
+	if startErr != nil {
+		return nil, startErr
+	}
+	if switchedClient, switchErr := cloneOpenCodeClientWithBaseURL(client, startedBaseURL); switchErr == nil {
+		client = switchedClient
+	}
+	retryDelay := 250 * time.Millisecond
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryDelay):
+		}
+		catalog, retryErr := client.ListModels(ctx)
+		if retryErr == nil {
+			return catalog, nil
+		}
+		if !isOpenCodeUnreachable(retryErr) {
+			return nil, retryErr
+		}
+		if retryDelay < 2*time.Second {
+			retryDelay *= 2
+		}
+	}
 }

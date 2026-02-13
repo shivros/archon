@@ -499,20 +499,11 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			case "ctrl+o":
 				return true, m.toggleNotesPanel()
 			case "ctrl+1":
-				if m.openComposeOptionPicker(composeOptionModel) {
-					m.setStatusMessage("select model")
-				}
-				return true, nil
+				return true, m.requestComposeOptionPicker(composeOptionModel)
 			case "ctrl+2":
-				if m.openComposeOptionPicker(composeOptionReasoning) {
-					m.setStatusMessage("select reasoning")
-				}
-				return true, nil
+				return true, m.requestComposeOptionPicker(composeOptionReasoning)
 			case "ctrl+3":
-				if m.openComposeOptionPicker(composeOptionAccess) {
-					m.setStatusMessage("select access")
-				}
-				return true, nil
+				return true, m.requestComposeOptionPicker(composeOptionAccess)
 			case "up":
 				if m.chatInput != nil {
 					if value, ok := m.composeHistoryNavigate(-1, m.chatInput.Value()); ok {

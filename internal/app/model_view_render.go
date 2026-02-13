@@ -64,6 +64,11 @@ func (m *Model) renderBodyWithSidebar(rightView string) string {
 }
 
 func (m *Model) renderStatusLineView() string {
+	help, status := m.statusLineParts()
+	return renderStatusLine(m.width, help, status)
+}
+
+func (m *Model) statusLineParts() (string, string) {
 	helpText := ""
 	if m.hotkeys != nil {
 		helpText = m.hotkeys.Render(m)
@@ -73,7 +78,21 @@ func (m *Model) renderStatusLineView() string {
 	}
 	help := helpStyle.Render(helpText)
 	status := statusStyle.Render(m.status)
-	return renderStatusLine(m.width, help, status)
+	return help, status
+}
+
+func (m *Model) statusLineStatusHitbox() (int, int, bool) {
+	help, status := m.statusLineParts()
+	return statusLineStatusBounds(m.width, help, status)
+}
+
+func (m *Model) renderedBodyHeight() int {
+	rightView := m.renderRightPaneView()
+	body := m.renderBodyWithSidebar(rightView)
+	if m.height > 0 && m.width > 0 {
+		body = m.overlayTransientViews(body)
+	}
+	return lipgloss.Height(body)
 }
 
 func (m *Model) overlayTransientViews(body string) string {

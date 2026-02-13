@@ -23,6 +23,7 @@ type openCodeRunner struct {
 	sink       ProviderLogSink
 	items      ProviderItemSink
 	options    *types.SessionRuntimeOptions
+	directory  string
 	providerID string
 	onSession  func(string)
 }
@@ -66,7 +67,7 @@ func (p *openCodeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, i
 		return nil, errors.New("provider session id is required to resume")
 	}
 	if providerSessionID == "" {
-		createdID, err := p.client.CreateSession(context.Background(), cfg.Title)
+		createdID, err := p.createSession(context.Background(), cfg.Title, cfg.Cwd, sink)
 		if err != nil {
 			return nil, err
 		}
@@ -78,6 +79,7 @@ func (p *openCodeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, i
 		sink:       sink,
 		items:      items,
 		options:    types.CloneRuntimeOptions(cfg.RuntimeOptions),
+		directory:  strings.TrimSpace(cfg.Cwd),
 		providerID: providerSessionID,
 		onSession:  cfg.OnProviderSessionID,
 	}
@@ -137,7 +139,7 @@ func (r *openCodeRunner) run(text string, runtimeOptions *types.SessionRuntimeOp
 	}
 	effectiveOptions := types.MergeRuntimeOptions(r.options, runtimeOptions)
 	r.appendUserItem(text)
-	reply, err := r.client.Prompt(context.Background(), r.providerID, text, effectiveOptions)
+	reply, err := r.client.Prompt(context.Background(), r.providerID, text, effectiveOptions, r.directory)
 	if err != nil {
 		if r.sink != nil {
 			r.sink.Write("stderr", []byte("opencode prompt error: "+err.Error()+"\n"))
@@ -156,7 +158,7 @@ func (r *openCodeRunner) Interrupt() error {
 	if r == nil || r.client == nil {
 		return errors.New("runner is not initialized")
 	}
-	return r.client.AbortSession(context.Background(), r.providerID)
+	return r.client.AbortSession(context.Background(), r.providerID, r.directory)
 }
 
 func (r *openCodeRunner) appendUserItem(text string) {
@@ -183,6 +185,47 @@ func (r *openCodeRunner) appendAssistantItem(text string) {
 			},
 		},
 	})
+}
+
+func (p *openCodeProvider) createSession(ctx context.Context, title, directory string, sink ProviderLogSink) (string, error) {
+	if p == nil || p.client == nil {
+		return "", errors.New("provider is not initialized")
+	}
+	sessionID, err := p.client.CreateSession(ctx, title, directory)
+	if err == nil {
+		return sessionID, nil
+	}
+	if !isOpenCodeUnreachable(err) {
+		return "", err
+	}
+	startedBaseURL, startErr := maybeAutoStartOpenCodeServer(p.providerName, p.client.baseURL, p.client.token, sink)
+	if startErr != nil {
+		return "", errors.New(err.Error() + " (auto-start failed: " + startErr.Error() + ")")
+	}
+	if switchedClient, switchErr := cloneOpenCodeClientWithBaseURL(p.client, startedBaseURL); switchErr == nil {
+		p.client = switchedClient
+	}
+	if sink != nil {
+		sink.Write("stderr", []byte("opencode auto-start: retrying session create\n"))
+	}
+	deadline := time.Now().Add(12 * time.Second)
+	retryDelay := 250 * time.Millisecond
+	lastErr := err
+	for time.Now().Before(deadline) {
+		time.Sleep(retryDelay)
+		sessionID, retryErr := p.client.CreateSession(ctx, title, directory)
+		if retryErr == nil {
+			return sessionID, nil
+		}
+		lastErr = retryErr
+		if !isOpenCodeUnreachable(retryErr) {
+			return "", retryErr
+		}
+		if retryDelay < 2*time.Second {
+			retryDelay *= 2
+		}
+	}
+	return "", lastErr
 }
 
 func buildOpenCodeUserPayloadWithRuntime(text string, runtimeOptions *types.SessionRuntimeOptions) []byte {
@@ -234,6 +277,7 @@ func resolveOpenCodeClientConfig(provider string, coreCfg config.CoreConfig) ope
 			baseURL = raw
 		}
 	}
+	baseURL = resolveOpenCodeRuntimeBaseURL(provider, baseURL)
 	token := strings.TrimSpace(coreCfg.OpenCodeToken(provider))
 	for _, env := range openCodeTokenEnvs(provider, coreCfg.OpenCodeTokenEnv(provider)) {
 		if raw := strings.TrimSpace(os.Getenv(env)); raw != "" {

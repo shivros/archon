@@ -230,6 +230,63 @@ func (m *Model) openComposeOptionPicker(target composeOptionKind) bool {
 	return m.chatAddonController.openComposeOptionPicker(m, target)
 }
 
+func (m *Model) requestComposeOptionPicker(target composeOptionKind) tea.Cmd {
+	if m == nil || target == composeOptionNone {
+		return nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(m.composeProvider()))
+	if provider == "" {
+		return nil
+	}
+	needsRefresh := m.shouldRefreshComposeOptions(provider, target)
+	if needsRefresh {
+		m.pendingComposeOptionTarget = target
+		m.pendingComposeOptionFor = provider
+		m.setStatusMessage("loading " + composeOptionLabel(target) + " options")
+		return fetchProviderOptionsCmd(m.sessionAPI, provider)
+	}
+	if m.openComposeOptionPicker(target) {
+		m.setStatusMessage("select " + composeOptionLabel(target))
+		return nil
+	}
+	// If options are missing or stale, fetch and reopen automatically.
+	m.pendingComposeOptionTarget = target
+	m.pendingComposeOptionFor = provider
+	m.setStatusMessage("loading " + composeOptionLabel(target) + " options")
+	return fetchProviderOptionsCmd(m.sessionAPI, provider)
+}
+
+func (m *Model) shouldRefreshComposeOptions(provider string, target composeOptionKind) bool {
+	if m == nil || target == composeOptionNone {
+		return false
+	}
+	if m.providerOptionCatalog(provider) == nil {
+		return true
+	}
+	if target != composeOptionModel {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "opencode", "kilocode":
+		return true
+	default:
+		return false
+	}
+}
+
+func composeOptionLabel(target composeOptionKind) string {
+	switch target {
+	case composeOptionModel:
+		return "model"
+	case composeOptionReasoning:
+		return "reasoning"
+	case composeOptionAccess:
+		return "access"
+	default:
+		return "session"
+	}
+}
+
 func (m *Model) closeComposeOptionPicker() {
 	if m == nil || m.chatAddonController == nil {
 		return
@@ -284,4 +341,12 @@ func (m *Model) composeControlSpans() []composeControlSpan {
 		return nil
 	}
 	return m.chatAddonController.composeControlSpans()
+}
+
+func (m *Model) clearPendingComposeOptionRequest() {
+	if m == nil {
+		return
+	}
+	m.pendingComposeOptionTarget = composeOptionNone
+	m.pendingComposeOptionFor = ""
 }

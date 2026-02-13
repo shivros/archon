@@ -212,6 +212,12 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	if got := cfg.OpenCodeUsername("kilocode"); got != "kilocode" {
 		t.Fatalf("unexpected default kilocode username: %q", got)
 	}
+	if got := cfg.OpenCodeBaseURL("opencode"); got != "http://127.0.0.1:4096" {
+		t.Fatalf("unexpected default opencode base url: %q", got)
+	}
+	if got := cfg.OpenCodeBaseURL("kilocode"); got != "http://127.0.0.1:4097" {
+		t.Fatalf("unexpected default kilocode base url: %q", got)
+	}
 	if got := cfg.OpenCodeTimeoutSeconds("opencode"); got != 30 {
 		t.Fatalf("unexpected default opencode timeout: %d", got)
 	}

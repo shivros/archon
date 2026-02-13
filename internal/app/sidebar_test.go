@@ -151,6 +151,14 @@ func TestResolveProviderBadgeUsesDefaults(t *testing.T) {
 	if claude.Color != "208" {
 		t.Fatalf("expected claude color 208, got %q", claude.Color)
 	}
+
+	kilocode := resolveProviderBadge("kilocode", nil)
+	if kilocode.Prefix != "[KLO]" {
+		t.Fatalf("expected kilocode prefix [KLO], got %q", kilocode.Prefix)
+	}
+	if kilocode.Color != "226" {
+		t.Fatalf("expected kilocode color 226, got %q", kilocode.Color)
+	}
 }
 
 func TestResolveProviderBadgeAppliesOverrides(t *testing.T) {

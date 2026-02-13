@@ -55,7 +55,13 @@ func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessio
 
 func fetchProviderOptionsCmd(api SessionProviderOptionsAPI, provider string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		timeout := 4 * time.Second
+		switch strings.ToLower(strings.TrimSpace(provider)) {
+		case "opencode", "kilocode":
+			// Give local server auto-start and cold plugin init enough time.
+			timeout = 90 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		options, err := api.GetProviderOptions(ctx, provider)
 		return providerOptionsMsg{provider: provider, options: options, err: err}
@@ -567,7 +573,13 @@ func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision
 
 func startSessionCmd(api WorkspaceSessionStartAPI, workspaceID, worktreeID, provider, text string, runtimeOptions *types.SessionRuntimeOptions) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		timeout := 8 * time.Second
+		switch strings.ToLower(strings.TrimSpace(provider)) {
+		case "opencode", "kilocode":
+			// OpenCode/Kilo cold starts can take longer on first run.
+			timeout = 90 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		req := client.StartSessionRequest{
 			Provider:       provider,

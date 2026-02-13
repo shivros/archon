@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -23,6 +24,7 @@ type openCodeClient struct {
 	baseURL    string
 	username   string
 	token      string
+	timeout    time.Duration
 	httpClient *http.Client
 }
 
@@ -95,30 +97,121 @@ func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 		baseURL:  strings.TrimRight(parsed.String(), "/"),
 		username: username,
 		token:    strings.TrimSpace(cfg.Token),
+		timeout:  timeout,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 	}, nil
 }
 
-func (c *openCodeClient) CreateSession(ctx context.Context, title string) (string, error) {
+func cloneOpenCodeClientWithBaseURL(client *openCodeClient, baseURL string) (*openCodeClient, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" || strings.EqualFold(strings.TrimRight(baseURL, "/"), strings.TrimRight(client.baseURL, "/")) {
+		return client, nil
+	}
+	timeout := client.timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return newOpenCodeClient(openCodeClientConfig{
+		BaseURL:  baseURL,
+		Username: client.username,
+		Token:    client.token,
+		Timeout:  timeout,
+	})
+}
+
+func (c *openCodeClient) CreateSession(ctx context.Context, title, directory string) (string, error) {
 	payload := map[string]any{}
 	if strings.TrimSpace(title) != "" {
 		payload["title"] = strings.TrimSpace(title)
 	}
-	var result struct {
-		ID string `json:"id"`
-	}
-	if err := c.doJSON(ctx, http.MethodPost, "/session", payload, &result); err != nil {
+	var result map[string]any
+	path := appendOpenCodeDirectoryQuery("/session", directory)
+	if err := c.doJSON(ctx, http.MethodPost, path, payload, &result); err != nil {
+		if errors.Is(err, io.EOF) {
+			return c.lookupCreatedSessionID(ctx, title, directory)
+		}
 		return "", err
 	}
-	if strings.TrimSpace(result.ID) == "" {
-		return "", fmt.Errorf("session id missing from server response")
+	if sessionID := openCodeExtractSessionID(result); sessionID != "" {
+		return sessionID, nil
 	}
-	return strings.TrimSpace(result.ID), nil
+	sessionID, lookupErr := c.lookupCreatedSessionID(ctx, title, directory)
+	if lookupErr == nil && strings.TrimSpace(sessionID) != "" {
+		return sessionID, nil
+	}
+	if lookupErr != nil {
+		return "", lookupErr
+	}
+	return "", fmt.Errorf("session id missing from server response")
 }
 
-func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, runtimeOptions *types.SessionRuntimeOptions) (string, error) {
+func openCodeExtractSessionID(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(asString(payload["id"])); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(asString(payload["sessionID"])); id != "" {
+		return id
+	}
+	if session, ok := payload["session"].(map[string]any); ok {
+		if id := strings.TrimSpace(asString(session["id"])); id != "" {
+			return id
+		}
+	}
+	if info, ok := payload["info"].(map[string]any); ok {
+		if id := strings.TrimSpace(asString(info["id"])); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func (c *openCodeClient) lookupCreatedSessionID(ctx context.Context, title, directory string) (string, error) {
+	query := url.Values{}
+	if dir := strings.TrimSpace(directory); dir != "" {
+		query.Set("directory", dir)
+	}
+	if q := strings.TrimSpace(title); q != "" {
+		query.Set("search", q)
+	}
+	query.Set("limit", "20")
+	path := "/session"
+	if encoded := strings.TrimSpace(query.Encode()); encoded != "" {
+		path += "?" + encoded
+	}
+	var sessions []map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &sessions); err != nil {
+		return "", err
+	}
+	if len(sessions) == 0 {
+		return "", fmt.Errorf("session id missing from server response")
+	}
+	title = strings.TrimSpace(title)
+	if title != "" {
+		for _, session := range sessions {
+			if strings.EqualFold(strings.TrimSpace(asString(session["title"])), title) {
+				if id := openCodeExtractSessionID(session); id != "" {
+					return id, nil
+				}
+			}
+		}
+	}
+	for _, session := range sessions {
+		if id := openCodeExtractSessionID(session); id != "" {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("session id missing from server response")
+}
+
+func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, runtimeOptions *types.SessionRuntimeOptions, directory string) (string, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return "", fmt.Errorf("session id is required")
@@ -143,8 +236,8 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 		Parts []map[string]any `json:"parts"`
 	}
 	paths := []string{
-		fmt.Sprintf("/session/%s/message", url.PathEscape(sessionID)),
-		fmt.Sprintf("/session/%s/prompt", url.PathEscape(sessionID)),
+		appendOpenCodeDirectoryQuery(fmt.Sprintf("/session/%s/message", url.PathEscape(sessionID)), directory),
+		appendOpenCodeDirectoryQuery(fmt.Sprintf("/session/%s/prompt", url.PathEscape(sessionID)), directory),
 	}
 	var lastErr error
 	for idx, path := range paths {
@@ -161,12 +254,12 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 	return "", lastErr
 }
 
-func (c *openCodeClient) AbortSession(ctx context.Context, sessionID string) error {
+func (c *openCodeClient) AbortSession(ctx context.Context, sessionID, directory string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return fmt.Errorf("session id is required")
 	}
-	path := fmt.Sprintf("/session/%s/abort", url.PathEscape(sessionID))
+	path := appendOpenCodeDirectoryQuery(fmt.Sprintf("/session/%s/abort", url.PathEscape(sessionID)), directory)
 	return c.doJSON(ctx, http.MethodPost, path, map[string]any{}, nil)
 }
 
@@ -191,8 +284,7 @@ func (c *openCodeClient) ListModels(ctx context.Context) (*openCodeModelCatalog,
 		if providerID == "" {
 			providerID = strings.TrimSpace(asString(provider["providerID"]))
 		}
-		models, _ := provider["models"].([]any)
-		for _, entry := range models {
+		for _, entry := range openCodeModelEntries(provider["models"]) {
 			modelID := openCodeModelID(providerID, entry)
 			if modelID == "" {
 				continue
@@ -225,11 +317,18 @@ func (c *openCodeClient) ListModels(ctx context.Context) (*openCodeModelCatalog,
 	return out, nil
 }
 
-func (c *openCodeClient) ListPermissions(ctx context.Context, sessionID string) ([]openCodePermission, error) {
+func (c *openCodeClient) ListPermissions(ctx context.Context, sessionID, directory string) ([]openCodePermission, error) {
 	path := "/permission"
+	query := url.Values{}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID != "" {
-		path += "?sessionID=" + url.QueryEscape(sessionID)
+		query.Set("sessionID", sessionID)
+	}
+	if dir := strings.TrimSpace(directory); dir != "" {
+		query.Set("directory", dir)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	var payload any
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &payload); err != nil {
@@ -263,7 +362,7 @@ func (c *openCodeClient) ListPermissions(ctx context.Context, sessionID string) 
 	return out, nil
 }
 
-func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permissionID, decision string) error {
+func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permissionID, decision, directory string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	permissionID = strings.TrimSpace(permissionID)
 	if permissionID == "" {
@@ -272,7 +371,10 @@ func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permiss
 	legacyDecision := normalizeApprovalDecision(decision)
 	modernDecision := normalizeOpenCodePermissionResponse(legacyDecision)
 	if sessionID != "" {
-		path := fmt.Sprintf("/session/%s/permissions/%s", url.PathEscape(sessionID), url.PathEscape(permissionID))
+		path := appendOpenCodeDirectoryQuery(
+			fmt.Sprintf("/session/%s/permissions/%s", url.PathEscape(sessionID), url.PathEscape(permissionID)),
+			directory,
+		)
 		body := map[string]any{
 			"response": modernDecision,
 		}
@@ -282,7 +384,7 @@ func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permiss
 			return err
 		}
 	}
-	legacyPath := "/permission/" + url.PathEscape(permissionID) + "/reply"
+	legacyPath := appendOpenCodeDirectoryQuery("/permission/"+url.PathEscape(permissionID)+"/reply", directory)
 	legacyBody := map[string]any{
 		"decision": legacyDecision,
 		"response": legacyDecision,
@@ -451,11 +553,23 @@ func openCodeShouldFallbackLegacy(err error) bool {
 		return false
 	}
 	switch reqErr.StatusCode {
-	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusBadRequest:
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
 		return true
 	default:
 		return false
 	}
+}
+
+func appendOpenCodeDirectoryQuery(path, directory string) string {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return path
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + "directory=" + url.QueryEscape(directory)
 }
 
 func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map[int]string) []types.CodexEvent {
@@ -726,6 +840,48 @@ func openCodeModelID(providerID string, entry any) string {
 		return openCodeNormalizedModelID(providerID, modelID)
 	default:
 		return ""
+	}
+}
+
+func openCodeModelEntries(raw any) []any {
+	switch typed := raw.(type) {
+	case []any:
+		return typed
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out := make([]any, 0, len(keys))
+		for _, key := range keys {
+			entry := typed[key]
+			if mapped, ok := entry.(map[string]any); ok {
+				modelID := strings.TrimSpace(asString(mapped["id"]))
+				if modelID == "" {
+					modelID = strings.TrimSpace(asString(mapped["modelID"]))
+				}
+				if modelID == "" {
+					cloned := make(map[string]any, len(mapped)+1)
+					for k, v := range mapped {
+						cloned[k] = v
+					}
+					cloned["id"] = key
+					out = append(out, cloned)
+					continue
+				}
+				out = append(out, mapped)
+				continue
+			}
+			if modelID := strings.TrimSpace(asString(entry)); modelID != "" {
+				out = append(out, modelID)
+				continue
+			}
+			out = append(out, map[string]any{"id": key})
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

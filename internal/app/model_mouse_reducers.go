@@ -124,20 +124,13 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 		if col < span.start || col > span.end {
 			continue
 		}
-		if m.openComposeOptionPicker(span.kind) {
-			switch span.kind {
-			case composeOptionModel:
-				m.setStatusMessage("select model")
-			case composeOptionReasoning:
-				m.setStatusMessage("select reasoning")
-			case composeOptionAccess:
-				m.setStatusMessage("select access")
-			}
-			if m.input != nil {
-				m.input.FocusChatInput()
-			}
-			return true
+		if cmd := m.requestComposeOptionPicker(span.kind); cmd != nil {
+			m.pendingMouseCmd = cmd
 		}
+		if m.input != nil {
+			m.input.FocusChatInput()
+		}
+		return true
 	}
 	return false
 }
@@ -422,6 +415,57 @@ func (m *Model) reduceTranscriptApprovalButtonLeftPressMouse(msg tea.MouseMsg, l
 		return true
 	}
 	return false
+}
+
+func (m *Model) reduceGlobalStatusCopyLeftPressMouse(msg tea.MouseMsg) bool {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return false
+	}
+	if !m.isStatusLineMouseRow(msg.Y) {
+		return false
+	}
+	start, end, ok := m.statusLineStatusHitbox()
+	if !ok {
+		return false
+	}
+	if !isStatusLineMouseCol(msg.X, start, end) {
+		return false
+	}
+	text := strings.TrimSpace(m.status)
+	if text == "" {
+		m.setCopyStatusWarning("nothing to copy")
+		return true
+	}
+	m.copyWithStatus(text, "status copied")
+	return true
+}
+
+func (m *Model) isStatusLineMouseRow(y int) bool {
+	if m.height <= 0 {
+		return false
+	}
+	// Bubble Tea mouse row indexing can vary by terminal backend; accept
+	// both 0-based and 1-based bottom-row coordinates.
+	if y == m.height-1 || y == m.height {
+		return true
+	}
+	// Use rendered body height as a fallback in case runtime sizing and
+	// mouse row coordinates diverge in specific terminals.
+	bodyHeight := m.renderedBodyHeight()
+	if bodyHeight <= 0 {
+		return false
+	}
+	return y == bodyHeight || y == bodyHeight+1
+}
+
+func isStatusLineMouseCol(x, start, end int) bool {
+	if x >= start && x <= end {
+		return true
+	}
+	// Terminals may report columns as 1-based; treat x-1 as a valid
+	// equivalent when matching the status hitbox.
+	col := x - 1
+	return col >= start && col <= end
 }
 
 func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {

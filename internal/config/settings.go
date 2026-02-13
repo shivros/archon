@@ -173,7 +173,16 @@ func (c CoreConfig) ProviderCommand(provider string) string {
 
 func (c CoreConfig) OpenCodeBaseURL(provider string) string {
 	cfg := c.openCodeProviderConfig(provider)
-	return strings.TrimSpace(cfg.BaseURL)
+	baseURL := strings.TrimSpace(cfg.BaseURL)
+	if baseURL != "" {
+		return baseURL
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "kilocode":
+		return "http://127.0.0.1:4097"
+	default:
+		return "http://127.0.0.1:4096"
+	}
 }
 
 func (c CoreConfig) OpenCodeToken(provider string) string {

@@ -28,6 +28,7 @@ func TestNewOpenCodeClientValidation(t *testing.T) {
 func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 	const username = "archon"
 	const token = "secret"
+	const directory = "/tmp/opencode-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		want := "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+token))
@@ -37,9 +38,17 @@ func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			writeJSON(w, http.StatusCreated, map[string]any{"id": "sess_1"})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/prompt":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			var payload map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			model, _ := payload["model"].(map[string]any)
@@ -58,6 +67,10 @@ func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 			})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/abort":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		case r.Method == http.MethodGet && r.URL.Path == "/config/providers":
@@ -99,7 +112,7 @@ func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
 
-	sessionID, err := client.CreateSession(context.Background(), "demo")
+	sessionID, err := client.CreateSession(context.Background(), "demo", directory)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -109,7 +122,7 @@ func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 
 	reply, err := client.Prompt(context.Background(), "sess_1", "hello", &types.SessionRuntimeOptions{
 		Model: "anthropic/claude-sonnet-4-20250514",
-	})
+	}, directory)
 	if err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
@@ -117,7 +130,7 @@ func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 		t.Fatalf("unexpected prompt reply: %q", reply)
 	}
 
-	if err := client.AbortSession(context.Background(), "sess_1"); err != nil {
+	if err := client.AbortSession(context.Background(), "sess_1", directory); err != nil {
 		t.Fatalf("AbortSession: %v", err)
 	}
 
@@ -135,12 +148,22 @@ func TestOpenCodeClientCreatePromptAbortAndModels(t *testing.T) {
 
 func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 	var (
-		replyPath string
-		replyBody map[string]any
+		replyPath     string
+		replyBody     map[string]any
+		replyRawQuery string
 	)
+	const directory = "/tmp/opencode-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/permission":
+			if got := strings.TrimSpace(r.URL.Query().Get("sessionID")); got != "session-1" {
+				http.Error(w, "missing sessionID", http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
 			writeJSON(w, http.StatusOK, []map[string]any{
 				{
 					"id":        "perm-1",
@@ -162,6 +185,7 @@ func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 			return
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/permission/"):
 			replyPath = r.URL.Path
+			replyRawQuery = r.URL.RawQuery
 			_ = json.NewDecoder(r.Body).Decode(&replyBody)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
@@ -178,31 +202,135 @@ func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	permissions, err := client.ListPermissions(context.Background(), "session-1")
+	permissions, err := client.ListPermissions(context.Background(), "session-1", directory)
 	if err != nil {
 		t.Fatalf("ListPermissions: %v", err)
 	}
 	if len(permissions) != 1 || permissions[0].PermissionID != "perm-1" {
 		t.Fatalf("unexpected permissions: %#v", permissions)
 	}
-	if err := client.ReplyPermission(context.Background(), "", "perm-1", "approve"); err != nil {
+	if err := client.ReplyPermission(context.Background(), "", "perm-1", "approve", directory); err != nil {
 		t.Fatalf("ReplyPermission: %v", err)
 	}
 	if replyPath != "/permission/perm-1/reply" {
 		t.Fatalf("unexpected reply path: %q", replyPath)
+	}
+	if got := strings.TrimSpace(replyRawQuery); got != "directory=%2Ftmp%2Fopencode-worktree" {
+		t.Fatalf("unexpected reply query: %q", got)
 	}
 	if replyBody["decision"] != "approve" {
 		t.Fatalf("unexpected reply body: %#v", replyBody)
 	}
 }
 
+func TestOpenCodeClientListModelsSupportsMappedModelShape(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/config/providers" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"providers": []map[string]any{
+				{
+					"id": "openai",
+					"models": map[string]any{
+						"gpt-5": map[string]any{
+							"id": "gpt-5",
+						},
+						"gpt-5-codex": map[string]any{
+							"name": "GPT-5 Codex",
+						},
+					},
+				},
+			},
+			"default": map[string]any{
+				"openai": "gpt-5",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	catalog, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if catalog == nil {
+		t.Fatalf("expected model catalog")
+	}
+	if len(catalog.Models) != 2 {
+		t.Fatalf("expected two mapped models, got %#v", catalog.Models)
+	}
+	if catalog.Models[0] != "openai/gpt-5" {
+		t.Fatalf("expected default model first, got %#v", catalog.Models)
+	}
+	if catalog.DefaultModel != "openai/gpt-5" {
+		t.Fatalf("unexpected default model: %q", catalog.DefaultModel)
+	}
+}
+
+func TestOpenCodeClientCreateSessionFallsBackWhenCreateReturnsEOF(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	const title = "archon test title"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			// Compatibility case: some server builds may return 200 with an empty body.
+			w.WriteHeader(http.StatusOK)
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(r.URL.Query().Get("search")); got != title {
+				http.Error(w, "missing search", http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"id":    "sess_fallback_1",
+					"title": title,
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	sessionID, err := client.CreateSession(context.Background(), title, directory)
+	if err != nil {
+		t.Fatalf("CreateSession fallback: %v", err)
+	}
+	if sessionID != "sess_fallback_1" {
+		t.Fatalf("unexpected fallback session id: %q", sessionID)
+	}
+}
+
 func TestOpenCodeClientReplyPermissionUsesSessionEndpoint(t *testing.T) {
 	var (
-		replyPath string
-		replyBody map[string]any
+		replyPath     string
+		replyBody     map[string]any
+		replyRawQuery string
 	)
+	const directory = "/tmp/opencode-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		replyPath = r.URL.Path
+		replyRawQuery = r.URL.RawQuery
 		_ = json.NewDecoder(r.Body).Decode(&replyBody)
 		writeJSON(w, http.StatusOK, true)
 	}))
@@ -212,11 +340,14 @@ func TestOpenCodeClientReplyPermissionUsesSessionEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	if err := client.ReplyPermission(context.Background(), "session-1", "perm-1", "accept"); err != nil {
+	if err := client.ReplyPermission(context.Background(), "session-1", "perm-1", "accept", directory); err != nil {
 		t.Fatalf("ReplyPermission: %v", err)
 	}
 	if replyPath != "/session/session-1/permissions/perm-1" {
 		t.Fatalf("unexpected reply path: %q", replyPath)
+	}
+	if got := strings.TrimSpace(replyRawQuery); got != "directory=%2Ftmp%2Fopencode-worktree" {
+		t.Fatalf("unexpected reply query: %q", got)
 	}
 	if got := strings.TrimSpace(asString(replyBody["response"])); got != "once" {
 		t.Fatalf("unexpected response payload: %#v", replyBody)

@@ -270,16 +270,31 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case providerOptionsMsg:
+		provider := strings.ToLower(strings.TrimSpace(msg.provider))
+		isPending := provider != "" && strings.EqualFold(provider, strings.TrimSpace(m.pendingComposeOptionFor))
 		if msg.err != nil {
+			if isPending {
+				m.clearPendingComposeOptionRequest()
+			}
 			m.setBackgroundError("provider options error: " + msg.err.Error())
 			return true, nil
 		}
-		provider := strings.TrimSpace(msg.provider)
 		if provider != "" && msg.options != nil {
 			if m.providerOptions == nil {
 				m.providerOptions = map[string]*types.ProviderOptionCatalog{}
 			}
 			m.providerOptions[provider] = msg.options
+		}
+		if isPending {
+			target := m.pendingComposeOptionTarget
+			m.clearPendingComposeOptionRequest()
+			if m.mode == uiModeCompose && strings.EqualFold(m.composeProvider(), provider) {
+				if m.openComposeOptionPicker(target) {
+					m.setStatusMessage("select " + composeOptionLabel(target))
+				} else {
+					m.setValidationStatus("no " + composeOptionLabel(target) + " options available")
+				}
+			}
 		}
 		return true, nil
 	case tailMsg:

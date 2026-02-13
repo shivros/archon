@@ -213,7 +213,7 @@ func (p *openCodeApprovalSyncProvider) SyncSessionApprovals(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	permissions, err := client.ListPermissions(callCtx, providerSessionID)
+	permissions, err := client.ListPermissions(callCtx, providerSessionID, session.Cwd)
 	if err != nil {
 		return nil, err
 	}

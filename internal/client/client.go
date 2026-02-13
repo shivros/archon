@@ -113,7 +113,7 @@ func (c *Client) GetProviderOptions(ctx context.Context, provider string) (*type
 	}
 	path := fmt.Sprintf("/v1/providers/%s/options", provider)
 	var resp ProviderOptionsResponse
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+	if err := c.doJSONWithTimeout(ctx, http.MethodGet, path, nil, true, &resp, providerCallTimeout(provider)); err != nil {
 		return nil, err
 	}
 	return resp.Options, nil
@@ -372,7 +372,7 @@ func (c *Client) UpdateAppState(ctx context.Context, state *types.AppState) (*ty
 
 func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*types.Session, error) {
 	var session types.Session
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/sessions", req, true, &session); err != nil {
+	if err := c.doJSONWithTimeout(ctx, http.MethodPost, "/v1/sessions", req, true, &session, providerCallTimeout(req.Provider)); err != nil {
 		return nil, err
 	}
 	return &session, nil
@@ -387,10 +387,19 @@ func (c *Client) StartWorkspaceSession(ctx context.Context, workspaceID, worktre
 		path = "/v1/workspaces/" + strings.TrimSpace(workspaceID) + "/worktrees/" + strings.TrimSpace(worktreeID) + "/sessions"
 	}
 	var session types.Session
-	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &session); err != nil {
+	if err := c.doJSONWithTimeout(ctx, http.MethodPost, path, req, true, &session, providerCallTimeout(req.Provider)); err != nil {
 		return nil, err
 	}
 	return &session, nil
+}
+
+func providerCallTimeout(provider string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "opencode", "kilocode":
+		return 90 * time.Second
+	default:
+		return 0
+	}
 }
 
 func (c *Client) GetSession(ctx context.Context, id string) (*types.Session, error) {

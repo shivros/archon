@@ -139,3 +139,43 @@ func TestComposeOptionPopupViewOffsetsForSidebar(t *testing.T) {
 		t.Fatalf("expected popup line to start with %d spaces for sidebar offset, got %q", layout.rightStart, line)
 	}
 }
+
+func TestRequestComposeOptionPickerFetchesAndAutoOpensForOpenCodeModel(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "opencode"}
+
+	cmd := m.requestComposeOptionPicker(composeOptionModel)
+	if cmd == nil {
+		t.Fatalf("expected provider options fetch command")
+	}
+	if m.composeOptionPickerOpen() {
+		t.Fatalf("expected picker to stay closed until options load")
+	}
+	if m.pendingComposeOptionTarget != composeOptionModel || m.pendingComposeOptionFor != "opencode" {
+		t.Fatalf("expected pending compose option request to be tracked")
+	}
+
+	nextModel, follow := m.Update(providerOptionsMsg{
+		provider: "opencode",
+		options: &types.ProviderOptionCatalog{
+			Provider: "opencode",
+			Models:   []string{"anthropic/claude-sonnet-4-20250514", "openai/gpt-5"},
+			Defaults: types.SessionRuntimeOptions{Model: "anthropic/claude-sonnet-4-20250514"},
+		},
+	})
+	next, ok := nextModel.(*Model)
+	if !ok || next == nil {
+		t.Fatalf("expected model update result, got %T", nextModel)
+	}
+	if follow != nil {
+		t.Fatalf("expected no follow-up command, got %T", follow)
+	}
+	if !next.composeOptionPickerOpen() {
+		t.Fatalf("expected model option picker to auto-open once options load")
+	}
+	if next.pendingComposeOptionTarget != composeOptionNone || next.pendingComposeOptionFor != "" {
+		t.Fatalf("expected pending compose option request to clear")
+	}
+}

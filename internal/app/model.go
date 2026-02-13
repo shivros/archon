@@ -162,6 +162,8 @@ type Model struct {
 	lastSessionMetaSyncAt      time.Time
 	sessionMetaRefreshPending  bool
 	sessionMetaSyncPending     bool
+	pendingComposeOptionTarget composeOptionKind
+	pendingComposeOptionFor    string
 	menu                       *MenuController
 	hotkeys                    *HotkeyRenderer
 	keybindings                *Keybindings
@@ -2149,6 +2151,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceInputFocusLeftPressMouse(msg, layout) {
 		return true
 	}
+	if m.reduceGlobalStatusCopyLeftPressMouse(msg) {
+		return true
+	}
 	if m.reduceNotesPanelLeftPressMouse(msg, layout) {
 		return true
 	}
@@ -2813,6 +2818,7 @@ func (m *Model) enterCompose(sessionID string) {
 	if m.mode == uiModeCompose {
 		m.saveCurrentComposeDraft()
 	}
+	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
 	label := m.selectedSessionLabel()
@@ -2834,6 +2840,7 @@ func (m *Model) enterCompose(sessionID string) {
 
 func (m *Model) exitCompose(status string) {
 	m.saveCurrentComposeDraft()
+	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeNormal
 	m.closeComposeOptionPicker()
 	if m.compose != nil {
@@ -2854,6 +2861,7 @@ func (m *Model) exitCompose(status string) {
 }
 
 func (m *Model) enterProviderPick() {
+	m.clearPendingComposeOptionRequest()
 	m.mode = uiModePickProvider
 	if m.providerPicker != nil {
 		m.providerPicker.Enter("")
@@ -2869,6 +2877,7 @@ func (m *Model) enterProviderPick() {
 }
 
 func (m *Model) exitProviderPick(status string) {
+	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeNormal
 	if m.providerPicker != nil {
 		m.providerPicker.Enter("")
@@ -3424,16 +3433,116 @@ func exportComposeHistory(raw map[string]*composeHistoryState) map[string][]stri
 }
 
 func renderStatusLine(width int, help, status string) string {
+	layout := computeStatusLineLayout(width, help, status)
+	return layout.render()
+}
+
+func statusLineStatusBounds(width int, help, status string) (int, int, bool) {
+	layout := computeStatusLineLayout(width, help, status)
+	return layout.statusBounds()
+}
+
+type statusLineLayout struct {
+	width   int
+	help    string
+	status  string
+	padding int
+}
+
+func computeStatusLineLayout(width int, help, status string) statusLineLayout {
+	layout := statusLineLayout{width: width}
 	if width <= 0 {
-		return help + " " + status
+		layout.help = help
+		layout.status = status
+		if strings.TrimSpace(help) != "" && strings.TrimSpace(status) != "" {
+			layout.padding = statusLinePadding
+		}
+		return layout
 	}
-	helpWidth := lipgloss.Width(help)
+
+	status = truncateToWidth(status, width)
 	statusWidth := lipgloss.Width(status)
-	padding := width - helpWidth - statusWidth
-	if padding < statusLinePadding {
-		padding = statusLinePadding
+	if statusWidth <= 0 {
+		layout.help = truncateToWidth(help, width)
+		return layout
 	}
-	return help + strings.Repeat(" ", padding) + status
+	layout.status = status
+
+	maxHelpWidth := width - statusWidth - statusLinePadding
+	if maxHelpWidth > 0 {
+		layout.help = truncateToWidth(help, maxHelpWidth)
+	}
+
+	helpWidth := lipgloss.Width(layout.help)
+	layout.padding = width - helpWidth - statusWidth
+	if helpWidth > 0 && layout.padding < statusLinePadding {
+		layout.padding = statusLinePadding
+	}
+	if helpWidth == 0 && layout.padding < 0 {
+		layout.padding = 0
+	}
+
+	return layout
+}
+
+func (l statusLineLayout) render() string {
+	if l.help == "" && l.status == "" {
+		return ""
+	}
+	if l.width <= 0 {
+		if l.help == "" {
+			return l.status
+		}
+		if l.status == "" {
+			return l.help
+		}
+		padding := l.padding
+		if padding < statusLinePadding {
+			padding = statusLinePadding
+		}
+		return l.help + strings.Repeat(" ", padding) + l.status
+	}
+	if l.status == "" {
+		return l.help
+	}
+	padding := l.padding
+	if padding < 0 {
+		padding = 0
+	}
+	return l.help + strings.Repeat(" ", padding) + l.status
+}
+
+func (l statusLineLayout) statusBounds() (int, int, bool) {
+	statusWidth := lipgloss.Width(l.status)
+	if statusWidth <= 0 {
+		return 0, 0, false
+	}
+	start := lipgloss.Width(l.help) + l.padding
+	if l.width > 0 {
+		maxCol := l.width - 1
+		if maxCol < 0 {
+			return 0, 0, false
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start > maxCol {
+			return 0, 0, false
+		}
+		end := start + statusWidth - 1
+		if end > maxCol {
+			end = maxCol
+		}
+		if end < start {
+			return 0, 0, false
+		}
+		return start, end, true
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + statusWidth - 1
+	return start, end, true
 }
 
 func renderInputDivider(width int, scrollable bool) string {

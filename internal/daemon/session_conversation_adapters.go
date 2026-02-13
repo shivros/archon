@@ -409,10 +409,12 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 	if err != nil {
 		return nil, nil, invalidError(err.Error(), err)
 	}
-	// Subscribe without directory filtering and rely on sessionID mapping.
-	// Some server builds may create sessions in a default instance even when
-	// workspace cwd differs, so strict directory filters can drop valid events.
-	upstream, upstreamCancel, err := client.SubscribeSessionEvents(ctx, providerSessionID, "")
+	directory := strings.TrimSpace(session.Cwd)
+	upstream, upstreamCancel, err := client.SubscribeSessionEvents(ctx, providerSessionID, directory)
+	if err != nil && directory != "" {
+		// Fallback for servers that reject directory scoping on event streams.
+		upstream, upstreamCancel, err = client.SubscribeSessionEvents(ctx, providerSessionID, "")
+	}
 	if err != nil {
 		return nil, nil, invalidError(err.Error(), err)
 	}
@@ -483,7 +485,7 @@ func (openCodeConversationAdapter) Approve(ctx context.Context, service *Session
 	if err != nil {
 		return invalidError(err.Error(), err)
 	}
-	if err := client.ReplyPermission(ctx, providerSessionID, permissionID, decision); err != nil {
+	if err := client.ReplyPermission(ctx, providerSessionID, permissionID, decision, session.Cwd); err != nil {
 		return invalidError(err.Error(), err)
 	}
 	if err := service.stores.Approvals.Delete(ctx, session.ID, requestID); err != nil {

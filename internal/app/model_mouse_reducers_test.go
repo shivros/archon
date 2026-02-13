@@ -557,6 +557,202 @@ func TestMouseReducerUserStatusLineClickDoesNotSelectMessage(t *testing.T) {
 	}
 }
 
+func TestMouseReducerGlobalStatusBarClickCopiesStatus(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	defer func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	}()
+
+	copied := ""
+	clipboardWriteAll = func(text string) error {
+		copied = text
+		return nil
+	}
+	clipboardWriteOSC52 = func(string) error {
+		t.Fatalf("expected system clipboard copy to succeed without OSC52 fallback")
+		return nil
+	}
+
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("follow: paused")
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleAgent, Text: "first"},
+	})
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+
+	handled := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      start,
+		Y:      m.height,
+	})
+	if !handled {
+		t.Fatalf("expected global status click to be handled")
+	}
+	if copied != "follow: paused" {
+		t.Fatalf("expected status copy payload %q, got %q", "follow: paused", copied)
+	}
+	if m.status != "status copied" {
+		t.Fatalf("expected copy success status, got %q", m.status)
+	}
+	if m.messageSelectActive {
+		t.Fatalf("expected status line copy click to avoid message selection")
+	}
+}
+
+func TestMouseReducerGlobalStatusBarHelpClickDoesNotCopy(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	defer func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	}()
+
+	copied := false
+	clipboardWriteAll = func(string) error {
+		copied = true
+		return nil
+	}
+	clipboardWriteOSC52 = func(string) error {
+		t.Fatalf("expected no clipboard fallback for non-copy click")
+		return nil
+	}
+
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("ready")
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+	if start <= 0 {
+		t.Fatalf("expected non-empty help segment before status, got status start %d", start)
+	}
+
+	handled := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      start - 1,
+		Y:      m.height,
+	})
+	if handled {
+		t.Fatalf("expected help-segment click to remain unhandled")
+	}
+	if copied {
+		t.Fatalf("expected help-segment click not to invoke clipboard copy")
+	}
+	if m.status != "ready" {
+		t.Fatalf("expected status to remain unchanged, got %q", m.status)
+	}
+}
+
+func TestMouseReducerGlobalStatusHitboxVisibleWithDefaultHotkeys(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(40, 20)
+	m.setStatusMessage("ready")
+
+	start, end, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected status hitbox with default hotkeys")
+	}
+	if end != m.width-1 {
+		t.Fatalf("expected status to render at right edge %d, got %d", m.width-1, end)
+	}
+	if start < 0 || start > end {
+		t.Fatalf("invalid status bounds [%d,%d]", start, end)
+	}
+}
+
+func TestMouseReducerGlobalStatusBarClickCopiesStatusOnZeroBasedBottomRow(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	defer func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	}()
+
+	copied := ""
+	clipboardWriteAll = func(text string) error {
+		copied = text
+		return nil
+	}
+	clipboardWriteOSC52 = func(string) error {
+		t.Fatalf("expected system clipboard copy to succeed without OSC52 fallback")
+		return nil
+	}
+
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("ready")
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+
+	handled := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      start,
+		Y:      m.height - 1,
+	})
+	if !handled {
+		t.Fatalf("expected global status click on zero-based bottom row to be handled")
+	}
+	if copied != "ready" {
+		t.Fatalf("expected status copy payload %q, got %q", "ready", copied)
+	}
+}
+
+func TestMouseReducerGlobalStatusBarClickCopiesStatusWithOneBasedX(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	defer func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	}()
+
+	copied := ""
+	clipboardWriteAll = func(text string) error {
+		copied = text
+		return nil
+	}
+	clipboardWriteOSC52 = func(string) error {
+		t.Fatalf("expected system clipboard copy to succeed without OSC52 fallback")
+		return nil
+	}
+
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("ready")
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+
+	handled := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      start + 1,
+		Y:      m.height - 1,
+	})
+	if !handled {
+		t.Fatalf("expected global status click with one-based X to be handled")
+	}
+	if copied != "ready" {
+		t.Fatalf("expected status copy payload %q, got %q", "ready", copied)
+	}
+}
+
 func TestMouseReducerComposeOptionPickerClickSelectsOption(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
