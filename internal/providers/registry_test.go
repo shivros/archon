@@ -37,6 +37,8 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			candidates: nil,
 			capabilities: Capabilities{
 				UsesItems:         true,
+				SupportsEvents:    true,
+				SupportsApprovals: true,
 				SupportsInterrupt: true,
 				NoProcess:         true,
 			},
@@ -47,6 +49,8 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			candidates: nil,
 			capabilities: Capabilities{
 				UsesItems:         true,
+				SupportsEvents:    true,
+				SupportsApprovals: true,
 				SupportsInterrupt: true,
 				NoProcess:         true,
 			},

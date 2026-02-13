@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -200,6 +202,78 @@ func TestSessionServiceListApprovalsRunsResync(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].RequestID != 7 {
 		t.Fatalf("expected synced request 7, got %#v", got)
+	}
+}
+
+func TestOpenCodeApprovalSyncProviderSyncSessionApprovals(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/permission" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"permissions": []map[string]any{
+				{
+					"id":        "perm-pending",
+					"sessionID": "remote-session",
+					"status":    "pending",
+					"type":      "command",
+					"command":   "echo hi",
+					"createdAt": "2026-02-11T01:00:00Z",
+				},
+				{
+					"id":        "perm-approved",
+					"sessionID": "remote-session",
+					"status":    "approved",
+					"type":      "command",
+					"command":   "echo done",
+					"createdAt": "2026-02-11T01:01:00Z",
+				},
+				{
+					"id":        "perm-other-session",
+					"sessionID": "another-session",
+					"status":    "pending",
+					"type":      "command",
+					"command":   "echo other",
+					"createdAt": "2026-02-11T01:02:00Z",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	provider := &openCodeApprovalSyncProvider{provider: "opencode"}
+	result, err := provider.SyncSessionApprovals(context.Background(), &types.Session{
+		ID:       "s-open",
+		Provider: "opencode",
+	}, &types.SessionMeta{
+		SessionID:         "s-open",
+		ProviderSessionID: "remote-session",
+	})
+	if err != nil {
+		t.Fatalf("SyncSessionApprovals: %v", err)
+	}
+	if result == nil || !result.Authoritative {
+		t.Fatalf("expected authoritative result, got %#v", result)
+	}
+	if len(result.Approvals) != 1 {
+		t.Fatalf("expected one pending approval, got %#v", result.Approvals)
+	}
+	approval := result.Approvals[0]
+	if approval.SessionID != "s-open" {
+		t.Fatalf("unexpected session id: %q", approval.SessionID)
+	}
+	if approval.Method != "item/commandExecution/requestApproval" {
+		t.Fatalf("unexpected approval method: %q", approval.Method)
+	}
+	params := map[string]any{}
+	if err := json.Unmarshal(approval.Params, &params); err != nil {
+		t.Fatalf("decode approval params: %v", err)
+	}
+	if params["permission_id"] != "perm-pending" {
+		t.Fatalf("missing permission id in params: %#v", params)
 	}
 }
 

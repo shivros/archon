@@ -56,6 +56,8 @@ var registry = []Definition{
 		Runtime: RuntimeOpenCodeServer,
 		Capabilities: Capabilities{
 			UsesItems:         true,
+			SupportsEvents:    true,
+			SupportsApprovals: true,
 			SupportsInterrupt: true,
 			NoProcess:         true,
 		},
@@ -66,6 +68,8 @@ var registry = []Definition{
 		Runtime: RuntimeOpenCodeServer,
 		Capabilities: Capabilities{
 			UsesItems:         true,
+			SupportsEvents:    true,
+			SupportsApprovals: true,
 			SupportsInterrupt: true,
 			NoProcess:         true,
 		},

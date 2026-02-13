@@ -41,6 +41,8 @@ func NewApprovalResyncService(stores *Stores, logger logging.Logger, extra ...Ap
 		providers: map[string]ApprovalSyncProvider{},
 	}
 	service.registerProvider(&codexApprovalSyncProvider{stores: stores, logger: logger})
+	service.registerProvider(&openCodeApprovalSyncProvider{provider: "opencode", stores: stores, logger: logger})
+	service.registerProvider(&openCodeApprovalSyncProvider{provider: "kilocode", stores: stores, logger: logger})
 	for _, provider := range extra {
 		service.registerProvider(provider)
 	}
@@ -172,6 +174,103 @@ type codexApprovalSyncProvider struct {
 	stores  *Stores
 	logger  logging.Logger
 	timeout time.Duration
+}
+
+type openCodeApprovalSyncProvider struct {
+	provider string
+	stores   *Stores
+	logger   logging.Logger
+	timeout  time.Duration
+}
+
+func (p *openCodeApprovalSyncProvider) Provider() string {
+	return p.provider
+}
+
+func (p *openCodeApprovalSyncProvider) SyncSessionApprovals(ctx context.Context, session *types.Session, meta *types.SessionMeta) (*ApprovalSyncResult, error) {
+	if session == nil {
+		return nil, nil
+	}
+	if providers.Normalize(session.Provider) != providers.Normalize(p.provider) {
+		return nil, nil
+	}
+	providerSessionID := ""
+	if meta != nil {
+		providerSessionID = strings.TrimSpace(meta.ProviderSessionID)
+	}
+	if providerSessionID == "" {
+		return nil, nil
+	}
+
+	timeout := p.timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	client, err := newOpenCodeClient(resolveOpenCodeClientConfig(session.Provider, loadCoreConfigOrDefault()))
+	if err != nil {
+		return nil, err
+	}
+	permissions, err := client.ListPermissions(callCtx, providerSessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	usedIDs := map[int]string{}
+	approvals := make([]*types.Approval, 0, len(permissions))
+	for _, permission := range permissions {
+		if permission.Status != "" && permission.Status != "pending" {
+			continue
+		}
+		if permission.SessionID != "" && permission.SessionID != providerSessionID {
+			continue
+		}
+		method := openCodePermissionMethod(permission)
+		params := map[string]any{
+			"permission_id": permission.PermissionID,
+			"type":          permission.Kind,
+		}
+		if permission.Summary != "" {
+			params["message"] = permission.Summary
+		}
+		switch method {
+		case "item/commandExecution/requestApproval":
+			if permission.Command != "" {
+				params["parsedCmd"] = permission.Command
+			}
+		case "item/fileChange/requestApproval":
+			if permission.Reason != "" {
+				params["reason"] = permission.Reason
+			} else if permission.Summary != "" {
+				params["reason"] = permission.Summary
+			}
+		case "tool/requestUserInput":
+			if permission.Summary != "" {
+				params["questions"] = []map[string]any{{"text": permission.Summary}}
+			}
+		}
+		paramsRaw, _ := json.Marshal(params)
+		requestID := openCodePermissionRequestID(permission.PermissionID, usedIDs)
+		approvals = append(approvals, &types.Approval{
+			SessionID: session.ID,
+			RequestID: requestID,
+			Method:    method,
+			Params:    paramsRaw,
+			CreatedAt: permission.CreatedAt,
+		})
+	}
+	sort.Slice(approvals, func(i, j int) bool {
+		if approvals[i].CreatedAt.Equal(approvals[j].CreatedAt) {
+			return approvals[i].RequestID < approvals[j].RequestID
+		}
+		return approvals[i].CreatedAt.Before(approvals[j].CreatedAt)
+	})
+	return &ApprovalSyncResult{
+		Approvals:     approvals,
+		Authoritative: true,
+	}, nil
 }
 
 func (p *codexApprovalSyncProvider) Provider() string {

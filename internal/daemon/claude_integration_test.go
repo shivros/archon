@@ -198,8 +198,15 @@ func extractHistoryText(item map[string]any) string {
 	if text, _ := item["text"].(string); strings.TrimSpace(text) != "" {
 		return text
 	}
-	content, ok := item["content"].([]any)
-	if !ok {
+	content := []any{}
+	if direct, ok := item["content"].([]any); ok {
+		content = direct
+	} else if message, ok := item["message"].(map[string]any); ok {
+		if nested, ok := message["content"].([]any); ok {
+			content = nested
+		}
+	}
+	if len(content) == 0 {
 		return ""
 	}
 	var parts []string

@@ -366,7 +366,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		} else if currentAgents > 0 {
 			return true, nil
 		}
+		provider := m.providerForSessionID(msg.id)
 		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, msg.id, msg.key, maxViewportLines)}
+		if shouldStreamItems(provider) {
+			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
+		}
 		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
 		return true, tea.Batch(cmds...)
 	case sendMsg:
@@ -386,6 +390,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.lastSessionMetaRefreshAt = now
 		provider := m.providerForSessionID(msg.id)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
+		if shouldStreamItems(provider) {
+			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
+		}
 		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.id))
 			return true, tea.Batch(cmds...)
@@ -486,6 +493,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.setStatusInfo("session started")
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
 		if shouldStreamItems(msg.session.Provider) {
+			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.session.ID))
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
 		} else if msg.session.Provider == "codex" {
 			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.session.ID))

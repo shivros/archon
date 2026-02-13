@@ -2,9 +2,16 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"control/internal/store"
 	"control/internal/types"
 )
 
@@ -83,6 +90,205 @@ func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) 
 			})
 			expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 		})
+	}
+}
+
+func TestOpenCodeConversationAdapterApproveRepliesPermission(t *testing.T) {
+	var (
+		receivedPath string
+		receivedBody map[string]any
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		auth := r.Header.Get("Authorization")
+		want := "Basic " + base64.StdEncoding.EncodeToString([]byte("opencode:token-123"))
+		if auth != want {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	t.Setenv("OPENCODE_TOKEN", "token-123")
+	ctx := context.Background()
+	base := t.TempDir()
+	approvalStore := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
+
+	session := &types.Session{
+		ID:        "s-open",
+		Provider:  "opencode",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: session,
+		Source:  sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session record: %v", err)
+	}
+	params, _ := json.Marshal(map[string]any{"permission_id": "perm-123"})
+	_, err = approvalStore.Upsert(ctx, &types.Approval{
+		SessionID: session.ID,
+		RequestID: 77,
+		Method:    "tool/requestUserInput",
+		Params:    params,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed approval: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:  sessionStore,
+		Approvals: approvalStore,
+	}, nil, nil)
+
+	if err := service.Approve(ctx, session.ID, 77, "accept", nil, nil); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if receivedPath != "/permission/perm-123/reply" {
+		t.Fatalf("unexpected permission reply path: %q", receivedPath)
+	}
+	if decision := receivedBody["decision"]; decision != "accept" {
+		t.Fatalf("unexpected approval decision payload: %#v", receivedBody)
+	}
+	_, ok, err := approvalStore.Get(ctx, session.ID, 77)
+	if err != nil {
+		t.Fatalf("get approval after delete: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected approval to be deleted after successful reply")
+	}
+}
+
+func TestOpenCodeConversationAdapterSubscribeEventsSyncsApprovals(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/event":
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatalf("expected http flusher")
+			}
+			send := func(payload map[string]any) {
+				data, _ := json.Marshal(payload)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", string(data))
+				flusher.Flush()
+			}
+			send(map[string]any{
+				"type": "permission.updated",
+				"properties": map[string]any{
+					"id":        "perm-abc",
+					"sessionID": "remote-s-1",
+					"type":      "command",
+					"title":     "run command",
+					"metadata": map[string]any{
+						"command": "echo one",
+					},
+				},
+			})
+			send(map[string]any{
+				"type": "permission.replied",
+				"properties": map[string]any{
+					"permissionID": "perm-abc",
+					"sessionID":    "remote-s-1",
+					"response":     "once",
+				},
+			})
+			send(map[string]any{
+				"type": "session.idle",
+				"properties": map[string]any{
+					"sessionID": "remote-s-1",
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	ctx := context.Background()
+	base := t.TempDir()
+	approvalStore := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	session := &types.Session{
+		ID:        "s-open-events",
+		Provider:  "opencode",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: session,
+		Source:  sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session record: %v", err)
+	}
+	_, err = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:         session.ID,
+		ProviderSessionID: "remote-s-1",
+	})
+	if err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+		Approvals:   approvalStore,
+	}, nil, nil)
+
+	streamCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	events, closeFn, err := service.SubscribeEvents(streamCtx, session.ID)
+	if err != nil {
+		t.Fatalf("SubscribeEvents: %v", err)
+	}
+	defer closeFn()
+
+	receivedApproval := false
+	receivedResolved := false
+	for i := 0; i < 3; i++ {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatalf("stream closed early")
+			}
+			switch event.Method {
+			case "item/commandExecution/requestApproval":
+				receivedApproval = true
+			case "permission/replied":
+				receivedResolved = true
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for mapped events")
+		}
+	}
+	if !receivedApproval || !receivedResolved {
+		t.Fatalf("expected approval lifecycle events, got approval=%v resolved=%v", receivedApproval, receivedResolved)
+	}
+
+	approvals, err := approvalStore.ListBySession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("ListBySession: %v", err)
+	}
+	if len(approvals) != 0 {
+		t.Fatalf("expected approval store to be reconciled, got %#v", approvals)
 	}
 }
 

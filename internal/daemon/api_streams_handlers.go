@@ -82,6 +82,8 @@ func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	_, _ = w.Write([]byte(":\n\n"))
+	flusher.Flush()
 
 	ctx := r.Context()
 	var count int

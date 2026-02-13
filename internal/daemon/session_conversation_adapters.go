@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -393,12 +394,116 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 	return "", nil
 }
 
-func (openCodeConversationAdapter) SubscribeEvents(context.Context, *SessionService, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
-	return nil, nil, invalidError("provider does not support events", nil)
+func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+	if session == nil {
+		return nil, nil, invalidError("session is required", nil)
+	}
+	providerSessionID := ""
+	if meta != nil {
+		providerSessionID = strings.TrimSpace(meta.ProviderSessionID)
+	}
+	if providerSessionID == "" {
+		return nil, nil, invalidError("provider session id not available", nil)
+	}
+	client, err := newOpenCodeClient(resolveOpenCodeClientConfig(session.Provider, loadCoreConfigOrDefault()))
+	if err != nil {
+		return nil, nil, invalidError(err.Error(), err)
+	}
+	// Subscribe without directory filtering and rely on sessionID mapping.
+	// Some server builds may create sessions in a default instance even when
+	// workspace cwd differs, so strict directory filters can drop valid events.
+	upstream, upstreamCancel, err := client.SubscribeSessionEvents(ctx, providerSessionID, "")
+	if err != nil {
+		return nil, nil, invalidError(err.Error(), err)
+	}
+
+	out := make(chan types.CodexEvent, 256)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, ok := <-upstream:
+				if !ok {
+					return
+				}
+				applyOpenCodeApprovalEvent(ctx, service, session, event)
+				select {
+				case <-ctx.Done():
+					return
+				case out <- event:
+				}
+			}
+		}
+	}()
+
+	cancel := func() {
+		upstreamCancel()
+		<-done
+	}
+	return out, cancel, nil
 }
 
-func (openCodeConversationAdapter) Approve(context.Context, *SessionService, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
-	return invalidError("provider does not support approvals", nil)
+func (openCodeConversationAdapter) Approve(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, requestID int, decision string, _ []string, _ map[string]any) error {
+	if session == nil {
+		return invalidError("session is required", nil)
+	}
+	if requestID < 0 {
+		return invalidError("request id is required", nil)
+	}
+	if service == nil || service.stores == nil || service.stores.Approvals == nil {
+		return unavailableError("approval store not available", nil)
+	}
+	record, ok, err := service.stores.Approvals.Get(ctx, session.ID, requestID)
+	if err != nil {
+		return unavailableError(err.Error(), err)
+	}
+	if !ok || record == nil {
+		return notFoundError("approval not found", nil)
+	}
+	params := map[string]any{}
+	if len(record.Params) > 0 {
+		_ = json.Unmarshal(record.Params, &params)
+	}
+	permissionID := strings.TrimSpace(asString(params["permission_id"]))
+	if permissionID == "" {
+		permissionID = strings.TrimSpace(asString(params["permissionID"]))
+	}
+	if permissionID == "" {
+		return invalidError("provider permission id not available", nil)
+	}
+	providerSessionID := ""
+	if meta != nil {
+		providerSessionID = strings.TrimSpace(meta.ProviderSessionID)
+	}
+	client, err := newOpenCodeClient(resolveOpenCodeClientConfig(session.Provider, loadCoreConfigOrDefault()))
+	if err != nil {
+		return invalidError(err.Error(), err)
+	}
+	if err := client.ReplyPermission(ctx, providerSessionID, permissionID, decision); err != nil {
+		return invalidError(err.Error(), err)
+	}
+	if err := service.stores.Approvals.Delete(ctx, session.ID, requestID); err != nil {
+		// Best-effort cleanup; avoid failing user action if remote decision succeeded.
+		if service.logger != nil {
+			service.logger.Warn("opencode_approval_delete_failed",
+				logging.F("session_id", session.ID),
+				logging.F("request_id", requestID),
+				logging.F("error", err),
+			)
+		}
+	}
+	now := time.Now().UTC()
+	if service.stores != nil && service.stores.SessionMeta != nil {
+		_, _ = service.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+			SessionID:    session.ID,
+			LastActiveAt: &now,
+		})
+	}
+	return nil
 }
 
 func (openCodeConversationAdapter) Interrupt(_ context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) error {
@@ -438,4 +543,36 @@ func (openCodeConversationAdapter) Interrupt(_ context.Context, service *Session
 		return invalidError(err.Error(), err)
 	}
 	return nil
+}
+
+func applyOpenCodeApprovalEvent(ctx context.Context, service *SessionService, session *types.Session, event types.CodexEvent) {
+	if service == nil || service.stores == nil || service.stores.Approvals == nil || session == nil {
+		return
+	}
+	switch {
+	case isApprovalMethod(event.Method) && event.ID != nil && *event.ID >= 0:
+		_, _ = service.stores.Approvals.Upsert(ctx, &types.Approval{
+			SessionID: session.ID,
+			RequestID: *event.ID,
+			Method:    event.Method,
+			Params:    event.Params,
+			CreatedAt: time.Now().UTC(),
+		})
+	case event.Method == "permission/replied":
+		requestID := -1
+		if event.ID != nil {
+			requestID = *event.ID
+		}
+		if requestID < 0 && len(event.Params) > 0 {
+			payload := map[string]any{}
+			if err := json.Unmarshal(event.Params, &payload); err == nil {
+				if parsed, ok := asInt(payload["request_id"]); ok {
+					requestID = parsed
+				}
+			}
+		}
+		if requestID >= 0 {
+			_ = service.stores.Approvals.Delete(ctx, session.ID, requestID)
+		}
+	}
 }
