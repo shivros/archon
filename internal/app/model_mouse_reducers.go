@@ -69,7 +69,15 @@ func (m *Model) mouseOverComposeControls(y int) bool {
 	return y == m.composeControlsRow()
 }
 
+func isMouseClickMsg(msg tea.MouseMsg) bool {
+	_, ok := msg.(tea.MouseClickMsg)
+	return ok
+}
+
 func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	if !m.composeOptionPickerOpen() {
 		return false
 	}
@@ -117,6 +125,9 @@ func composePickerRowForClick(y, row, height int) (int, bool) {
 }
 
 func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if m.mode != uiModeCompose || mouse.X < layout.rightStart || !m.mouseOverComposeControls(mouse.Y) {
 		return false
@@ -138,6 +149,9 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 }
 
 func (m *Model) reduceContextMenuLeftPressMouse(msg tea.MouseMsg) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	if m.contextMenu == nil || !m.contextMenu.IsOpen() {
 		return false
 	}
@@ -160,6 +174,9 @@ func (m *Model) reduceContextMenuLeftPressMouse(msg tea.MouseMsg) bool {
 }
 
 func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseRight {
 		return false
@@ -321,6 +338,9 @@ func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta
 }
 
 func (m *Model) reduceMenuLeftPressMouse(msg tea.MouseMsg) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	if m.menu == nil {
 		return false
 	}
@@ -338,6 +358,9 @@ func (m *Model) reduceMenuLeftPressMouse(msg tea.MouseMsg) bool {
 }
 
 func (m *Model) reduceSidebarScrollbarLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if layout.listWidth > 0 && mouse.X < layout.listWidth && layout.barWidth > 0 && mouse.X >= layout.barStart {
 		if m.sidebar != nil && m.sidebar.ScrollbarSelect(mouse.Y) {
@@ -351,6 +374,9 @@ func (m *Model) reduceSidebarScrollbarLeftPressMouse(msg tea.MouseMsg, layout mo
 }
 
 func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart || !m.mouseOverInput(mouse.Y) {
 		return false
@@ -373,6 +399,9 @@ func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 }
 
 func (m *Model) reduceTranscriptReasoningButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -387,6 +416,9 @@ func (m *Model) reduceTranscriptReasoningButtonLeftPressMouse(msg tea.MouseMsg, 
 }
 
 func (m *Model) reduceTranscriptApprovalButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -431,6 +463,9 @@ func (m *Model) reduceTranscriptApprovalButtonLeftPressMouse(msg tea.MouseMsg, l
 }
 
 func (m *Model) reduceGlobalStatusCopyLeftPressMouse(msg tea.MouseMsg) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseLeft {
 		return false
@@ -477,6 +512,9 @@ func isStatusLineMouseCol(x, start, end int) bool {
 }
 
 func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -491,6 +529,9 @@ func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mous
 }
 
 func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -512,6 +553,9 @@ func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouse
 }
 
 func (m *Model) reduceTranscriptNotesFilterLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -533,6 +577,9 @@ func (m *Model) reduceTranscriptNotesFilterLeftPressMouse(msg tea.MouseMsg, layo
 }
 
 func (m *Model) reduceTranscriptMoveLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -554,6 +601,9 @@ func (m *Model) reduceTranscriptMoveLeftPressMouse(msg tea.MouseMsg, layout mous
 }
 
 func (m *Model) reduceTranscriptDeleteLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -568,6 +618,9 @@ func (m *Model) reduceTranscriptDeleteLeftPressMouse(msg tea.MouseMsg, layout mo
 }
 
 func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if mouse.X < layout.rightStart {
 		return false
@@ -582,6 +635,9 @@ func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mo
 }
 
 func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if m.mode == uiModePickProvider && m.providerPicker != nil {
 		if mouse.X >= layout.rightStart {
@@ -690,6 +746,9 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 }
 
 func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	if layout.listWidth > 0 && mouse.X < layout.listWidth {
 		if m.sidebar != nil {

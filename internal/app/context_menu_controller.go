@@ -218,6 +218,9 @@ func (c *ContextMenuController) HandleMouse(msg tea.MouseMsg, maxWidth, maxHeigh
 	if c == nil || !c.active {
 		return false, ContextMenuNone
 	}
+	if _, ok := msg.(tea.MouseClickMsg); !ok {
+		return false, ContextMenuNone
+	}
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseLeft {
 		return false, ContextMenuNone

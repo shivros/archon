@@ -99,6 +99,9 @@ func (c *ConfirmController) HandleMouse(msg tea.MouseMsg, maxWidth, maxHeight in
 	if c == nil || !c.active {
 		return false, confirmChoiceNone
 	}
+	if _, ok := msg.(tea.MouseClickMsg); !ok {
+		return false, confirmChoiceNone
+	}
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseLeft {
 		return false, confirmChoiceNone

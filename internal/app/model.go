@@ -390,6 +390,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tea.MouseMsg:
+			if _, ok := msg.(tea.MouseClickMsg); !ok {
+				return m, nil
+			}
 			if handled, choice := m.confirm.HandleMouse(msg, m.width, m.height-1); handled {
 				if choice == confirmChoiceNone {
 					return m, nil
@@ -2128,27 +2131,28 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return false
 	}
 	layout := m.resolveMouseLayout()
+	if m.reduceSidebarDragMouse(msg, layout) {
+		return true
+	}
 
+	mouse := msg.Mouse()
+	if mouse.Button == tea.MouseLeft || mouse.Button == tea.MouseRight {
+		if _, ok := msg.(tea.MouseClickMsg); !ok {
+			return false
+		}
+	}
 	if m.reduceContextMenuLeftPressMouse(msg) {
 		return true
 	}
 	if m.reduceContextMenuRightPressMouse(msg, layout) {
 		return true
 	}
-	if m.reduceSidebarDragMouse(msg, layout) {
-		return true
-	}
-
-	mouse := msg.Mouse()
 	switch mouse.Button {
 	case tea.MouseWheelUp:
 		return m.reduceMouseWheel(msg, layout, -1)
 	case tea.MouseWheelDown:
 		return m.reduceMouseWheel(msg, layout, 1)
 	case tea.MouseLeft:
-		if _, ok := msg.(tea.MouseClickMsg); !ok {
-			return false
-		}
 	default:
 		return false
 	}

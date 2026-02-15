@@ -45,6 +45,36 @@ func TestMouseReducerRightPressClosesContextMenu(t *testing.T) {
 	}
 }
 
+func TestMouseReducerRightReleaseDoesNotOpenContextMenu(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	if m.contextMenu == nil {
+		t.Fatalf("expected context menu controller")
+	}
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		if m.sidebar.ItemAtRow(y) != nil {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected at least one visible sidebar row")
+	}
+
+	handled := m.handleMouse(tea.MouseReleaseMsg{Button: tea.MouseRight, X: 1, Y: row})
+	if handled {
+		t.Fatalf("expected right-button release to be ignored")
+	}
+	if m.contextMenu.IsOpen() {
+		t.Fatalf("expected context menu to remain closed on right-button release")
+	}
+}
+
 func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
@@ -124,6 +154,22 @@ func TestMouseReducerPickProviderLeftClickSelects(t *testing.T) {
 	}
 	if m.newSession == nil || m.newSession.provider == "" {
 		t.Fatalf("expected provider to be selected, got %#v", m.newSession)
+	}
+}
+
+func TestMouseReducerPickProviderLeftReleaseIgnored(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+	layout := m.resolveMouseLayout()
+
+	handled := m.reduceModePickersLeftPressMouse(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: 2}, layout)
+	if handled {
+		t.Fatalf("expected provider release to be ignored")
+	}
+	if m.mode != uiModePickProvider {
+		t.Fatalf("expected mode to remain pick-provider, got %v", m.mode)
 	}
 }
 

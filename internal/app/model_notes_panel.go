@@ -365,6 +365,9 @@ func (m *Model) reduceNotesPanelWheelMouse(msg tea.MouseMsg, layout mouseLayout,
 }
 
 func (m *Model) reduceNotesPanelLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
 	if !layout.panelVisible || layout.panelWidth <= 0 || m.notesPanelViewport.Height() <= 0 {
 		return false
 	}
