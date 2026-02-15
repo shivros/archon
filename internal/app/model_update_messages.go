@@ -307,6 +307,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case tailMsg:
 		if msg.err != nil {
 			m.setBackgroundError("tail error: " + msg.err.Error())
+			if msg.key != "" && msg.key == m.pendingSessionKey {
+				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeError)
+			}
 			if msg.key != "" && msg.key == m.loadingKey {
 				m.loading = false
 				m.setContentText("Error loading history.")
@@ -323,6 +326,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
 			if msg.key != "" {
 				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
+				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
 			}
 			m.setBackgroundStatus("tail refreshed")
 			return true, nil
@@ -332,12 +336,16 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.noteRequestVisibleUpdate(msg.id)
 		if msg.key != "" {
 			m.transcriptCache[msg.key] = blocks
+			m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
 		}
 		m.setBackgroundStatus("tail updated")
 		return true, nil
 	case historyMsg:
 		if msg.err != nil {
 			m.setBackgroundError("history error: " + msg.err.Error())
+			if msg.key != "" && msg.key == m.pendingSessionKey {
+				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeError)
+			}
 			if msg.key != "" && msg.key == m.loadingKey {
 				m.loading = false
 				m.setContentText("Error loading history.")
@@ -354,6 +362,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
 			if msg.key != "" {
 				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
+				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
 			}
 			m.setBackgroundStatus("history refreshed")
 			return true, nil
@@ -363,6 +372,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.noteRequestVisibleUpdate(msg.id)
 		if msg.key != "" {
 			m.transcriptCache[msg.key] = blocks
+			m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
 		}
 		m.setBackgroundStatus("history updated")
 		return true, nil

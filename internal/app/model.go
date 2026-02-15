@@ -197,6 +197,7 @@ type Model struct {
 	notesPanelViewport         viewport.Model
 	noteMoveNoteID             string
 	noteMoveReturnMode         uiMode
+	uiLatency                  *uiLatencyTracker
 }
 
 type newSessionTarget struct {
@@ -254,7 +255,7 @@ type confirmAction struct {
 	sessionIDs  []string
 }
 
-func NewModel(client *client.Client) Model {
+func NewModel(client *client.Client, opts ...ModelOption) Model {
 	vp := viewport.New(viewport.WithWidth(minViewportWidth), viewport.WithHeight(minContentHeight-1))
 	vp.SetContent("No sessions.")
 	notesPanelVP := viewport.New(viewport.WithWidth(minViewportWidth), viewport.WithHeight(minContentHeight-1))
@@ -272,7 +273,7 @@ func NewModel(client *client.Client) Model {
 	now := time.Now().UTC()
 	chatAddon := NewChatInputAddon(minViewportWidth, 8)
 
-	return Model{
+	model := Model{
 		workspaceAPI:               api,
 		sessionAPI:                 api,
 		notesAPI:                   api,
@@ -331,7 +332,14 @@ func NewModel(client *client.Client) Model {
 		contextMenu:                NewContextMenuController(),
 		confirm:                    NewConfirmController(),
 		notesByScope:               map[types.NoteScope][]*types.Note{},
+		uiLatency:                  newUILatencyTracker(nil),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&model)
+		}
+	}
+	return model
 }
 
 func Run(client *client.Client) error {
@@ -371,6 +379,9 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	startedAt := time.Now()
+	defer m.recordUILatencySpan(uiLatencySpanModelUpdate, startedAt)
+
 	switch msg := msg.(type) {
 	case tickMsg:
 		return m, m.handleTick(msg)
@@ -528,6 +539,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) View() tea.View {
+	startedAt := time.Now()
+	defer m.recordUILatencySpan(uiLatencySpanModelView, startedAt)
+
 	rightView := m.renderRightPaneView()
 	body := m.renderBodyWithSidebar(rightView)
 	statusLine := m.renderStatusLineView()
@@ -686,11 +700,13 @@ func (m *Model) onSelectionChangedImmediate() tea.Cmd {
 func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	item := m.selectedItem()
 	if item == nil {
+		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
 		m.resetStream()
 		m.setContentText("No sessions.")
 		return m.batchWithNotesPanelSync(nil)
 	}
 	if item.kind == sidebarWorkspace {
+		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
 		stateChanged := false
 		maybeID := item.workspaceID()
 		if maybeID == unassignedWorkspaceID {
@@ -715,6 +731,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		return m.batchWithNotesPanelSync(nil)
 	}
 	if item.kind == sidebarWorktree {
+		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
 		stateChanged := false
 		wsID := item.workspaceID()
 		if wsID != "" && wsID != m.appState.ActiveWorkspaceID {
@@ -736,6 +753,7 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		return m.batchWithNotesPanelSync(nil)
 	}
 	if !item.isSession() {
+		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
 		return m.batchWithNotesPanelSync(nil)
 	}
 	draftChanged := false
@@ -806,22 +824,26 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	if item == nil || item.session == nil {
 		return nil
 	}
+	token := item.key()
+	m.startUILatencyAction(uiLatencyActionSwitchSession, token)
+
 	id := item.session.ID
 	m.resetStream()
 	m.pendingApproval = nil
-	m.pendingSessionKey = item.key()
+	m.pendingSessionKey = token
 	m.setStatusMessage("loading " + id)
 	m.scrollOnLoad = true
-	if cached, ok := m.transcriptCache[item.key()]; ok {
+	if cached, ok := m.transcriptCache[token]; ok {
 		m.setSnapshotBlocks(cached)
 		m.loading = false
 		m.loadingKey = ""
+		m.finishUILatencyAction(uiLatencyActionSwitchSession, token, uiLatencyOutcomeCacheHit)
 	} else {
 		m.loading = true
-		m.loadingKey = item.key()
+		m.loadingKey = token
 		m.setLoadingContent()
 	}
-	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, item.key(), maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
+	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, token, maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
 	if isActiveStatus(item.session.Status) {
 		if shouldStreamItems(item.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
@@ -2390,6 +2412,9 @@ func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
 }
 
 func (m *Model) toggleSidebar() {
+	m.startUILatencyAction(uiLatencyActionToggleSessionsSidebar, "")
+	defer m.finishUILatencyAction(uiLatencyActionToggleSessionsSidebar, "", uiLatencyOutcomeOK)
+
 	m.appState.SidebarCollapsed = !m.appState.SidebarCollapsed
 	m.hasAppState = true
 	m.updateDelegate()
@@ -2870,6 +2895,9 @@ func (m *Model) enterCompose(sessionID string) {
 }
 
 func (m *Model) exitCompose(status string) {
+	m.startUILatencyAction(uiLatencyActionExitCompose, "")
+	defer m.finishUILatencyAction(uiLatencyActionExitCompose, "", uiLatencyOutcomeOK)
+
 	m.saveCurrentComposeDraft()
 	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeNormal
@@ -3206,6 +3234,12 @@ func (m *Model) sectionOffsetsCached() []int {
 }
 
 func (m *Model) enterNewSession() bool {
+	outcome := uiLatencyOutcomeOK
+	m.startUILatencyAction(uiLatencyActionOpenNewSession, "")
+	defer func() {
+		m.finishUILatencyAction(uiLatencyActionOpenNewSession, "", outcome)
+	}()
+
 	item := m.selectedItem()
 	workspaceID := ""
 	worktreeID := ""
@@ -3222,6 +3256,7 @@ func (m *Model) enterNewSession() bool {
 		worktreeID = m.appState.ActiveWorktreeID
 	}
 	if workspaceID == "" {
+		outcome = uiLatencyOutcomeValidation
 		m.setValidationStatus("select a workspace or worktree")
 		return false
 	}

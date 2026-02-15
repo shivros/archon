@@ -16,6 +16,9 @@ const (
 )
 
 func (m *Model) toggleNotesPanel() tea.Cmd {
+	m.startUILatencyAction(uiLatencyActionToggleNotesSidebar, "")
+	defer m.finishUILatencyAction(uiLatencyActionToggleNotesSidebar, "", uiLatencyOutcomeOK)
+
 	m.notesPanelOpen = !m.notesPanelOpen
 	if m.notesPanelOpen {
 		m.setStatusMessage("notes panel opened")
