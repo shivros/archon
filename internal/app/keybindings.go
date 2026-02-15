@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 const (
@@ -102,8 +102,8 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandInputNewline:         "shift+enter",
 	KeyCommandInputWordLeft:        "ctrl+left",
 	KeyCommandInputWordRight:       "ctrl+right",
-	KeyCommandInputDeleteWordLeft:  "ctrl+backspace",
-	KeyCommandInputDeleteWordRight: "ctrl+delete",
+	KeyCommandInputDeleteWordLeft:  "alt+backspace",
+	KeyCommandInputDeleteWordRight: "alt+delete",
 	KeyCommandInputSelectAll:       "ctrl+a",
 	KeyCommandInputUndo:            "ctrl+z",
 	KeyCommandInputRedo:            "ctrl+y",

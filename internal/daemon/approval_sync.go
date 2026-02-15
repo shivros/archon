@@ -228,29 +228,7 @@ func (p *openCodeApprovalSyncProvider) SyncSessionApprovals(ctx context.Context,
 			continue
 		}
 		method := openCodePermissionMethod(permission)
-		params := map[string]any{
-			"permission_id": permission.PermissionID,
-			"type":          permission.Kind,
-		}
-		if permission.Summary != "" {
-			params["message"] = permission.Summary
-		}
-		switch method {
-		case "item/commandExecution/requestApproval":
-			if permission.Command != "" {
-				params["parsedCmd"] = permission.Command
-			}
-		case "item/fileChange/requestApproval":
-			if permission.Reason != "" {
-				params["reason"] = permission.Reason
-			} else if permission.Summary != "" {
-				params["reason"] = permission.Summary
-			}
-		case "tool/requestUserInput":
-			if permission.Summary != "" {
-				params["questions"] = []map[string]any{{"text": permission.Summary}}
-			}
-		}
+		params := openCodeApprovalParams(permission, method)
 		paramsRaw, _ := json.Marshal(params)
 		requestID := openCodePermissionRequestID(permission.PermissionID, usedIDs)
 		approvals = append(approvals, &types.Approval{

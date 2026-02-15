@@ -3,14 +3,14 @@ package app
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestSearchReducerEscExitsSearchMode(t *testing.T) {
 	m := NewModel(nil)
 	m.enterSearch()
 
-	handled, cmd := m.reduceSearchModeKey(tea.KeyMsg{Type: tea.KeyEsc})
+	handled, cmd := m.reduceSearchModeKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatalf("expected search reducer to handle esc")
 	}
@@ -36,7 +36,7 @@ func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
 	}
 	m.searchInput.SetValue("hello")
 
-	handled, cmd := m.reduceSearchModeKey(tea.KeyMsg{Type: tea.KeyF6})
+	handled, cmd := m.reduceSearchModeKey(tea.KeyPressMsg{Code: tea.KeyF6})
 	if !handled {
 		t.Fatalf("expected search reducer to handle remapped submit")
 	}
@@ -51,6 +51,20 @@ func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
 	}
 }
 
+func TestUpdateSearchModePasteUpdatesInput(t *testing.T) {
+	m := NewModel(nil)
+	m.enterSearch()
+	if m.searchInput == nil {
+		t.Fatalf("expected search input")
+	}
+	m.searchInput.Focus()
+
+	_, _ = m.Update(tea.PasteMsg{Content: "hello search"})
+	if got := m.searchInput.Value(); got != "hello search" {
+		t.Fatalf("expected search paste to update input, got %q", got)
+	}
+}
+
 func TestComposeReducerEnterEmptyShowsValidation(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("")
@@ -58,7 +72,7 @@ func TestComposeReducerEnterEmptyShowsValidation(t *testing.T) {
 		m.chatInput.SetValue("   ")
 	}
 
-	handled, cmd := m.reduceComposeInputKey(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected compose reducer to handle enter")
 	}
@@ -78,7 +92,7 @@ func TestComposeReducerNotesNewOverrideOpensAddNote(t *testing.T) {
 		KeyCommandNewSession: "ctrl+s",
 	}))
 
-	handled, cmd := m.reduceComposeInputKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected notes-new override to be handled from compose input")
 	}
@@ -93,10 +107,24 @@ func TestComposeReducerNotesNewOverrideOpensAddNote(t *testing.T) {
 	}
 }
 
+func TestUpdateComposeModePasteUpdatesInput(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.Focus()
+
+	_, _ = m.Update(tea.PasteMsg{Content: "hello compose"})
+	if got := m.chatInput.Value(); got != "hello compose" {
+		t.Fatalf("expected compose paste to update input, got %q", got)
+	}
+}
+
 func TestReduceClipboardAndSearchKeysUsesCtrlGForCopySessionID(t *testing.T) {
 	m := NewModel(nil)
 
-	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyMsg{Type: tea.KeyCtrlG})
+	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected ctrl+g to be handled for copy session id")
 	}
@@ -111,7 +139,7 @@ func TestReduceClipboardAndSearchKeysUsesCtrlGForCopySessionID(t *testing.T) {
 func TestReduceClipboardAndSearchKeysCtrlYNotReservedForCopyByDefault(t *testing.T) {
 	m := NewModel(nil)
 
-	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyMsg{Type: tea.KeyCtrlY})
+	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	if handled {
 		t.Fatalf("expected ctrl+y not to trigger copy session id by default")
 	}
@@ -123,7 +151,7 @@ func TestReduceClipboardAndSearchKeysCopySessionIDRemappable(t *testing.T) {
 		KeyCommandCopySessionID: "ctrl+y",
 	}))
 
-	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyMsg{Type: tea.KeyCtrlY})
+	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected remapped copy session id command to be handled")
 	}
@@ -139,7 +167,7 @@ func TestMenuReducerEscClosesMenu(t *testing.T) {
 		t.Fatalf("expected menu to be active")
 	}
 
-	handled, _ := m.reduceMenuMode(tea.KeyMsg{Type: tea.KeyEsc})
+	handled, _ := m.reduceMenuMode(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatalf("expected menu reducer to handle esc")
 	}
@@ -156,7 +184,7 @@ func TestWorkspaceEditReducerRequiresWorkspaceSelection(t *testing.T) {
 	}
 	m.workspacePicker.SetOptions(nil)
 
-	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected workspace edit reducer to handle enter")
 	}
@@ -177,7 +205,7 @@ func TestWorkspaceEditReducerRenameSessionEnterReturnsCommand(t *testing.T) {
 	}
 	m.renameInput.SetValue("Renamed Session")
 
-	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected workspace edit reducer to handle enter")
 	}
@@ -195,6 +223,23 @@ func TestWorkspaceEditReducerRenameSessionEnterReturnsCommand(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEditReducerRenameSessionPasteUpdatesInput(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameSession
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.Focus()
+
+	handled, _ := m.reduceWorkspaceEditModes(tea.PasteMsg{Content: "Renamed Session"})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle paste")
+	}
+	if got := m.renameInput.Value(); got != "Renamed Session" {
+		t.Fatalf("expected paste to update rename input, got %q", got)
+	}
+}
+
 func TestWorkspaceEditReducerRenameSessionSupportsRemappedSubmit(t *testing.T) {
 	m := NewModel(nil)
 	m.applyKeybindings(NewKeybindings(map[string]string{
@@ -207,7 +252,7 @@ func TestWorkspaceEditReducerRenameSessionSupportsRemappedSubmit(t *testing.T) {
 	}
 	m.renameInput.SetValue("Renamed Session")
 
-	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyF6})
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyF6})
 	if !handled {
 		t.Fatalf("expected workspace edit reducer to handle remapped submit")
 	}
@@ -227,7 +272,7 @@ func TestWorkspaceEditReducerRenameSessionRequiresSelection(t *testing.T) {
 	}
 	m.renameInput.SetValue("Renamed Session")
 
-	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected workspace edit reducer to handle enter")
 	}
@@ -249,7 +294,7 @@ func TestWorkspaceEditReducerRenameWorktreeEnterReturnsCommand(t *testing.T) {
 	}
 	m.renameInput.SetValue("Renamed Worktree")
 
-	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected workspace edit reducer to handle enter")
 	}
@@ -272,7 +317,7 @@ func TestAddWorkspaceReducerHandlesNilController(t *testing.T) {
 	m.mode = uiModeAddWorkspace
 	m.addWorkspace = nil
 
-	handled, cmd := m.reduceAddWorkspaceMode(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reduceAddWorkspaceMode(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected add workspace reducer to handle mode")
 	}
@@ -299,7 +344,7 @@ func TestPickProviderReducerEscExits(t *testing.T) {
 	m.newSession = &newSessionTarget{}
 	m.enterProviderPick()
 
-	handled, cmd := m.reducePickProviderMode(tea.KeyMsg{Type: tea.KeyEsc})
+	handled, cmd := m.reducePickProviderMode(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled {
 		t.Fatalf("expected pick provider reducer to handle esc")
 	}
@@ -322,7 +367,7 @@ func TestPickProviderReducerEnterSelectsProvider(t *testing.T) {
 	m.newSession = &newSessionTarget{}
 	m.enterProviderPick()
 
-	handled, cmd := m.reducePickProviderMode(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, cmd := m.reducePickProviderMode(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected pick provider reducer to handle enter")
 	}

@@ -7,7 +7,7 @@ import (
 
 	"control/internal/types"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
@@ -593,6 +593,8 @@ func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []
 	blocks := itemsToBlocks(items)
 	if provider == "codex" {
 		blocks = coalesceAdjacentReasoningBlocks(blocks)
+	}
+	if providerSupportsApprovals(provider) {
 		blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
 		blocks = preserveApprovalPositions(previous, blocks)
 	}

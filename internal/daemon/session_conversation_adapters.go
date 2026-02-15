@@ -341,9 +341,28 @@ func (a openCodeConversationAdapter) History(ctx context.Context, service *Sessi
 	if session == nil {
 		return nil, invalidError("session is required", nil)
 	}
+	opID := logging.NewRequestID()
+	baseFields := append(openCodeSessionLogFields(session, meta), logging.F("op_id", opID), logging.F("lines", lines))
+	if service != nil && service.logger != nil && service.logger.Enabled(logging.Debug) {
+		service.logger.Debug("opencode_history_request", baseFields...)
+	}
 	reconciler := newOpenCodeHistoryReconciler(service, session, meta)
-	if syncResult, err := reconciler.Sync(ctx, lines); err == nil && len(syncResult.items) > 0 {
-		return syncResult.items, nil
+	if syncResult, err := reconciler.Sync(ctx, lines); err == nil {
+		if len(syncResult.items) > 0 {
+			if service != nil && service.logger != nil && service.logger.Enabled(logging.Debug) {
+				service.logger.Debug("opencode_history_remote_ok",
+					append(baseFields, logging.F("items", len(syncResult.items)))...,
+				)
+			}
+			return syncResult.items, nil
+		}
+		if service != nil && service.logger != nil && service.logger.Enabled(logging.Debug) {
+			service.logger.Debug("opencode_history_remote_empty", baseFields...)
+		}
+	} else if service != nil && service.logger != nil {
+		service.logger.Warn("opencode_history_remote_failed",
+			append(append(baseFields, logging.F("fallback", "local_history")), openCodeErrorLogFields(err)...)...,
+		)
 	}
 	return a.fallback.History(ctx, service, session, meta, source, lines)
 }
@@ -363,9 +382,24 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 	if meta != nil {
 		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
 	}
+	opID := logging.NewRequestID()
+	baseFields := append(
+		openCodeSessionLogFields(session, meta),
+		logging.F("op_id", opID),
+		logging.F("input_len", len(text)),
+	)
+	baseFields = append(baseFields, openCodeRuntimeLogFields(runtimeOptions)...)
+	if service.logger != nil && service.logger.Enabled(logging.Debug) {
+		service.logger.Debug("opencode_send_start", baseFields...)
+	}
 	reconciler := newOpenCodeHistoryReconciler(service, session, meta)
 	payload := buildOpenCodeUserPayloadWithRuntime(text, runtimeOptions)
 	if err := service.manager.SendInput(session.ID, payload); err != nil {
+		if service.logger != nil {
+			service.logger.Warn("opencode_send_input_failed",
+				append(append(baseFields, logging.F("stage", "send_input")), openCodeErrorLogFields(err)...)...,
+			)
+		}
 		if errors.Is(err, ErrSessionNotFound) {
 			providerSessionID := ""
 			if meta != nil {
@@ -383,9 +417,19 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 				ProviderSessionID: providerSessionID,
 			}, session)
 			if resumeErr != nil {
+				if service.logger != nil {
+					service.logger.Warn("opencode_send_resume_failed",
+						append(append(baseFields, logging.F("stage", "resume")), openCodeErrorLogFields(resumeErr)...)...,
+					)
+				}
 				return "", invalidError(resumeErr.Error(), resumeErr)
 			}
 			if err := service.manager.SendInput(session.ID, payload); err != nil {
+				if service.logger != nil {
+					service.logger.Warn("opencode_send_retry_failed",
+						append(append(baseFields, logging.F("stage", "send_after_resume")), openCodeErrorLogFields(err)...)...,
+					)
+				}
 				reconciler.ReconcileBestEffort(ctx, "send_after_resume_error")
 				return "", invalidError(err.Error(), err)
 			}
@@ -393,6 +437,9 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 			reconciler.ReconcileBestEffort(ctx, "send_error")
 			return "", invalidError(err.Error(), err)
 		}
+	}
+	if service.logger != nil && service.logger.Enabled(logging.Debug) {
+		service.logger.Debug("opencode_send_ok", baseFields...)
 	}
 	now := time.Now().UTC()
 	if service.stores != nil && service.stores.SessionMeta != nil {
@@ -415,6 +462,11 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 	if providerSessionID == "" {
 		return nil, nil, invalidError("provider session id not available", nil)
 	}
+	opID := logging.NewRequestID()
+	baseFields := append(openCodeSessionLogFields(session, meta), logging.F("op_id", opID))
+	if service.logger != nil && service.logger.Enabled(logging.Debug) {
+		service.logger.Debug("opencode_events_subscribe_start", baseFields...)
+	}
 	client, err := newOpenCodeClient(resolveOpenCodeClientConfig(session.Provider, loadCoreConfigOrDefault()))
 	if err != nil {
 		return nil, nil, invalidError(err.Error(), err)
@@ -422,10 +474,20 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 	directory := strings.TrimSpace(session.Cwd)
 	upstream, upstreamCancel, err := client.SubscribeSessionEvents(ctx, providerSessionID, directory)
 	if err != nil && directory != "" {
+		if service.logger != nil {
+			service.logger.Warn("opencode_events_subscribe_directory_failed",
+				append(append(baseFields, logging.F("stage", "subscribe_with_directory")), openCodeErrorLogFields(err)...)...,
+			)
+		}
 		// Fallback for servers that reject directory scoping on event streams.
 		upstream, upstreamCancel, err = client.SubscribeSessionEvents(ctx, providerSessionID, "")
 	}
 	if err != nil {
+		if service.logger != nil {
+			service.logger.Warn("opencode_events_subscribe_failed",
+				append(baseFields, openCodeErrorLogFields(err)...)...,
+			)
+		}
 		return nil, nil, invalidError(err.Error(), err)
 	}
 
@@ -435,30 +497,81 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 	go func() {
 		defer close(done)
 		defer close(out)
+		startedAt := time.Now()
 		sawTurnCompleted := false
+		eventCount := 0
+		recoveredCount := 0
+		firstMethod := ""
+		lastMethod := ""
+		closeReason := "unknown"
+		defer func() {
+			if service.logger != nil && service.logger.Enabled(logging.Debug) {
+				service.logger.Debug("opencode_events_subscribe_close",
+					append(
+						baseFields,
+						logging.F("close_reason", closeReason),
+						logging.F("events", eventCount),
+						logging.F("recovered_events", recoveredCount),
+						logging.F("saw_turn_completed", sawTurnCompleted),
+						logging.F("first_method", firstMethod),
+						logging.F("last_method", lastMethod),
+						logging.F("duration_ms", time.Since(startedAt).Milliseconds()),
+					)...,
+				)
+			}
+			if service.logger != nil && closeReason == "upstream_closed" && !sawTurnCompleted && recoveredCount == 0 {
+				service.logger.Warn("opencode_events_closed_without_completion",
+					append(baseFields,
+						logging.F("events", eventCount),
+						logging.F("duration_ms", time.Since(startedAt).Milliseconds()),
+					)...,
+				)
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
+				closeReason = "context_done"
 				return
 			case event, ok := <-upstream:
 				if !ok {
+					closeReason = "upstream_closed"
 					if ctx.Err() == nil {
-						for _, recovered := range reconciler.RecoveredEvents(ctx, sawTurnCompleted) {
+						recoveredEvents := reconciler.RecoveredEvents(ctx, sawTurnCompleted)
+						recoveredCount = len(recoveredEvents)
+						for _, recovered := range recoveredEvents {
 							select {
 							case <-ctx.Done():
+								closeReason = "context_done"
 								return
 							case out <- recovered:
 							}
 						}
+						if service.logger != nil && recoveredCount > 0 {
+							service.logger.Info("opencode_events_recovered",
+								append(baseFields, logging.F("recovered_events", recoveredCount))...,
+							)
+						}
 					}
 					return
 				}
+				eventCount++
+				if eventCount == 1 {
+					firstMethod = event.Method
+				}
+				lastMethod = event.Method
 				if event.Method == "turn/completed" {
 					sawTurnCompleted = true
+				}
+				if event.Method == "error" && service.logger != nil {
+					service.logger.Warn("opencode_events_error_event",
+						append(baseFields, logging.F("event_params", string(event.Params)))...,
+					)
 				}
 				applyOpenCodeApprovalEvent(ctx, service, session, event)
 				select {
 				case <-ctx.Done():
+					closeReason = "context_done"
 					return
 				case out <- event:
 				}

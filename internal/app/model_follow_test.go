@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestViewportScrollDownFromBottomPausesFollow(t *testing.T) {
@@ -15,7 +15,7 @@ func TestViewportScrollDownFromBottomPausesFollow(t *testing.T) {
 		t.Fatalf("expected follow to start enabled")
 	}
 
-	if !m.handleViewportScroll(tea.KeyMsg{Type: tea.KeyDown}) {
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: tea.KeyDown}) {
 		t.Fatalf("expected down scroll to be handled")
 	}
 	if m.follow {
@@ -31,14 +31,14 @@ func TestViewportScrollDownAtBottomResumesFollow(t *testing.T) {
 	m.resize(120, 40)
 	seedFollowContent(&m, 200)
 
-	if !m.handleViewportScroll(tea.KeyMsg{Type: tea.KeyUp}) {
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: tea.KeyUp}) {
 		t.Fatalf("expected up scroll to be handled")
 	}
 	if m.follow {
 		t.Fatalf("expected follow to pause after scrolling up")
 	}
 
-	if !m.handleViewportScroll(tea.KeyMsg{Type: tea.KeyDown}) {
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: tea.KeyDown}) {
 		t.Fatalf("expected down scroll to be handled")
 	}
 	if !m.follow {

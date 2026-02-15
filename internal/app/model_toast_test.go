@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,8 @@ func TestViewShowsToastOverlay(t *testing.T) {
 	m.resize(100, 20)
 	m.showErrorToast("copied session id")
 
-	plain := xansi.Strip(m.View())
+	view := m.View()
+	plain := xansi.Strip(fmt.Sprint(view.Content))
 	if !strings.Contains(plain, "copied session id") {
 		t.Fatalf("expected toast text in view output: %q", plain)
 	}

@@ -218,7 +218,12 @@ func TestOpenCodeApprovalSyncProviderSyncSessionApprovals(t *testing.T) {
 					"sessionID": "remote-session",
 					"status":    "pending",
 					"type":      "command",
-					"command":   "echo hi",
+					"title":     "Run verification suite",
+					"metadata": map[string]any{
+						"command": "go test ./...",
+						"reason":  "Validate before merge",
+						"cwd":     "/repo/worktree",
+					},
 					"createdAt": "2026-02-11T01:00:00Z",
 				},
 				{
@@ -274,6 +279,16 @@ func TestOpenCodeApprovalSyncProviderSyncSessionApprovals(t *testing.T) {
 	}
 	if params["permission_id"] != "perm-pending" {
 		t.Fatalf("missing permission id in params: %#v", params)
+	}
+	if params["title"] != "Run verification suite" {
+		t.Fatalf("missing title in params: %#v", params)
+	}
+	if params["parsedCmd"] != "go test ./..." {
+		t.Fatalf("missing parsed command in params: %#v", params)
+	}
+	metadata, _ := params["metadata"].(map[string]any)
+	if metadata == nil || metadata["cwd"] != "/repo/worktree" {
+		t.Fatalf("missing metadata in params: %#v", params)
 	}
 }
 

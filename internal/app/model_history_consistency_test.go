@@ -319,3 +319,90 @@ func TestTailMsgCodexKeepsApprovalsInRelativeOrder(t *testing.T) {
 		t.Fatalf("unexpected approval order: %#v", blocks)
 	}
 }
+
+func TestHistoryMsgItemsProviderMergesPendingApprovals(t *testing.T) {
+	m := newPhase0ModelWithSession("kilocode")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	m.setApprovalsForSession("s1", []*ApprovalRequest{
+		{
+			RequestID: 31,
+			SessionID: "s1",
+			Method:    "tool/requestUserInput",
+			Summary:   "user input",
+			Detail:    "confirm deployment target",
+			CreatedAt: time.Date(2026, 2, 14, 12, 0, 0, 0, time.UTC),
+		},
+	})
+
+	msg := historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "assistant", "content": []any{map[string]any{"type": "text", "text": "I need one confirmation."}}},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected assistant + approval blocks, got %#v", blocks)
+	}
+	if blocks[0].Role != ChatRoleAgent {
+		t.Fatalf("expected assistant block first, got %#v", blocks[0])
+	}
+	if blocks[1].Role != ChatRoleApproval || blocks[1].RequestID != 31 {
+		t.Fatalf("expected approval block to be preserved, got %#v", blocks[1])
+	}
+}
+
+func TestHistoryMsgClaudeDoesNotMergeApprovals(t *testing.T) {
+	m := newPhase0ModelWithSession("claude")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	// Claude does not expose approval events through this pipeline; ensure no
+	// cross-provider approval blocks leak into Claude history rendering.
+	m.setApprovalsForSession("s1", []*ApprovalRequest{
+		{
+			RequestID: 41,
+			SessionID: "s1",
+			Method:    "tool/requestUserInput",
+			Summary:   "user input",
+			Detail:    "this should not render for claude",
+			CreatedAt: time.Date(2026, 2, 14, 12, 1, 0, 0, time.UTC),
+		},
+	})
+
+	msg := historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "assistant", "content": []any{map[string]any{"type": "text", "text": "Claude reply."}}},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected only assistant block, got %#v", blocks)
+	}
+	if blocks[0].Role != ChatRoleAgent {
+		t.Fatalf("expected assistant role, got %#v", blocks[0])
+	}
+}

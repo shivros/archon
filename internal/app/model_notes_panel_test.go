@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
@@ -119,10 +119,9 @@ func TestMouseReducerNotesPanelCopyClickHandled(t *testing.T) {
 		t.Fatalf("expected panel to be visible")
 	}
 	x := layout.panelStart + span.CopyStart
-	y := span.CopyLine - m.notesPanelViewport.YOffset + 1
-	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	y := span.CopyLine - m.notesPanelViewport.YOffset() + 1
+	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      x,
 		Y:      y,
 	}, layout)
@@ -162,10 +161,9 @@ func TestMouseReducerNotesPanelMoveClickOpensMovePicker(t *testing.T) {
 		t.Fatalf("expected panel to be visible")
 	}
 	x := layout.panelStart + span.MoveStart
-	y := span.MoveLine - m.notesPanelViewport.YOffset + 1
-	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	y := span.MoveLine - m.notesPanelViewport.YOffset() + 1
+	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      x,
 		Y:      y,
 	}, layout)
@@ -192,7 +190,7 @@ func TestMouseReducerNotesPanelDeleteClickOpensConfirm(t *testing.T) {
 	m.notesPanelBlocks = []ChatBlock{
 		{ID: "n1", Role: ChatRoleSessionNote, Text: "delete me"},
 	}
-	m.notesPanelViewport.Width = 80
+	m.notesPanelViewport.SetWidth(80)
 	m.notesPanelWidth = 80
 	m.renderNotesPanel()
 	if len(m.notesPanelSpans) != 1 {
@@ -207,10 +205,9 @@ func TestMouseReducerNotesPanelDeleteClickOpensConfirm(t *testing.T) {
 		t.Fatalf("expected panel to be visible")
 	}
 	x := layout.panelStart + span.DeleteStart
-	y := span.DeleteLine - m.notesPanelViewport.YOffset + 1
-	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	y := span.DeleteLine - m.notesPanelViewport.YOffset() + 1
+	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      x,
 		Y:      y,
 	}, layout)
@@ -237,7 +234,7 @@ func TestNotesModeKeyboardFilterToggle(t *testing.T) {
 	if !m.notesFilters.ShowWorkspace {
 		t.Fatalf("expected workspace filter enabled by default")
 	}
-	handled, _ := m.reduceNotesModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	handled, _ := m.reduceNotesModeKey(tea.KeyPressMsg{Text: "1"})
 	if !handled {
 		t.Fatalf("expected key to be handled")
 	}
@@ -278,9 +275,8 @@ func TestMouseReducerNotesPanelFilterToggleHandled(t *testing.T) {
 	if filterRow < 0 || filterCol < 0 {
 		t.Fatalf("expected filter token in panel view, got %q", xansi.Strip(m.notesPanelViewport.View()))
 	}
-	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	handled := m.reduceNotesPanelLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      layout.panelStart + filterCol,
 		Y:      filterRow,
 	}, layout)

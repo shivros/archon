@@ -1,13 +1,14 @@
 package app
 
 import (
+	"os"
 	"strings"
 	"sync"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
-	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -59,7 +60,7 @@ func getRenderer(width int) *glamour.TermRenderer {
 
 func buildStyleConfig() glamouransi.StyleConfig {
 	var base glamouransi.StyleConfig
-	if lipgloss.HasDarkBackground() {
+	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
 		base = styles.DarkStyleConfig
 	} else {
 		base = styles.LightStyleConfig

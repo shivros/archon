@@ -17,6 +17,7 @@ type ApprovalRequest struct {
 	Method    string
 	Summary   string
 	Detail    string
+	Context   []string
 	CreatedAt time.Time
 }
 
@@ -26,43 +27,104 @@ type ApprovalResolution struct {
 	Method     string
 	Summary    string
 	Detail     string
+	Context    []string
 	Decision   string
 	ResolvedAt time.Time
 }
 
+type approvalPresentation struct {
+	Summary string
+	Detail  string
+	Context []string
+}
+
 func approvalSummary(method string, params map[string]any) (string, string) {
+	presentation := approvalPresentationFromParams(method, params)
+	return presentation.Summary, presentation.Detail
+}
+
+func approvalPresentationFromParams(method string, params map[string]any) approvalPresentation {
 	switch method {
 	case "item/commandExecution/requestApproval":
-		cmd := asString(params["parsedCmd"])
+		metadata, _ := params["metadata"].(map[string]any)
+		cmd := approvalFirstNonEmptyString(params, metadata, "parsedCmd", "command", "cmd")
 		if cmd == "" {
-			cmd = asString(params["command"])
+			p := approvalPresentation{
+				Summary: "command execution",
+				Context: approvalSharedContextLines(params, metadata),
+			}
+			if reason := approvalFirstNonEmptyString(params, metadata, "reason", "message", "title", "description"); reason != "" {
+				approvalAppendContextLine(&p.Context, "Reason: "+reason)
+			}
+			return p
 		}
-		cmd = strings.TrimSpace(cmd)
-		if cmd == "" {
-			return "command execution", ""
+		p := approvalPresentation{
+			Summary: "command",
+			Detail:  cmd,
+			Context: approvalSharedContextLines(params, metadata),
 		}
-		return "command", cmd
+		if reason := approvalFirstNonEmptyString(params, metadata, "reason", "message", "title", "description"); reason != "" && !strings.EqualFold(reason, cmd) {
+			approvalAppendContextLine(&p.Context, "Reason: "+reason)
+		}
+		return p
 	case "item/fileChange/requestApproval":
-		reason := strings.TrimSpace(asString(params["reason"]))
-		if reason != "" {
-			return "file change", reason
+		metadata, _ := params["metadata"].(map[string]any)
+		reason := approvalFirstNonEmptyString(params, metadata, "reason", "message", "title", "description")
+		p := approvalPresentation{
+			Summary: "file change",
+			Detail:  reason,
+			Context: approvalSharedContextLines(params, metadata),
 		}
-		return "file change", ""
+		for _, path := range approvalExtractPaths(params, metadata) {
+			approvalAppendContextLine(&p.Context, "Path: "+path)
+		}
+		return p
 	case "tool/requestUserInput":
-		if questions, ok := params["questions"].([]any); ok {
-			for _, q := range questions {
-				if qMap, ok := q.(map[string]any); ok {
-					text := strings.TrimSpace(asString(qMap["text"]))
-					if text != "" {
-						return "user input", text
-					}
-				}
+		metadata, _ := params["metadata"].(map[string]any)
+		p := approvalPresentation{
+			Summary: "user input",
+			Context: approvalSharedContextLines(params, metadata),
+		}
+		questions := approvalExtractQuestions(params, metadata)
+		if len(questions) == 0 {
+			p.Detail = approvalFirstNonEmptyString(params, metadata, "message", "title", "question", "prompt")
+			return p
+		}
+		p.Detail = questions[0]
+		for i := 1; i < len(questions); i++ {
+			approvalAppendContextLine(&p.Context, fmt.Sprintf("Question %d: %s", i+1, questions[i]))
+		}
+		if options := approvalExtractOptions(params, metadata); len(options) > 0 {
+			approvalAppendContextLine(&p.Context, "Options: "+strings.Join(options, " | "))
+		}
+		return p
+	default:
+		p := approvalPresentation{
+			Summary: "approval",
+			Context: approvalSharedContextLines(params, nil),
+		}
+		p.Detail = approvalFirstNonEmptyString(params, nil, "message", "title", "reason", "description", "parsedCmd", "command")
+		if p.Detail == "" {
+			p.Detail = approvalFirstNonEmptyString(params, nil, "question", "prompt")
+		}
+		if p.Detail == "" && strings.TrimSpace(method) != "" {
+			p.Summary = strings.TrimSpace(method)
+		}
+		if p.Detail != "" {
+			return p
+		}
+		if len(p.Context) > 0 {
+			return p
+		}
+		if questions := approvalExtractQuestions(params, nil); len(questions) > 0 {
+			p.Summary = "user input"
+			p.Detail = questions[0]
+			for i := 1; i < len(questions); i++ {
+				approvalAppendContextLine(&p.Context, fmt.Sprintf("Question %d: %s", i+1, questions[i]))
 			}
 		}
-		return "user input", ""
-	default:
+		return p
 	}
-	return "approval", ""
 }
 
 func approvalFromRecord(record *types.Approval) *ApprovalRequest {
@@ -73,13 +135,14 @@ func approvalFromRecord(record *types.Approval) *ApprovalRequest {
 	if len(record.Params) > 0 {
 		_ = json.Unmarshal(record.Params, &params)
 	}
-	summary, detail := approvalSummary(record.Method, params)
+	presentation := approvalPresentationFromParams(record.Method, params)
 	return &ApprovalRequest{
 		RequestID: record.RequestID,
 		SessionID: record.SessionID,
 		Method:    record.Method,
-		Summary:   summary,
-		Detail:    detail,
+		Summary:   presentation.Summary,
+		Detail:    presentation.Detail,
+		Context:   cloneStringSlice(presentation.Context),
 		CreatedAt: record.CreatedAt,
 	}
 }
@@ -89,6 +152,7 @@ func cloneApprovalRequest(req *ApprovalRequest) *ApprovalRequest {
 		return nil
 	}
 	copy := *req
+	copy.Context = cloneStringSlice(req.Context)
 	return &copy
 }
 
@@ -105,6 +169,7 @@ func approvalResolutionFromRequest(req *ApprovalRequest, decision string, resolv
 		Method:     req.Method,
 		Summary:    req.Summary,
 		Detail:     req.Detail,
+		Context:    cloneStringSlice(req.Context),
 		Decision:   strings.TrimSpace(strings.ToLower(decision)),
 		ResolvedAt: resolvedAt,
 	}
@@ -169,6 +234,7 @@ func cloneApprovalResolution(resolution *ApprovalResolution) *ApprovalResolution
 		return nil
 	}
 	copy := *resolution
+	copy.Context = cloneStringSlice(resolution.Context)
 	return &copy
 }
 
@@ -325,6 +391,7 @@ func approvalRequestEqual(left, right *ApprovalRequest) bool {
 		left.Method == right.Method &&
 		left.Summary == right.Summary &&
 		left.Detail == right.Detail &&
+		stringSlicesEqual(left.Context, right.Context) &&
 		left.CreatedAt.Equal(right.CreatedAt)
 }
 
@@ -337,6 +404,7 @@ func approvalResolutionEqual(left, right *ApprovalResolution) bool {
 		left.Method == right.Method &&
 		left.Summary == right.Summary &&
 		left.Detail == right.Detail &&
+		stringSlicesEqual(left.Context, right.Context) &&
 		left.Decision == right.Decision &&
 		left.ResolvedAt.Equal(right.ResolvedAt)
 }
@@ -479,6 +547,16 @@ func approvalRequestToBlock(req *ApprovalRequest) ChatBlock {
 	if detail := strings.TrimSpace(req.Detail); detail != "" {
 		lines = append(lines, "", detail)
 	}
+	for _, line := range req.Context {
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+		if len(lines) == 1 && strings.TrimSpace(req.Detail) == "" {
+			lines = append(lines, "")
+		}
+		lines = append(lines, text)
+	}
 	return ChatBlock{
 		ID:        approvalBlockID(req.RequestID),
 		Role:      ChatRoleApproval,
@@ -509,6 +587,16 @@ func approvalResolutionToBlock(resolution *ApprovalResolution) ChatBlock {
 	lines := []string{title}
 	if detail := strings.TrimSpace(resolution.Detail); detail != "" {
 		lines = append(lines, "", detail)
+	}
+	for _, line := range resolution.Context {
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+		if len(lines) == 1 && strings.TrimSpace(resolution.Detail) == "" {
+			lines = append(lines, "")
+		}
+		lines = append(lines, text)
 	}
 	return ChatBlock{
 		ID:        approvalResolutionBlockID(resolution.RequestID),
@@ -554,4 +642,201 @@ func isApprovalRole(role ChatRole) bool {
 
 func approvalSessionIDFromBlock(block ChatBlock) string {
 	return strings.TrimSpace(block.SessionID)
+}
+
+func cloneStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		out = append(out, text)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	left = cloneStringSlice(left)
+	right = cloneStringSlice(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func approvalFirstNonEmptyString(primary map[string]any, secondary map[string]any, keys ...string) string {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if primary != nil {
+			if value := strings.TrimSpace(asString(primary[key])); value != "" {
+				return value
+			}
+		}
+		if secondary != nil {
+			if value := strings.TrimSpace(asString(secondary[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func approvalExtractQuestions(primary map[string]any, secondary map[string]any) []string {
+	var questions []string
+	for _, raw := range []any{primary["questions"], primary["prompts"], secondary["questions"], secondary["prompts"]} {
+		entries, ok := raw.([]any)
+		if !ok {
+			continue
+		}
+		for _, entry := range entries {
+			switch typed := entry.(type) {
+			case string:
+				text := strings.TrimSpace(typed)
+				if text == "" {
+					continue
+				}
+				questions = append(questions, text)
+			case map[string]any:
+				text := approvalFirstNonEmptyString(typed, nil, "text", "prompt", "question", "title", "message")
+				if text == "" {
+					continue
+				}
+				questions = append(questions, text)
+			}
+		}
+	}
+	return dedupeStrings(questions)
+}
+
+func approvalExtractOptions(primary map[string]any, secondary map[string]any) []string {
+	var values []string
+	for _, container := range []map[string]any{primary, secondary} {
+		if container == nil {
+			continue
+		}
+		for _, key := range []string{"options", "choices"} {
+			entries, ok := container[key].([]any)
+			if !ok {
+				continue
+			}
+			for _, entry := range entries {
+				switch typed := entry.(type) {
+				case string:
+					text := strings.TrimSpace(typed)
+					if text == "" {
+						continue
+					}
+					values = append(values, text)
+				case map[string]any:
+					label := approvalFirstNonEmptyString(typed, nil, "label", "name", "value")
+					if label != "" {
+						values = append(values, label)
+					}
+				}
+			}
+		}
+	}
+	return dedupeStrings(values)
+}
+
+func approvalExtractPaths(primary map[string]any, secondary map[string]any) []string {
+	var paths []string
+	appendPath := func(raw string) {
+		text := strings.TrimSpace(raw)
+		if text == "" {
+			return
+		}
+		paths = append(paths, text)
+	}
+	appendFromArray := func(raw any) {
+		entries, ok := raw.([]any)
+		if !ok {
+			return
+		}
+		for _, entry := range entries {
+			switch typed := entry.(type) {
+			case string:
+				appendPath(typed)
+			case map[string]any:
+				appendPath(approvalFirstNonEmptyString(typed, nil, "path", "file", "target"))
+			}
+		}
+	}
+
+	for _, container := range []map[string]any{primary, secondary} {
+		if container == nil {
+			continue
+		}
+		appendPath(approvalFirstNonEmptyString(container, nil, "path", "file"))
+		appendFromArray(container["paths"])
+		appendFromArray(container["files"])
+		appendFromArray(container["changes"])
+	}
+	return dedupeStrings(paths)
+}
+
+func approvalSharedContextLines(params map[string]any, metadata map[string]any) []string {
+	lines := make([]string, 0, 4)
+	if permissionID := approvalFirstNonEmptyString(params, metadata, "permission_id", "permissionID"); permissionID != "" {
+		approvalAppendContextLine(&lines, "Permission: "+permissionID)
+	}
+	if sessionID := approvalFirstNonEmptyString(params, metadata, "session_id", "sessionID"); sessionID != "" {
+		approvalAppendContextLine(&lines, "Provider session: "+sessionID)
+	}
+	if directory := approvalFirstNonEmptyString(params, metadata, "cwd", "directory", "workdir", "workspace"); directory != "" {
+		approvalAppendContextLine(&lines, "Directory: "+directory)
+	}
+	return lines
+}
+
+func approvalAppendContextLine(lines *[]string, line string) {
+	text := strings.TrimSpace(line)
+	if text == "" {
+		return
+	}
+	for _, existing := range *lines {
+		if strings.EqualFold(strings.TrimSpace(existing), text) {
+			return
+		}
+	}
+	*lines = append(*lines, text)
+}
+
+func dedupeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		key := strings.ToLower(text)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, text)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type mouseLayout struct {
@@ -45,17 +45,17 @@ func (m *Model) resolveMouseLayout() mouseLayout {
 
 func (m *Model) mouseOverInput(y int) bool {
 	if m.mode == uiModeCompose && m.chatInput != nil {
-		start := m.viewport.Height + 2
+		start := m.viewport.Height() + 2
 		end := start + m.chatInput.Height() - 1
 		return y >= start && y <= end
 	}
 	if m.mode == uiModeAddNote && m.noteInput != nil {
-		start := m.viewport.Height + 2
+		start := m.viewport.Height() + 2
 		end := start + m.noteInput.Height() - 1
 		return y >= start && y <= end
 	}
 	if m.mode == uiModeSearch && m.searchInput != nil {
-		start := m.viewport.Height + 2
+		start := m.viewport.Height() + 2
 		end := start + m.searchInput.Height() - 1
 		return y >= start && y <= end
 	}
@@ -79,8 +79,9 @@ func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, layout
 		return false
 	}
 	height := len(strings.Split(popup, "\n"))
-	if msg.X >= layout.rightStart {
-		if pickerRow, ok := composePickerRowForClick(msg.Y, row, height); ok {
+	mouse := msg.Mouse()
+	if mouse.X >= layout.rightStart {
+		if pickerRow, ok := composePickerRowForClick(mouse.Y, row, height); ok {
 			if m.composeOptionPickerHandleClick(pickerRow) {
 				cmd := m.applyComposeOptionSelection(m.composeOptionPickerSelectedID())
 				m.closeComposeOptionPicker()
@@ -116,10 +117,11 @@ func composePickerRowForClick(y, row, height int) (int, bool) {
 }
 
 func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if m.mode != uiModeCompose || msg.X < layout.rightStart || !m.mouseOverComposeControls(msg.Y) {
+	mouse := msg.Mouse()
+	if m.mode != uiModeCompose || mouse.X < layout.rightStart || !m.mouseOverComposeControls(mouse.Y) {
 		return false
 	}
-	col := msg.X - layout.rightStart
+	col := mouse.X - layout.rightStart
 	for _, span := range m.composeControlSpans() {
 		if col < span.start || col > span.end {
 			continue
@@ -139,7 +141,8 @@ func (m *Model) reduceContextMenuLeftPressMouse(msg tea.MouseMsg) bool {
 	if m.contextMenu == nil || !m.contextMenu.IsOpen() {
 		return false
 	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	mouse := msg.Mouse()
+	if mouse.Button != tea.MouseLeft {
 		return false
 	}
 	if handled, action := m.contextMenu.HandleMouse(msg, m.width, m.height-1); handled {
@@ -150,18 +153,19 @@ func (m *Model) reduceContextMenuLeftPressMouse(msg tea.MouseMsg) bool {
 		}
 		return true
 	}
-	if !m.contextMenu.Contains(msg.X, msg.Y, m.width, m.height-1) {
+	if !m.contextMenu.Contains(mouse.X, mouse.Y, m.width, m.height-1) {
 		m.contextMenu.Close()
 	}
 	return false
 }
 
 func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonRight {
+	mouse := msg.Mouse()
+	if mouse.Button != tea.MouseRight {
 		return false
 	}
-	if layout.listWidth > 0 && msg.X < layout.listWidth && m.sidebar != nil {
-		if entry := m.sidebar.ItemAtRow(msg.Y); entry != nil {
+	if layout.listWidth > 0 && mouse.X < layout.listWidth && m.sidebar != nil {
+		if entry := m.sidebar.ItemAtRow(mouse.Y); entry != nil {
 			if m.menu != nil {
 				m.menu.CloseAll()
 			}
@@ -169,12 +173,12 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 				switch entry.kind {
 				case sidebarWorkspace:
 					if entry.workspace != nil {
-						m.contextMenu.OpenWorkspace(entry.workspace.ID, entry.workspace.Name, msg.X, msg.Y)
+						m.contextMenu.OpenWorkspace(entry.workspace.ID, entry.workspace.Name, mouse.X, mouse.Y)
 						return true
 					}
 				case sidebarWorktree:
 					if entry.worktree != nil {
-						m.contextMenu.OpenWorktree(entry.worktree.ID, entry.worktree.WorkspaceID, entry.worktree.Name, msg.X, msg.Y)
+						m.contextMenu.OpenWorktree(entry.worktree.ID, entry.worktree.WorkspaceID, entry.worktree.Name, mouse.X, mouse.Y)
 						return true
 					}
 				case sidebarSession:
@@ -185,7 +189,7 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 							workspaceID = entry.meta.WorkspaceID
 							worktreeID = entry.meta.WorktreeID
 						}
-						m.contextMenu.OpenSession(entry.session.ID, workspaceID, worktreeID, entry.Title(), msg.X, msg.Y)
+						m.contextMenu.OpenSession(entry.session.ID, workspaceID, worktreeID, entry.Title(), mouse.X, mouse.Y)
 						return true
 					}
 				}
@@ -200,24 +204,28 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 }
 
 func (m *Model) reduceSidebarDragMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.Action == tea.MouseActionRelease {
+	mouse := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseReleaseMsg:
 		m.sidebarDragging = false
-	}
-	if msg.Action == tea.MouseActionMotion && m.sidebarDragging {
-		if layout.listWidth > 0 && msg.X < layout.listWidth && layout.barWidth > 0 && msg.X >= layout.barStart {
-			if m.sidebar != nil && m.sidebar.ScrollbarSelect(msg.Y) {
-				m.lastSidebarWheelAt = time.Now()
-				m.pendingSidebarWheel = true
-				return true
+	case tea.MouseMotionMsg:
+		if m.sidebarDragging {
+			if layout.listWidth > 0 && mouse.X < layout.listWidth && layout.barWidth > 0 && mouse.X >= layout.barStart {
+				if m.sidebar != nil && m.sidebar.ScrollbarSelect(mouse.Y) {
+					m.lastSidebarWheelAt = time.Now()
+					m.pendingSidebarWheel = true
+					return true
+				}
 			}
+			return true
 		}
-		return true
 	}
 	return false
 }
 
 func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int) bool {
-	if layout.listWidth > 0 && layout.barWidth > 0 && msg.X < layout.listWidth {
+	mouse := msg.Mouse()
+	if layout.listWidth > 0 && layout.barWidth > 0 && mouse.X < layout.listWidth {
 		now := time.Now()
 		if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
 			return true
@@ -234,13 +242,13 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 	if m.reduceModeWheelMouse(msg, layout, delta) {
 		return true
 	}
-	before := m.viewport.YOffset
+	before := m.viewport.YOffset()
 	wasFollowing := m.follow
 	m.pauseFollow(true)
 	if delta < 0 {
-		m.viewport.LineUp(3)
+		m.viewport.ScrollUp(3)
 	} else {
-		m.viewport.LineDown(3)
+		m.viewport.ScrollDown(3)
 	}
 	if !wasFollowing && before < m.maxViewportYOffset() && m.isViewportAtBottom() {
 		m.setFollowEnabled(true, true)
@@ -249,12 +257,13 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 }
 
 func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta int) bool {
-	if m.mode == uiModePickProvider && msg.X >= layout.rightStart {
+	mouse := msg.Mouse()
+	if m.mode == uiModePickProvider && mouse.X >= layout.rightStart {
 		if m.providerPicker != nil && m.providerPicker.Scroll(delta) {
 			return true
 		}
 	}
-	if msg.X >= layout.rightStart && m.mouseOverInput(msg.Y) {
+	if mouse.X >= layout.rightStart && m.mouseOverInput(mouse.Y) {
 		if m.mode == uiModeCompose && m.chatInput != nil {
 			m.pendingMouseCmd = m.chatInput.Scroll(delta)
 			return true
@@ -273,37 +282,37 @@ func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta
 			return true
 		}
 	}
-	if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil && msg.X >= layout.rightStart {
+	if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil && mouse.X >= layout.rightStart {
 		if m.groupPicker.Move(delta) {
 			return true
 		}
 	}
-	if m.noteMovePickerModeActive() && m.groupSelectPicker != nil && msg.X >= layout.rightStart {
+	if m.noteMovePickerModeActive() && m.groupSelectPicker != nil && mouse.X >= layout.rightStart {
 		if m.groupSelectPicker.Move(delta) {
 			return true
 		}
 	}
-	if (m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit) && m.workspacePicker != nil && msg.X >= layout.rightStart {
+	if (m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit) && m.workspacePicker != nil && mouse.X >= layout.rightStart {
 		if m.workspacePicker.Move(delta) {
 			return true
 		}
 	}
-	if m.mode == uiModePickWorkspaceGroupRename && m.groupSelectPicker != nil && msg.X >= layout.rightStart {
+	if m.mode == uiModePickWorkspaceGroupRename && m.groupSelectPicker != nil && mouse.X >= layout.rightStart {
 		if m.groupSelectPicker.Move(delta) {
 			return true
 		}
 	}
-	if m.mode == uiModePickWorkspaceGroupDelete && m.groupSelectPicker != nil && msg.X >= layout.rightStart {
+	if m.mode == uiModePickWorkspaceGroupDelete && m.groupSelectPicker != nil && mouse.X >= layout.rightStart {
 		if m.groupSelectPicker.Move(delta) {
 			return true
 		}
 	}
-	if m.mode == uiModePickWorkspaceGroupAssign && m.groupSelectPicker != nil && msg.X >= layout.rightStart {
+	if m.mode == uiModePickWorkspaceGroupAssign && m.groupSelectPicker != nil && mouse.X >= layout.rightStart {
 		if m.groupSelectPicker.Move(delta) {
 			return true
 		}
 	}
-	if m.mode == uiModeAssignGroupWorkspaces && m.workspaceMulti != nil && msg.X >= layout.rightStart {
+	if m.mode == uiModeAssignGroupWorkspaces && m.workspaceMulti != nil && mouse.X >= layout.rightStart {
 		if m.workspaceMulti.Move(delta) {
 			return true
 		}
@@ -329,8 +338,9 @@ func (m *Model) reduceMenuLeftPressMouse(msg tea.MouseMsg) bool {
 }
 
 func (m *Model) reduceSidebarScrollbarLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if layout.listWidth > 0 && msg.X < layout.listWidth && layout.barWidth > 0 && msg.X >= layout.barStart {
-		if m.sidebar != nil && m.sidebar.ScrollbarSelect(msg.Y) {
+	mouse := msg.Mouse()
+	if layout.listWidth > 0 && mouse.X < layout.listWidth && layout.barWidth > 0 && mouse.X >= layout.barStart {
+		if m.sidebar != nil && m.sidebar.ScrollbarSelect(mouse.Y) {
 			m.lastSidebarWheelAt = time.Now()
 			m.pendingSidebarWheel = true
 			m.sidebarDragging = true
@@ -341,7 +351,8 @@ func (m *Model) reduceSidebarScrollbarLeftPressMouse(msg tea.MouseMsg, layout mo
 }
 
 func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart || !m.mouseOverInput(msg.Y) {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart || !m.mouseOverInput(mouse.Y) {
 		return false
 	}
 	if m.mode == uiModeCompose && m.chatInput != nil {
@@ -362,30 +373,32 @@ func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 }
 
 func (m *Model) reduceTranscriptReasoningButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNormal && m.mode != uiModeCompose {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
 		return false
 	}
-	return m.toggleReasoningByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	return m.toggleReasoningByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
 }
 
 func (m *Model) reduceTranscriptApprovalButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNormal && m.mode != uiModeCompose {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
 		return false
 	}
-	col := msg.X - layout.rightStart
-	absolute := m.viewport.YOffset + msg.Y - 1
+	col := mouse.X - layout.rightStart
+	absolute := m.viewport.YOffset() + mouse.Y - 1
 	for _, span := range m.contentBlockSpans {
 		if span.Role != ChatRoleApproval {
 			continue
@@ -418,17 +431,18 @@ func (m *Model) reduceTranscriptApprovalButtonLeftPressMouse(msg tea.MouseMsg, l
 }
 
 func (m *Model) reduceGlobalStatusCopyLeftPressMouse(msg tea.MouseMsg) bool {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	mouse := msg.Mouse()
+	if mouse.Button != tea.MouseLeft {
 		return false
 	}
-	if !m.isStatusLineMouseRow(msg.Y) {
+	if !m.isStatusLineMouseRow(mouse.Y) {
 		return false
 	}
 	start, end, ok := m.statusLineStatusHitbox()
 	if !ok {
 		return false
 	}
-	if !isStatusLineMouseCol(msg.X, start, end) {
+	if !isStatusLineMouseCol(mouse.X, start, end) {
 		return false
 	}
 	text := strings.TrimSpace(m.status)
@@ -444,13 +458,9 @@ func (m *Model) isStatusLineMouseRow(y int) bool {
 	if m.height <= 0 {
 		return false
 	}
-	// Bubble Tea mouse row indexing can vary by terminal backend; accept
-	// both 0-based and 1-based bottom-row coordinates.
 	if y == m.height-1 || y == m.height {
 		return true
 	}
-	// Use rendered body height as a fallback in case runtime sizing and
-	// mouse row coordinates diverge in specific terminals.
 	bodyHeight := m.renderedBodyHeight()
 	if bodyHeight <= 0 {
 		return false
@@ -462,36 +472,36 @@ func isStatusLineMouseCol(x, start, end int) bool {
 	if x >= start && x <= end {
 		return true
 	}
-	// Terminals may report columns as 1-based; treat x-1 as a valid
-	// equivalent when matching the status hitbox.
 	col := x - 1
 	return col >= start && col <= end
 }
 
 func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() {
 		return false
 	}
-	return m.copyBlockByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	return m.copyBlockByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
 }
 
 func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNormal && m.mode != uiModeCompose {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
 		return false
 	}
-	handled, cmd := m.pinBlockByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	handled, cmd := m.pinBlockByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
 	if !handled {
 		return false
 	}
@@ -502,16 +512,17 @@ func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouse
 }
 
 func (m *Model) reduceTranscriptNotesFilterLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() {
 		return false
 	}
-	handled, cmd := m.toggleNotesFilterByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	handled, cmd := m.toggleNotesFilterByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
 	if !handled {
 		return false
 	}
@@ -522,16 +533,17 @@ func (m *Model) reduceTranscriptNotesFilterLeftPressMouse(msg tea.MouseMsg, layo
 }
 
 func (m *Model) reduceTranscriptMoveLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() {
 		return false
 	}
-	handled, cmd := m.moveNoteByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	handled, cmd := m.moveNoteByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
 	if !handled {
 		return false
 	}
@@ -542,35 +554,38 @@ func (m *Model) reduceTranscriptMoveLeftPressMouse(msg tea.MouseMsg, layout mous
 }
 
 func (m *Model) reduceTranscriptDeleteLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() {
 		return false
 	}
-	return m.deleteNoteByViewportPosition(msg.X-layout.rightStart, msg.Y-1)
+	return m.deleteNoteByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
 }
 
 func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if msg.X < layout.rightStart {
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
 		return false
 	}
 	if m.mode != uiModeNormal && m.mode != uiModeCompose {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.viewport.Height || m.mouseOverInput(msg.Y) {
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
 		return false
 	}
-	return m.selectMessageByViewportPoint(msg.X-layout.rightStart, msg.Y-1)
+	return m.selectMessageByViewportPoint(mouse.X-layout.rightStart, mouse.Y-1)
 }
 
 func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	mouse := msg.Mouse()
 	if m.mode == uiModePickProvider && m.providerPicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.providerPicker.SelectByRow(row) {
 				m.pendingMouseCmd = m.selectProvider()
 				return true
@@ -578,16 +593,16 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 		}
 	}
 	if m.mode == uiModeEditWorkspaceGroups && m.groupPicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.groupPicker.HandleClick(row) {
 				return true
 			}
 		}
 	}
 	if (m.mode == uiModePickWorkspaceRename || m.mode == uiModePickWorkspaceGroupEdit) && m.workspacePicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.workspacePicker.HandleClick(row) {
 				id := m.workspacePicker.SelectedID()
 				if id == "" {
@@ -603,8 +618,8 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 		}
 	}
 	if m.mode == uiModePickWorkspaceGroupRename && m.groupSelectPicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
 				id := m.groupSelectPicker.SelectedID()
 				if id == "" {
@@ -616,8 +631,8 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 		}
 	}
 	if m.mode == uiModePickWorkspaceGroupDelete && m.groupSelectPicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
 				id := m.groupSelectPicker.SelectedID()
 				if id == "" {
@@ -629,8 +644,8 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 		}
 	}
 	if m.mode == uiModePickWorkspaceGroupAssign && m.groupSelectPicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
 				id := m.groupSelectPicker.SelectedID()
 				if id == "" {
@@ -642,8 +657,8 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 		}
 	}
 	if m.noteMovePickerModeActive() && m.groupSelectPicker != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.groupSelectPicker.HandleClick(row) {
 				if cmd := m.handleNoteMovePickerSelection(); cmd != nil {
 					m.pendingMouseCmd = cmd
@@ -653,16 +668,16 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 		}
 	}
 	if m.mode == uiModeAssignGroupWorkspaces && m.workspaceMulti != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 && m.workspaceMulti.HandleClick(row) {
 				return true
 			}
 		}
 	}
 	if m.mode == uiModeAddWorktree && m.addWorktree != nil {
-		if msg.X >= layout.rightStart {
-			row := msg.Y - 1
+		if mouse.X >= layout.rightStart {
+			row := mouse.Y - 1
 			if row >= 0 {
 				if handled, cmd := m.addWorktree.HandleClick(row, m); handled {
 					m.pendingMouseCmd = cmd
@@ -675,9 +690,10 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 }
 
 func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if layout.listWidth > 0 && msg.X < layout.listWidth {
+	mouse := msg.Mouse()
+	if layout.listWidth > 0 && mouse.X < layout.listWidth {
 		if m.sidebar != nil {
-			m.sidebar.SelectByRow(msg.Y)
+			m.sidebar.SelectByRow(mouse.Y)
 			m.pendingMouseCmd = m.onSelectionChanged()
 			return true
 		}

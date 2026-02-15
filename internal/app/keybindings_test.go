@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestLoadKeybindingsDefaultsWhenMissing(t *testing.T) {
@@ -201,7 +201,7 @@ func TestModelKeyStringUsesRemap(t *testing.T) {
 	model.applyKeybindings(NewKeybindings(map[string]string{
 		KeyCommandToggleSidebar: "alt+b",
 	}))
-	key := model.keyString(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true})
+	key := model.keyString(tea.KeyPressMsg{Code: 'b', Mod: tea.ModAlt})
 	if key != "ctrl+b" {
 		t.Fatalf("expected remapped key ctrl+b, got %q", key)
 	}
@@ -209,7 +209,7 @@ func TestModelKeyStringUsesRemap(t *testing.T) {
 
 func TestModelKeyStringWithNilModelReturnsRaw(t *testing.T) {
 	var model *Model
-	key := model.keyString(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	key := model.keyString(tea.KeyPressMsg{Text: "q"})
 	if key != "q" {
 		t.Fatalf("expected raw key q, got %q", key)
 	}
@@ -267,7 +267,7 @@ func TestKeyMatchesOverriddenCommandRequiresOverride(t *testing.T) {
 	model := &Model{}
 	model.applyKeybindings(DefaultKeybindings())
 
-	if model.keyMatchesOverriddenCommand(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, KeyCommandNotesNew, "n") {
+	if model.keyMatchesOverriddenCommand(tea.KeyPressMsg{Text: "n"}, KeyCommandNotesNew, "n") {
 		t.Fatalf("expected default binding to not count as an override")
 	}
 }
@@ -278,7 +278,7 @@ func TestKeyMatchesOverriddenCommandMatchesRawKey(t *testing.T) {
 		KeyCommandNotesNew: "ctrl+n",
 	}))
 
-	if !model.keyMatchesOverriddenCommand(tea.KeyMsg{Type: tea.KeyCtrlN}, KeyCommandNotesNew, "n") {
+	if !model.keyMatchesOverriddenCommand(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}, KeyCommandNotesNew, "n") {
 		t.Fatalf("expected overridden notes key to match raw event")
 	}
 }

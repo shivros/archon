@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
@@ -319,7 +319,7 @@ func (m *Model) renderNotesPanel() {
 	if !m.notesPanelOpen {
 		return
 	}
-	width := m.notesPanelViewport.Width
+	width := m.notesPanelViewport.Width()
 	if width <= 0 {
 		m.notesPanelSpans = nil
 		m.notesPanelViewport.SetContent("")
@@ -346,35 +346,37 @@ func (m *Model) renderNotesPanelView() string {
 }
 
 func (m *Model) reduceNotesPanelWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta int) bool {
-	if !layout.panelVisible || layout.panelWidth <= 0 || m.notesPanelViewport.Height <= 0 {
+	if !layout.panelVisible || layout.panelWidth <= 0 || m.notesPanelViewport.Height() <= 0 {
 		return false
 	}
-	if msg.X < layout.panelStart || msg.X >= layout.panelStart+layout.panelWidth {
+	mouse := msg.Mouse()
+	if mouse.X < layout.panelStart || mouse.X >= layout.panelStart+layout.panelWidth {
 		return false
 	}
-	if msg.Y < 0 || msg.Y > m.notesPanelViewport.Height {
+	if mouse.Y < 0 || mouse.Y > m.notesPanelViewport.Height() {
 		return false
 	}
 	if delta < 0 {
-		m.notesPanelViewport.LineUp(3)
+		m.notesPanelViewport.ScrollUp(3)
 	} else {
-		m.notesPanelViewport.LineDown(3)
+		m.notesPanelViewport.ScrollDown(3)
 	}
 	return true
 }
 
 func (m *Model) reduceNotesPanelLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if !layout.panelVisible || layout.panelWidth <= 0 || m.notesPanelViewport.Height <= 0 {
+	if !layout.panelVisible || layout.panelWidth <= 0 || m.notesPanelViewport.Height() <= 0 {
 		return false
 	}
-	if msg.X < layout.panelStart || msg.X >= layout.panelStart+layout.panelWidth {
+	mouse := msg.Mouse()
+	if mouse.X < layout.panelStart || mouse.X >= layout.panelStart+layout.panelWidth {
 		return false
 	}
-	if msg.Y < 1 || msg.Y > m.notesPanelViewport.Height {
+	if mouse.Y < 1 || mouse.Y > m.notesPanelViewport.Height() {
 		return false
 	}
-	col := msg.X - layout.panelStart
-	line := msg.Y - 1
+	col := mouse.X - layout.panelStart
+	line := mouse.Y - 1
 	if handled, cmd := m.toggleNotesFilterByPanelViewportPosition(col, line); handled {
 		if cmd != nil {
 			m.pendingMouseCmd = cmd
@@ -397,7 +399,7 @@ func (m *Model) copyNotesPanelByViewportPosition(col, line int) bool {
 	if col < 0 || line < 0 || len(m.notesPanelBlocks) == 0 || len(m.notesPanelSpans) == 0 {
 		return false
 	}
-	absolute := m.notesPanelViewport.YOffset + line
+	absolute := m.notesPanelViewport.YOffset() + line
 	for _, span := range m.notesPanelSpans {
 		if span.CopyLine != absolute {
 			continue
@@ -430,7 +432,7 @@ func (m *Model) deleteNotesPanelByViewportPosition(col, line int) bool {
 	if col < 0 || line < 0 || len(m.notesPanelBlocks) == 0 || len(m.notesPanelSpans) == 0 {
 		return false
 	}
-	absolute := m.notesPanelViewport.YOffset + line
+	absolute := m.notesPanelViewport.YOffset() + line
 	for _, span := range m.notesPanelSpans {
 		if !isNoteRole(span.Role) {
 			continue
@@ -463,7 +465,7 @@ func (m *Model) toggleNotesFilterByViewportPosition(col, line int) (bool, tea.Cm
 	if col < 0 || line < 0 || len(m.contentBlockSpans) == 0 {
 		return false, nil
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	lines := m.currentLines()
 	if absolute < 0 || absolute >= len(lines) {
 		return false, nil
@@ -491,7 +493,7 @@ func (m *Model) toggleNotesFilterByPanelViewportPosition(col, line int) (bool, t
 	if col < 0 || line < 0 || len(m.notesPanelSpans) == 0 {
 		return false, nil
 	}
-	absolute := m.notesPanelViewport.YOffset + line
+	absolute := m.notesPanelViewport.YOffset() + line
 	lines := strings.Split(xansi.Strip(m.notesPanelViewport.View()), "\n")
 	if line < 0 || line >= len(lines) {
 		return false, nil

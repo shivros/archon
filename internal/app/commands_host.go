@@ -4,7 +4,7 @@ import (
 	"control/internal/client"
 	"control/internal/types"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) setStatus(status string) {

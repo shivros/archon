@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/client"
 	"control/internal/types"
@@ -227,15 +227,13 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 	if m.mode != uiModeAddNote {
 		return false, nil
 	}
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch m.keyString(keyMsg) {
+		case "ctrl+o":
+			return true, m.toggleNotesPanel()
+		}
+	} else if _, ok := msg.(tea.PasteMsg); !ok {
 		return false, nil
-	}
-	switch m.keyString(keyMsg) {
-	case "ctrl+o":
-		return true, m.toggleNotesPanel()
-	case "q":
-		return true, tea.Quit
 	}
 	controller := textInputModeController{
 		input:             m.noteInput,
@@ -247,7 +245,7 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 		},
 		onSubmit: m.submitAddNoteInput,
 	}
-	handled, cmd := controller.Update(keyMsg)
+	handled, cmd := controller.Update(msg)
 	if handled && m.consumeInputHeightChanges(m.noteInput) {
 		m.resize(m.width, m.height)
 	}

@@ -1,6 +1,6 @@
 package app
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 const (
 	chatBubblePaddingVertical   = 0

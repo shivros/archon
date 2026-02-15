@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type requestActivity struct {
@@ -128,7 +128,12 @@ func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {
 	if m.requestActivity.refreshCount == 1 || m.requestActivity.refreshCount%3 == 0 {
 		m.setBackgroundStatus("still working; refreshing thread")
 	}
-	return fetchHistoryCmd(m.sessionAPI, sessionID, key, maxViewportLines)
+	provider := m.providerForSessionID(sessionID)
+	historyCmd := fetchHistoryCmd(m.sessionAPI, sessionID, key, maxViewportLines)
+	if shouldStreamItems(provider) && providerSupportsApprovals(provider) {
+		return tea.Batch(historyCmd, fetchApprovalsCmd(m.sessionAPI, sessionID))
+	}
+	return historyCmd
 }
 
 func (m *Model) composeActivityLine(now time.Time) string {
@@ -159,7 +164,7 @@ func (m *Model) composeActivityLine(now time.Time) string {
 	if req.hiddenReasoningCount > 0 {
 		line += fmt.Sprintf(" | reasoning hidden: %d (press e)", req.hiddenReasoningCount)
 	}
-	if w := m.viewport.Width; w > 0 {
+	if w := m.viewport.Width(); w > 0 {
 		line = truncateToWidth(line, w)
 	}
 	return line

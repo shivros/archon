@@ -6,7 +6,7 @@ import (
 
 	"control/internal/types"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -18,7 +18,7 @@ func TestMouseReducerLeftPressOutsideContextMenuCloses(t *testing.T) {
 	}
 	m.contextMenu.OpenSession("s1", "", "", "Session", 2, 2)
 
-	handled := m.reduceContextMenuLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 119, Y: 39})
+	handled := m.reduceContextMenuLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 119, Y: 39})
 	if handled {
 		t.Fatalf("expected outside click to remain unhandled")
 	}
@@ -36,7 +36,7 @@ func TestMouseReducerRightPressClosesContextMenu(t *testing.T) {
 	m.contextMenu.OpenSession("s1", "", "", "Session", 2, 2)
 	layout := m.resolveMouseLayout()
 
-	handled := m.reduceContextMenuRightPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonRight, X: layout.rightStart, Y: 0}, layout)
+	handled := m.reduceContextMenuRightPressMouse(tea.MouseClickMsg{Button: tea.MouseRight, X: layout.rightStart, Y: 0}, layout)
 	if !handled {
 		t.Fatalf("expected right click to be handled")
 	}
@@ -55,9 +55,9 @@ func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	m.chatInput.Blur()
 	m.input.FocusSidebar()
 	layout := m.resolveMouseLayout()
-	y := m.viewport.Height + 2
+	y := m.viewport.Height() + 2
 
-	handled := m.reduceInputFocusLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: y}, layout)
+	handled := m.reduceInputFocusLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected compose input click to be handled")
 	}
@@ -75,7 +75,7 @@ func TestMouseReducerWheelPausesFollow(t *testing.T) {
 	m.follow = true
 	layout := m.resolveMouseLayout()
 
-	handled := m.reduceMouseWheel(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: layout.rightStart, Y: 2}, layout, 1)
+	handled := m.reduceMouseWheel(tea.MouseClickMsg{Button: tea.MouseWheelDown, X: layout.rightStart, Y: 2}, layout, 1)
 	if !handled {
 		t.Fatalf("expected wheel event to be handled")
 	}
@@ -93,14 +93,14 @@ func TestMouseReducerWheelDownToBottomResumesFollow(t *testing.T) {
 	seedFollowContent(&m, 220)
 	layout := m.resolveMouseLayout()
 
-	if !m.reduceMouseWheel(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: layout.rightStart, Y: 2}, layout, -1) {
+	if !m.reduceMouseWheel(tea.MouseClickMsg{Button: tea.MouseWheelUp, X: layout.rightStart, Y: 2}, layout, -1) {
 		t.Fatalf("expected wheel up to be handled")
 	}
 	if m.follow {
 		t.Fatalf("expected follow paused after wheel up")
 	}
 
-	if !m.reduceMouseWheel(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: layout.rightStart, Y: 2}, layout, 1) {
+	if !m.reduceMouseWheel(tea.MouseClickMsg{Button: tea.MouseWheelDown, X: layout.rightStart, Y: 2}, layout, 1) {
 		t.Fatalf("expected wheel down to be handled")
 	}
 	if !m.follow {
@@ -115,7 +115,7 @@ func TestMouseReducerPickProviderLeftClickSelects(t *testing.T) {
 	m.enterProviderPick()
 	layout := m.resolveMouseLayout()
 
-	handled := m.reduceModePickersLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: 1}, layout)
+	handled := m.reduceModePickersLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: 1}, layout)
 	if !handled {
 		t.Fatalf("expected provider click to be handled")
 	}
@@ -141,10 +141,10 @@ func TestMouseReducerTranscriptCopyClickHandlesPerMessage(t *testing.T) {
 		t.Fatalf("expected copy metadata, got %#v", span)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.CopyLine - m.viewport.YOffset + 1
+	y := span.CopyLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.CopyStart
 
-	handled := m.reduceTranscriptCopyLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptCopyLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected copy click to be handled")
 	}
@@ -171,10 +171,10 @@ func TestMouseReducerTranscriptCopyClickHandlesInNotesMode(t *testing.T) {
 		t.Fatalf("expected copy metadata, got %#v", span)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.CopyLine - m.viewport.YOffset + 1
+	y := span.CopyLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.CopyStart
 
-	handled := m.reduceTranscriptCopyLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptCopyLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected copy click to be handled in notes mode")
 	}
@@ -200,10 +200,10 @@ func TestMouseReducerTranscriptPinClickQueuesPinCommand(t *testing.T) {
 		t.Fatalf("expected pin metadata, got %#v", span)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.PinLine - m.viewport.YOffset + 1
+	y := span.PinLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.PinStart
 
-	handled := m.reduceTranscriptPinLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptPinLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected pin click to be handled")
 	}
@@ -244,10 +244,10 @@ func TestMouseReducerTranscriptMoveClickOpensMovePickerInNotesMode(t *testing.T)
 		t.Fatalf("expected move metadata, got %#v", span)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.MoveLine - m.viewport.YOffset + 1
+	y := span.MoveLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.MoveStart
 
-	handled := m.reduceTranscriptMoveLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptMoveLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected move click to be handled in notes mode")
 	}
@@ -275,10 +275,10 @@ func TestMouseReducerTranscriptDeleteClickOpensConfirmInNotesMode(t *testing.T) 
 		t.Fatalf("expected delete metadata, got %#v", span)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.DeleteLine - m.viewport.YOffset + 1
+	y := span.DeleteLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.DeleteStart
 
-	handled := m.reduceTranscriptDeleteLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptDeleteLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected delete click to be handled in notes mode")
 	}
@@ -316,11 +316,10 @@ func TestMouseReducerTranscriptNotesFilterClickTogglesWorkspace(t *testing.T) {
 		t.Fatalf("expected filter token in notes header")
 	}
 	layout := m.resolveMouseLayout()
-	y := targetLine - m.viewport.YOffset + 1
+	y := targetLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + targetCol
-	handled := m.reduceTranscriptNotesFilterLeftPressMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	handled := m.reduceTranscriptNotesFilterLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      x,
 		Y:      y,
 	}, layout)
@@ -349,10 +348,10 @@ func TestMouseReducerApprovalButtonClickSendsApprovalForRequestZero(t *testing.T
 		t.Fatalf("expected approve metadata, got %#v", span)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.ApproveLine - m.viewport.YOffset + 1
+	y := span.ApproveLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.ApproveStart
 
-	handled := m.reduceTranscriptApprovalButtonLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptApprovalButtonLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected approval click to be handled")
 	}
@@ -398,10 +397,10 @@ func TestMouseReducerApprovalButtonUsesBlockSessionWhenSidebarIsWorkspace(t *tes
 	}
 	span := m.contentBlockSpans[0]
 	layout := m.resolveMouseLayout()
-	y := span.ApproveLine - m.viewport.YOffset + 1
+	y := span.ApproveLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.ApproveStart
 
-	handled := m.reduceTranscriptApprovalButtonLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptApprovalButtonLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected approval click to be handled")
 	}
@@ -425,9 +424,9 @@ func TestMouseReducerTranscriptClickSelectsMessage(t *testing.T) {
 	}
 	first := m.contentBlockSpans[0]
 	layout := m.resolveMouseLayout()
-	y := first.CopyLine - m.viewport.YOffset + 2
+	y := first.CopyLine - m.viewport.YOffset() + 2
 
-	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: y}, layout)
+	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected transcript click to be handled")
 	}
@@ -439,8 +438,8 @@ func TestMouseReducerTranscriptClickSelectsMessage(t *testing.T) {
 	}
 
 	second := m.contentBlockSpans[1]
-	y = second.CopyLine - m.viewport.YOffset + 2
-	handled = m.reduceTranscriptSelectLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: y}, layout)
+	y = second.CopyLine - m.viewport.YOffset() + 2
+	handled = m.reduceTranscriptSelectLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected second transcript click to be handled")
 	}
@@ -460,9 +459,9 @@ func TestMouseReducerReasoningBodyClickSelectsWithoutToggle(t *testing.T) {
 	}
 	span := m.contentBlockSpans[0]
 	layout := m.resolveMouseLayout()
-	bodyY := span.CopyLine - m.viewport.YOffset + 2
+	bodyY := span.CopyLine - m.viewport.YOffset() + 2
 
-	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: bodyY}, layout)
+	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: bodyY}, layout)
 	if !handled {
 		t.Fatalf("expected body click to be handled")
 	}
@@ -492,10 +491,10 @@ func TestMouseReducerReasoningButtonClickToggles(t *testing.T) {
 		t.Fatalf("expected expand button before click, got %q", before)
 	}
 	layout := m.resolveMouseLayout()
-	y := span.ToggleLine - m.viewport.YOffset + 1
+	y := span.ToggleLine - m.viewport.YOffset() + 1
 	x := layout.rightStart + span.ToggleStart
 
-	handled := m.reduceTranscriptReasoningButtonLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptReasoningButtonLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if !handled {
 		t.Fatalf("expected reasoning button click to be handled")
 	}
@@ -522,10 +521,10 @@ func TestMouseReducerMetaLineClickDoesNotSelectMessage(t *testing.T) {
 	}
 	span := m.contentBlockSpans[0]
 	layout := m.resolveMouseLayout()
-	y := span.CopyLine - m.viewport.YOffset + 1
+	y := span.CopyLine - m.viewport.YOffset() + 1
 	x := layout.rightStart
 
-	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if handled {
 		t.Fatalf("expected meta line click to avoid selection")
 	}
@@ -545,10 +544,10 @@ func TestMouseReducerUserStatusLineClickDoesNotSelectMessage(t *testing.T) {
 	}
 	span := m.contentBlockSpans[0]
 	layout := m.resolveMouseLayout()
-	y := span.EndLine - m.viewport.YOffset + 1
+	y := span.EndLine - m.viewport.YOffset() + 1
 	x := layout.rightStart
 
-	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}, layout)
+	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
 	if handled {
 		t.Fatalf("expected status line click to avoid selection")
 	}
@@ -587,9 +586,8 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatus(t *testing.T) {
 		t.Fatalf("expected global status hitbox")
 	}
 
-	handled := m.handleMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      start,
 		Y:      m.height,
 	})
@@ -637,9 +635,8 @@ func TestMouseReducerGlobalStatusBarHelpClickDoesNotCopy(t *testing.T) {
 		t.Fatalf("expected non-empty help segment before status, got status start %d", start)
 	}
 
-	handled := m.handleMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      start - 1,
 		Y:      m.height,
 	})
@@ -698,9 +695,8 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatusOnZeroBasedBottomRow(t *tes
 		t.Fatalf("expected global status hitbox")
 	}
 
-	handled := m.handleMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      start,
 		Y:      m.height - 1,
 	})
@@ -739,9 +735,8 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatusWithOneBasedX(t *testing.T)
 		t.Fatalf("expected global status hitbox")
 	}
 
-	handled := m.handleMouse(tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
 		X:      start + 1,
 		Y:      m.height - 1,
 	})
@@ -768,7 +763,7 @@ func TestMouseReducerComposeOptionPickerClickSelectsOption(t *testing.T) {
 	}
 
 	handled := m.reduceComposeOptionPickerLeftPressMouse(
-		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: row + 1},
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: row + 1},
 		layout,
 	)
 	if !handled {
@@ -802,7 +797,7 @@ func TestMouseReducerComposeOptionPickerClickBelowPopupSelectsLastOption(t *test
 	y := row + height
 
 	handled := m.reduceComposeOptionPickerLeftPressMouse(
-		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: layout.rightStart, Y: y},
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y},
 		layout,
 	)
 	if !handled {

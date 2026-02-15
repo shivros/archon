@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -99,19 +99,20 @@ func (c *ConfirmController) HandleMouse(msg tea.MouseMsg, maxWidth, maxHeight in
 	if c == nil || !c.active {
 		return false, confirmChoiceNone
 	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	mouse := msg.Mouse()
+	if mouse.Button != tea.MouseLeft {
 		return false, confirmChoiceNone
 	}
 	x, y, width, height := c.layout(maxWidth, maxHeight)
-	if msg.X < x || msg.X >= x+width || msg.Y < y || msg.Y >= y+height {
+	if mouse.X < x || mouse.X >= x+width || mouse.Y < y || mouse.Y >= y+height {
 		return false, confirmChoiceNone
 	}
 	buttonRow := y + height - 1
-	if msg.Y != buttonRow {
+	if mouse.Y != buttonRow {
 		return true, confirmChoiceNone
 	}
 	mid := x + width/2
-	if msg.X < mid {
+	if mouse.X < mid {
 		c.selected = 0
 		return true, confirmChoiceConfirm
 	}

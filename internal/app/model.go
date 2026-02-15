@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/client"
@@ -253,9 +253,9 @@ type confirmAction struct {
 }
 
 func NewModel(client *client.Client) Model {
-	vp := viewport.New(minViewportWidth, minContentHeight-1)
+	vp := viewport.New(viewport.WithWidth(minViewportWidth), viewport.WithHeight(minContentHeight-1))
 	vp.SetContent("No sessions.")
-	notesPanelVP := viewport.New(minViewportWidth, minContentHeight-1)
+	notesPanelVP := viewport.New(viewport.WithWidth(minViewportWidth), viewport.WithHeight(minContentHeight-1))
 	notesPanelVP.SetContent("No notes.")
 
 	api := NewClientAPI(client)
@@ -351,7 +351,7 @@ func Run(client *client.Client) error {
 		conflicts := DetectKeybindingConflicts(keybindings)
 		model.enqueueStartupKeybindingConflictToasts(conflicts)
 	}
-	p := tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	p := tea.NewProgram(&model)
 	_, err = p.Run()
 	return err
 }
@@ -394,8 +394,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, m.handleConfirmChoice(choice)
 			}
-			if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-				if !m.confirm.Contains(msg.X, msg.Y, m.width, m.height-1) {
+			mouse := msg.Mouse()
+			if mouse.Button == tea.MouseLeft {
+				if !m.confirm.Contains(mouse.X, mouse.Y, m.width, m.height-1) {
 					m.confirm.Close()
 					m.pendingConfirm = confirmAction{}
 				}
@@ -464,6 +465,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.reduceAddNoteMode(msg); handled {
 		return m, cmd
 	}
+	if _, ok := msg.(tea.PasteMsg); ok {
+		if handled, cmd := m.reduceSearchModeKey(msg); handled {
+			return m, cmd
+		}
+		if handled, cmd := m.reduceComposeInputKey(msg); handled {
+			return m, cmd
+		}
+	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -513,15 +522,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) View() string {
+func (m *Model) View() tea.View {
 	rightView := m.renderRightPaneView()
 	body := m.renderBodyWithSidebar(rightView)
 	statusLine := m.renderStatusLineView()
+	var content string
 	if m.height <= 0 || m.width <= 0 {
-		return body
+		content = body
+	} else {
+		body = m.overlayTransientViews(body)
+		content = lipgloss.JoinVertical(lipgloss.Left, body, statusLine)
 	}
-	body = m.overlayTransientViews(body)
-	return lipgloss.JoinVertical(lipgloss.Left, body, statusLine)
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
+	return v
 }
 
 func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
@@ -605,14 +620,14 @@ func (m *Model) resize(width, height int) {
 		extraLines = 2
 	}
 	vpHeight := max(1, contentHeight-1-extraLines)
-	m.viewport.Width = contentWidth
-	m.viewport.Height = vpHeight
+	m.viewport.SetWidth(contentWidth)
+	m.viewport.SetHeight(vpHeight)
 	if panelVisible {
-		m.notesPanelViewport.Width = panelWidth
-		m.notesPanelViewport.Height = max(1, contentHeight-1)
+		m.notesPanelViewport.SetWidth(panelWidth)
+		m.notesPanelViewport.SetHeight(max(1, contentHeight-1))
 	} else {
-		m.notesPanelViewport.Width = 0
-		m.notesPanelViewport.Height = 0
+		m.notesPanelViewport.SetWidth(0)
+		m.notesPanelViewport.SetHeight(0)
 	}
 	if m.addWorkspace != nil {
 		m.addWorkspace.Resize(mainViewportWidth)
@@ -1696,10 +1711,10 @@ func (m *Model) usesViewport() bool {
 }
 
 func (m *Model) viewportScrollbarView() string {
-	if m.viewport.Height <= 0 {
+	if m.viewport.Height() <= 0 {
 		return ""
 	}
-	height := m.viewport.Height
+	height := m.viewport.Height()
 	total := m.viewport.TotalLineCount()
 	if total <= height || total <= 0 {
 		return strings.Repeat(" \n", max(0, height-1)) + " "
@@ -1713,7 +1728,7 @@ func (m *Model) viewportScrollbarView() string {
 	top := 0
 	denom := total - height
 	if denom > 0 && maxStart > 0 {
-		top = int(math.Round(float64(m.viewport.YOffset) / float64(denom) * float64(maxStart)))
+		top = int(math.Round(float64(m.viewport.YOffset()) / float64(denom) * float64(maxStart)))
 	}
 	if top < 0 {
 		top = 0
@@ -1745,12 +1760,12 @@ func (m *Model) setContentText(text string) {
 }
 
 func (m *Model) renderViewport() {
-	if m.viewport.Width <= 0 {
+	if m.viewport.Width() <= 0 {
 		return
 	}
-	renderWidth := m.viewport.Width
+	renderWidth := m.viewport.Width()
 	if !m.appState.SidebarCollapsed && renderWidth > 1 {
-		renderWidth--
+		renderWidth -= 1
 	}
 	selectedRenderIndex := m.selectedMessageRenderIndex()
 	needsRender := m.renderedForWidth != renderWidth ||
@@ -1944,15 +1959,15 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
-	before := m.viewport.YOffset
+	before := m.viewport.YOffset()
 	wasFollowing := m.follow
 	switch msg.String() {
 	case "up":
 		m.pauseFollow(true)
-		m.viewport.LineUp(1)
+		m.viewport.ScrollUp(1)
 	case "down":
 		m.pauseFollow(true)
-		m.viewport.LineDown(1)
+		m.viewport.ScrollDown(1)
 	case "pgup":
 		m.pauseFollow(true)
 		m.viewport.PageUp()
@@ -1987,8 +2002,8 @@ func (m *Model) toggleVisibleReasoning() bool {
 	if len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false
 	}
-	start := m.viewport.YOffset
-	end := start + m.viewport.Height - 1
+	start := m.viewport.YOffset()
+	end := start + m.viewport.Height() - 1
 	target := -1
 	for i := len(m.contentBlockSpans) - 1; i >= 0; i-- {
 		span := m.contentBlockSpans[i]
@@ -2020,7 +2035,7 @@ func (m *Model) toggleReasoningByViewportLine(line int) bool {
 	if line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
 		if span.Role != ChatRoleReasoning {
 			continue
@@ -2071,7 +2086,7 @@ func (m *Model) persistCurrentBlocks() {
 
 func (m *Model) maxViewportYOffset() int {
 	total := m.viewport.TotalLineCount()
-	maxOffset := total - m.viewport.Height
+	maxOffset := total - m.viewport.Height()
 	if maxOffset < 0 {
 		return 0
 	}
@@ -2079,7 +2094,7 @@ func (m *Model) maxViewportYOffset() int {
 }
 
 func (m *Model) isViewportAtBottom() bool {
-	return m.viewport.YOffset >= m.maxViewportYOffset()
+	return m.viewport.YOffset() >= m.maxViewportYOffset()
 }
 
 func (m *Model) setFollowEnabled(enabled, announce bool) {
@@ -2122,18 +2137,17 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 
-	if msg.Action == tea.MouseActionPress {
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			return m.reduceMouseWheel(msg, layout, -1)
-		case tea.MouseButtonWheelDown:
-			return m.reduceMouseWheel(msg, layout, 1)
-		case tea.MouseButtonLeft:
-		default:
-			return false
-		}
+	mouse := msg.Mouse()
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		return m.reduceMouseWheel(msg, layout, -1)
+	case tea.MouseWheelDown:
+		return m.reduceMouseWheel(msg, layout, 1)
+	case tea.MouseLeft:
+	default:
+		return false
 	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	if mouse.Button != tea.MouseLeft {
 		return false
 	}
 	if m.reduceMenuLeftPressMouse(msg) {
@@ -2970,7 +2984,7 @@ func (m *Model) applySearch(query string) {
 		m.setStatusMessage("no matches")
 		return
 	}
-	m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset, 1)
+	m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset(), 1)
 	if m.searchIndex < 0 {
 		m.searchIndex = 0
 	}
@@ -2994,7 +3008,7 @@ func (m *Model) moveSearch(delta int) {
 		return
 	}
 	if m.searchIndex < 0 {
-		m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset, delta)
+		m.searchIndex = selectSearchIndex(m.searchMatches, m.viewport.YOffset(), delta)
 		if m.searchIndex < 0 {
 			m.searchIndex = 0
 		}
@@ -3091,7 +3105,7 @@ func (m *Model) jumpSection(delta int) {
 		m.setValidationStatus("no sections")
 		return
 	}
-	current := m.viewport.YOffset
+	current := m.viewport.YOffset()
 	index := -1
 	if delta < 0 {
 		for i := len(offsets) - 1; i >= 0; i-- {
@@ -3232,6 +3246,10 @@ func (m *Model) providerForSessionID(sessionID string) string {
 
 func shouldStreamItems(provider string) bool {
 	return providers.CapabilitiesFor(provider).UsesItems
+}
+
+func providerSupportsApprovals(provider string) bool {
+	return providers.CapabilitiesFor(provider).SupportsApprovals
 }
 
 func (m *Model) composeSessionID() string {

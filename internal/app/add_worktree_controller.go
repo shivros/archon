@@ -8,7 +8,7 @@ import (
 	"control/internal/client"
 	"control/internal/types"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type worktreeAddMode int
@@ -210,8 +210,9 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 		return true, nil
 	}
 
-	if keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) > 0 {
-		switch strings.ToLower(string(keyMsg.Runes[0])) {
+	key := keyMsg.Key()
+	if key.Text != "" {
+		switch strings.ToLower(key.Text) {
 		case "n":
 			c.choice = 0
 			return true, c.advance(host)

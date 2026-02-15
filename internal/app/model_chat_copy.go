@@ -3,14 +3,14 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) copyBlockByViewportPosition(col, line int) bool {
 	if col < 0 || line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
 		if span.CopyLine != absolute {
 			continue
@@ -43,7 +43,7 @@ func (m *Model) pinBlockByViewportPosition(col, line int) (bool, tea.Cmd) {
 	if col < 0 || line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false, nil
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
 		if span.PinLine != absolute {
 			continue
@@ -88,7 +88,7 @@ func (m *Model) deleteNoteByViewportPosition(col, line int) bool {
 	if col < 0 || line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
 		if !isNoteRole(span.Role) {
 			continue
@@ -132,7 +132,7 @@ func (m *Model) toggleReasoningByViewportPosition(col, line int) bool {
 	if col < 0 || line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
 		if span.Role != ChatRoleReasoning {
 			continue

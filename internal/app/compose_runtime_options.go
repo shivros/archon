@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/types"
 )
@@ -218,9 +218,9 @@ func (m *Model) normalizeComposeRuntimeOptionsForModel(provider string, options 
 
 func (m *Model) composeControlsRow() int {
 	if m.chatInput == nil {
-		return m.viewport.Height + 2
+		return m.viewport.Height() + 2
 	}
-	return m.viewport.Height + 2 + m.chatInput.Height()
+	return m.viewport.Height() + 2 + m.chatInput.Height()
 }
 
 func (m *Model) openComposeOptionPicker(target composeOptionKind) bool {

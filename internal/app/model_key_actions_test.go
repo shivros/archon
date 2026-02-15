@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/types"
 )
@@ -218,7 +218,7 @@ func TestNotesNewOverrideWorksFromSidebarSelection(t *testing.T) {
 		KeyCommandNewSession: "ctrl+s",
 	}))
 
-	handled, cmd := m.reduceNormalModeKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	handled, cmd := m.reduceNormalModeKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected notes-new override to be handled")
 	}
@@ -246,7 +246,7 @@ func TestSpaceDoesNotEnableSessionMultiSelect(t *testing.T) {
 	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarSession)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	if cmd != nil {
 		t.Fatalf("expected no command for space key in normal mode")
 	}
@@ -273,6 +273,6 @@ func selectSidebarItemKind(t *testing.T, m *Model, kind sidebarItemKind) {
 	t.Fatalf("did not find sidebar item kind %v", kind)
 }
 
-func keyRune(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+func keyRune(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: string(r)}
 }

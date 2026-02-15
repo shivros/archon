@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/types"
 )
@@ -15,7 +15,7 @@ func TestPhase0ComposeSendKeepsLocalState(t *testing.T) {
 	m.enterCompose("s1")
 	m.chatInput.SetValue("hello from compose")
 
-	nextModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	nextModel, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	next := asModel(t, nextModel)
 
 	if cmd == nil {

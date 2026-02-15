@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 func (m *Model) renderRightPaneView() string {
@@ -23,7 +23,7 @@ func (m *Model) renderRightPaneView() string {
 		rightLines = append(rightLines, activityStyle.Render(activity))
 	}
 	if inputLine != "" {
-		dividerWidth := m.viewport.Width
+		dividerWidth := m.viewport.Width()
 		if dividerWidth <= 0 {
 			dividerWidth = max(1, m.width)
 		}

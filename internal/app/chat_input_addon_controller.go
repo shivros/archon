@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/types"
 )
@@ -155,7 +155,7 @@ func (c *ChatInputAddonController) openComposeOptionPicker(m *Model, target comp
 	if len(options) == 0 {
 		return false
 	}
-	return c.addon.OpenOptionPicker(target, options, selectedID, m.viewport.Width)
+	return c.addon.OpenOptionPicker(target, options, selectedID, m.viewport.Width())
 }
 
 func (c *ChatInputAddonController) closeComposeOptionPicker() {

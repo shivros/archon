@@ -102,6 +102,7 @@ type openCodePermission struct {
 	Summary      string
 	Command      string
 	Reason       string
+	Metadata     map[string]any
 	CreatedAt    time.Time
 	Raw          map[string]any
 }

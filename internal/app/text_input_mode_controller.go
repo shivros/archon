@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type textInputModeController struct {
@@ -16,44 +16,51 @@ type textInputModeController struct {
 	preHandle         func(key string, msg tea.KeyMsg) (bool, tea.Cmd)
 }
 
-func (c textInputModeController) Update(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 	if c.input == nil {
 		return true, nil
 	}
-	key := msg.String()
+	keyMsg, isKey := msg.(tea.KeyMsg)
+	if !isKey {
+		if c.beforeInputUpdate != nil {
+			c.beforeInputUpdate()
+		}
+		return true, c.input.Update(msg)
+	}
+	key := keyMsg.String()
 	if c.keyString != nil {
-		key = c.keyString(msg)
+		key = c.keyString(keyMsg)
 	}
 	if c.preHandle != nil {
-		if handled, cmd := c.preHandle(key, msg); handled {
+		if handled, cmd := c.preHandle(key, keyMsg); handled {
 			return true, cmd
 		}
 	}
-	if c.matchesCommand(msg, KeyCommandInputSelectAll, "ctrl+a") {
+	if c.matchesCommand(keyMsg, KeyCommandInputSelectAll, "ctrl+a") {
 		c.input.SelectAll()
 		return true, nil
 	}
-	if c.matchesCommand(msg, KeyCommandInputUndo, "ctrl+z") {
+	if c.matchesCommand(keyMsg, KeyCommandInputUndo, "ctrl+z") {
 		c.input.Undo()
 		return true, nil
 	}
-	if c.matchesCommand(msg, KeyCommandInputRedo, "ctrl+y") || key == "ctrl+shift+z" {
+	if c.matchesCommand(keyMsg, KeyCommandInputRedo, "ctrl+y") || key == "ctrl+shift+z" {
 		c.input.Redo()
 		return true, nil
 	}
-	if c.matchesCommand(msg, KeyCommandInputWordLeft, "ctrl+left") || key == "alt+left" || key == "alt+b" {
+	if c.matchesCommand(keyMsg, KeyCommandInputWordLeft, "ctrl+left") || key == "alt+left" || key == "alt+b" {
 		return true, c.input.MoveWordLeft()
 	}
-	if c.matchesCommand(msg, KeyCommandInputWordRight, "ctrl+right") || key == "alt+right" || key == "alt+f" {
+	if c.matchesCommand(keyMsg, KeyCommandInputWordRight, "ctrl+right") || key == "alt+right" || key == "alt+f" {
 		return true, c.input.MoveWordRight()
 	}
-	if c.matchesCommand(msg, KeyCommandInputDeleteWordLeft, "ctrl+backspace") || key == "alt+backspace" || key == "ctrl+w" {
+	if c.matchesCommand(keyMsg, KeyCommandInputDeleteWordLeft, "alt+backspace") || key == "ctrl+w" {
 		return true, c.input.DeleteWordLeft()
 	}
-	if c.matchesCommand(msg, KeyCommandInputDeleteWordRight, "ctrl+delete") || key == "alt+delete" || key == "alt+d" {
+	if c.matchesCommand(keyMsg, KeyCommandInputDeleteWordRight, "alt+delete") || key == "alt+d" {
 		return true, c.input.DeleteWordRight()
 	}
-	if c.matchesCommand(msg, KeyCommandInputNewline, "shift+enter") || key == "ctrl+enter" {
+	if c.matchesCommand(keyMsg, KeyCommandInputNewline, "shift+enter") || key == "ctrl+enter" {
 		return true, c.input.InsertNewline()
 	}
 	switch key {
@@ -63,7 +70,7 @@ func (c textInputModeController) Update(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	}
-	if c.matchesCommand(msg, KeyCommandInputSubmit, "enter") {
+	if c.matchesCommand(keyMsg, KeyCommandInputSubmit, "enter") {
 		if c.onSubmit != nil {
 			return true, c.onSubmit(strings.TrimSpace(c.input.Value()))
 		}

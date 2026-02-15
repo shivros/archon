@@ -177,7 +177,12 @@ func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 					"sessionID": "session-1",
 					"status":    "pending",
 					"type":      "command",
-					"command":   "echo one",
+					"title":     "Run verification suite",
+					"metadata": map[string]any{
+						"command": "go test ./...",
+						"reason":  "Validate before merge",
+						"cwd":     "/repo/worktree",
+					},
 					"createdAt": "2026-02-12T01:00:00Z",
 				},
 				{
@@ -215,6 +220,15 @@ func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 	}
 	if len(permissions) != 1 || permissions[0].PermissionID != "perm-1" {
 		t.Fatalf("unexpected permissions: %#v", permissions)
+	}
+	if permissions[0].Summary != "Run verification suite" {
+		t.Fatalf("expected summary from title, got %#v", permissions[0])
+	}
+	if permissions[0].Command != "go test ./..." {
+		t.Fatalf("expected command from metadata, got %#v", permissions[0])
+	}
+	if permissions[0].Reason != "Validate before merge" {
+		t.Fatalf("expected reason from metadata, got %#v", permissions[0])
 	}
 	if err := client.ReplyPermission(context.Background(), "", "perm-1", "approve", directory); err != nil {
 		t.Fatalf("ReplyPermission: %v", err)

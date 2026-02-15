@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/types"
 )
@@ -264,7 +264,7 @@ func TestReduceNotesModeKeyNotesNewDefault(t *testing.T) {
 	m.mode = uiModeNotes
 	m.setNotesRootScope(noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: "ws1"})
 
-	handled, cmd := m.reduceNotesModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	handled, cmd := m.reduceNotesModeKey(tea.KeyPressMsg{Text: "n"})
 	if !handled {
 		t.Fatalf("expected notes key reducer to handle notes new")
 	}
@@ -285,7 +285,7 @@ func TestReduceNotesModeKeyNotesNewUsesCommandBindingEvenWithRemapCollision(t *t
 		KeyCommandOpenSearch: "ctrl+j",
 	}))
 
-	handled, cmd := m.reduceNotesModeKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	handled, cmd := m.reduceNotesModeKey(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected notes key reducer to handle notes new binding")
 	}
@@ -323,6 +323,23 @@ func TestReduceAddNoteModePassesNonKeyMessagesThrough(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatalf("expected no command")
+	}
+}
+
+func TestReduceAddNoteModeHandlesPaste(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddNote
+	if m.noteInput == nil {
+		t.Fatalf("expected note input")
+	}
+	m.noteInput.Focus()
+
+	handled, _ := m.reduceAddNoteMode(tea.PasteMsg{Content: "note body"})
+	if !handled {
+		t.Fatalf("expected paste to be handled in add note mode")
+	}
+	if got := m.noteInput.Value(); got != "note body" {
+		t.Fatalf("expected note paste to update input, got %q", got)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 	"control/internal/client"
 	"control/internal/types"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
@@ -19,7 +19,7 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 	controller.input.SetValue("/tmp/repo")
 
-	handled, cmd := controller.Update(tea.KeyMsg{Type: tea.KeyF6}, host)
+	handled, cmd := controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
 	if !handled {
 		t.Fatalf("expected remapped submit key to be handled")
 	}
@@ -31,7 +31,7 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 	controller.input.SetValue("Repo Name")
 
-	handled, cmd = controller.Update(tea.KeyMsg{Type: tea.KeyF6}, host)
+	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
 	if !handled {
 		t.Fatalf("expected remapped submit key to be handled")
 	}
@@ -51,7 +51,7 @@ func TestAddWorktreeControllerSupportsRemappedSubmit(t *testing.T) {
 		t.Fatalf("expected input")
 	}
 
-	handled, cmd := controller.Update(tea.KeyMsg{Type: tea.KeyF6}, host)
+	handled, cmd := controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
 	if !handled {
 		t.Fatalf("expected remapped submit key to be handled")
 	}
@@ -63,7 +63,7 @@ func TestAddWorktreeControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 
 	controller.input.SetValue("/tmp/repo-wt")
-	handled, cmd = controller.Update(tea.KeyMsg{Type: tea.KeyF6}, host)
+	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
 	if !handled {
 		t.Fatalf("expected remapped submit key to be handled")
 	}

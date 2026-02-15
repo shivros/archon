@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/client"
 	"control/internal/daemon"
@@ -90,9 +90,9 @@ func TestUICodexStreamingExistingSession(t *testing.T) {
 	h.SelectSession(session.ID)
 
 	logPhase("ui_send")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" again.")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
@@ -152,9 +152,9 @@ func TestUIClaudeStreamingExistingSession(t *testing.T) {
 	h.SelectSession(session.ID)
 
 	logPhase("ui_send")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" again.")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
@@ -214,11 +214,11 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 	h.SelectWorkspace(ws.ID)
 
 	logPhase("ui_new_session")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	h.SendKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	h.SelectProvider("codex")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" and nothing else.")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
@@ -280,9 +280,9 @@ func TestUICodexStreamingResumeSession(t *testing.T) {
 	h.SelectSession(session.ID)
 
 	logPhase("ui_send")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" again.")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
@@ -328,11 +328,11 @@ func TestUIClaudeStreamingNewSession(t *testing.T) {
 	h.SelectWorkspace(ws.ID)
 
 	logPhase("ui_new_session")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	h.SendKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	h.SelectProvider("claude")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" and nothing else.")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
@@ -393,9 +393,9 @@ func TestUIClaudeStreamingResumeSession(t *testing.T) {
 	h.SelectSession(session.ID)
 
 	logPhase("ui_send")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	h.SetChatInput("Say \"ok\" again.")
-	h.SendKey(tea.KeyMsg{Type: tea.KeyEnter})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	logPhase("wait_agent_reply")
 	h.WaitForAgentReply(45 * time.Second)
@@ -451,8 +451,8 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 			h.SelectWorkspace(ws.ID)
 			h.SelectSession(sessionID)
 
-			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+			h.SendKey(tea.KeyPressMsg{Text: "d"})
+			h.SendKey(tea.KeyPressMsg{Text: "y"})
 
 			h.WaitFor(func() bool {
 				return !sidebarHasSession(h.model, sessionID)
@@ -522,10 +522,10 @@ func TestUISpaceDoesNotEnableBulkDismiss(t *testing.T) {
 	h.SelectWorkspace(ws.ID)
 	h.SelectSession("sess-bulk-1")
 
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	h.SendKey(tea.KeyPressMsg{Text: " "})
+	h.SendKey(tea.KeyPressMsg{Text: " "})
+	h.SendKey(tea.KeyPressMsg{Text: "d"})
+	h.SendKey(tea.KeyPressMsg{Text: "y"})
 
 	h.WaitFor(func() bool {
 		return !sidebarHasSession(h.model, "sess-bulk-1")
@@ -593,28 +593,28 @@ func TestUIShowDismissedAndUndismissSession(t *testing.T) {
 	h.SelectWorkspace(ws.ID)
 	h.SelectSession(sessionID)
 
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	h.SendKey(tea.KeyPressMsg{Text: "d"})
+	h.SendKey(tea.KeyPressMsg{Text: "y"})
 
 	h.WaitFor(func() bool {
 		return !sidebarHasSession(h.model, sessionID)
 	}, 2*time.Second)
 
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	h.SendKey(tea.KeyPressMsg{Text: "D"})
 
 	h.WaitFor(func() bool {
 		return sidebarHasSession(h.model, sessionID)
 	}, 2*time.Second)
 
 	h.SelectSession(sessionID)
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	h.SendKey(tea.KeyPressMsg{Text: "u"})
 
 	h.WaitFor(func() bool {
 		got, err := api.GetSession(ctx, sessionID)
 		return err == nil && got.Status == types.SessionStatusInactive
 	}, 2*time.Second)
 
-	h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	h.SendKey(tea.KeyPressMsg{Text: "D"})
 	if !sidebarHasSession(h.model, sessionID) {
 		t.Fatalf("expected undismissed session to remain visible when dismissed are hidden")
 	}
@@ -670,8 +670,8 @@ func TestUIDismissSessionCancelKeepsSession(t *testing.T) {
 			h.SelectWorkspace(ws.ID)
 			h.SelectSession(sessionID)
 
-			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-			h.SendKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+			h.SendKey(tea.KeyPressMsg{Text: "d"})
+			h.SendKey(tea.KeyPressMsg{Text: "n"})
 
 			time.Sleep(100 * time.Millisecond)
 

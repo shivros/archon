@@ -1,13 +1,14 @@
 package app
 
 import (
-	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
+
+	"control/internal/app/sanitizer"
 )
 
 type TextInput struct {
@@ -22,6 +23,7 @@ type TextInput struct {
 	allSelected bool
 	undoHistory []string
 	redoHistory []string
+	sanitizer   sanitizer.InputSanitizer
 }
 
 type TextInputConfig struct {
@@ -50,6 +52,11 @@ func NewTextInput(width int, cfg TextInputConfig) *TextInput {
 	inputWidth := setTextareaWidth(&input, width)
 	c := &TextInput{input: input, width: inputWidth}
 	c.SetConfig(cfg)
+	if cfg.SingleLine {
+		c.sanitizer = sanitizer.NewTerminalSanitizer(sanitizer.SingleLineConfig())
+	} else {
+		c.sanitizer = sanitizer.NewTerminalSanitizer(sanitizer.DefaultConfig())
+	}
 	return c
 }
 
@@ -164,7 +171,7 @@ func (c *TextInput) Scroll(lines int) tea.Cmd {
 		if lines < 0 {
 			key = tea.KeyUp
 		}
-		c.input, cmd = c.input.Update(tea.KeyMsg{Type: key})
+		c.input, cmd = c.input.Update(tea.KeyPressMsg{Code: key})
 	}
 	c.sanitize()
 	if !wasFocused {
@@ -177,7 +184,7 @@ func (c *TextInput) InsertNewline() tea.Cmd {
 	if c == nil {
 		return nil
 	}
-	return c.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
 func (c *TextInput) MoveWordLeft() tea.Cmd {
@@ -185,7 +192,7 @@ func (c *TextInput) MoveWordLeft() tea.Cmd {
 		return nil
 	}
 	c.allSelected = false
-	return c.Update(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt})
 }
 
 func (c *TextInput) MoveWordRight() tea.Cmd {
@@ -193,21 +200,21 @@ func (c *TextInput) MoveWordRight() tea.Cmd {
 		return nil
 	}
 	c.allSelected = false
-	return c.Update(tea.KeyMsg{Type: tea.KeyRight, Alt: true})
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt})
 }
 
 func (c *TextInput) DeleteWordLeft() tea.Cmd {
 	if c == nil {
 		return nil
 	}
-	return c.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyBackspace, Mod: tea.ModAlt})
 }
 
 func (c *TextInput) DeleteWordRight() tea.Cmd {
 	if c == nil {
 		return nil
 	}
-	return c.Update(tea.KeyMsg{Type: tea.KeyDelete, Alt: true})
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModAlt})
 }
 
 func (c *TextInput) SelectAll() bool {
@@ -262,6 +269,11 @@ func (c *TextInput) SetConfig(cfg TextInputConfig) {
 	c.minHeight = cfg.MinHeight
 	c.maxHeight = cfg.MaxHeight
 	c.height = cfg.Height
+	if cfg.SingleLine {
+		c.sanitizer = sanitizer.NewTerminalSanitizer(sanitizer.SingleLineConfig())
+	} else {
+		c.sanitizer = sanitizer.NewTerminalSanitizer(sanitizer.DefaultConfig())
+	}
 	if c.applyHeightPolicy() {
 		c.heightDirty = true
 	}
@@ -349,8 +361,12 @@ func (c *TextInput) pushRedoHistory(value string) {
 }
 
 func isMutationKey(msg tea.KeyMsg) bool {
-	switch msg.Type {
-	case tea.KeyRunes, tea.KeySpace, tea.KeyEnter, tea.KeyBackspace, tea.KeyDelete:
+	key := msg.Key()
+	switch key.Code {
+	case tea.KeyEnter, tea.KeyBackspace, tea.KeyDelete:
+		return true
+	}
+	if key.Text != "" {
 		return true
 	}
 	switch msg.String() {
@@ -362,7 +378,8 @@ func isMutationKey(msg tea.KeyMsg) bool {
 }
 
 func isDeletionKey(msg tea.KeyMsg) bool {
-	switch msg.Type {
+	key := msg.Key()
+	switch key.Code {
 	case tea.KeyBackspace, tea.KeyDelete:
 		return true
 	}
@@ -375,7 +392,8 @@ func isDeletionKey(msg tea.KeyMsg) bool {
 }
 
 func isNavigationKey(msg tea.KeyMsg) bool {
-	switch msg.Type {
+	key := msg.Key()
+	switch key.Code {
 	case tea.KeyLeft, tea.KeyRight, tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd:
 		return true
 	}
@@ -388,7 +406,8 @@ func isNavigationKey(msg tea.KeyMsg) bool {
 }
 
 func isNewlineKey(msg tea.KeyMsg) bool {
-	if msg.Type == tea.KeyEnter {
+	key := msg.Key()
+	if key.Code == tea.KeyEnter {
 		return true
 	}
 	switch msg.String() {
@@ -489,8 +508,6 @@ func wrappedLineCount(value string, width int) int {
 	return max(1, count)
 }
 
-var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
-
 func (c *TextInput) sanitize() {
 	if c == nil {
 		return
@@ -499,31 +516,13 @@ func (c *TextInput) sanitize() {
 	if value == "" {
 		return
 	}
-	cleaned := sanitizeChatInput(value, c.singleLine)
+	if c.sanitizer == nil {
+		return
+	}
+	cleaned := c.sanitizer.Sanitize(value)
 	if cleaned != value {
 		c.input.SetValue(cleaned)
 	}
-}
-
-func sanitizeChatInput(value string, singleLine bool) string {
-	value = ansiEscapeRE.ReplaceAllString(value, "")
-	var b strings.Builder
-	b.Grow(len(value))
-	for _, r := range value {
-		if r == '\n' {
-			if singleLine {
-				b.WriteRune(' ')
-			} else {
-				b.WriteRune(r)
-			}
-			continue
-		}
-		if r < 32 || r == 127 {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 func applyWordNavigationAliases(input *textarea.Model) {
@@ -532,8 +531,8 @@ func applyWordNavigationAliases(input *textarea.Model) {
 	}
 	appendBindingKey(&input.KeyMap.WordBackward, "ctrl+left")
 	appendBindingKey(&input.KeyMap.WordForward, "ctrl+right")
-	appendBindingKey(&input.KeyMap.DeleteWordBackward, "ctrl+backspace")
-	appendBindingKey(&input.KeyMap.DeleteWordForward, "ctrl+delete")
+	appendBindingKey(&input.KeyMap.DeleteWordBackward, "ctrl+w")
+	appendBindingKey(&input.KeyMap.DeleteWordForward, "alt+d")
 }
 
 func appendBindingKey(binding *key.Binding, alias string) {

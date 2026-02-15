@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/types"
 )
@@ -58,7 +58,7 @@ func (m *Model) moveNoteByViewportPosition(col, line int) (bool, tea.Cmd) {
 	if col < 0 || line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return false, nil
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
 		if !isNoteRole(span.Role) {
 			continue
@@ -81,7 +81,7 @@ func (m *Model) moveNotesPanelByViewportPosition(col, line int) (bool, tea.Cmd) 
 	if col < 0 || line < 0 || len(m.notesPanelBlocks) == 0 || len(m.notesPanelSpans) == 0 {
 		return false, nil
 	}
-	absolute := m.notesPanelViewport.YOffset + line
+	absolute := m.notesPanelViewport.YOffset() + line
 	for _, span := range m.notesPanelSpans {
 		if !isNoteRole(span.Role) {
 			continue

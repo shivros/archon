@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -218,14 +218,15 @@ func (c *ContextMenuController) HandleMouse(msg tea.MouseMsg, maxWidth, maxHeigh
 	if c == nil || !c.active {
 		return false, ContextMenuNone
 	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	mouse := msg.Mouse()
+	if mouse.Button != tea.MouseLeft {
 		return false, ContextMenuNone
 	}
 	x, y, width, height := c.layout(maxWidth, maxHeight)
-	if msg.X < x || msg.X >= x+width || msg.Y < y || msg.Y >= y+height {
+	if mouse.X < x || mouse.X >= x+width || mouse.Y < y || mouse.Y >= y+height {
 		return false, ContextMenuNone
 	}
-	row := msg.Y - y
+	row := mouse.Y - y
 	if row <= 0 {
 		return true, ContextMenuNone
 	}

@@ -321,7 +321,7 @@ func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
 			params = map[string]any{}
 		}
 	}
-	summary, detail := approvalSummary(event.Method, params)
+	presentation := approvalPresentationFromParams(event.Method, params)
 	createdAt := time.Now().UTC()
 	if ts := strings.TrimSpace(event.TS); ts != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
@@ -331,8 +331,9 @@ func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
 	return &ApprovalRequest{
 		RequestID: *event.ID,
 		Method:    event.Method,
-		Summary:   summary,
-		Detail:    detail,
+		Summary:   presentation.Summary,
+		Detail:    presentation.Detail,
+		Context:   cloneStringSlice(presentation.Context),
 		CreatedAt: createdAt,
 	}
 }

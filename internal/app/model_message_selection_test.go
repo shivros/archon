@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -16,7 +16,7 @@ func TestMessageSelectionEnterWithV(t *testing.T) {
 		{Role: ChatRoleAgent, Text: "two"},
 	})
 
-	handled, cmd := m.reduceViewToggleKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	handled, cmd := m.reduceViewToggleKeys(tea.KeyPressMsg{Text: "v"})
 	if !handled {
 		t.Fatalf("expected v to be handled")
 	}
@@ -44,7 +44,7 @@ func TestMessageSelectionMoveAndExit(t *testing.T) {
 	m.enterMessageSelection()
 	m.messageSelectIndex = 0
 
-	handled, cmd := m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	handled, cmd := m.reduceMessageSelectionKey(tea.KeyPressMsg{Text: "j"})
 	if !handled || cmd != nil {
 		t.Fatalf("expected j to be handled without command")
 	}
@@ -52,7 +52,7 @@ func TestMessageSelectionMoveAndExit(t *testing.T) {
 		t.Fatalf("expected selected index to move to 1, got %d", m.messageSelectIndex)
 	}
 
-	handled, cmd = m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyEsc})
+	handled, cmd = m.reduceMessageSelectionKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !handled || cmd != nil {
 		t.Fatalf("expected esc to be handled without command")
 	}
@@ -68,7 +68,7 @@ func TestMessageSelectionCopyUsesPlainText(t *testing.T) {
 	m.enterMessageSelection()
 	m.messageSelectIndex = 0
 
-	handled, cmd := m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	handled, cmd := m.reduceMessageSelectionKey(tea.KeyPressMsg{Text: "y"})
 	if !handled || cmd != nil {
 		t.Fatalf("expected y to be handled without command")
 	}
@@ -105,7 +105,7 @@ func TestMessageSelectionExitUsesRemappedToggleCommand(t *testing.T) {
 	}))
 	m.enterMessageSelection()
 
-	handled, cmd := m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	handled, cmd := m.reduceMessageSelectionKey(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected remapped toggle command to be handled")
 	}
@@ -128,7 +128,7 @@ func TestMessageSelectionQuitUsesRemappedQuitCommand(t *testing.T) {
 	}))
 	m.enterMessageSelection()
 
-	handled, cmd := m.reduceMessageSelectionKey(tea.KeyMsg{Type: tea.KeyCtrlQ})
+	handled, cmd := m.reduceMessageSelectionKey(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected remapped quit command to be handled")
 	}

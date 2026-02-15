@@ -3,14 +3,13 @@ package app
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 	switch m.mode {
 	case uiModeRenameWorkspace:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
+		if !isTextInputMsg(msg) {
 			return true, nil
 		}
 		controller := m.newSingleLineInputController(
@@ -21,10 +20,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			},
 			m.submitRenameWorkspaceInput,
 		)
-		return controller.Update(keyMsg)
+		return controller.Update(msg)
 	case uiModeRenameWorktree:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
+		if !isTextInputMsg(msg) {
 			return true, nil
 		}
 		controller := m.newSingleLineInputController(
@@ -35,10 +33,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			},
 			m.submitRenameWorktreeInput,
 		)
-		return controller.Update(keyMsg)
+		return controller.Update(msg)
 	case uiModeRenameSession:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
+		if !isTextInputMsg(msg) {
 			return true, nil
 		}
 		controller := m.newSingleLineInputController(
@@ -49,10 +46,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			},
 			m.submitRenameSessionInput,
 		)
-		return controller.Update(keyMsg)
+		return controller.Update(msg)
 	case uiModeAddWorkspaceGroup:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
+		if !isTextInputMsg(msg) {
 			return true, nil
 		}
 		controller := m.newSingleLineInputController(
@@ -63,7 +59,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			},
 			m.submitAddWorkspaceGroupInput,
 		)
-		return controller.Update(keyMsg)
+		return controller.Update(msg)
 	case uiModePickWorkspaceRename, uiModePickWorkspaceGroupEdit:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
@@ -175,8 +171,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case uiModeRenameWorkspaceGroup:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
+		if !isTextInputMsg(msg) {
 			return true, nil
 		}
 		controller := m.newSingleLineInputController(
@@ -187,7 +182,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			},
 			m.submitRenameWorkspaceGroupInput,
 		)
-		return controller.Update(keyMsg)
+		return controller.Update(msg)
 	case uiModeAssignGroupWorkspaces:
 		keyMsg, ok := msg.(tea.KeyMsg)
 		if !ok {
@@ -322,8 +317,11 @@ func (m *Model) reduceComposeMode(msg tea.Msg) (bool, tea.Cmd) {
 	return true, nil
 }
 
-func (m *Model) reduceSearchModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (m *Model) reduceSearchModeKey(msg tea.Msg) (bool, tea.Cmd) {
 	if m.mode != uiModeSearch {
+		return false, nil
+	}
+	if !isTextInputMsg(msg) {
 		return false, nil
 	}
 	controller := m.newSingleLineInputController(
@@ -452,8 +450,11 @@ func (m *Model) submitRenameWorkspaceGroupInput(name string) tea.Cmd {
 	return updateWorkspaceGroupCmd(m.workspaceAPI, id, name)
 }
 
-func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 	if m.input == nil || !m.input.IsChatFocused() {
+		return false, nil
+	}
+	if !isTextInputMsg(msg) {
 		return false, nil
 	}
 	controller := textInputModeController{
@@ -535,6 +536,15 @@ func (m *Model) reduceComposeInputKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.resize(m.width, m.height)
 	}
 	return handled, cmd
+}
+
+func isTextInputMsg(msg tea.Msg) bool {
+	switch msg.(type) {
+	case tea.KeyMsg, tea.PasteMsg:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Model) cancelComposeInput() tea.Cmd {

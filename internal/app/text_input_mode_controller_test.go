@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestTextInputModeControllerShiftEnterInsertsNewline(t *testing.T) {
@@ -19,7 +19,7 @@ func TestTextInputModeControllerShiftEnterInsertsNewline(t *testing.T) {
 		},
 	}
 
-	handled, _ := controller.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected shift+enter to be handled")
 	}
@@ -44,7 +44,7 @@ func TestTextInputModeControllerEnterCallsSubmitWithTrimmedText(t *testing.T) {
 		},
 	}
 
-	handled, _ := controller.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected enter to be handled")
 	}
@@ -72,7 +72,7 @@ func TestTextInputModeControllerSupportsRemappedSubmitCommand(t *testing.T) {
 		},
 	}
 
-	handled, _ := controller.Update(tea.KeyMsg{Type: tea.KeyF6})
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	if !handled {
 		t.Fatalf("expected remapped submit to be handled")
 	}
@@ -89,7 +89,7 @@ func TestTextInputSelectAllReplaceUndoRedo(t *testing.T) {
 		t.Fatalf("expected select all to succeed")
 	}
 
-	_ = input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_ = input.Update(tea.KeyPressMsg{Text: "x"})
 	if got := input.Value(); got != "x" {
 		t.Fatalf("expected replace-all behavior after select all, got %q", got)
 	}
@@ -129,11 +129,11 @@ func TestTextInputModeControllerWordActions(t *testing.T) {
 		},
 	}
 
-	handled, _ := controller.Update(tea.KeyMsg{Type: tea.KeyF7})
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyF7})
 	if !handled {
 		t.Fatalf("expected remapped word-left action to be handled")
 	}
-	handled, _ = controller.Update(tea.KeyMsg{Type: tea.KeyF8})
+	handled, _ = controller.Update(tea.KeyPressMsg{Code: tea.KeyF8})
 	if !handled {
 		t.Fatalf("expected remapped delete-word-left action to be handled")
 	}
@@ -167,8 +167,8 @@ func TestNewTextInputAddsCtrlWordNavigationAliases(t *testing.T) {
 	}
 	assertHasKeyBinding(t, input.input.KeyMap.WordBackward.Keys(), "ctrl+left")
 	assertHasKeyBinding(t, input.input.KeyMap.WordForward.Keys(), "ctrl+right")
-	assertHasKeyBinding(t, input.input.KeyMap.DeleteWordBackward.Keys(), "ctrl+backspace")
-	assertHasKeyBinding(t, input.input.KeyMap.DeleteWordForward.Keys(), "ctrl+delete")
+	assertHasKeyBinding(t, input.input.KeyMap.DeleteWordBackward.Keys(), "alt+backspace")
+	assertHasKeyBinding(t, input.input.KeyMap.DeleteWordForward.Keys(), "alt+delete")
 }
 
 func TestSingleLineTextInputSanitizesAndBlocksNewline(t *testing.T) {
@@ -185,7 +185,7 @@ func TestSingleLineTextInputSanitizesAndBlocksNewline(t *testing.T) {
 			return "shift+enter"
 		},
 	}
-	handled, _ := controller.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected shift+enter to be handled for single-line input")
 	}

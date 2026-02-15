@@ -7,7 +7,7 @@ import (
 
 	"control/internal/types"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -291,11 +291,12 @@ func (m *MenuController) HandleMouse(msg tea.MouseMsg, dropdownWidth int) (bool,
 	if m == nil {
 		return false, MenuActionNone
 	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	mouse := msg.Mouse()
+	if mouse.Button != tea.MouseLeft {
 		return false, MenuActionNone
 	}
-	if msg.Y == 0 {
-		idx := m.menuItemIndexAt(msg.X)
+	if mouse.Y == 0 {
+		idx := m.menuItemIndexAt(mouse.X)
 		if idx >= 0 {
 			m.menuIndex = idx
 			m.OpenDropdown()
@@ -306,8 +307,8 @@ func (m *MenuController) HandleMouse(msg tea.MouseMsg, dropdownWidth int) (bool,
 		}
 		return false, MenuActionNone
 	}
-	if m.submenuKind != submenuNone && dropdownWidth > 0 && msg.X >= dropdownWidth+1 {
-		row := msg.Y - 1
+	if m.submenuKind != submenuNone && dropdownWidth > 0 && mouse.X >= dropdownWidth+1 {
+		row := mouse.Y - 1
 		if row < 0 {
 			return true, MenuActionNone
 		}
@@ -324,8 +325,8 @@ func (m *MenuController) HandleMouse(msg tea.MouseMsg, dropdownWidth int) (bool,
 		}
 		return false, MenuActionNone
 	}
-	if msg.Y > 0 && msg.Y <= m.DropdownHeight() {
-		row := msg.Y - 1
+	if mouse.Y > 0 && mouse.Y <= m.DropdownHeight() {
+		row := mouse.Y - 1
 		if row < 0 {
 			return true, MenuActionNone
 		}

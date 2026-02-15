@@ -30,6 +30,7 @@ func newOpenCodeHistoryReconciler(service *SessionService, session *types.Sessio
 }
 
 func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCodeHistorySyncResult, error) {
+	start := time.Now()
 	if r.session == nil {
 		return openCodeHistorySyncResult{}, invalidError("session is required", nil)
 	}
@@ -55,6 +56,17 @@ func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCod
 		messages, fetchErr = client.ListSessionMessages(ctx, providerSessionID, "", limit)
 	}
 	if fetchErr != nil {
+		r.logWarn("opencode_history_sync_failed",
+			append(
+				append(
+					openCodeSessionLogFields(r.session, r.meta),
+					logging.F("requested_lines", lines),
+					logging.F("limit", limit),
+					logging.F("duration_ms", time.Since(start).Milliseconds()),
+				),
+				openCodeErrorLogFields(fetchErr)...,
+			)...,
+		)
 		return openCodeHistorySyncResult{}, fetchErr
 	}
 
@@ -72,12 +84,26 @@ func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCod
 	}
 	if appendErr := r.service.appendSessionItems(r.session.ID, missing); appendErr != nil {
 		r.logWarn("opencode_history_backfill_failed",
-			logging.F("session_id", r.session.ID),
-			logging.F("provider", r.session.Provider),
-			logging.F("error", appendErr),
+			append(
+				append(
+					openCodeSessionLogFields(r.session, r.meta),
+					logging.F("missing_items", len(missing)),
+					logging.F("duration_ms", time.Since(start).Milliseconds()),
+				),
+				openCodeErrorLogFields(appendErr)...,
+			)...,
 		)
 		return openCodeHistorySyncResult{items: items}, nil
 	}
+	r.logDebug("opencode_history_sync_ok",
+		append(
+			openCodeSessionLogFields(r.session, r.meta),
+			logging.F("requested_lines", lines),
+			logging.F("returned_items", len(items)),
+			logging.F("backfilled_items", len(missing)),
+			logging.F("duration_ms", time.Since(start).Milliseconds()),
+		)...,
+	)
 	return openCodeHistorySyncResult{
 		items:      items,
 		backfilled: missing,
@@ -97,24 +123,50 @@ func (r openCodeHistoryReconciler) ReconcileBestEffort(ctx context.Context, reas
 		defer cancel()
 		reconcileCtx = timeoutCtx
 	}
+	opID := logging.NewRequestID()
+	start := time.Now()
+	r.logDebug("opencode_history_reconcile_start",
+		append(
+			openCodeSessionLogFields(r.session, r.meta),
+			logging.F("op_id", opID),
+			logging.F("reason", reason),
+		)...,
+	)
 	result, err := r.Sync(reconcileCtx, 200)
 	if err != nil {
 		r.logWarn("opencode_history_reconcile_failed",
-			logging.F("session_id", r.session.ID),
-			logging.F("provider", r.session.Provider),
-			logging.F("reason", reason),
-			logging.F("error", err),
+			append(
+				append(
+					openCodeSessionLogFields(r.session, r.meta),
+					logging.F("op_id", opID),
+					logging.F("reason", reason),
+					logging.F("duration_ms", time.Since(start).Milliseconds()),
+				),
+				openCodeErrorLogFields(err)...,
+			)...,
 		)
 		return
 	}
 	if len(result.backfilled) > 0 {
 		r.logInfo("opencode_history_reconciled",
-			logging.F("session_id", r.session.ID),
-			logging.F("provider", r.session.Provider),
-			logging.F("reason", reason),
-			logging.F("items", len(result.backfilled)),
+			append(
+				openCodeSessionLogFields(r.session, r.meta),
+				logging.F("op_id", opID),
+				logging.F("reason", reason),
+				logging.F("items", len(result.backfilled)),
+				logging.F("duration_ms", time.Since(start).Milliseconds()),
+			)...,
 		)
+		return
 	}
+	r.logDebug("opencode_history_reconcile_noop",
+		append(
+			openCodeSessionLogFields(r.session, r.meta),
+			logging.F("op_id", opID),
+			logging.F("reason", reason),
+			logging.F("duration_ms", time.Since(start).Milliseconds()),
+		)...,
+	)
 }
 
 func (r openCodeHistoryReconciler) RecoveredEvents(ctx context.Context, sawTurnCompleted bool) []types.CodexEvent {
@@ -157,6 +209,13 @@ func (r openCodeHistoryReconciler) logInfo(message string, fields ...logging.Fie
 		return
 	}
 	r.service.logger.Info(message, fields...)
+}
+
+func (r openCodeHistoryReconciler) logDebug(message string, fields ...logging.Field) {
+	if r.service == nil || r.service.logger == nil || !r.service.logger.Enabled(logging.Debug) {
+		return
+	}
+	r.service.logger.Debug(message, fields...)
 }
 
 func openCodeHistoryItemsToEvents(items []map[string]any, ts string) []types.CodexEvent {

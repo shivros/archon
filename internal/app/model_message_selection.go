@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
@@ -128,8 +128,8 @@ func (m *Model) visibleMessageSelectionIndex() int {
 	if len(m.contentBlockSpans) == 0 {
 		return -1
 	}
-	start := m.viewport.YOffset
-	end := start + m.viewport.Height - 1
+	start := m.viewport.YOffset()
+	end := start + m.viewport.Height() - 1
 	for i := len(m.contentBlockSpans) - 1; i >= 0; i-- {
 		span := m.contentBlockSpans[i]
 		if span.EndLine < start || span.StartLine > end {
@@ -190,7 +190,7 @@ func (m *Model) blockIndexByViewportPoint(col, line int) int {
 	if line < 0 || col < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
 		return -1
 	}
-	absolute := m.viewport.YOffset + line
+	absolute := m.viewport.YOffset() + line
 	lines := m.currentLines()
 	if absolute < 0 || absolute >= len(lines) {
 		return -1
@@ -276,20 +276,20 @@ func (m *Model) focusMessageSelection() {
 	if selected == nil {
 		return
 	}
-	if m.viewport.Height <= 0 {
+	if m.viewport.Height() <= 0 {
 		return
 	}
 	start := selected.StartLine
 	end := selected.EndLine
-	visibleStart := m.viewport.YOffset
-	visibleEnd := visibleStart + m.viewport.Height - 1
+	visibleStart := m.viewport.YOffset()
+	visibleEnd := visibleStart + m.viewport.Height() - 1
 	if start < visibleStart {
-		m.viewport.YOffset = start
+		m.viewport.SetYOffset(start)
 	}
 	if end > visibleEnd {
-		m.viewport.YOffset = end - m.viewport.Height + 1
-		if m.viewport.YOffset < 0 {
-			m.viewport.YOffset = 0
+		m.viewport.SetYOffset(end - m.viewport.Height() + 1)
+		if m.viewport.YOffset() < 0 {
+			m.viewport.SetYOffset(0)
 		}
 	}
 	m.pauseFollow(false)

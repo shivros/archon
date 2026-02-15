@@ -126,54 +126,16 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 			return nil
 		}
 	case "permission.updated":
-		permissionID := strings.TrimSpace(asString(props["id"]))
-		if permissionID == "" {
+		permission, ok := parseOpenCodePermission(props)
+		if !ok {
 			return nil
 		}
-		permission := openCodePermission{
-			PermissionID: permissionID,
-			SessionID:    strings.TrimSpace(asString(props["sessionID"])),
-			Kind:         strings.TrimSpace(asString(props["type"])),
-			Summary:      strings.TrimSpace(asString(props["title"])),
-			CreatedAt:    openCodePermissionCreatedAt(props),
-			Raw:          props,
-		}
-		metadata, _ := props["metadata"].(map[string]any)
-		if metadata != nil {
-			if permission.Command == "" {
-				permission.Command = strings.TrimSpace(asString(metadata["command"]))
-			}
-			if permission.Command == "" {
-				permission.Command = strings.TrimSpace(asString(metadata["parsedCmd"]))
-			}
-			if permission.Reason == "" {
-				permission.Reason = strings.TrimSpace(asString(metadata["reason"]))
-			}
+		if permission.CreatedAt.IsZero() {
+			permission.CreatedAt = openCodePermissionCreatedAt(props)
 		}
 		method := openCodePermissionMethod(permission)
 		requestID := openCodePermissionRequestID(permission.PermissionID, usedPermissionIDs)
-		params := map[string]any{
-			"permission_id": permission.PermissionID,
-			"session_id":    permission.SessionID,
-			"type":          permission.Kind,
-			"title":         permission.Summary,
-		}
-		switch method {
-		case "item/commandExecution/requestApproval":
-			if permission.Command != "" {
-				params["parsedCmd"] = permission.Command
-			}
-		case "item/fileChange/requestApproval":
-			if permission.Reason != "" {
-				params["reason"] = permission.Reason
-			}
-		default:
-			if permission.Summary != "" {
-				params["questions"] = []map[string]any{
-					{"text": permission.Summary},
-				}
-			}
-		}
+		params := openCodeApprovalParams(permission, method)
 		return []types.CodexEvent{build(method, &requestID, params)}
 	case "permission.replied":
 		permissionID := strings.TrimSpace(asString(props["permissionID"]))
@@ -794,38 +756,49 @@ func parseOpenCodePermission(item map[string]any) (openCodePermission, bool) {
 	if item == nil {
 		return openCodePermission{}, false
 	}
-	permissionID := strings.TrimSpace(asString(item["id"]))
-	if permissionID == "" {
-		permissionID = strings.TrimSpace(asString(item["permissionID"]))
-	}
+	request, _ := item["request"].(map[string]any)
+	metadata := openCodePermissionMetadata(item, request)
+
+	permissionID := openCodePermissionField(item, request, metadata, "id", "permissionID", "permissionId")
 	if permissionID == "" {
 		return openCodePermission{}, false
 	}
 
-	sessionID := strings.TrimSpace(asString(item["sessionID"]))
+	sessionID := openCodePermissionField(item, request, metadata, "sessionID", "sessionId", "providerSessionID")
 	if sessionID == "" {
-		sessionID = strings.TrimSpace(asString(item["sessionId"]))
-	}
-	if sessionID == "" {
-		if session, ok := item["session"].(map[string]any); ok {
-			sessionID = strings.TrimSpace(asString(session["id"]))
+		for _, holder := range []map[string]any{item, request, metadata} {
+			if holder == nil {
+				continue
+			}
+			if session, ok := holder["session"].(map[string]any); ok && session != nil {
+				sessionID = strings.TrimSpace(asString(session["id"]))
+				if sessionID != "" {
+					break
+				}
+			}
 		}
 	}
 
-	status := strings.ToLower(strings.TrimSpace(asString(item["status"])))
-	kind := strings.TrimSpace(asString(item["type"]))
-	if kind == "" {
-		kind = strings.TrimSpace(asString(item["kind"]))
-	}
-	summary := strings.TrimSpace(asString(item["message"]))
-	command := strings.TrimSpace(asString(item["command"]))
-	if command == "" {
-		command = strings.TrimSpace(asString(item["parsedCmd"]))
-	}
-	reason := strings.TrimSpace(asString(item["reason"]))
+	status := strings.ToLower(openCodePermissionField(item, request, metadata, "status", "state"))
+	kind := openCodePermissionField(item, request, metadata, "type", "kind")
+	summary := openCodePermissionField(item, request, metadata, "message", "title", "prompt", "question")
+	command := openCodePermissionField(item, request, metadata, "command", "parsedCmd", "cmd")
+	reason := openCodePermissionField(item, request, metadata, "reason", "description")
 	createdAt := openCodeTimestamp(item["createdAt"])
 	if createdAt.IsZero() {
+		createdAt = openCodeTimestamp(request["createdAt"])
+	}
+	if createdAt.IsZero() {
+		createdAt = openCodeTimestamp(metadata["createdAt"])
+	}
+	if createdAt.IsZero() {
 		createdAt = openCodeTimestamp(item["ts"])
+	}
+	if createdAt.IsZero() {
+		createdAt = openCodeTimestamp(request["ts"])
+	}
+	if createdAt.IsZero() {
+		createdAt = openCodeTimestamp(metadata["ts"])
 	}
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
@@ -838,9 +811,53 @@ func parseOpenCodePermission(item map[string]any) (openCodePermission, bool) {
 		Summary:      summary,
 		Command:      command,
 		Reason:       reason,
+		Metadata:     cloneAnyMap(metadata),
 		CreatedAt:    createdAt,
 		Raw:          item,
 	}, true
+}
+
+func openCodePermissionMetadata(item map[string]any, request map[string]any) map[string]any {
+	if item != nil {
+		if metadata, ok := item["metadata"].(map[string]any); ok && metadata != nil {
+			return metadata
+		}
+	}
+	if request != nil {
+		if metadata, ok := request["metadata"].(map[string]any); ok && metadata != nil {
+			return metadata
+		}
+	}
+	return nil
+}
+
+func openCodePermissionField(primary map[string]any, secondary map[string]any, metadata map[string]any, keys ...string) string {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		for _, source := range []map[string]any{primary, secondary, metadata} {
+			if source == nil {
+				continue
+			}
+			if value := strings.TrimSpace(asString(source[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
 }
 
 func openCodeTimestamp(raw any) time.Time {
@@ -885,9 +902,49 @@ func openCodePermissionMethod(permission openCodePermission) string {
 		return "item/commandExecution/requestApproval"
 	case strings.Contains(kind, "file"), strings.Contains(kind, "write"), strings.Contains(kind, "edit"):
 		return "item/fileChange/requestApproval"
+	case strings.TrimSpace(permission.Command) != "":
+		return "item/commandExecution/requestApproval"
+	case strings.TrimSpace(permission.Reason) != "":
+		return "item/fileChange/requestApproval"
 	default:
 		return "tool/requestUserInput"
 	}
+}
+
+func openCodeApprovalParams(permission openCodePermission, method string) map[string]any {
+	params := map[string]any{
+		"permission_id": permission.PermissionID,
+		"type":          permission.Kind,
+	}
+	if permission.SessionID != "" {
+		params["session_id"] = permission.SessionID
+	}
+	if permission.Summary != "" {
+		params["title"] = permission.Summary
+		params["message"] = permission.Summary
+	}
+	if permission.Command != "" {
+		params["command"] = permission.Command
+		params["parsedCmd"] = permission.Command
+	}
+	if permission.Reason != "" {
+		params["reason"] = permission.Reason
+	}
+	if !permission.CreatedAt.IsZero() {
+		params["created_at"] = permission.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if len(permission.Metadata) > 0 {
+		params["metadata"] = cloneAnyMap(permission.Metadata)
+	}
+	if len(permission.Raw) > 0 {
+		params["raw"] = cloneAnyMap(permission.Raw)
+	}
+	if method == "tool/requestUserInput" && permission.Summary != "" {
+		params["questions"] = []map[string]any{
+			{"text": permission.Summary},
+		}
+	}
+	return params
 }
 
 func openCodePermissionRequestID(permissionID string, used map[int]string) int {
