@@ -85,13 +85,16 @@ func TestApprovalFromRecordBuildsRichCommandContext(t *testing.T) {
 	}
 	got := strings.Join(req.Context, "\n")
 	for _, want := range []string{
-		"Permission: perm-42",
-		"Provider session: remote-session",
 		"Directory: /repo/worktree",
 		"Reason: Run full suite before release",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing context line %q in %q", want, got)
+		}
+	}
+	for _, blocked := range []string{"perm-42", "remote-session"} {
+		if strings.Contains(got, blocked) {
+			t.Fatalf("expected sensitive identifier %q to be hidden in %q", blocked, got)
 		}
 	}
 }
@@ -121,5 +124,47 @@ func TestApprovalRequestToBlockRendersContextLines(t *testing.T) {
 		if !strings.Contains(block.Text, want) {
 			t.Fatalf("expected %q in block text:\n%s", want, block.Text)
 		}
+	}
+}
+
+func TestApprovalFromRecordBuildsExternalDirectoryRequest(t *testing.T) {
+	params, err := json.Marshal(map[string]any{
+		"permission_id": "per_hidden",
+		"session_id":    "ses_hidden",
+		"raw": map[string]any{
+			"permission": "external_directory",
+			"patterns": []any{
+				"/home/shiv/go/pkg/mod/charm.land/bubbletea/v2@v2.0.0-rc.2/*",
+				"/tmp/shared/*",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	record := &types.Approval{
+		SessionID: "s1",
+		RequestID: 111,
+		Method:    "tool/requestUserInput",
+		Params:    params,
+		CreatedAt: time.Date(2026, 2, 14, 12, 0, 0, 0, time.UTC),
+	}
+
+	req := approvalFromRecord(record)
+	if req == nil {
+		t.Fatalf("expected approval request")
+	}
+	if req.Summary != "external directory access" {
+		t.Fatalf("unexpected summary: %q", req.Summary)
+	}
+	if req.Detail != "/home/shiv/go/pkg/mod/charm.land/bubbletea/v2@v2.0.0-rc.2/*" {
+		t.Fatalf("unexpected detail: %q", req.Detail)
+	}
+	contextText := strings.Join(req.Context, "\n")
+	if !strings.Contains(contextText, "Target: /tmp/shared/*") {
+		t.Fatalf("expected additional target in context, got %q", contextText)
+	}
+	if strings.Contains(contextText, "per_hidden") || strings.Contains(contextText, "ses_hidden") {
+		t.Fatalf("expected hidden ids to stay out of display context: %q", contextText)
 	}
 }

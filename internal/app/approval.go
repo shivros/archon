@@ -44,9 +44,10 @@ func approvalSummary(method string, params map[string]any) (string, string) {
 }
 
 func approvalPresentationFromParams(method string, params map[string]any) approvalPresentation {
+	raw := approvalAsMap(params["raw"])
+	metadata := approvalMergedMap(approvalAsMap(params["metadata"]), approvalAsMap(raw["metadata"]))
 	switch method {
 	case "item/commandExecution/requestApproval":
-		metadata, _ := params["metadata"].(map[string]any)
 		cmd := approvalFirstNonEmptyString(params, metadata, "parsedCmd", "command", "cmd")
 		if cmd == "" {
 			p := approvalPresentation{
@@ -68,7 +69,6 @@ func approvalPresentationFromParams(method string, params map[string]any) approv
 		}
 		return p
 	case "item/fileChange/requestApproval":
-		metadata, _ := params["metadata"].(map[string]any)
 		reason := approvalFirstNonEmptyString(params, metadata, "reason", "message", "title", "description")
 		p := approvalPresentation{
 			Summary: "file change",
@@ -80,7 +80,9 @@ func approvalPresentationFromParams(method string, params map[string]any) approv
 		}
 		return p
 	case "tool/requestUserInput":
-		metadata, _ := params["metadata"].(map[string]any)
+		if permissionPresentation, ok := approvalPermissionPresentation(params, raw, metadata); ok {
+			return permissionPresentation
+		}
 		p := approvalPresentation{
 			Summary: "user input",
 			Context: approvalSharedContextLines(params, metadata),
@@ -99,6 +101,9 @@ func approvalPresentationFromParams(method string, params map[string]any) approv
 		}
 		return p
 	default:
+		if permissionPresentation, ok := approvalPermissionPresentation(params, raw, metadata); ok {
+			return permissionPresentation
+		}
 		p := approvalPresentation{
 			Summary: "approval",
 			Context: approvalSharedContextLines(params, nil),
@@ -124,6 +129,59 @@ func approvalPresentationFromParams(method string, params map[string]any) approv
 			}
 		}
 		return p
+	}
+}
+
+func approvalPermissionPresentation(params map[string]any, raw map[string]any, metadata map[string]any) (approvalPresentation, bool) {
+	permission := strings.ToLower(strings.TrimSpace(approvalFirstNonEmptyString(raw, metadata, "permission", "type", "kind")))
+	if permission == "" {
+		return approvalPresentation{}, false
+	}
+	permission = strings.ReplaceAll(permission, "-", "_")
+	targets := approvalExtractPaths(raw, params)
+	p := approvalPresentation{
+		Summary: approvalPermissionSummary(permission),
+		Context: approvalSharedContextLines(params, metadata),
+	}
+	if len(targets) > 0 {
+		p.Detail = targets[0]
+		for _, target := range targets[1:] {
+			approvalAppendContextLine(&p.Context, "Target: "+target)
+		}
+	}
+	if reason := approvalFirstNonEmptyString(params, metadata, "message", "title", "reason", "description"); reason != "" {
+		if !strings.EqualFold(reason, p.Detail) {
+			if p.Detail == "" {
+				p.Detail = reason
+			} else {
+				approvalAppendContextLine(&p.Context, "Reason: "+reason)
+			}
+		}
+	}
+	if p.Detail == "" {
+		if question := approvalFirstNonEmptyString(params, metadata, "question", "prompt"); question != "" {
+			p.Detail = question
+		}
+	}
+	return p, true
+}
+
+func approvalPermissionSummary(permission string) string {
+	switch permission {
+	case "external_directory":
+		return "external directory access"
+	case "external_file":
+		return "external file access"
+	case "external_command":
+		return "external command execution"
+	case "network", "external_network":
+		return "network access"
+	default:
+		normalized := strings.TrimSpace(strings.ReplaceAll(permission, "_", " "))
+		if normalized == "" {
+			return "access request"
+		}
+		return normalized + " access"
 	}
 }
 
@@ -786,18 +844,16 @@ func approvalExtractPaths(primary map[string]any, secondary map[string]any) []st
 		appendFromArray(container["paths"])
 		appendFromArray(container["files"])
 		appendFromArray(container["changes"])
+		appendFromArray(container["patterns"])
+		appendFromArray(container["always"])
+		appendFromArray(container["allow"])
+		appendFromArray(container["targets"])
 	}
 	return dedupeStrings(paths)
 }
 
 func approvalSharedContextLines(params map[string]any, metadata map[string]any) []string {
 	lines := make([]string, 0, 4)
-	if permissionID := approvalFirstNonEmptyString(params, metadata, "permission_id", "permissionID"); permissionID != "" {
-		approvalAppendContextLine(&lines, "Permission: "+permissionID)
-	}
-	if sessionID := approvalFirstNonEmptyString(params, metadata, "session_id", "sessionID"); sessionID != "" {
-		approvalAppendContextLine(&lines, "Provider session: "+sessionID)
-	}
 	if directory := approvalFirstNonEmptyString(params, metadata, "cwd", "directory", "workdir", "workspace"); directory != "" {
 		approvalAppendContextLine(&lines, "Directory: "+directory)
 	}
@@ -837,6 +893,44 @@ func dedupeStrings(values []string) []string {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func approvalAsMap(raw any) map[string]any {
+	typed, ok := raw.(map[string]any)
+	if !ok || typed == nil {
+		return nil
+	}
+	return typed
+}
+
+func approvalMergedMap(primary map[string]any, secondary map[string]any) map[string]any {
+	switch {
+	case len(primary) == 0 && len(secondary) == 0:
+		return nil
+	case len(primary) == 0:
+		return cloneAnyMap(secondary)
+	case len(secondary) == 0:
+		return cloneAnyMap(primary)
+	}
+	out := cloneAnyMap(primary)
+	for key, value := range secondary {
+		if _, exists := out[key]; exists {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
 	}
 	return out
 }

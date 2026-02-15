@@ -780,7 +780,7 @@ func parseOpenCodePermission(item map[string]any) (openCodePermission, bool) {
 	}
 
 	status := strings.ToLower(openCodePermissionField(item, request, metadata, "status", "state"))
-	kind := openCodePermissionField(item, request, metadata, "type", "kind")
+	kind := openCodePermissionField(item, request, metadata, "type", "kind", "permission")
 	summary := openCodePermissionField(item, request, metadata, "message", "title", "prompt", "question")
 	command := openCodePermissionField(item, request, metadata, "command", "parsedCmd", "cmd")
 	reason := openCodePermissionField(item, request, metadata, "reason", "description")
