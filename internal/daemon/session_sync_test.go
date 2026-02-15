@@ -283,3 +283,265 @@ func TestShouldSkipSyncOverwrite(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadSyncSnapshotTracksDismissedSessions(t *testing.T) {
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	ctx := context.Background()
+	dismissedAt := time.Now().UTC()
+
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-dismissed",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceCodex,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   "sess-dismissed",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		DismissedAt: &dismissedAt,
+	})
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-active",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceCodex,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   "sess-active",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+
+	syncer := &CodexSyncer{
+		sessions: sessionStore,
+		meta:     metaStore,
+	}
+
+	snapshot, err := syncer.loadSyncSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("loadSyncSnapshot() error = %v", err)
+	}
+	if snapshot == nil {
+		t.Fatalf("expected snapshot")
+	}
+	if !snapshot.isDismissed("sess-dismissed") {
+		t.Fatalf("expected dismissed session in snapshot set")
+	}
+	if snapshot.isDismissed("sess-active") {
+		t.Fatalf("did not expect active session in dismissed set")
+	}
+	if _, ok := snapshot.record("sess-dismissed"); !ok {
+		t.Fatalf("expected dismissed record in snapshot")
+	}
+	if snapshot.meta("sess-active") == nil {
+		t.Fatalf("expected active meta in snapshot")
+	}
+}
+
+func TestRemoveStaleSkipsDismissedSessions(t *testing.T) {
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	ctx := context.Background()
+	dismissedAt := time.Now().UTC()
+
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-dismissed",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceCodex,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   "sess-dismissed",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		DismissedAt: &dismissedAt,
+	})
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-stale",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceCodex,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   "sess-stale",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-seen",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceCodex,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   "sess-seen",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+
+	syncer := &CodexSyncer{
+		sessions: sessionStore,
+		meta:     metaStore,
+	}
+	snapshot, err := syncer.loadSyncSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("loadSyncSnapshot() error = %v", err)
+	}
+	if err := syncer.removeStale(ctx, "ws-1", "wt-1", map[string]struct{}{"sess-seen": {}}, snapshot, nil); err != nil {
+		t.Fatalf("removeStale() error = %v", err)
+	}
+
+	if _, ok, err := sessionStore.GetRecord(ctx, "sess-dismissed"); err != nil || !ok {
+		t.Fatalf("dismissed record should remain, ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := metaStore.Get(ctx, "sess-dismissed"); err != nil || !ok {
+		t.Fatalf("dismissed meta should remain, ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := sessionStore.GetRecord(ctx, "sess-stale"); err != nil {
+		t.Fatalf("get stale record: %v", err)
+	} else if ok {
+		t.Fatalf("expected stale record to be removed")
+	}
+	if _, ok, err := metaStore.Get(ctx, "sess-stale"); err != nil {
+		t.Fatalf("get stale meta: %v", err)
+	} else if ok {
+		t.Fatalf("expected stale meta to be removed")
+	}
+	if _, ok, err := sessionStore.GetRecord(ctx, "sess-seen"); err != nil || !ok {
+		t.Fatalf("seen record should remain, ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := metaStore.Get(ctx, "sess-seen"); err != nil || !ok {
+		t.Fatalf("seen meta should remain, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestDefaultThreadSyncPolicyClassifyThread(t *testing.T) {
+	policy := &defaultThreadSyncPolicy{}
+	snapshot := &syncSnapshot{
+		dismissedSessionID: map[string]struct{}{
+			"s-dismissed": {},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		thread  codexThreadSummary
+		cwd     string
+		exclude []string
+		want    threadDisposition
+	}{
+		{
+			name:   "out of scope",
+			thread: codexThreadSummary{ID: "s-out", Cwd: "/tmp/other"},
+			cwd:    "/tmp/repo",
+			want:   threadDispositionOutOfScope,
+		},
+		{
+			name:    "excluded path",
+			thread:  codexThreadSummary{ID: "s-excluded", Cwd: "/tmp/repo/wt"},
+			cwd:     "/tmp/repo",
+			exclude: []string{"/tmp/repo/wt"},
+			want:    threadDispositionExcluded,
+		},
+		{
+			name:   "dismissed",
+			thread: codexThreadSummary{ID: "s-dismissed", Cwd: "/tmp/repo"},
+			cwd:    "/tmp/repo",
+			want:   threadDispositionDismissed,
+		},
+		{
+			name:   "process",
+			thread: codexThreadSummary{ID: "s-process", Cwd: "/tmp/repo"},
+			cwd:    "/tmp/repo",
+			want:   threadDispositionProcess,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := policy.ClassifyThread(tc.thread, tc.cwd, tc.exclude, snapshot)
+			if got != tc.want {
+				t.Fatalf("ClassifyThread() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultThreadSyncPolicyShouldRemoveStale(t *testing.T) {
+	policy := &defaultThreadSyncPolicy{}
+	record := &types.SessionRecord{
+		Session: &types.Session{ID: "s1"},
+		Source:  sessionSourceCodex,
+	}
+	meta := &types.SessionMeta{
+		SessionID:   "s1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	}
+
+	if !policy.ShouldRemoveStale(record, meta, "ws-1", "wt-1", map[string]struct{}{}) {
+		t.Fatalf("expected stale codex session to be removable")
+	}
+	if policy.ShouldRemoveStale(record, meta, "ws-2", "wt-1", map[string]struct{}{}) {
+		t.Fatalf("expected workspace mismatch to block removal")
+	}
+	if policy.ShouldRemoveStale(record, meta, "ws-1", "wt-1", map[string]struct{}{"s1": {}}) {
+		t.Fatalf("expected seen session to block removal")
+	}
+	dismissedAt := time.Now().UTC()
+	meta.DismissedAt = &dismissedAt
+	if policy.ShouldRemoveStale(record, meta, "ws-1", "wt-1", map[string]struct{}{}) {
+		t.Fatalf("expected dismissed session to block removal")
+	}
+}
+
+type captureSyncMetricsSink struct {
+	metrics []SyncPathMetric
+}
+
+func (s *captureSyncMetricsSink) RecordSyncPath(metric SyncPathMetric) {
+	s.metrics = append(s.metrics, metric)
+}
+
+func TestRecordSyncPathMetricUsesInjectedSink(t *testing.T) {
+	sink := &captureSyncMetricsSink{}
+	syncer := &CodexSyncer{
+		metrics: sink,
+	}
+	startedAt := time.Now().Add(-25 * time.Millisecond)
+	syncer.recordSyncPathMetric("/tmp/repo", "ws-1", "wt-1", startedAt, &syncPathStats{
+		pages:                 2,
+		threadsListed:         10,
+		threadsDismissed:      5,
+		threadsConsidered:     5,
+		sessionRecordsWritten: 2,
+		sessionMetaWritten:    3,
+		staleRemoved:          1,
+	})
+	if len(sink.metrics) != 1 {
+		t.Fatalf("expected one metric call, got %d", len(sink.metrics))
+	}
+	metric := sink.metrics[0]
+	if metric.WorkspaceID != "ws-1" || metric.WorktreeID != "wt-1" {
+		t.Fatalf("unexpected target in metric: %#v", metric)
+	}
+	if metric.ThreadsDismissed != 5 {
+		t.Fatalf("expected dismissed count 5, got %d", metric.ThreadsDismissed)
+	}
+	if metric.DurationMS < 0 {
+		t.Fatalf("expected non-negative duration, got %d", metric.DurationMS)
+	}
+}

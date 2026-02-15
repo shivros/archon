@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 )
 
 type execProvider struct {
@@ -53,16 +54,26 @@ func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items
 		return nil, err
 	}
 
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
 	go func() {
+		defer copyWG.Done()
 		_, _ = io.Copy(sink.StdoutWriter(), stdoutPipe)
 	}()
 	go func() {
+		defer copyWG.Done()
 		_, _ = io.Copy(sink.StderrWriter(), stderrPipe)
 	}()
 
+	waitFn := func() error {
+		err := cmd.Wait()
+		copyWG.Wait()
+		return err
+	}
+
 	return &providerProcess{
 		Process: cmd.Process,
-		Wait:    cmd.Wait,
+		Wait:    waitFn,
 	}, nil
 }
 
