@@ -43,8 +43,8 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	if opencode.Username != "archon" {
 		t.Fatalf("unexpected opencode username: %q", opencode.Username)
 	}
-	if opencode.Timeout != 90*time.Second {
-		t.Fatalf("expected opencode timeout floor 90s, got %s", opencode.Timeout)
+	if opencode.Timeout != 30*time.Second {
+		t.Fatalf("expected opencode default timeout 30s, got %s", opencode.Timeout)
 	}
 
 	kilocode := resolveOpenCodeClientConfig("kilocode", coreCfg)
@@ -54,8 +54,8 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	if kilocode.Username != "archon-kilo" {
 		t.Fatalf("unexpected kilocode username: %q", kilocode.Username)
 	}
-	if kilocode.Timeout != 90*time.Second {
-		t.Fatalf("expected kilocode timeout floor 90s, got %s", kilocode.Timeout)
+	if kilocode.Timeout != 30*time.Second {
+		t.Fatalf("expected kilocode default timeout 30s, got %s", kilocode.Timeout)
 	}
 }
 
@@ -151,8 +151,12 @@ username = "archon"
 	if createCalls.Load() != 1 {
 		t.Fatalf("expected one session create call, got %d", createCalls.Load())
 	}
-	if promptCalls.Load() != 1 {
-		t.Fatalf("expected one prompt call for initial text, got %d", promptCalls.Load())
+	deadline := time.Now().Add(2 * time.Second)
+	for promptCalls.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if promptCalls.Load() < 1 {
+		t.Fatalf("expected async prompt call for initial text, got %d", promptCalls.Load())
 	}
 	if proc.Send == nil {
 		t.Fatalf("expected send function")

@@ -46,15 +46,18 @@ func (a *ChatInputAddon) OpenOptionPicker(target composeOptionKind, options []se
 		return false
 	}
 	selectedID = strings.TrimSpace(selectedID)
+	a.optionPicker.ClearQuery()
 	a.optionPicker.SetOptions(options)
 	a.optionPicker.SelectID(selectedID)
 	a.optionTarget = target
-	height := len(options)
-	if height < 3 {
-		height = 3
+	// Reserve one extra line so the query prompt can be shown without
+	// reducing the number of visible options.
+	height := len(options) + 1
+	if height < 4 {
+		height = 4
 	}
-	if height > 8 {
-		height = 8
+	if height > 9 {
+		height = 9
 	}
 	if width <= 0 {
 		width = minViewportWidth
@@ -100,6 +103,34 @@ func (a *ChatInputAddon) OptionPickerSelectedID() string {
 		return ""
 	}
 	return a.optionPicker.SelectedID()
+}
+
+func (a *ChatInputAddon) OptionPickerQuery() string {
+	if a == nil || a.optionPicker == nil {
+		return ""
+	}
+	return a.optionPicker.Query()
+}
+
+func (a *ChatInputAddon) OptionPickerAppendQuery(text string) bool {
+	if a == nil || a.optionPicker == nil {
+		return false
+	}
+	return a.optionPicker.AppendQuery(text)
+}
+
+func (a *ChatInputAddon) OptionPickerBackspaceQuery() bool {
+	if a == nil || a.optionPicker == nil {
+		return false
+	}
+	return a.optionPicker.BackspaceQuery()
+}
+
+func (a *ChatInputAddon) OptionPickerClearQuery() bool {
+	if a == nil || a.optionPicker == nil {
+		return false
+	}
+	return a.optionPicker.ClearQuery()
 }
 
 func (a *ChatInputAddon) OptionPickerView() string {

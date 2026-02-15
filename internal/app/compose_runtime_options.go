@@ -322,6 +322,34 @@ func (m *Model) composeOptionPickerSelectedID() string {
 	return m.chatAddonController.composeOptionPickerSelectedID()
 }
 
+func (m *Model) composeOptionPickerQuery() string {
+	if m == nil || m.chatAddonController == nil {
+		return ""
+	}
+	return m.chatAddonController.composeOptionPickerQuery()
+}
+
+func (m *Model) composeOptionPickerAppendQuery(text string) bool {
+	if m == nil || m.chatAddonController == nil {
+		return false
+	}
+	return m.chatAddonController.composeOptionPickerAppendQuery(text)
+}
+
+func (m *Model) composeOptionPickerBackspaceQuery() bool {
+	if m == nil || m.chatAddonController == nil {
+		return false
+	}
+	return m.chatAddonController.composeOptionPickerBackspaceQuery()
+}
+
+func (m *Model) composeOptionPickerClearQuery() bool {
+	if m == nil || m.chatAddonController == nil {
+		return false
+	}
+	return m.chatAddonController.composeOptionPickerClearQuery()
+}
+
 func (m *Model) moveComposeOptionPicker(delta int) {
 	if m == nil || m.chatAddonController == nil {
 		return

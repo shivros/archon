@@ -35,6 +35,10 @@ func (m *Model) reduceNoteMovePickerMode(msg tea.Msg) (bool, tea.Cmd) {
 	}
 	switch keyMsg.String() {
 	case "esc":
+		if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
+			m.setStatusMessage("filter cleared")
+			return true, nil
+		}
 		m.exitNoteMovePicker("move canceled")
 		return true, nil
 	case "enter":
@@ -50,6 +54,9 @@ func (m *Model) reduceNoteMovePickerMode(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	default:
+		if m.groupSelectPicker != nil {
+			m.applyPickerTypeAhead(keyMsg, m.groupSelectPicker)
+		}
 		return true, nil
 	}
 }
@@ -171,6 +178,7 @@ func (m *Model) applyNoteMoveTargetSelection(target string) tea.Cmd {
 
 func (m *Model) enterNoteMovePicker(mode uiMode, options []selectOption, status string) {
 	if m.groupSelectPicker != nil {
+		m.groupSelectPicker.ClearQuery()
 		m.groupSelectPicker.SetOptions(options)
 	}
 	m.mode = mode

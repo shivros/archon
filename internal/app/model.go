@@ -2477,6 +2477,7 @@ func (m *Model) exitAddWorkspaceGroup(status string) {
 func (m *Model) enterWorkspacePicker(mode uiMode) {
 	m.mode = mode
 	if m.workspacePicker != nil {
+		m.workspacePicker.ClearQuery()
 		options := make([]selectOption, 0, len(m.workspaces))
 		for _, ws := range m.workspaces {
 			if ws == nil {
@@ -2492,6 +2493,7 @@ func (m *Model) enterWorkspacePicker(mode uiMode) {
 func (m *Model) enterGroupPicker() {
 	m.mode = uiModePickWorkspaceGroupRename
 	if m.groupSelectPicker != nil {
+		m.groupSelectPicker.ClearQuery()
 		options := make([]selectOption, 0, len(m.groups))
 		for _, group := range m.groups {
 			if group == nil {
@@ -2510,6 +2512,7 @@ func (m *Model) enterGroupPicker() {
 func (m *Model) enterGroupAssignPicker() {
 	m.mode = uiModePickWorkspaceGroupAssign
 	if m.groupSelectPicker != nil {
+		m.groupSelectPicker.ClearQuery()
 		options := make([]selectOption, 0, len(m.groups))
 		for _, group := range m.groups {
 			if group == nil {
@@ -2528,6 +2531,7 @@ func (m *Model) enterGroupAssignPicker() {
 func (m *Model) enterGroupDeletePicker() {
 	m.mode = uiModePickWorkspaceGroupDelete
 	if m.groupSelectPicker != nil {
+		m.groupSelectPicker.ClearQuery()
 		options := make([]selectOption, 0, len(m.groups))
 		for _, group := range m.groups {
 			if group == nil {
@@ -2560,6 +2564,7 @@ func (m *Model) enterEditWorkspaceGroups(id string) {
 		}
 	}
 	if m.groupPicker != nil {
+		m.groupPicker.ClearQuery()
 		m.groupPicker.SetGroups(m.groups, selected)
 	}
 	if m.input != nil {
@@ -2616,6 +2621,7 @@ func (m *Model) enterAssignGroupWorkspaces(groupID string) {
 	m.mode = uiModeAssignGroupWorkspaces
 	m.assignGroupID = groupID
 	if m.workspaceMulti != nil {
+		m.workspaceMulti.ClearQuery()
 		options := make([]multiSelectOption, 0, len(m.workspaces))
 		for _, ws := range m.workspaces {
 			if ws == nil {

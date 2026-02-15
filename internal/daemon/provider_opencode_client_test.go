@@ -677,6 +677,78 @@ func TestOpenCodeClientPromptRecoversAssistantAfterRequestTimeout(t *testing.T) 
 	}
 }
 
+func TestOpenCodeClientPromptTimeoutReturnsPendingWhenNoAssistantRecovery(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	var (
+		listCalls   atomic.Int32
+		promptCalls atomic.Int32
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			promptCalls.Add(1)
+			time.Sleep(200 * time.Millisecond)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "late reply"},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			listCalls.Add(1)
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "assistant-old",
+						"role":      "assistant",
+						"createdAt": "2026-02-12T01:00:00Z",
+					},
+					"parts": []map[string]any{
+						{"type": "text", "text": "old reply"},
+					},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{
+		BaseURL: server.URL,
+		Timeout: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	if err == nil {
+		t.Fatalf("expected pending timeout error")
+	}
+	if !errors.Is(err, errOpenCodePromptPending) {
+		t.Fatalf("expected pending timeout error, got %v", err)
+	}
+	if reply != "" {
+		t.Fatalf("expected empty reply when prompt is still pending, got %q", reply)
+	}
+	if promptCalls.Load() != 1 {
+		t.Fatalf("expected one prompt request, got %d", promptCalls.Load())
+	}
+	if listCalls.Load() < 2 {
+		t.Fatalf("expected baseline and recovery list calls, got %d", listCalls.Load())
+	}
+}
+
 func TestOpenCodeClientPromptParsesMessageContentShape(t *testing.T) {
 	const directory = "/tmp/opencode-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

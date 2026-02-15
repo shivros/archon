@@ -19,6 +19,8 @@ import (
 	"control/internal/types"
 )
 
+var errOpenCodePromptPending = errors.New("opencode prompt pending")
+
 type openCodeJSONRequester interface {
 	doJSON(ctx context.Context, method, path string, body any, out any) error
 }
@@ -319,9 +321,13 @@ func (s *openCodePromptService) Prompt(ctx context.Context, sessionID, text stri
 			// Some OpenCode/Kilo server builds keep processing after the client-side
 			// HTTP timeout. Recover the assistant turn from session history when
 			// possible instead of surfacing a false-negative send failure.
-			if recovered := s.sessions.waitForAssistantReply(ctx, sessionID, directory, baseline); recovered != "" {
+			recoveryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			recovered := s.sessions.waitForAssistantReply(recoveryCtx, sessionID, directory, baseline)
+			cancel()
+			if recovered != "" {
 				return recovered, nil
 			}
+			return "", fmt.Errorf("%w: %v", errOpenCodePromptPending, err)
 		}
 		lastErr = err
 		if idx == 0 && openCodeShouldFallbackLegacy(err) {

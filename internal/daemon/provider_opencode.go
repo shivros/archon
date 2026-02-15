@@ -88,9 +88,7 @@ func (p *openCodeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, i
 	}
 
 	if text := strings.TrimSpace(cfg.InitialText); text != "" {
-		if err := runner.SendUser(text); err != nil {
-			return nil, err
-		}
+		runner.runAsync(text, runner.options, "initial prompt")
 	}
 
 	done := make(chan struct{})
@@ -132,6 +130,21 @@ func (r *openCodeRunner) SendUser(text string) error {
 	return r.Send(buildOpenCodeUserPayloadWithRuntime(text, r.options))
 }
 
+func (r *openCodeRunner) runAsync(text string, runtimeOptions *types.SessionRuntimeOptions, source string) {
+	if r == nil {
+		return
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	go func(sendText string, sendOptions *types.SessionRuntimeOptions, sendSource string) {
+		if err := r.run(sendText, sendOptions); err != nil && r.sink != nil {
+			r.sink.Write("stderr", []byte("opencode "+strings.TrimSpace(sendSource)+" failed: "+err.Error()+"\n"))
+		}
+	}(text, runtimeOptions, source)
+}
+
 func (r *openCodeRunner) run(text string, runtimeOptions *types.SessionRuntimeOptions) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -141,6 +154,12 @@ func (r *openCodeRunner) run(text string, runtimeOptions *types.SessionRuntimeOp
 	r.appendUserItem(text)
 	reply, err := r.client.Prompt(context.Background(), r.providerID, text, effectiveOptions, r.directory)
 	if err != nil {
+		if errors.Is(err, errOpenCodePromptPending) {
+			if r.sink != nil {
+				r.sink.Write("stderr", []byte("opencode prompt pending: provider still processing in background\n"))
+			}
+			return nil
+		}
 		if r.sink != nil {
 			r.sink.Write("stderr", []byte("opencode prompt error: "+err.Error()+"\n"))
 		}
@@ -286,10 +305,8 @@ func resolveOpenCodeClientConfig(provider string, coreCfg config.CoreConfig) ope
 		}
 	}
 	timeoutSeconds := coreCfg.OpenCodeTimeoutSeconds(provider)
-	if timeoutSeconds < 90 {
-		// OpenCode/Kilo prompt endpoints can legitimately block while a turn
-		// executes. Keep provider HTTP timeout aligned with API-level send calls.
-		timeoutSeconds = 90
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 30
 	}
 	return openCodeClientConfig{
 		BaseURL:  baseURL,

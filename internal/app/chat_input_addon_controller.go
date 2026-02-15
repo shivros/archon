@@ -176,6 +176,34 @@ func (c *ChatInputAddonController) composeOptionPickerSelectedID() string {
 	return c.addon.OptionPickerSelectedID()
 }
 
+func (c *ChatInputAddonController) composeOptionPickerQuery() string {
+	if c == nil || c.addon == nil {
+		return ""
+	}
+	return c.addon.OptionPickerQuery()
+}
+
+func (c *ChatInputAddonController) composeOptionPickerAppendQuery(text string) bool {
+	if c == nil || c.addon == nil {
+		return false
+	}
+	return c.addon.OptionPickerAppendQuery(text)
+}
+
+func (c *ChatInputAddonController) composeOptionPickerBackspaceQuery() bool {
+	if c == nil || c.addon == nil {
+		return false
+	}
+	return c.addon.OptionPickerBackspaceQuery()
+}
+
+func (c *ChatInputAddonController) composeOptionPickerClearQuery() bool {
+	if c == nil || c.addon == nil {
+		return false
+	}
+	return c.addon.OptionPickerClearQuery()
+}
+
 func (c *ChatInputAddonController) moveComposeOptionPicker(delta int) {
 	if c == nil || c.addon == nil {
 		return

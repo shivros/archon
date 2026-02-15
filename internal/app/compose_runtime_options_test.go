@@ -179,3 +179,23 @@ func TestRequestComposeOptionPickerFetchesAndAutoOpensForOpenCodeModel(t *testin
 		t.Fatalf("expected pending compose option request to clear")
 	}
 }
+
+func TestComposeOptionPickerTypeAheadFiltersModelOptions(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected model option picker to open")
+	}
+	if !m.composeOptionPickerAppendQuery("53c") {
+		t.Fatalf("expected type-ahead query to update picker")
+	}
+	selected := m.composeOptionPickerSelectedID()
+	if selected != "gpt-5.3-codex" {
+		t.Fatalf("expected filtered model selection to be gpt-5.3-codex, got %q", selected)
+	}
+	_ = m.applyComposeOptionSelection(selected)
+	if m.newSession.runtimeOptions == nil || m.newSession.runtimeOptions.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected selected model to be applied, got %#v", m.newSession.runtimeOptions)
+	}
+}

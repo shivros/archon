@@ -67,6 +67,10 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		switch keyMsg.String() {
 		case "esc":
+			if m.workspacePicker != nil && m.workspacePicker.ClearQuery() {
+				m.setStatusMessage("filter cleared")
+				return true, nil
+			}
 			m.exitWorkspacePicker("selection canceled")
 			return true, nil
 		case "enter":
@@ -95,6 +99,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			return true, nil
 		}
+		if m.workspacePicker != nil {
+			m.applyPickerTypeAhead(keyMsg, m.workspacePicker)
+		}
 		return true, nil
 	case uiModePickWorkspaceGroupRename, uiModePickWorkspaceGroupDelete, uiModePickWorkspaceGroupAssign:
 		keyMsg, ok := msg.(tea.KeyMsg)
@@ -103,6 +110,10 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		switch keyMsg.String() {
 		case "esc":
+			if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
+				m.setStatusMessage("filter cleared")
+				return true, nil
+			}
 			m.exitWorkspacePicker("selection canceled")
 			return true, nil
 		case "enter":
@@ -134,6 +145,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			return true, nil
 		}
+		if m.groupSelectPicker != nil {
+			m.applyPickerTypeAhead(keyMsg, m.groupSelectPicker)
+		}
 		return true, nil
 	case uiModeEditWorkspaceGroups:
 		keyMsg, ok := msg.(tea.KeyMsg)
@@ -142,6 +156,10 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		switch keyMsg.String() {
 		case "esc":
+			if m.groupPicker != nil && m.groupPicker.ClearQuery() {
+				m.setStatusMessage("filter cleared")
+				return true, nil
+			}
 			m.exitEditWorkspaceGroups("edit canceled")
 			return true, nil
 		case "enter":
@@ -169,6 +187,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 				return true, nil
 			}
 		}
+		if m.groupPicker != nil {
+			m.applyPickerTypeAhead(keyMsg, m.groupPicker)
+		}
 		return true, nil
 	case uiModeRenameWorkspaceGroup:
 		if !isTextInputMsg(msg) {
@@ -190,6 +211,10 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		switch keyMsg.String() {
 		case "esc":
+			if m.workspaceMulti != nil && m.workspaceMulti.ClearQuery() {
+				m.setStatusMessage("filter cleared")
+				return true, nil
+			}
 			m.exitAssignGroupWorkspaces("assignment canceled")
 			return true, nil
 		case "enter":
@@ -216,6 +241,9 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			if m.workspaceMulti != nil && m.workspaceMulti.Move(-1) {
 				return true, nil
 			}
+		}
+		if m.workspaceMulti != nil {
+			m.applyPickerTypeAhead(keyMsg, m.workspaceMulti)
 		}
 		return true, nil
 	default:
@@ -264,6 +292,10 @@ func (m *Model) reducePickProviderMode(msg tea.Msg) (bool, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
+			if m.providerPicker != nil && m.providerPicker.ClearQuery() {
+				m.setStatusMessage("filter cleared")
+				return true, nil
+			}
 			m.exitProviderPick("new session canceled")
 			return true, nil
 		case "enter":
@@ -277,6 +309,9 @@ func (m *Model) reducePickProviderMode(msg tea.Msg) (bool, tea.Cmd) {
 			if m.providerPicker != nil {
 				m.providerPicker.Move(-1)
 			}
+			return true, nil
+		}
+		if m.providerPicker != nil && m.applyPickerTypeAhead(msg, m.providerPicker) {
 			return true, nil
 		}
 	}
@@ -468,6 +503,10 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 			if m.composeOptionPickerOpen() {
 				switch msg.String() {
 				case "esc":
+					if m.composeOptionPickerClearQuery() {
+						m.setStatusMessage("session option filter cleared")
+						return true, nil
+					}
 					m.closeComposeOptionPicker()
 					m.setStatusMessage("session options picker closed")
 					return true, nil
@@ -482,6 +521,21 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 				case "k", "up":
 					m.moveComposeOptionPicker(-1)
 					return true, nil
+				}
+				switch m.keyString(msg) {
+				case "backspace", "ctrl+h":
+					if m.composeOptionPickerBackspaceQuery() {
+						return true, nil
+					}
+				case "ctrl+u":
+					if m.composeOptionPickerClearQuery() {
+						return true, nil
+					}
+				}
+				if text := pickerTypeAheadText(msg); text != "" {
+					if m.composeOptionPickerAppendQuery(text) {
+						return true, nil
+					}
 				}
 			}
 			if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {

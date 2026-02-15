@@ -75,6 +75,34 @@ func TestAddWorktreeControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeControllerExistingTypeAheadSelectsFilteredEntry(t *testing.T) {
+	controller := NewAddWorktreeController(80)
+	host := &stubAddWorktreeHost{}
+	controller.Enter("ws1", "/tmp/repo")
+	controller.mode = worktreeModeExisting
+	controller.step = 0
+	controller.SetAvailable([]*types.GitWorktree{
+		{Path: "/tmp/repo/feature-ui", Branch: "feature-ui"},
+		{Path: "/tmp/repo/fix-api", Branch: "fix-api"},
+		{Path: "/tmp/repo/chore", Branch: "chore"},
+	}, nil, "/tmp/repo")
+	if !controller.appendQuery("fxapi") {
+		t.Fatalf("expected type-ahead query to filter worktrees")
+	}
+	if len(controller.filtered) != 1 {
+		t.Fatalf("expected one filtered worktree, got %d", len(controller.filtered))
+	}
+	if _, cmd := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host); cmd != nil {
+		t.Fatalf("expected no async command when picking existing worktree")
+	}
+	if controller.step != 1 {
+		t.Fatalf("expected controller to advance to name step, got %d", controller.step)
+	}
+	if controller.path != "/tmp/repo/fix-api" {
+		t.Fatalf("expected filtered worktree to be selected, got %q", controller.path)
+	}
+}
+
 type stubAddWorkspaceHost struct {
 	submitKey  string
 	status     string

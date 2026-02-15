@@ -115,7 +115,7 @@ func TestMouseReducerPickProviderLeftClickSelects(t *testing.T) {
 	m.enterProviderPick()
 	layout := m.resolveMouseLayout()
 
-	handled := m.reduceModePickersLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: 1}, layout)
+	handled := m.reduceModePickersLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: 2}, layout)
 	if !handled {
 		t.Fatalf("expected provider click to be handled")
 	}
@@ -763,7 +763,7 @@ func TestMouseReducerComposeOptionPickerClickSelectsOption(t *testing.T) {
 	}
 
 	handled := m.reduceComposeOptionPickerLeftPressMouse(
-		tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: row + 1},
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: row + 2},
 		layout,
 	)
 	if !handled {

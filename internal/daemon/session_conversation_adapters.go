@@ -441,6 +441,7 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 	if service.logger != nil && service.logger.Enabled(logging.Debug) {
 		service.logger.Debug("opencode_send_ok", baseFields...)
 	}
+	openCodeSchedulePostSendReconcile(service, session, meta, "send_ok")
 	now := time.Now().UTC()
 	if service.stores != nil && service.stores.SessionMeta != nil {
 		_, _ = service.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
@@ -449,6 +450,54 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 		})
 	}
 	return "", nil
+}
+
+func openCodeSchedulePostSendReconcile(service *SessionService, session *types.Session, meta *types.SessionMeta, reason string) {
+	if service == nil || session == nil {
+		return
+	}
+	trimmedReason := strings.TrimSpace(reason)
+	if trimmedReason == "" {
+		trimmedReason = "send"
+	}
+	go func() {
+		reconciler := newOpenCodeHistoryReconciler(service, session, meta)
+		delay := 2 * time.Second
+		for attempt := 1; attempt <= 9; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			result, err := reconciler.Sync(ctx, 200)
+			cancel()
+			if err == nil && len(result.backfilled) > 0 {
+				if service.logger != nil {
+					service.logger.Info("opencode_post_send_reconcile_backfilled",
+						append(
+							openCodeSessionLogFields(session, meta),
+							logging.F("reason", trimmedReason),
+							logging.F("attempt", attempt),
+							logging.F("items", len(result.backfilled)),
+						)...,
+					)
+				}
+				return
+			}
+			if attempt == 9 {
+				break
+			}
+			timer := time.NewTimer(delay)
+			<-timer.C
+			if delay < 10*time.Second {
+				delay *= 2
+			}
+		}
+		if service.logger != nil && service.logger.Enabled(logging.Debug) {
+			service.logger.Debug("opencode_post_send_reconcile_exhausted",
+				append(
+					openCodeSessionLogFields(session, meta),
+					logging.F("reason", trimmedReason),
+				)...,
+			)
+		}
+	}()
 }
 
 func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {

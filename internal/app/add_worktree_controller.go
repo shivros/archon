@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"control/internal/client"
@@ -37,6 +36,8 @@ type AddWorktreeController struct {
 	listIndex     int
 	listOffset    int
 	listHeight    int
+	query         string
+	filtered      []int
 	path          string
 	branch        string
 	name          string
@@ -77,6 +78,8 @@ func (c *AddWorktreeController) Enter(workspaceID, workspacePath string) {
 	c.choice = 0
 	c.listIndex = 0
 	c.listOffset = 0
+	c.query = ""
+	c.filtered = nil
 	c.path = ""
 	c.branch = ""
 	c.name = ""
@@ -95,6 +98,8 @@ func (c *AddWorktreeController) Exit() {
 	c.choice = 0
 	c.listIndex = 0
 	c.listOffset = 0
+	c.query = ""
+	c.filtered = nil
 	c.path = ""
 	c.branch = ""
 	c.name = ""
@@ -107,10 +112,7 @@ func (c *AddWorktreeController) Exit() {
 
 func (c *AddWorktreeController) SetAvailable(available []*types.GitWorktree, existing []*types.Worktree, workspacePath string) int {
 	c.available = filterAvailableWorktrees(available, existing, workspacePath)
-	if c.listIndex >= len(c.available) {
-		c.listIndex = 0
-	}
-	c.ensureVisible()
+	c.rebuildFiltered()
 	return len(c.available)
 }
 
@@ -158,6 +160,10 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 
 	switch host.keyString(keyMsg) {
 	case "esc":
+		if c.mode == worktreeModeExisting && c.step == 0 && c.clearQuery() {
+			host.setStatus("worktree filter cleared")
+			return true, nil
+		}
 		host.exitAddWorktree("add worktree canceled")
 		return true, nil
 	case "enter":
@@ -188,9 +194,25 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 				c.setListIndex(0)
 				return true, nil
 			case "end":
-				c.setListIndex(len(c.available) - 1)
+				c.setListIndex(len(c.filtered) - 1)
 				return true, nil
 			}
+			switch host.keyString(keyMsg) {
+			case "backspace", "ctrl+h":
+				if c.backspaceQuery() {
+					return true, nil
+				}
+			case "ctrl+u":
+				if c.clearQuery() {
+					return true, nil
+				}
+			}
+			if text := pickerTypeAheadText(keyMsg); text != "" {
+				if c.appendQuery(text) {
+					return true, nil
+				}
+			}
+			return true, nil
 		}
 		return false, nil
 	}
@@ -248,7 +270,7 @@ func (c *AddWorktreeController) prepareInput() {
 		c.input.Focus()
 		switch c.step {
 		case 0:
-			c.input.SetPlaceholder("number")
+			c.input.SetPlaceholder("(type to filter)")
 		case 1:
 			c.input.SetPlaceholder("(optional) display name")
 		}
@@ -321,11 +343,16 @@ func (c *AddWorktreeController) advance(host addWorktreeHost) tea.Cmd {
 	case worktreeModeExisting:
 		switch c.step {
 		case 0:
-			if len(c.available) == 0 {
+			if len(c.filtered) == 0 {
 				host.setStatus("no worktrees available")
 				return nil
 			}
-			c.path = c.available[c.listIndex].Path
+			idx := c.selectedAvailableIndex()
+			if idx < 0 || idx >= len(c.available) {
+				host.setStatus("no worktree selected")
+				return nil
+			}
+			c.path = c.available[idx].Path
 			c.step = 1
 			c.prepareInput()
 			host.setStatus("add worktree: name (optional)")
@@ -369,13 +396,24 @@ func (c *AddWorktreeController) renderStep() string {
 			renderAddField(c.input, c.step, "Name", c.name, 2),
 		}, "\n")
 	case worktreeModeExisting:
-		lines := []string{"Worktrees:"}
+		filter := "/"
+		if strings.TrimSpace(c.query) != "" {
+			filter = "/ " + c.query
+		}
+		header := fmt.Sprintf("Worktrees [%s]:", filter)
+		lines := []string{header}
 		if len(c.available) == 0 {
 			lines = append(lines, "  (none found)")
+		} else if len(c.filtered) == 0 {
+			lines = append(lines, "  (no matches)")
 		} else {
 			start, end := c.visibleRange()
 			for i := start; i < end; i++ {
-				wt := c.available[i]
+				availableIndex := c.filtered[i]
+				if availableIndex < 0 || availableIndex >= len(c.available) {
+					continue
+				}
+				wt := c.available[availableIndex]
 				label := wt.Path
 				if wt.Branch != "" {
 					label += " (" + wt.Branch + ")"
@@ -387,11 +425,12 @@ func (c *AddWorktreeController) renderStep() string {
 				lines = append(lines, line)
 			}
 		}
-		lines = append(lines, "", "Use j/k/↑/↓ to select • Enter to continue • Click to select")
+		lines = append(lines, "", "Use j/k/↑/↓ to select • type to filter • Enter to continue • Click to select")
 		if c.step >= 1 {
 			selected := c.path
-			if strings.TrimSpace(selected) == "" && c.listIndex >= 0 && c.listIndex < len(c.available) {
-				selected = c.available[c.listIndex].Path
+			selectedIndex := c.selectedAvailableIndex()
+			if strings.TrimSpace(selected) == "" && selectedIndex >= 0 && selectedIndex < len(c.available) {
+				selected = c.available[selectedIndex].Path
 			}
 			if selected != "" {
 				lines = append(lines, fmt.Sprintf("Selected: %s", selected))
@@ -407,12 +446,12 @@ func (c *AddWorktreeController) HandleClick(row int, host addWorktreeHost) (bool
 	if c.mode != worktreeModeExisting || c.step != 0 {
 		return false, nil
 	}
-	if len(c.available) == 0 {
+	if len(c.filtered) == 0 {
 		return false, nil
 	}
 	listStart := 1
 	idx := c.listOffset + (row - listStart)
-	if idx < 0 || idx >= len(c.available) {
+	if idx < 0 || idx >= len(c.filtered) {
 		return false, nil
 	}
 	c.setListIndex(idx)
@@ -423,7 +462,7 @@ func (c *AddWorktreeController) Scroll(delta int) bool {
 	if c.mode != worktreeModeExisting || c.step != 0 {
 		return false
 	}
-	if len(c.available) == 0 {
+	if len(c.filtered) == 0 {
 		return false
 	}
 	c.setListIndex(c.listIndex + delta)
@@ -436,7 +475,7 @@ func (c *AddWorktreeController) setListIndex(idx int) {
 }
 
 func (c *AddWorktreeController) ensureVisible() {
-	if len(c.available) == 0 {
+	if len(c.filtered) == 0 {
 		c.listIndex = 0
 		c.listOffset = 0
 		return
@@ -444,8 +483,8 @@ func (c *AddWorktreeController) ensureVisible() {
 	if c.listIndex < 0 {
 		c.listIndex = 0
 	}
-	if c.listIndex >= len(c.available) {
-		c.listIndex = len(c.available) - 1
+	if c.listIndex >= len(c.filtered) {
+		c.listIndex = len(c.filtered) - 1
 	}
 	if c.listHeight <= 0 {
 		c.listHeight = 8
@@ -456,7 +495,7 @@ func (c *AddWorktreeController) ensureVisible() {
 	if c.listIndex >= c.listOffset+c.listHeight {
 		c.listOffset = c.listIndex - c.listHeight + 1
 	}
-	maxOffset := len(c.available) - c.listHeight
+	maxOffset := len(c.filtered) - c.listHeight
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -466,18 +505,92 @@ func (c *AddWorktreeController) ensureVisible() {
 }
 
 func (c *AddWorktreeController) visibleRange() (int, int) {
-	if len(c.available) == 0 {
+	if len(c.filtered) == 0 {
 		return 0, 0
 	}
-	if c.listHeight <= 0 || len(c.available) <= c.listHeight {
-		return 0, len(c.available)
+	if c.listHeight <= 0 || len(c.filtered) <= c.listHeight {
+		return 0, len(c.filtered)
 	}
 	c.ensureVisible()
 	end := c.listOffset + c.listHeight
-	if end > len(c.available) {
-		end = len(c.available)
+	if end > len(c.filtered) {
+		end = len(c.filtered)
 	}
 	return c.listOffset, end
+}
+
+func (c *AddWorktreeController) selectedAvailableIndex() int {
+	if c.listIndex < 0 || c.listIndex >= len(c.filtered) {
+		return -1
+	}
+	return c.filtered[c.listIndex]
+}
+
+func (c *AddWorktreeController) setQuery(query string) bool {
+	if query == c.query {
+		return false
+	}
+	c.query = query
+	c.rebuildFiltered()
+	return true
+}
+
+func (c *AddWorktreeController) appendQuery(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	return c.setQuery(c.query + text)
+}
+
+func (c *AddWorktreeController) backspaceQuery() bool {
+	if c.query == "" {
+		return false
+	}
+	runes := []rune(c.query)
+	return c.setQuery(string(runes[:len(runes)-1]))
+}
+
+func (c *AddWorktreeController) clearQuery() bool {
+	return c.setQuery("")
+}
+
+func (c *AddWorktreeController) rebuildFiltered() {
+	selected := c.selectedAvailableIndex()
+	c.filtered = pickerFilterIndices(c.query, len(c.available), func(index int) (label, id, search string) {
+		wt := c.available[index]
+		if wt == nil {
+			return "", "", ""
+		}
+		label = wt.Path
+		if strings.TrimSpace(wt.Branch) != "" {
+			label += " (" + wt.Branch + ")"
+		}
+		id = wt.Path
+		search = wt.Path + " " + wt.Branch
+		return label, id, search
+	})
+	if len(c.filtered) == 0 {
+		c.listIndex = 0
+		c.listOffset = 0
+		return
+	}
+	if selected >= 0 {
+		for i, idx := range c.filtered {
+			if idx == selected {
+				c.listIndex = i
+				c.ensureVisible()
+				return
+			}
+		}
+	}
+	if c.listIndex >= len(c.filtered) {
+		c.listIndex = len(c.filtered) - 1
+	}
+	if c.listIndex < 0 {
+		c.listIndex = 0
+	}
+	c.ensureVisible()
 }
 
 func filterAvailableWorktrees(available []*types.GitWorktree, existing []*types.Worktree, workspacePath string) []*types.GitWorktree {
@@ -503,16 +616,4 @@ func filterAvailableWorktrees(available []*types.GitWorktree, existing []*types.
 		out = append(out, wt)
 	}
 	return out
-}
-
-func parseIndex(value string) int {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return -1
-	}
-	idx, err := strconv.Atoi(value)
-	if err != nil || idx <= 0 {
-		return -1
-	}
-	return idx - 1
 }
