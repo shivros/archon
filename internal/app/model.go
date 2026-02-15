@@ -120,6 +120,8 @@ type Model struct {
 	providerOptions            map[string]*types.ProviderOptionCatalog
 	appState                   types.AppState
 	hasAppState                bool
+	initialStateLoaded         bool
+	appStateSaveSeq            int
 	stream                     *StreamController
 	codexStream                *CodexStreamController
 	itemStream                 *ItemStreamController
@@ -2144,6 +2146,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	case tea.MouseWheelDown:
 		return m.reduceMouseWheel(msg, layout, 1)
 	case tea.MouseLeft:
+		if _, ok := msg.(tea.MouseClickMsg); !ok {
+			return false
+		}
 	default:
 		return false
 	}
@@ -2420,12 +2425,14 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 	}
 	m.syncAppStateComposeHistory()
 	m.syncAppStateInputDrafts()
+	m.appStateSaveSeq++
+	requestSeq := m.appStateSaveSeq
 	state := m.appState
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 		updated, err := m.stateAPI.UpdateAppState(ctx, &state)
-		return appStateSavedMsg{state: updated, err: err}
+		return appStateSavedMsg{requestSeq: requestSeq, state: updated, err: err}
 	}
 }
 

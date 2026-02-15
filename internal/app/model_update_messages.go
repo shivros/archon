@@ -249,18 +249,25 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.upsertNotesLive(msg.note)
 		m.setStatusInfo("note moved")
 		return true, m.notesRefreshCmdForOpenViews()
-	case appStateMsg:
+	case appStateInitialLoadMsg:
 		if msg.err != nil {
 			m.setBackgroundError("state error: " + msg.err.Error())
 			return true, nil
 		}
+		if m.initialStateLoaded || m.hasAppState {
+			return true, nil
+		}
 		if msg.state != nil {
 			m.applyAppState(msg.state)
+			m.initialStateLoaded = true
 			m.applySidebarItems()
 			m.resize(m.width, m.height)
 		}
 		return true, nil
 	case appStateSavedMsg:
+		if msg.requestSeq > 0 && msg.requestSeq < m.appStateSaveSeq {
+			return true, nil
+		}
 		if msg.err != nil {
 			m.setBackgroundError("state save error: " + msg.err.Error())
 			return true, nil

@@ -27,9 +27,15 @@ type appStateMsg struct {
 	err   error
 }
 
-type appStateSavedMsg struct {
+type appStateInitialLoadMsg struct {
 	state *types.AppState
 	err   error
+}
+
+type appStateSavedMsg struct {
+	requestSeq int
+	state      *types.AppState
+	err        error
 }
 
 type providerOptionsMsg struct {

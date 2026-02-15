@@ -813,3 +813,48 @@ func TestMouseReducerComposeOptionPickerClickBelowPopupSelectsLastOption(t *test
 		t.Fatalf("expected bottom-edge click to select last model, got %q", got)
 	}
 }
+
+func TestMouseReducerMenuGroupToggleIgnoresLeftRelease(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.groups = []*types.WorkspaceGroup{{ID: "g1", Name: "Group 1"}}
+	if m.menu == nil {
+		t.Fatalf("expected menu controller")
+	}
+	m.menu.SetGroups(m.groups)
+	m.menu.OpenBar()
+	m.menu.OpenDropdown()
+
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		X:      1,
+		Y:      4, // dropdown row 4 => second group checkbox row (g1)
+	})
+	if !handled {
+		t.Fatalf("expected group click to be handled")
+	}
+	if !selectedGroupIDsContain(m.menu.SelectedGroupIDs(), "g1") {
+		t.Fatalf("expected click to select group g1, got %#v", m.menu.SelectedGroupIDs())
+	}
+
+	handled = m.handleMouse(tea.MouseReleaseMsg{
+		Button: tea.MouseLeft,
+		X:      1,
+		Y:      4,
+	})
+	if handled {
+		t.Fatalf("expected left release to be ignored for menu toggles")
+	}
+	if !selectedGroupIDsContain(m.menu.SelectedGroupIDs(), "g1") {
+		t.Fatalf("expected release not to revert selection, got %#v", m.menu.SelectedGroupIDs())
+	}
+}
+
+func selectedGroupIDsContain(ids []string, want string) bool {
+	for _, id := range ids {
+		if id == want {
+			return true
+		}
+	}
+	return false
+}

@@ -201,7 +201,7 @@ func fetchAppStateCmd(api AppStateGetAPI) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 		state, err := api.GetAppState(ctx)
-		return appStateMsg{state: state, err: err}
+		return appStateInitialLoadMsg{state: state, err: err}
 	}
 }
 

@@ -291,6 +291,9 @@ func (m *MenuController) HandleMouse(msg tea.MouseMsg, dropdownWidth int) (bool,
 	if m == nil {
 		return false, MenuActionNone
 	}
+	if _, ok := msg.(tea.MouseClickMsg); !ok {
+		return false, MenuActionNone
+	}
 	mouse := msg.Mouse()
 	if mouse.Button != tea.MouseLeft {
 		return false, MenuActionNone
