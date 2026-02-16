@@ -50,6 +50,38 @@ func TestPhase0ComposeSendKeepsLocalState(t *testing.T) {
 	}
 }
 
+func TestPhase0ComposeStartNewSessionClearsExistingTranscript(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+	m.applyBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "old transcript"}})
+	m.newSession = &newSessionTarget{
+		workspaceID: "ws1",
+		provider:    "codex",
+	}
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("start fresh")
+
+	cmd := m.submitComposeInput("start fresh")
+	if cmd == nil {
+		t.Fatalf("expected start session command")
+	}
+	if got := m.chatInput.Value(); got != "" {
+		t.Fatalf("expected chat input to clear, got %q", got)
+	}
+	if blocks := m.currentBlocks(); len(blocks) != 0 {
+		t.Fatalf("expected transcript blocks to clear before new session starts, got %#v", blocks)
+	}
+	lines := strings.Join(m.currentLines(), "\n")
+	if strings.Contains(lines, "old transcript") {
+		t.Fatalf("expected previous transcript text to clear, got %q", lines)
+	}
+	if !strings.Contains(lines, "Starting new session...") {
+		t.Fatalf("expected starting-session placeholder, got %q", lines)
+	}
+}
+
 func TestPhase0ScheduleSessionLoadDebouncesSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.selectSeq = 41

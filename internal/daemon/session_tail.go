@@ -159,8 +159,12 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 	if err != nil {
 		return nil, err
 	}
-	items := flattenCodexItems(thread)
+	items := flattenCodexItemsWithLimit(thread, lines)
 	return items, nil
+}
+
+func flattenCodexItemsWithLimit(thread *codexThread, limit int) []map[string]any {
+	return trimItemsToLimit(flattenCodexItems(thread), limit)
 }
 
 func flattenCodexItems(thread *codexThread) []map[string]any {

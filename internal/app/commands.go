@@ -558,12 +558,6 @@ func historyPollCmd(id, key string, attempt int, delay time.Duration, minAgents 
 	})
 }
 
-func historyBackfillCmd(id, key string, lines int, delay time.Duration) tea.Cmd {
-	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return historyBackfillMsg{id: id, key: key, lines: lines}
-	})
-}
-
 func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

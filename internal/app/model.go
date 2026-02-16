@@ -865,11 +865,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		m.setLoadingContent()
 	}
 	initialLines := m.historyFetchLinesInitial()
-	backfillLines := m.historyFetchLinesBackfill()
 	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, id, token, initialLines), fetchApprovalsCmd(m.sessionAPI, id)}
-	if m.historyLoadPolicyOrDefault().ShouldBackfill(initialLines, backfillLines) {
-		cmds = append(cmds, historyBackfillCmd(id, token, backfillLines, m.historyBackfillDelay()))
-	}
 	if isActiveStatus(item.session.Status) {
 		if shouldStreamItems(item.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
@@ -3068,11 +3064,13 @@ func (m *Model) applyProviderSelection(provider string) tea.Cmd {
 	}
 	m.newSession.provider = provider
 	m.newSession.runtimeOptions = m.composeDefaultsForProvider(provider)
+	m.resetStream()
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
 	if m.compose != nil {
 		m.compose.Enter("", "New session")
 	}
+	m.setContentText("New session. Send your first message to start.")
 	if m.chatInput != nil {
 		m.chatInput.SetPlaceholder("new session message")
 		m.chatInput.Focus()

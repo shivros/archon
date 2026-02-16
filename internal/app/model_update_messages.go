@@ -187,6 +187,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		nextSelection := m.selectedSessionSnapshot()
 		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
 		if m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection) {
+			if m.shouldSkipSelectionReloadOnSessionsUpdate(previousSelection, nextSelection) {
+				return true, saveSidebarExpansionCmd
+			}
 			selectionCmd := m.onSelectionChangedImmediate()
 			if selectionCmd != nil && saveSidebarExpansionCmd != nil {
 				return true, tea.Batch(selectionCmd, saveSidebarExpansionCmd)
@@ -424,20 +427,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		provider := m.providerForSessionID(msg.id)
-		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, m.historyFetchLinesBackfill())}
+		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, m.historyFetchLinesInitial())}
 		if shouldStreamItems(provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
 		}
 		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
 		return true, tea.Batch(cmds...)
-	case historyBackfillMsg:
-		if msg.id == "" || msg.key == "" || msg.lines <= 0 {
-			return true, nil
-		}
-		if msg.key != m.pendingSessionKey {
-			return true, nil
-		}
-		return true, fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, msg.lines)
 	case sendMsg:
 		if msg.err != nil {
 			m.setStatusError("send error: " + msg.err.Error())
@@ -536,13 +531,18 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case startSessionMsg:
 		if msg.err != nil {
 			m.setStatusError("start session error: " + msg.err.Error())
+			m.loading = false
+			m.loadingKey = ""
 			m.stopRequestActivity()
 			return true, nil
 		}
 		if msg.session == nil || msg.session.ID == "" {
 			m.setStatusError("start session error: no session returned")
+			m.loading = false
+			m.loadingKey = ""
 			return true, nil
 		}
+		m.resetStream()
 		m.newSession = nil
 		m.pendingSelectID = msg.session.ID
 		label := msg.session.Title
@@ -554,14 +554,14 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		key := "sess:" + msg.session.ID
 		m.pendingSessionKey = key
+		m.loading = true
+		m.loadingKey = key
+		m.scrollOnLoad = true
+		m.setLoadingContent()
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
-		backfillLines := m.historyFetchLinesBackfill()
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, initialLines)}
-		if m.historyLoadPolicyOrDefault().ShouldBackfill(initialLines, backfillLines) {
-			cmds = append(cmds, historyBackfillCmd(msg.session.ID, key, backfillLines, m.historyBackfillDelay()))
-		}
 		if shouldStreamItems(msg.session.Provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.session.ID))
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
@@ -644,6 +644,20 @@ func (m *Model) shouldKeepLiveCodexSnapshot(provider, sessionID string) bool {
 	return strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(sessionID) && m.requestActivity.eventCount > 0
 }
 
+func (m *Model) shouldSkipSelectionReloadOnSessionsUpdate(previous, next sessionSelectionSnapshot) bool {
+	if !next.isSession {
+		return false
+	}
+	if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+		return true
+	}
+	// Preserve manual reading position when the same selected session updates.
+	return !m.follow &&
+		previous.isSession &&
+		previous.sessionID == next.sessionID &&
+		previous.key == next.key
+}
+
 func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []map[string]any, previous []ChatBlock) []ChatBlock {
 	blocks := itemsToBlocks(items)
 	if provider == "codex" {
@@ -665,6 +679,9 @@ func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []
 }
 
 func (m *Model) activeStreamTargetID() string {
+	if m.newSession != nil {
+		return ""
+	}
 	targetID := m.composeSessionID()
 	if targetID == "" {
 		targetID = m.selectedSessionID()

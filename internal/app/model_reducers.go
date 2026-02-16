@@ -618,6 +618,8 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 			m.setValidationStatus("provider is required")
 			return nil
 		}
+		m.resetStream()
+		m.setContentText("Starting new session...")
 		m.enableFollow(false)
 		m.setStatusMessage("starting session")
 		if m.chatInput != nil {

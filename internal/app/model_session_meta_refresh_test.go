@@ -104,3 +104,69 @@ func TestSessionsWithMetaMsgClearsAutoRefreshPending(t *testing.T) {
 		t.Fatalf("expected auto refresh pending flags to clear")
 	}
 }
+
+func TestSessionsWithMetaMsgSkipsReloadWhileViewingNotes(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected s1 to be selected")
+	}
+	m.mode = uiModeNotes
+
+	current := m.sessions[0]
+	handled, cmd := m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: []*types.Session{
+			{
+				ID:        current.ID,
+				Provider:  current.Provider,
+				Status:    current.Status,
+				CreatedAt: current.CreatedAt,
+				Title:     current.Title,
+			},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-2"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no session reload command while in notes mode")
+	}
+	if m.mode != uiModeNotes {
+		t.Fatalf("expected to stay in notes mode, got %v", m.mode)
+	}
+}
+
+func TestSessionsWithMetaMsgSkipsReloadWhenFollowPaused(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected s1 to be selected")
+	}
+	m.follow = false
+
+	current := m.sessions[0]
+	handled, cmd := m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: []*types.Session{
+			{
+				ID:        current.ID,
+				Provider:  current.Provider,
+				Status:    current.Status,
+				CreatedAt: current.CreatedAt,
+				Title:     current.Title,
+			},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-2"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no session reload command while follow is paused")
+	}
+	if m.follow {
+		t.Fatalf("expected follow to remain paused")
+	}
+}
