@@ -23,12 +23,20 @@ var defaultCodexModels = []string{
 }
 
 var defaultClaudeModels = []string{"sonnet", "opus"}
+var defaultNotificationTriggers = []string{
+	"turn.completed",
+	"session.failed",
+	"session.killed",
+	"session.exited",
+}
+var defaultNotificationMethods = []string{"auto"}
 
 type CoreConfig struct {
-	Daemon    CoreDaemonConfig    `toml:"daemon"`
-	Providers CoreProvidersConfig `toml:"providers"`
-	Logging   CoreLoggingConfig   `toml:"logging"`
-	Debug     CoreDebugConfig     `toml:"debug"`
+	Daemon        CoreDaemonConfig        `toml:"daemon"`
+	Providers     CoreProvidersConfig     `toml:"providers"`
+	Logging       CoreLoggingConfig       `toml:"logging"`
+	Debug         CoreDebugConfig         `toml:"debug"`
+	Notifications CoreNotificationsConfig `toml:"notifications"`
 }
 
 type CoreDaemonConfig struct {
@@ -41,6 +49,15 @@ type CoreLoggingConfig struct {
 
 type CoreDebugConfig struct {
 	StreamDebug bool `toml:"stream_debug"`
+}
+
+type CoreNotificationsConfig struct {
+	Enabled              *bool    `toml:"enabled"`
+	Triggers             []string `toml:"triggers"`
+	Methods              []string `toml:"methods"`
+	ScriptCommands       []string `toml:"script_commands"`
+	ScriptTimeoutSeconds int      `toml:"script_timeout_seconds"`
+	DedupeWindowSeconds  int      `toml:"dedupe_window_seconds"`
 }
 
 type CoreProvidersConfig struct {
@@ -112,6 +129,13 @@ func DefaultCoreConfig() CoreConfig {
 		Logging: CoreLoggingConfig{
 			Level: "info",
 		},
+		Notifications: CoreNotificationsConfig{
+			Enabled:              boolPtr(true),
+			Triggers:             append([]string{}, defaultNotificationTriggers...),
+			Methods:              append([]string{}, defaultNotificationMethods...),
+			ScriptTimeoutSeconds: 10,
+			DedupeWindowSeconds:  5,
+		},
 		Providers: CoreProvidersConfig{
 			Codex: CoreCodexProviderConfig{
 				DefaultModel: defaultCodexModel,
@@ -162,6 +186,47 @@ func (c CoreConfig) LogLevel() string {
 
 func (c CoreConfig) StreamDebugEnabled() bool {
 	return c.Debug.StreamDebug
+}
+
+func (c CoreConfig) NotificationsEnabled() bool {
+	if c.Notifications.Enabled == nil {
+		return true
+	}
+	return *c.Notifications.Enabled
+}
+
+func (c CoreConfig) NotificationTriggers() []string {
+	values := normalizedList(c.Notifications.Triggers)
+	if len(values) == 0 {
+		values = append([]string{}, defaultNotificationTriggers...)
+	}
+	return values
+}
+
+func (c CoreConfig) NotificationMethods() []string {
+	values := normalizedList(c.Notifications.Methods)
+	if len(values) == 0 {
+		values = append([]string{}, defaultNotificationMethods...)
+	}
+	return values
+}
+
+func (c CoreConfig) NotificationScriptCommands() []string {
+	return normalizedList(c.Notifications.ScriptCommands)
+}
+
+func (c CoreConfig) NotificationScriptTimeoutSeconds() int {
+	if c.Notifications.ScriptTimeoutSeconds > 0 {
+		return c.Notifications.ScriptTimeoutSeconds
+	}
+	return 10
+}
+
+func (c CoreConfig) NotificationDedupeWindowSeconds() int {
+	if c.Notifications.DedupeWindowSeconds > 0 {
+		return c.Notifications.DedupeWindowSeconds
+	}
+	return 5
 }
 
 func (c CoreConfig) ProviderCommand(provider string) string {

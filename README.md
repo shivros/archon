@@ -55,6 +55,14 @@ level = "info" # debug | info | warn | error
 [debug]
 stream_debug = false
 
+[notifications]
+enabled = true
+triggers = ["turn.completed", "session.failed", "session.killed", "session.exited"]
+methods = ["auto"] # auto | notify-send | dunstify | bell
+script_commands = [] # shell commands fed JSON payload via stdin
+script_timeout_seconds = 10
+dedupe_window_seconds = 5
+
 [providers.codex]
 command = "codex"
 default_model = "gpt-5.1-codex"
@@ -88,6 +96,28 @@ command = "gemini"
 ```
 
 OpenCode/Kilo prompt requests are long-running by design; Archon enforces a runtime minimum of `90` seconds for these providers.
+
+### Notifications
+
+Archon supports daemon-side notifications with layered overrides:
+
+- global defaults from `~/.archon/config.toml` `[notifications]`
+- per-worktree overrides (`worktree.notification_overrides`)
+- per-session overrides (`session_meta.notification_overrides`)
+
+Precedence is: `session override` > `worktree override` > `global defaults`.
+
+`script_commands` are executed with the notification event JSON on stdin and these env vars:
+
+- `ARCHON_EVENT`
+- `ARCHON_SESSION_ID`
+- `ARCHON_WORKSPACE_ID`
+- `ARCHON_WORKTREE_ID`
+- `ARCHON_PROVIDER`
+- `ARCHON_STATUS`
+- `ARCHON_TURN_ID`
+- `ARCHON_CWD`
+- `ARCHON_NOTIFICATION_AT`
 
 Example `ui.toml`:
 

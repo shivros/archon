@@ -121,11 +121,22 @@ func (d *Daemon) Run(ctx context.Context) error {
 		Stores:  d.stores,
 		Logger:  d.logger,
 	}
+	notifier := NewNotificationService(
+		NewNotificationPolicyResolver(notificationDefaultsFromCoreConfig(loadCoreConfigOrDefault()), d.stores, d.logger),
+		NewNotificationDispatcher(defaultNotificationSinks(), d.logger),
+		d.logger,
+	)
+	defer notifier.Close()
+	if d.manager != nil {
+		d.manager.SetNotificationPublisher(notifier)
+	}
+	api.Notifier = notifier
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)
 	api.Syncer = syncer
 	api.LiveCodex = NewCodexLiveManager(d.stores, d.logger)
+	api.LiveCodex.SetNotificationPublisher(notifier)
 	approvalSync := NewApprovalResyncService(d.stores, d.logger)
 
 	mux := http.NewServeMux()

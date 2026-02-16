@@ -28,22 +28,24 @@ const (
 )
 
 type configOutput struct {
-	CoreConfigPath  string                    `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
-	UIConfigPath    string                    `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
-	KeybindingsPath string                    `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
-	Chat            *uiChatConfigOutput       `json:"chat,omitempty" toml:"chat,omitempty"`
-	Daemon          *effectiveDaemonConfig    `json:"daemon,omitempty" toml:"daemon,omitempty"`
-	Logging         *effectiveLoggingConfig   `json:"logging,omitempty" toml:"logging,omitempty"`
-	Debug           *effectiveDebugConfig     `json:"debug,omitempty" toml:"debug,omitempty"`
-	Providers       *effectiveProvidersConfig `json:"providers,omitempty" toml:"providers,omitempty"`
-	Keybindings     map[string]string         `json:"keybindings,omitempty" toml:"keybindings,omitempty"`
+	CoreConfigPath  string                        `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
+	UIConfigPath    string                        `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
+	KeybindingsPath string                        `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
+	Chat            *uiChatConfigOutput           `json:"chat,omitempty" toml:"chat,omitempty"`
+	Daemon          *effectiveDaemonConfig        `json:"daemon,omitempty" toml:"daemon,omitempty"`
+	Logging         *effectiveLoggingConfig       `json:"logging,omitempty" toml:"logging,omitempty"`
+	Debug           *effectiveDebugConfig         `json:"debug,omitempty" toml:"debug,omitempty"`
+	Notifications   *effectiveNotificationsConfig `json:"notifications,omitempty" toml:"notifications,omitempty"`
+	Providers       *effectiveProvidersConfig     `json:"providers,omitempty" toml:"providers,omitempty"`
+	Keybindings     map[string]string             `json:"keybindings,omitempty" toml:"keybindings,omitempty"`
 }
 
 type coreConfigOutput struct {
-	Daemon    coreDaemonConfigOut      `json:"daemon" toml:"daemon"`
-	Logging   effectiveLoggingConfig   `json:"logging" toml:"logging"`
-	Debug     effectiveDebugConfig     `json:"debug" toml:"debug"`
-	Providers effectiveProvidersConfig `json:"providers" toml:"providers"`
+	Daemon        coreDaemonConfigOut          `json:"daemon" toml:"daemon"`
+	Logging       effectiveLoggingConfig       `json:"logging" toml:"logging"`
+	Debug         effectiveDebugConfig         `json:"debug" toml:"debug"`
+	Notifications effectiveNotificationsConfig `json:"notifications" toml:"notifications"`
+	Providers     effectiveProvidersConfig     `json:"providers" toml:"providers"`
 }
 
 type coreDaemonConfigOut struct {
@@ -74,6 +76,15 @@ type effectiveLoggingConfig struct {
 
 type effectiveDebugConfig struct {
 	StreamDebug bool `json:"stream_debug" toml:"stream_debug"`
+}
+
+type effectiveNotificationsConfig struct {
+	Enabled              bool     `json:"enabled" toml:"enabled"`
+	Triggers             []string `json:"triggers,omitempty" toml:"triggers,omitempty"`
+	Methods              []string `json:"methods,omitempty" toml:"methods,omitempty"`
+	ScriptCommands       []string `json:"script_commands,omitempty" toml:"script_commands,omitempty"`
+	ScriptTimeoutSeconds int      `json:"script_timeout_seconds" toml:"script_timeout_seconds"`
+	DedupeWindowSeconds  int      `json:"dedupe_window_seconds" toml:"dedupe_window_seconds"`
 }
 
 type effectiveProvidersConfig struct {
@@ -210,6 +221,14 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 		out.Debug = &effectiveDebugConfig{
 			StreamDebug: coreCfg.StreamDebugEnabled(),
 		}
+		out.Notifications = &effectiveNotificationsConfig{
+			Enabled:              coreCfg.NotificationsEnabled(),
+			Triggers:             coreCfg.NotificationTriggers(),
+			Methods:              coreCfg.NotificationMethods(),
+			ScriptCommands:       coreCfg.NotificationScriptCommands(),
+			ScriptTimeoutSeconds: coreCfg.NotificationScriptTimeoutSeconds(),
+			DedupeWindowSeconds:  coreCfg.NotificationDedupeWindowSeconds(),
+		}
 		out.Providers = &effectiveProvidersConfig{
 			Codex: effectiveCodexProviderConfig{
 				Command:        coreCfg.ProviderCommand("codex"),
@@ -316,6 +335,13 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 			Debug: effectiveDebugConfig{
 				StreamDebug: false,
 			},
+			Notifications: effectiveNotificationsConfig{
+				Enabled:              true,
+				Triggers:             []string{"turn.completed", "session.failed", "session.killed", "session.exited"},
+				Methods:              []string{"auto"},
+				ScriptTimeoutSeconds: 10,
+				DedupeWindowSeconds:  5,
+			},
 		}
 		if payload.Daemon != nil {
 			out.Daemon.Address = payload.Daemon.Address
@@ -325,6 +351,9 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 		}
 		if payload.Debug != nil {
 			out.Debug = *payload.Debug
+		}
+		if payload.Notifications != nil {
+			out.Notifications = *payload.Notifications
 		}
 		if payload.Providers != nil {
 			out.Providers = *payload.Providers

@@ -38,6 +38,14 @@ level = "debug"
 [debug]
 stream_debug = true
 
+[notifications]
+enabled = true
+triggers = ["turn.completed", "session.failed"]
+methods = ["notify-send", "bell"]
+script_commands = ["~/.archon/scripts/notify.sh"]
+script_timeout_seconds = 20
+dedupe_window_seconds = 8
+
 [providers.codex]
 command = "/usr/local/bin/codex"
 default_model = "gpt-5.3-codex"
@@ -90,6 +98,24 @@ command = "/usr/local/bin/gemini"
 	}
 	if !cfg.StreamDebugEnabled() {
 		t.Fatalf("expected stream_debug=true")
+	}
+	if !cfg.NotificationsEnabled() {
+		t.Fatalf("expected notifications enabled=true")
+	}
+	if got := cfg.NotificationScriptTimeoutSeconds(); got != 20 {
+		t.Fatalf("unexpected notification script timeout: %d", got)
+	}
+	if got := cfg.NotificationDedupeWindowSeconds(); got != 8 {
+		t.Fatalf("unexpected notification dedupe window: %d", got)
+	}
+	if got := cfg.NotificationTriggers(); len(got) != 2 || got[0] != "turn.completed" {
+		t.Fatalf("unexpected notification triggers: %#v", got)
+	}
+	if got := cfg.NotificationMethods(); len(got) != 2 || got[0] != "notify-send" {
+		t.Fatalf("unexpected notification methods: %#v", got)
+	}
+	if got := cfg.NotificationScriptCommands(); len(got) != 1 || got[0] != "~/.archon/scripts/notify.sh" {
+		t.Fatalf("unexpected notification script commands: %#v", got)
 	}
 	if got := cfg.ProviderCommand("codex"); got != "/usr/local/bin/codex" {
 		t.Fatalf("unexpected codex command: %q", got)
@@ -205,6 +231,18 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	}
 	if cfg.StreamDebugEnabled() {
 		t.Fatalf("expected stream debug disabled by default")
+	}
+	if !cfg.NotificationsEnabled() {
+		t.Fatalf("expected notifications enabled by default")
+	}
+	if got := cfg.NotificationScriptTimeoutSeconds(); got != 10 {
+		t.Fatalf("unexpected default notification script timeout: %d", got)
+	}
+	if got := cfg.NotificationDedupeWindowSeconds(); got != 5 {
+		t.Fatalf("unexpected default notification dedupe window: %d", got)
+	}
+	if got := cfg.NotificationMethods(); len(got) == 0 || got[0] != "auto" {
+		t.Fatalf("unexpected default notification methods: %#v", got)
 	}
 	if got := cfg.OpenCodeUsername("opencode"); got != "opencode" {
 		t.Fatalf("unexpected default opencode username: %q", got)

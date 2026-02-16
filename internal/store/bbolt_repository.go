@@ -1109,6 +1109,7 @@ func cloneWorktree(worktree *types.Worktree) *types.Worktree {
 		return nil
 	}
 	copy := *worktree
+	copy.NotificationOverrides = types.CloneNotificationSettingsPatch(worktree.NotificationOverrides)
 	return &copy
 }
 

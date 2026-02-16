@@ -115,4 +115,42 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if meta.RuntimeOptions.Access != types.AccessOnRequest {
 		t.Fatalf("expected runtime access to persist, got %q", meta.RuntimeOptions.Access)
 	}
+
+	enabled := false
+	notificationUpdateReq := UpdateSessionRequest{
+		NotificationOverrides: &types.NotificationSettingsPatch{
+			Enabled:  &enabled,
+			Methods:  []types.NotificationMethod{types.NotificationMethodBell},
+			Triggers: []types.NotificationTrigger{types.NotificationTriggerSessionFailed},
+		},
+	}
+	notificationBody, _ := json.Marshal(notificationUpdateReq)
+	notificationReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/sessions/"+session.ID, bytes.NewReader(notificationBody))
+	notificationReq.Header.Set("Authorization", "Bearer token")
+	notificationReq.Header.Set("Content-Type", "application/json")
+	notificationResp, err := http.DefaultClient.Do(notificationReq)
+	if err != nil {
+		t.Fatalf("patch notification overrides: %v", err)
+	}
+	defer notificationResp.Body.Close()
+	if notificationResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", notificationResp.StatusCode)
+	}
+
+	meta, ok, err = metaStore.Get(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("get meta notification overrides: %v", err)
+	}
+	if !ok || meta == nil || meta.NotificationOverrides == nil {
+		t.Fatalf("expected notification overrides to persist")
+	}
+	if meta.NotificationOverrides.Enabled == nil || *meta.NotificationOverrides.Enabled {
+		t.Fatalf("expected notification enabled=false to persist")
+	}
+	if len(meta.NotificationOverrides.Methods) != 1 || meta.NotificationOverrides.Methods[0] != types.NotificationMethodBell {
+		t.Fatalf("expected notification methods to persist, got %#v", meta.NotificationOverrides.Methods)
+	}
+	if len(meta.NotificationOverrides.Triggers) != 1 || meta.NotificationOverrides.Triggers[0] != types.NotificationTriggerSessionFailed {
+		t.Fatalf("expected notification triggers to persist, got %#v", meta.NotificationOverrides.Triggers)
+	}
 }

@@ -21,22 +21,23 @@ import (
 var ErrSessionNotFound = errors.New("session not found")
 
 type StartSessionConfig struct {
-	Provider            string
-	Cmd                 string
-	Cwd                 string
-	Args                []string
-	Env                 []string
-	CodexHome           string
-	Title               string
-	Tags                []string
-	RuntimeOptions      *types.SessionRuntimeOptions
-	WorkspaceID         string
-	WorktreeID          string
-	InitialInput        string
-	InitialText         string
-	Resume              bool
-	ProviderSessionID   string
-	OnProviderSessionID func(string)
+	Provider              string
+	Cmd                   string
+	Cwd                   string
+	Args                  []string
+	Env                   []string
+	CodexHome             string
+	Title                 string
+	Tags                  []string
+	RuntimeOptions        *types.SessionRuntimeOptions
+	WorkspaceID           string
+	WorktreeID            string
+	InitialInput          string
+	InitialText           string
+	Resume                bool
+	ProviderSessionID     string
+	NotificationOverrides *types.NotificationSettingsPatch
+	OnProviderSessionID   func(string)
 }
 
 type SessionManager struct {
@@ -45,6 +46,9 @@ type SessionManager struct {
 	sessions     map[string]*sessionRuntime
 	metaStore    SessionMetaStore
 	sessionStore SessionIndexStore
+	notifier     NotificationPublisher
+	emitter      SessionLifecycleEmitter
+	defaultEmit  bool
 }
 
 type sessionRuntime struct {
@@ -79,12 +83,30 @@ func (m *SessionManager) SetMetaStore(store SessionMetaStore) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.metaStore = store
+	if m.defaultEmit && m.notifier != nil {
+		m.emitter = NewSessionLifecycleEmitter(m.notifier, m.metaStore, nil)
+	}
 }
 
 func (m *SessionManager) SetSessionStore(store SessionIndexStore) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessionStore = store
+}
+
+func (m *SessionManager) SetNotificationPublisher(notifier NotificationPublisher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifier = notifier
+	m.emitter = NewSessionLifecycleEmitter(notifier, m.metaStore, nil)
+	m.defaultEmit = true
+}
+
+func (m *SessionManager) SetSessionLifecycleEmitter(emitter SessionLifecycleEmitter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.emitter = emitter
+	m.defaultEmit = false
 }
 
 func (m *SessionManager) SessionsBaseDir() string {
@@ -244,6 +266,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 			// have been re-keyed to the codex thread ID.
 			m.upsertSessionMeta(cfg, session.ID, finalStatus)
 			m.upsertSessionRecord(session, sessionSourceInternal)
+			m.publishSessionLifecycleEvent(session, cfg, finalStatus, "session_manager_wait")
 			runtimeState.sink.Close()
 			if runtimeState.items != nil {
 				runtimeState.items.Close()
@@ -410,6 +433,7 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 
 			m.upsertSessionMeta(cfg, session.ID, finalStatus)
 			m.upsertSessionRecord(session, sessionSourceInternal)
+			m.publishSessionLifecycleEvent(session, cfg, finalStatus, "session_manager_resume_wait")
 			runtimeState.sink.Close()
 			if runtimeState.items != nil {
 				runtimeState.items.Close()
@@ -538,8 +562,10 @@ func (m *SessionManager) MarkExited(id string) error {
 	now := time.Now().UTC()
 	state.session.Status = types.SessionStatusExited
 	state.session.ExitedAt = &now
+	sessionCopy := cloneSession(state.session)
 	m.mu.Unlock()
 	m.upsertSessionRecord(state.session, sessionSourceInternal)
+	m.publishSessionLifecycleEvent(sessionCopy, StartSessionConfig{}, types.SessionStatusExited, "session_manager_mark_exited")
 	return nil
 }
 
@@ -833,14 +859,15 @@ func (m *SessionManager) upsertSessionMeta(cfg StartSessionConfig, sessionID str
 	}
 	now := time.Now().UTC()
 	meta := &types.SessionMeta{
-		SessionID:      sessionID,
-		WorkspaceID:    cfg.WorkspaceID,
-		WorktreeID:     cfg.WorktreeID,
-		Title:          title,
-		TitleLocked:    titleLocked,
-		InitialInput:   sanitizeTitle(cfg.InitialInput),
-		RuntimeOptions: types.CloneRuntimeOptions(cfg.RuntimeOptions),
-		LastActiveAt:   &now,
+		SessionID:             sessionID,
+		WorkspaceID:           cfg.WorkspaceID,
+		WorktreeID:            cfg.WorktreeID,
+		Title:                 title,
+		TitleLocked:           titleLocked,
+		InitialInput:          sanitizeTitle(cfg.InitialInput),
+		RuntimeOptions:        types.CloneRuntimeOptions(cfg.RuntimeOptions),
+		NotificationOverrides: types.CloneNotificationSettingsPatch(cfg.NotificationOverrides),
+		LastActiveAt:          &now,
 	}
 	_, _ = store.Upsert(context.Background(), meta)
 }
@@ -913,6 +940,19 @@ func (m *SessionManager) upsertSessionRecord(session *types.Session, source stri
 		Session: copy,
 		Source:  source,
 	})
+}
+
+func (m *SessionManager) publishSessionLifecycleEvent(session *types.Session, cfg StartSessionConfig, status types.SessionStatus, source string) {
+	if session == nil {
+		return
+	}
+	m.mu.Lock()
+	emitter := m.emitter
+	m.mu.Unlock()
+	if emitter == nil {
+		return
+	}
+	emitter.EmitSessionLifecycleEvent(context.Background(), session, cfg, status, source)
 }
 
 func (m *SessionManager) flushLoop(state *sessionRuntime) {

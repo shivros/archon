@@ -95,6 +95,42 @@ func TestSessionManagerKill(t *testing.T) {
 	waitForStatus(t, manager, session.ID, types.SessionStatusKilled, 3*time.Second)
 }
 
+func TestSessionManagerPublishesSessionExitNotification(t *testing.T) {
+	manager := newTestManager(t)
+	notifier := newTestNotificationPublisher()
+	manager.SetNotificationPublisher(notifier)
+
+	cfg := StartSessionConfig{
+		Provider:    "custom",
+		Cmd:         os.Args[0],
+		Args:        helperArgs("stdout=done", "sleep_ms=20", "exit=0"),
+		Env:         []string{"GO_WANT_HELPER_PROCESS=1"},
+		WorkspaceID: "ws-test",
+		WorktreeID:  "wt-test",
+		Title:       "session title",
+	}
+
+	session, err := manager.StartSession(cfg)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	waitForStatus(t, manager, session.ID, types.SessionStatusExited, 2*time.Second)
+
+	event, ok := notifier.WaitForEvent(2 * time.Second)
+	if !ok {
+		t.Fatalf("expected notification event")
+	}
+	if event.Trigger != types.NotificationTriggerSessionExited {
+		t.Fatalf("unexpected trigger: %q", event.Trigger)
+	}
+	if event.SessionID != session.ID {
+		t.Fatalf("unexpected session id: %q", event.SessionID)
+	}
+	if event.WorkspaceID != "ws-test" || event.WorktreeID != "wt-test" {
+		t.Fatalf("unexpected workspace/worktree ids: %q/%q", event.WorkspaceID, event.WorktreeID)
+	}
+}
+
 func TestTailInvalidStream(t *testing.T) {
 	manager := newTestManager(t)
 
@@ -426,4 +462,36 @@ func TestHelperProcess(t *testing.T) {
 		time.Sleep(time.Duration(sleepMs) * time.Millisecond)
 	}
 	os.Exit(exitCode)
+}
+
+type testNotificationPublisher struct {
+	ch chan types.NotificationEvent
+}
+
+func newTestNotificationPublisher() *testNotificationPublisher {
+	return &testNotificationPublisher{ch: make(chan types.NotificationEvent, 8)}
+}
+
+func (p *testNotificationPublisher) Publish(event types.NotificationEvent) {
+	if p == nil {
+		return
+	}
+	select {
+	case p.ch <- event:
+	default:
+	}
+}
+
+func (p *testNotificationPublisher) WaitForEvent(timeout time.Duration) (types.NotificationEvent, bool) {
+	if p == nil {
+		return types.NotificationEvent{}, false
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case event := <-p.ch:
+		return event, true
+	case <-timer.C:
+		return types.NotificationEvent{}, false
+	}
 }

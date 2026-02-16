@@ -212,9 +212,10 @@ func (s *WorkspaceService) UpdateWorktree(ctx context.Context, workspaceID, work
 	}
 
 	wt, err := s.worktrees.UpdateWorktree(ctx, workspaceID, &types.Worktree{
-		ID:   worktreeID,
-		Name: name,
-		Path: path,
+		ID:                    worktreeID,
+		Name:                  name,
+		Path:                  path,
+		NotificationOverrides: mergeWorktreeNotificationOverrides(existing.NotificationOverrides, req.NotificationOverrides),
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrWorkspaceNotFound) {
@@ -226,6 +227,13 @@ func (s *WorkspaceService) UpdateWorktree(ctx context.Context, workspaceID, work
 		return nil, invalidError(err.Error(), err)
 	}
 	return wt, nil
+}
+
+func mergeWorktreeNotificationOverrides(existing, incoming *types.NotificationSettingsPatch) *types.NotificationSettingsPatch {
+	if incoming == nil {
+		return types.CloneNotificationSettingsPatch(existing)
+	}
+	return types.CloneNotificationSettingsPatch(incoming)
 }
 
 func (s *WorkspaceService) DeleteWorktree(ctx context.Context, workspaceID, worktreeID string) error {

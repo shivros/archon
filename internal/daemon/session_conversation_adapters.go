@@ -313,6 +313,7 @@ func (claudeConversationAdapter) SendMessage(ctx context.Context, service *Sessi
 			LastActiveAt: &now,
 		})
 	}
+	service.publishTurnCompleted(session, meta, "", "claude_send")
 	return "", nil
 }
 
@@ -589,6 +590,9 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 						recoveredEvents := reconciler.RecoveredEvents(ctx, sawTurnCompleted)
 						recoveredCount = len(recoveredEvents)
 						for _, recovered := range recoveredEvents {
+							if recovered.Method == "turn/completed" {
+								service.publishTurnCompleted(session, meta, parseTurnIDFromEventParams(recovered.Params), "opencode_recovered_event")
+							}
 							select {
 							case <-ctx.Done():
 								closeReason = "context_done"
@@ -611,6 +615,7 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 				lastMethod = event.Method
 				if event.Method == "turn/completed" {
 					sawTurnCompleted = true
+					service.publishTurnCompleted(session, meta, parseTurnIDFromEventParams(event.Params), "opencode_event")
 				}
 				if event.Method == "error" && service.logger != nil {
 					service.logger.Warn("opencode_events_error_event",

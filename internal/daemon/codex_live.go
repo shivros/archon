@@ -17,6 +17,7 @@ type CodexLiveManager struct {
 	sessions map[string]*codexLiveSession
 	stores   *Stores
 	logger   logging.Logger
+	notifier NotificationPublisher
 }
 
 func NewCodexLiveManager(stores *Stores, logger logging.Logger) *CodexLiveManager {
@@ -28,6 +29,15 @@ func NewCodexLiveManager(stores *Stores, logger logging.Logger) *CodexLiveManage
 		stores:   stores,
 		logger:   logger,
 	}
+}
+
+func (m *CodexLiveManager) SetNotificationPublisher(notifier NotificationPublisher) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifier = notifier
 }
 
 func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string, input []map[string]any) (string, error) {
@@ -195,6 +205,7 @@ func (m *CodexLiveManager) ensure(session *types.Session, meta *types.SessionMet
 		client:    client,
 		hub:       newCodexSubscriberHub(),
 		stores:    m.stores,
+		notifier:  m.notifier,
 	}
 	ls.start()
 
@@ -211,6 +222,7 @@ type codexLiveSession struct {
 	client     *codexAppServer
 	hub        *codexSubscriberHub
 	stores     *Stores
+	notifier   NotificationPublisher
 	activeTurn string
 	lastActive time.Time
 	closed     bool
@@ -261,6 +273,7 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 	}
 	s.hub.Broadcast(event)
 	if msg.Method == "turn/completed" {
+		s.publishTurnCompleted(parseTurnIDFromEventParams(msg.Params))
 		var payload struct {
 			Turn struct {
 				ID string `json:"id"`
@@ -279,6 +292,34 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 		}
 		s.maybeClose()
 	}
+}
+
+func (s *codexLiveSession) publishTurnCompleted(turnID string) {
+	if s == nil || s.notifier == nil {
+		return
+	}
+	event := types.NotificationEvent{
+		Trigger:    types.NotificationTriggerTurnCompleted,
+		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:  strings.TrimSpace(s.sessionID),
+		TurnID:     strings.TrimSpace(turnID),
+		Source:     "codex_live_event",
+	}
+	if s.stores != nil && s.stores.Sessions != nil {
+		if record, ok, err := s.stores.Sessions.GetRecord(context.Background(), s.sessionID); err == nil && ok && record != nil && record.Session != nil {
+			event.Provider = strings.TrimSpace(record.Session.Provider)
+			event.Title = strings.TrimSpace(record.Session.Title)
+			event.Cwd = strings.TrimSpace(record.Session.Cwd)
+			event.Status = strings.TrimSpace(string(record.Session.Status))
+		}
+	}
+	if s.stores != nil && s.stores.SessionMeta != nil {
+		if meta, ok, err := s.stores.SessionMeta.Get(context.Background(), s.sessionID); err == nil && ok && meta != nil {
+			event.WorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+			event.WorktreeID = strings.TrimSpace(meta.WorktreeID)
+		}
+	}
+	s.notifier.Publish(event)
 }
 
 func (s *codexLiveSession) handleRequest(msg rpcMessage) {

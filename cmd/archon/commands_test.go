@@ -237,6 +237,10 @@ network_access = false
 	if debugCfg["stream_debug"] != true {
 		t.Fatalf("unexpected stream_debug: %#v", debugCfg["stream_debug"])
 	}
+	notificationsCfg, _ := payload["notifications"].(map[string]any)
+	if notificationsCfg["enabled"] != true {
+		t.Fatalf("unexpected notifications enabled: %#v", notificationsCfg["enabled"])
+	}
 	providers, _ := payload["providers"].(map[string]any)
 	codex, _ := providers["codex"].(map[string]any)
 	if codex["default_model"] != "gpt-5.3-codex" {

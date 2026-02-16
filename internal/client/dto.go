@@ -45,22 +45,24 @@ type CreateWorktreeRequest struct {
 }
 
 type StartSessionRequest struct {
-	Provider       string                       `json:"provider"`
-	Cmd            string                       `json:"cmd,omitempty"`
-	Cwd            string                       `json:"cwd,omitempty"`
-	Args           []string                     `json:"args,omitempty"`
-	Env            []string                     `json:"env,omitempty"`
-	Title          string                       `json:"title,omitempty"`
-	Tags           []string                     `json:"tags,omitempty"`
-	WorkspaceID    string                       `json:"workspace_id,omitempty"`
-	WorktreeID     string                       `json:"worktree_id,omitempty"`
-	Text           string                       `json:"text,omitempty"`
-	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+	Provider              string                           `json:"provider"`
+	Cmd                   string                           `json:"cmd,omitempty"`
+	Cwd                   string                           `json:"cwd,omitempty"`
+	Args                  []string                         `json:"args,omitempty"`
+	Env                   []string                         `json:"env,omitempty"`
+	Title                 string                           `json:"title,omitempty"`
+	Tags                  []string                         `json:"tags,omitempty"`
+	WorkspaceID           string                           `json:"workspace_id,omitempty"`
+	WorktreeID            string                           `json:"worktree_id,omitempty"`
+	Text                  string                           `json:"text,omitempty"`
+	RuntimeOptions        *types.SessionRuntimeOptions     `json:"runtime_options,omitempty"`
+	NotificationOverrides *types.NotificationSettingsPatch `json:"notification_overrides,omitempty"`
 }
 
 type UpdateSessionRequest struct {
-	Title          string                       `json:"title,omitempty"`
-	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+	Title                 string                           `json:"title,omitempty"`
+	RuntimeOptions        *types.SessionRuntimeOptions     `json:"runtime_options,omitempty"`
+	NotificationOverrides *types.NotificationSettingsPatch `json:"notification_overrides,omitempty"`
 }
 
 type ProviderOptionsResponse struct {

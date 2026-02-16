@@ -18,6 +18,7 @@ type SessionService struct {
 	stores       *Stores
 	live         *CodexLiveManager
 	logger       logging.Logger
+	notifier     NotificationPublisher
 	adapters     *conversationAdapterRegistry
 	history      *conversationHistoryStrategyRegistry
 	codexPool    CodexHistoryPool
@@ -42,6 +43,15 @@ func WithCodexHistoryPool(pool CodexHistoryPool) SessionServiceOption {
 			return
 		}
 		s.codexPool = pool
+	}
+}
+
+func WithNotificationPublisher(notifier NotificationPublisher) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || notifier == nil {
+			return
+		}
+		s.notifier = notifier
 	}
 }
 
@@ -71,6 +81,19 @@ func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveM
 		svc.codexPool = NewCodexHistoryPool(logger)
 	}
 	return svc
+}
+
+func (s *SessionService) publishTurnCompleted(session *types.Session, meta *types.SessionMeta, turnID string, source string) {
+	if s == nil || s.notifier == nil || session == nil {
+		return
+	}
+	event := notificationEventFromSession(session, types.NotificationTriggerTurnCompleted, source)
+	if meta != nil {
+		event.WorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+		event.WorktreeID = strings.TrimSpace(meta.WorktreeID)
+	}
+	event.TurnID = strings.TrimSpace(turnID)
+	s.notifier.Publish(event)
 }
 
 func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
@@ -492,19 +515,20 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		needsAsyncInitialSend = true
 	}
 	session, err := s.manager.StartSession(StartSessionConfig{
-		Provider:       req.Provider,
-		Cmd:            req.Cmd,
-		Cwd:            cwd,
-		Args:           req.Args,
-		Env:            req.Env,
-		CodexHome:      codexHome,
-		Title:          title,
-		Tags:           req.Tags,
-		RuntimeOptions: runtimeOptions,
-		WorkspaceID:    req.WorkspaceID,
-		WorktreeID:     req.WorktreeID,
-		InitialInput:   initialInput,
-		InitialText:    initialTextForStart,
+		Provider:              req.Provider,
+		Cmd:                   req.Cmd,
+		Cwd:                   cwd,
+		Args:                  req.Args,
+		Env:                   req.Env,
+		CodexHome:             codexHome,
+		Title:                 title,
+		Tags:                  req.Tags,
+		RuntimeOptions:        runtimeOptions,
+		WorkspaceID:           req.WorkspaceID,
+		WorktreeID:            req.WorktreeID,
+		InitialInput:          initialInput,
+		InitialText:           initialTextForStart,
+		NotificationOverrides: types.CloneNotificationSettingsPatch(req.NotificationOverrides),
 	})
 	if err != nil {
 		return nil, invalidError(err.Error(), err)
@@ -702,7 +726,8 @@ func (s *SessionService) Update(ctx context.Context, id string, req UpdateSessio
 	}
 	hasTitle := strings.TrimSpace(req.Title) != ""
 	hasRuntimeOptions := req.RuntimeOptions != nil
-	if !hasTitle && !hasRuntimeOptions {
+	hasNotificationOverrides := req.NotificationOverrides != nil
+	if !hasTitle && !hasRuntimeOptions && !hasNotificationOverrides {
 		return invalidError("at least one update field is required", nil)
 	}
 	session, _, err := s.getSessionRecord(ctx, id)
@@ -738,6 +763,20 @@ func (s *SessionService) Update(ctx context.Context, id string, req UpdateSessio
 			SessionID:      id,
 			RuntimeOptions: runtimeOptions,
 			LastActiveAt:   &now,
+		})
+		if err != nil {
+			return unavailableError(err.Error(), err)
+		}
+	}
+	if hasNotificationOverrides {
+		if s.stores == nil || s.stores.SessionMeta == nil {
+			return unavailableError("session metadata store not available", nil)
+		}
+		now := time.Now().UTC()
+		_, err = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+			SessionID:             id,
+			NotificationOverrides: types.CloneNotificationSettingsPatch(req.NotificationOverrides),
+			LastActiveAt:          &now,
 		})
 		if err != nil {
 			return unavailableError(err.Error(), err)

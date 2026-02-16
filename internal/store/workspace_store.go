@@ -594,12 +594,13 @@ func normalizeWorktree(workspaceID string, worktree *types.Worktree) (*types.Wor
 		name = defaultName(path)
 	}
 	wt := &types.Worktree{
-		ID:          worktree.ID,
-		WorkspaceID: workspaceID,
-		Name:        name,
-		Path:        path,
-		CreatedAt:   worktree.CreatedAt,
-		UpdatedAt:   worktree.UpdatedAt,
+		ID:                    worktree.ID,
+		WorkspaceID:           workspaceID,
+		Name:                  name,
+		Path:                  path,
+		NotificationOverrides: types.CloneNotificationSettingsPatch(worktree.NotificationOverrides),
+		CreatedAt:             worktree.CreatedAt,
+		UpdatedAt:             worktree.UpdatedAt,
 	}
 	if wt.ID == "" {
 		id, err := newID()

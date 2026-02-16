@@ -18,26 +18,29 @@ type API struct {
 	Syncer           SessionSyncer
 	LiveCodex        *CodexLiveManager
 	CodexHistoryPool CodexHistoryPool
+	Notifier         NotificationPublisher
 	Logger           logging.Logger
 }
 
 type StartSessionRequest struct {
-	Provider       string                       `json:"provider"`
-	Cmd            string                       `json:"cmd,omitempty"`
-	Cwd            string                       `json:"cwd,omitempty"`
-	Args           []string                     `json:"args,omitempty"`
-	Env            []string                     `json:"env,omitempty"`
-	Title          string                       `json:"title,omitempty"`
-	Tags           []string                     `json:"tags,omitempty"`
-	WorkspaceID    string                       `json:"workspace_id,omitempty"`
-	WorktreeID     string                       `json:"worktree_id,omitempty"`
-	Text           string                       `json:"text,omitempty"`
-	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+	Provider              string                           `json:"provider"`
+	Cmd                   string                           `json:"cmd,omitempty"`
+	Cwd                   string                           `json:"cwd,omitempty"`
+	Args                  []string                         `json:"args,omitempty"`
+	Env                   []string                         `json:"env,omitempty"`
+	Title                 string                           `json:"title,omitempty"`
+	Tags                  []string                         `json:"tags,omitempty"`
+	WorkspaceID           string                           `json:"workspace_id,omitempty"`
+	WorktreeID            string                           `json:"worktree_id,omitempty"`
+	Text                  string                           `json:"text,omitempty"`
+	RuntimeOptions        *types.SessionRuntimeOptions     `json:"runtime_options,omitempty"`
+	NotificationOverrides *types.NotificationSettingsPatch `json:"notification_overrides,omitempty"`
 }
 
 type UpdateSessionRequest struct {
-	Title          string                       `json:"title,omitempty"`
-	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+	Title                 string                           `json:"title,omitempty"`
+	RuntimeOptions        *types.SessionRuntimeOptions     `json:"runtime_options,omitempty"`
+	NotificationOverrides *types.NotificationSettingsPatch `json:"notification_overrides,omitempty"`
 }
 
 type TailItemsResponse struct {
@@ -86,9 +89,12 @@ func parseBoolQueryValue(raw string) bool {
 }
 
 func (a *API) newSessionService() *SessionService {
-	opts := make([]SessionServiceOption, 0, 1)
+	opts := make([]SessionServiceOption, 0, 2)
 	if a != nil && a.CodexHistoryPool != nil {
 		opts = append(opts, WithCodexHistoryPool(a.CodexHistoryPool))
+	}
+	if a != nil && a.Notifier != nil {
+		opts = append(opts, WithNotificationPublisher(a.Notifier))
 	}
 	return NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger, opts...)
 }

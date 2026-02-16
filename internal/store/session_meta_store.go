@@ -202,6 +202,9 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		if normalized.RuntimeOptions == nil {
 			normalized.RuntimeOptions = types.CloneRuntimeOptions(existing.RuntimeOptions)
 		}
+		if normalized.NotificationOverrides == nil {
+			normalized.NotificationOverrides = types.CloneNotificationSettingsPatch(existing.NotificationOverrides)
+		}
 	}
 	if normalized.LastActiveAt == nil {
 		now := time.Now().UTC()

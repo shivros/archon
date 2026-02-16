@@ -124,12 +124,22 @@ func TestWorktreeStoreCRUD(t *testing.T) {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
-	wt, err := store.AddWorktree(ctx, ws.ID, &types.Worktree{Path: wtDir})
+	enabled := false
+	wt, err := store.AddWorktree(ctx, ws.ID, &types.Worktree{
+		Path: wtDir,
+		NotificationOverrides: &types.NotificationSettingsPatch{
+			Enabled: &enabled,
+			Methods: []types.NotificationMethod{types.NotificationMethodBell},
+		},
+	})
 	if err != nil {
 		t.Fatalf("add worktree: %v", err)
 	}
 	if wt.Name != filepath.Base(wtDir) {
 		t.Fatalf("expected default name")
+	}
+	if wt.NotificationOverrides == nil || wt.NotificationOverrides.Enabled == nil || *wt.NotificationOverrides.Enabled {
+		t.Fatalf("expected worktree notification override to persist")
 	}
 
 	list, err := store.ListWorktrees(ctx, ws.ID)
@@ -147,6 +157,9 @@ func TestWorktreeStoreCRUD(t *testing.T) {
 	}
 	if updated.Name != "Renamed Worktree" {
 		t.Fatalf("expected updated worktree name")
+	}
+	if updated.NotificationOverrides == nil || len(updated.NotificationOverrides.Methods) != 1 || updated.NotificationOverrides.Methods[0] != types.NotificationMethodBell {
+		t.Fatalf("expected worktree notification override to survive update")
 	}
 	if !updated.UpdatedAt.After(updated.CreatedAt) {
 		t.Fatalf("expected worktree updated_at to advance")
