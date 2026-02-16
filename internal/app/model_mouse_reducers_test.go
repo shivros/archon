@@ -948,6 +948,72 @@ func TestMouseReducerMenuGroupToggleIgnoresLeftRelease(t *testing.T) {
 	}
 }
 
+func TestMouseReducerVisualDeleteClickInNotesModeWithSidebarExpandedDoesNotCopy(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.appState.SidebarCollapsed {
+		t.Fatalf("expected expanded sidebar state")
+	}
+	m.resize(120, 40)
+	m.mode = uiModeNotes
+	m.notes = []*types.Note{{ID: "n1", Scope: types.NoteScopeSession, SessionID: "s1", Title: "Important follow-up"}}
+	m.applyBlocks([]ChatBlock{
+		{ID: "n1", Role: ChatRoleSessionNote, Text: "remember this"},
+	})
+
+	x, y := findVisualTokenInBody(t, &m, "[Delete]")
+	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	if !handled {
+		t.Fatalf("expected visual delete click to be handled")
+	}
+	if m.status == "message copied" {
+		t.Fatalf("expected delete action, got copy status")
+	}
+	if m.pendingConfirm.kind != confirmDeleteNote || m.pendingConfirm.noteID != "n1" {
+		t.Fatalf("unexpected pending confirm after visual delete click: %#v", m.pendingConfirm)
+	}
+}
+
+func TestMouseReducerVisualDeleteClickInNotesPanelWithSidebarExpanded(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.appState.SidebarCollapsed {
+		t.Fatalf("expected expanded sidebar state")
+	}
+	m.notesPanelOpen = true
+	m.resize(180, 40)
+	m.notes = []*types.Note{{ID: "n1", Scope: types.NoteScopeSession, SessionID: "s1", Title: "delete me"}}
+	m.notesPanelBlocks = []ChatBlock{{ID: "n1", Role: ChatRoleSessionNote, Text: "delete me"}}
+	m.renderNotesPanel()
+
+	layout := m.resolveMouseLayout()
+	if !layout.panelVisible {
+		t.Fatalf("expected notes panel to be visible")
+	}
+	x, y := findVisualTokenInBody(t, &m, "[Delete]")
+	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	if !handled {
+		t.Fatalf("expected panel visual delete click to be handled")
+	}
+	if m.status == "note copied" {
+		t.Fatalf("expected delete action, got copy status")
+	}
+	if m.pendingConfirm.kind != confirmDeleteNote || m.pendingConfirm.noteID != "n1" {
+		t.Fatalf("unexpected pending confirm after panel visual delete click: %#v", m.pendingConfirm)
+	}
+}
+
+func findVisualTokenInBody(t *testing.T, m *Model, token string) (int, int) {
+	t.Helper()
+	body := m.renderBodyWithSidebar(m.renderRightPaneView())
+	lines := strings.Split(xansi.Strip(body), "\n")
+	for y, line := range lines {
+		if x := strings.Index(line, token); x >= 0 {
+			return x + 1, y
+		}
+	}
+	t.Fatalf("could not find token %q in rendered body:\n%s", token, body)
+	return 0, 0
+}
+
 func selectedGroupIDsContain(ids []string, want string) bool {
 	for _, id := range ids {
 		if id == want {

@@ -8,6 +8,7 @@ import (
 )
 
 func (m *Model) renderRightPaneView() string {
+	frame := m.layoutFrame()
 	headerText, bodyText := m.modeViewContent()
 	rightHeader := headerStyle.Render(headerText)
 	rightBody := bodyText
@@ -34,7 +35,7 @@ func (m *Model) renderRightPaneView() string {
 		rightLines = append(rightLines, inputLine)
 	}
 	mainView := lipgloss.JoinVertical(lipgloss.Left, rightLines...)
-	if !m.notesPanelVisible || m.notesPanelWidth <= 0 {
+	if !frame.panelVisible || frame.panelWidth <= 0 {
 		return mainView
 	}
 	panelView := m.renderNotesPanelView()
@@ -47,13 +48,15 @@ func (m *Model) renderRightPaneView() string {
 }
 
 func (m *Model) renderBodyWithSidebar(rightView string) string {
+	frame := m.layoutFrame()
 	body := rightView
-	if m.appState.SidebarCollapsed {
+	if frame.sidebarWidth <= 0 {
 		return body
 	}
 	listView := ""
 	if m.sidebar != nil {
 		listView = m.sidebar.View()
+		listView = normalizeBlockWidth(listView, frame.sidebarWidth)
 	}
 	height := max(lipgloss.Height(listView), lipgloss.Height(rightView))
 	if height < 1 {
@@ -61,6 +64,17 @@ func (m *Model) renderBodyWithSidebar(rightView string) string {
 	}
 	divider := strings.Repeat("│\n", height-1) + "│"
 	return lipgloss.JoinHorizontal(lipgloss.Top, listView, dividerStyle.Render(divider), rightView)
+}
+
+func normalizeBlockWidth(block string, width int) string {
+	if width <= 0 || block == "" {
+		return block
+	}
+	lines := strings.Split(block, "\n")
+	for i, line := range lines {
+		lines[i] = lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) renderStatusLineView() string {

@@ -18,12 +18,13 @@ type mouseLayout struct {
 }
 
 func (m *Model) resolveMouseLayout() mouseLayout {
-	layout := mouseLayout{}
-	if !m.appState.SidebarCollapsed {
-		layout.listWidth = clamp(m.width/3, minListWidth, maxListWidth)
-		if m.width-layout.listWidth-1 < minViewportWidth {
-			layout.listWidth = max(minListWidth, m.width/2)
-		}
+	frame := m.layoutFrame()
+	layout := mouseLayout{
+		listWidth:    frame.sidebarWidth,
+		rightStart:   frame.rightStart,
+		panelVisible: frame.panelVisible,
+		panelStart:   frame.panelStart,
+		panelWidth:   frame.panelWidth,
 	}
 	if m.sidebar != nil {
 		layout.barWidth = m.sidebar.ScrollbarWidth()
@@ -31,14 +32,6 @@ func (m *Model) resolveMouseLayout() mouseLayout {
 	layout.barStart = layout.listWidth - layout.barWidth
 	if layout.barStart < 0 {
 		layout.barStart = 0
-	}
-	if layout.listWidth > 0 {
-		layout.rightStart = layout.listWidth + 1
-	}
-	if m.notesPanelVisible && m.notesPanelWidth > 0 {
-		layout.panelVisible = true
-		layout.panelWidth = m.notesPanelWidth
-		layout.panelStart = layout.rightStart + m.notesPanelMainWidth + 1
 	}
 	return layout
 }

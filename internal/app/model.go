@@ -634,37 +634,16 @@ func (m *Model) resize(width, height int) {
 	m.width = width
 	m.height = height
 
-	contentHeight := max(minContentHeight, height-2)
-	listWidth := 0
-	viewportWidth := width
-	if !m.appState.SidebarCollapsed {
-		listWidth = clamp(width/3, minListWidth, maxListWidth)
-		if width-listWidth-1 < minViewportWidth {
-			listWidth = max(minListWidth, width/2)
-		}
-		viewportWidth = max(minViewportWidth, width-listWidth-1)
-	}
-	contentWidth := viewportWidth
-	mainViewportWidth := viewportWidth
-	panelWidth := 0
-	panelVisible := false
-	if m.notesPanelOpen {
-		panelWidth = clamp(viewportWidth/3, notesPanelMinWidth, notesPanelMaxWidth)
-		if viewportWidth-panelWidth-1 >= minViewportWidth {
-			panelVisible = true
-			mainViewportWidth = viewportWidth - panelWidth - 1
-			contentWidth = mainViewportWidth
-		}
-	}
-	m.notesPanelVisible = panelVisible
-	m.notesPanelWidth = panelWidth
-	m.notesPanelMainWidth = mainViewportWidth
-	if m.usesViewport() && mainViewportWidth > minViewportWidth+viewportScrollbarWidth {
-		contentWidth = mainViewportWidth - viewportScrollbarWidth
-	}
+	layout := resolveResizeLayout(width, height, m.appState.SidebarCollapsed, m.notesPanelOpen, m.usesViewport())
+	contentHeight := layout.contentHeight
+	contentWidth := layout.contentWidth
+	mainViewportWidth := layout.panelMain
+	m.notesPanelVisible = layout.panelVisible
+	m.notesPanelWidth = layout.panelWidth
+	m.notesPanelMainWidth = layout.panelMain
 
 	if m.sidebar != nil {
-		m.sidebar.SetSize(listWidth, contentHeight)
+		m.sidebar.SetSize(layout.sidebarWidth, contentHeight)
 	}
 	extraLines := 0
 	if m.mode == uiModeCompose {
@@ -685,8 +664,8 @@ func (m *Model) resize(width, height int) {
 	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.SetWidth(contentWidth)
 	m.viewport.SetHeight(vpHeight)
-	if panelVisible {
-		m.notesPanelViewport.SetWidth(panelWidth)
+	if layout.panelVisible {
+		m.notesPanelViewport.SetWidth(layout.panelWidth)
 		m.notesPanelViewport.SetHeight(max(1, contentHeight-1))
 	} else {
 		m.notesPanelViewport.SetWidth(0)
@@ -1068,14 +1047,7 @@ func (m *Model) applySidebarItems() {
 }
 
 func (m *Model) sidebarWidth() int {
-	if m.appState.SidebarCollapsed {
-		return 0
-	}
-	listWidth := clamp(m.width/3, minListWidth, maxListWidth)
-	if m.width-listWidth-1 < minViewportWidth {
-		listWidth = max(minListWidth, m.width/2)
-	}
-	return listWidth
+	return computeSidebarWidth(m.width, m.appState.SidebarCollapsed)
 }
 
 func (m *Model) handleMenuAction(action MenuAction) tea.Cmd {
