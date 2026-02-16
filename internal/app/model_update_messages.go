@@ -413,12 +413,20 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		provider := m.providerForSessionID(msg.id)
-		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, maxViewportLines)}
+		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, m.historyFetchLinesBackfill())}
 		if shouldStreamItems(provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
 		}
 		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
 		return true, tea.Batch(cmds...)
+	case historyBackfillMsg:
+		if msg.id == "" || msg.key == "" || msg.lines <= 0 {
+			return true, nil
+		}
+		if msg.key != m.pendingSessionKey {
+			return true, nil
+		}
+		return true, fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, msg.lines)
 	case sendMsg:
 		if msg.err != nil {
 			m.setStatusError("send error: " + msg.err.Error())
@@ -537,7 +545,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.pendingSessionKey = key
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		m.setStatusInfo("session started")
-		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, maxViewportLines)}
+		initialLines := m.historyFetchLinesInitial()
+		backfillLines := m.historyFetchLinesBackfill()
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, initialLines)}
+		if m.historyLoadPolicyOrDefault().ShouldBackfill(initialLines, backfillLines) {
+			cmds = append(cmds, historyBackfillCmd(msg.session.ID, key, backfillLines, m.historyBackfillDelay()))
+		}
 		if shouldStreamItems(msg.session.Provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.session.ID))
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))

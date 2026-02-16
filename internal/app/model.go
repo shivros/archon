@@ -205,6 +205,7 @@ type Model struct {
 	noteMoveReturnMode         uiMode
 	uiLatency                  *uiLatencyTracker
 	selectionLoadPolicy        SessionSelectionLoadPolicy
+	historyLoadPolicy          SessionHistoryLoadPolicy
 	renderPipeline             RenderPipeline
 	layerComposer              LayerComposer
 }
@@ -345,6 +346,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		notesByScope:               map[types.NoteScope][]*types.Note{},
 		uiLatency:                  newUILatencyTracker(nil),
 		selectionLoadPolicy:        defaultSessionSelectionLoadPolicy{},
+		historyLoadPolicy:          defaultSessionHistoryLoadPolicy{},
 		renderPipeline:             NewDefaultRenderPipeline(),
 		layerComposer:              NewTextLayerComposer(),
 	}
@@ -855,7 +857,12 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		m.loadingKey = token
 		m.setLoadingContent()
 	}
-	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, id, token, maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
+	initialLines := m.historyFetchLinesInitial()
+	backfillLines := m.historyFetchLinesBackfill()
+	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, id, token, initialLines), fetchApprovalsCmd(m.sessionAPI, id)}
+	if m.historyLoadPolicyOrDefault().ShouldBackfill(initialLines, backfillLines) {
+		cmds = append(cmds, historyBackfillCmd(id, token, backfillLines, m.historyBackfillDelay()))
+	}
 	if isActiveStatus(item.session.Status) {
 		if shouldStreamItems(item.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))

@@ -151,6 +151,12 @@ type historyPollMsg struct {
 	minAgents int
 }
 
+type historyBackfillMsg struct {
+	id    string
+	key   string
+	lines int
+}
+
 type killMsg struct {
 	id  string
 	err error

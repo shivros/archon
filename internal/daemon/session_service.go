@@ -19,22 +19,58 @@ type SessionService struct {
 	live         *CodexLiveManager
 	logger       logging.Logger
 	adapters     *conversationAdapterRegistry
+	history      *conversationHistoryStrategyRegistry
+	codexPool    CodexHistoryPool
 	approvalSync *ApprovalResyncService
 	migrateOnce  sync.Once
 }
 
-func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger) *SessionService {
+type SessionServiceOption func(*SessionService)
+
+func WithSessionHistoryStrategies(history *conversationHistoryStrategyRegistry) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || history == nil {
+			return
+		}
+		s.history = history
+	}
+}
+
+func WithCodexHistoryPool(pool CodexHistoryPool) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || pool == nil {
+			return
+		}
+		s.codexPool = pool
+	}
+}
+
+func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
 	}
-	return &SessionService{
+	svc := &SessionService{
 		manager:      manager,
 		stores:       stores,
 		live:         live,
 		logger:       logger,
 		adapters:     newConversationAdapterRegistry(),
+		history:      newConversationHistoryStrategyRegistry(),
+		codexPool:    NewCodexHistoryPool(logger),
 		approvalSync: NewApprovalResyncService(stores, logger),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(svc)
+		}
+	}
+	if svc.history == nil {
+		svc.history = newConversationHistoryStrategyRegistry()
+	}
+	if svc.codexPool == nil {
+		svc.codexPool = NewCodexHistoryPool(logger)
+	}
+	return svc
 }
 
 func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
@@ -533,7 +569,7 @@ func (s *SessionService) History(ctx context.Context, id string, lines int) ([]m
 		return nil, notFoundError("session not found", ErrSessionNotFound)
 	}
 	meta := s.getSessionMeta(ctx, id)
-	return s.conversationAdapter(session.Provider).History(ctx, s, session, meta, source, lines)
+	return s.historyStrategy(session.Provider).History(ctx, s, session, meta, source, lines)
 }
 
 func (s *SessionService) SendMessage(ctx context.Context, id string, input []map[string]any) (string, error) {
@@ -926,6 +962,13 @@ func (s *SessionService) conversationAdapter(provider string) conversationAdapte
 		s.adapters = newConversationAdapterRegistry()
 	}
 	return s.adapters.adapterFor(provider)
+}
+
+func (s *SessionService) historyStrategy(provider string) conversationHistoryStrategy {
+	if s.history == nil {
+		s.history = newConversationHistoryStrategyRegistry()
+	}
+	return s.history.strategyFor(provider)
 }
 
 func (s *SessionService) ensureSessionCwd(ctx context.Context, session *types.Session, meta *types.SessionMeta) {

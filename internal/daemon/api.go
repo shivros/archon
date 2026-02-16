@@ -11,13 +11,14 @@ import (
 )
 
 type API struct {
-	Version   string
-	Manager   *SessionManager
-	Stores    *Stores
-	Shutdown  func(context.Context) error
-	Syncer    SessionSyncer
-	LiveCodex *CodexLiveManager
-	Logger    logging.Logger
+	Version          string
+	Manager          *SessionManager
+	Stores           *Stores
+	Shutdown         func(context.Context) error
+	Syncer           SessionSyncer
+	LiveCodex        *CodexLiveManager
+	CodexHistoryPool CodexHistoryPool
+	Logger           logging.Logger
 }
 
 type StartSessionRequest struct {
@@ -82,4 +83,12 @@ func isRefreshRequest(r *http.Request) bool {
 func parseBoolQueryValue(raw string) bool {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	return value == "1" || value == "true" || value == "yes"
+}
+
+func (a *API) newSessionService() *SessionService {
+	opts := make([]SessionServiceOption, 0, 1)
+	if a != nil && a.CodexHistoryPool != nil {
+		opts = append(opts, WithCodexHistoryPool(a.CodexHistoryPool))
+	}
+	return NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger, opts...)
 }

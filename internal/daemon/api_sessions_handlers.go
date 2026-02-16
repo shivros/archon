@@ -10,7 +10,7 @@ import (
 )
 
 func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	service := a.newSessionService()
 
 	switch r.Method {
 	case http.MethodGet:
@@ -70,7 +70,7 @@ func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	service := a.newSessionService()
 
 	path := strings.TrimPrefix(r.URL.Path, "/v1/sessions/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")

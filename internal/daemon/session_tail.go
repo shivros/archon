@@ -152,13 +152,10 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 		}
 	}
 	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	client, err := startCodexAppServer(ctx, session.Cwd, codexHome, s.logger)
-	if err != nil {
-		return nil, err
+	if s.codexPool == nil {
+		s.codexPool = NewCodexHistoryPool(s.logger)
 	}
-	defer client.Close()
-
-	thread, err := client.ReadThread(ctx, threadID)
+	thread, err := s.codexPool.ReadThread(ctx, session.Cwd, codexHome, threadID)
 	if err != nil {
 		return nil, err
 	}

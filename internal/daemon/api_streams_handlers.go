@@ -9,7 +9,7 @@ import (
 
 func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 	stream := r.URL.Query().Get("stream")
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	service := a.newSessionService()
 	ch, cancel, err := service.Subscribe(r.Context(), id, stream)
 	if err != nil {
 		writeServiceError(w, err)
@@ -50,7 +50,7 @@ func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	service := a.newSessionService()
 	reqID := logging.NewRequestID()
 	if a.Logger != nil && a.Logger.Enabled(logging.Debug) {
 		a.Logger.Debug("events_stream_open",
@@ -131,7 +131,7 @@ func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	service := a.newSessionService()
 	reqID := logging.NewRequestID()
 	lines := parseLines(r.URL.Query().Get("lines"))
 	snapshot, _, snapErr := service.readSessionItems(id, lines)

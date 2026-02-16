@@ -194,7 +194,7 @@ func (a *API) startSessionForWorkspace(w http.ResponseWriter, r *http.Request, w
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	service := NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger)
+	service := a.newSessionService()
 	var req StartSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})

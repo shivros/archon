@@ -131,9 +131,9 @@ func TestPhase1SelectionChangeDoesNotFetchProviderOptions(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected nested load batch, got %T", loadMsg)
 	}
-	// history + approvals + stream + events; provider options fetch is intentionally excluded.
-	if len(loadBatch) != 4 {
-		t.Fatalf("expected 4 selection-load commands, got %d", len(loadBatch))
+	// history + backfill + approvals + stream/items + events; provider options fetch is intentionally excluded.
+	if len(loadBatch) != 5 {
+		t.Fatalf("expected 5 selection-load commands, got %d", len(loadBatch))
 	}
 }
 

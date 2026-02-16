@@ -121,6 +121,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		Stores:  d.stores,
 		Logger:  d.logger,
 	}
+	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
+	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)
 	api.Syncer = syncer
 	api.LiveCodex = NewCodexLiveManager(d.stores, d.logger)
