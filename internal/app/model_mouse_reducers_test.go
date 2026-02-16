@@ -132,7 +132,7 @@ func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	}
 }
 
-func TestMouseReducerWheelPausesFollow(t *testing.T) {
+func TestMouseReducerWheelDownKeepsFollowEnabled(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.follow = true
@@ -142,11 +142,11 @@ func TestMouseReducerWheelPausesFollow(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected wheel event to be handled")
 	}
-	if m.follow {
-		t.Fatalf("expected follow to pause after wheel scroll")
+	if !m.follow {
+		t.Fatalf("expected follow to stay enabled when wheel-scrolling down")
 	}
-	if m.status != "follow: paused" {
-		t.Fatalf("unexpected status %q", m.status)
+	if m.status == "follow: paused" {
+		t.Fatalf("expected wheel down to avoid pausing follow")
 	}
 }
 
@@ -168,6 +168,25 @@ func TestMouseReducerWheelDownToBottomResumesFollow(t *testing.T) {
 	}
 	if !m.follow {
 		t.Fatalf("expected follow to resume once wheel scroll reaches bottom")
+	}
+}
+
+func TestMouseReducerWheelDownWhilePausedAtBottomResumesFollow(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	seedFollowContent(&m, 220)
+	m.pauseFollow(false)
+	m.viewport.GotoBottom()
+	layout := m.resolveMouseLayout()
+
+	if !m.reduceMouseWheel(tea.MouseClickMsg{Button: tea.MouseWheelDown, X: layout.rightStart, Y: 2}, layout, 1) {
+		t.Fatalf("expected wheel down to be handled")
+	}
+	if !m.follow {
+		t.Fatalf("expected follow to resume when wheel-scrolling down at bottom while paused")
+	}
+	if m.status != "follow: on" {
+		t.Fatalf("unexpected status %q", m.status)
 	}
 }
 

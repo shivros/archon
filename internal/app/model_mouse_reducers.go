@@ -259,17 +259,14 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 	if m.reduceModeWheelMouse(msg, layout, delta) {
 		return true
 	}
-	before := m.viewport.YOffset()
 	wasFollowing := m.follow
-	m.pauseFollow(true)
 	if delta < 0 {
+		m.pauseFollow(true)
 		m.viewport.ScrollUp(3)
 	} else {
 		m.viewport.ScrollDown(3)
 	}
-	if !wasFollowing && before < m.maxViewportYOffset() && m.isViewportAtBottom() {
-		m.setFollowEnabled(true, true)
-	}
+	m.maybeResumeFollowAfterManualScroll(wasFollowing, delta > 0)
 	return true
 }
 

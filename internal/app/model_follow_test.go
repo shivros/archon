@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func TestViewportScrollDownFromBottomPausesFollow(t *testing.T) {
+func TestViewportScrollDownFromBottomKeepsFollowEnabled(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	seedFollowContent(&m, 200)
@@ -18,11 +18,11 @@ func TestViewportScrollDownFromBottomPausesFollow(t *testing.T) {
 	if !m.handleViewportScroll(tea.KeyPressMsg{Code: tea.KeyDown}) {
 		t.Fatalf("expected down scroll to be handled")
 	}
-	if m.follow {
-		t.Fatalf("expected follow to pause after manual scroll")
+	if !m.follow {
+		t.Fatalf("expected follow to stay enabled when scrolling down")
 	}
-	if m.status != "follow: paused" {
-		t.Fatalf("unexpected status %q", m.status)
+	if m.status == "follow: paused" {
+		t.Fatalf("expected down scroll to avoid pausing follow")
 	}
 }
 
@@ -46,6 +46,39 @@ func TestViewportScrollDownAtBottomResumesFollow(t *testing.T) {
 	}
 	if m.status != "follow: on" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestViewportScrollDownWhilePausedAtBottomResumesFollow(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	seedFollowContent(&m, 200)
+	m.pauseFollow(false)
+	m.viewport.GotoBottom()
+
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: tea.KeyDown}) {
+		t.Fatalf("expected down scroll to be handled")
+	}
+	if !m.follow {
+		t.Fatalf("expected follow to resume when scrolling down at bottom while paused")
+	}
+	if m.status != "follow: on" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestViewportScrollUpWhilePausedAtBottomStaysPaused(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	seedFollowContent(&m, 10)
+	m.pauseFollow(false)
+	m.viewport.GotoBottom()
+
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: tea.KeyUp}) {
+		t.Fatalf("expected up scroll to be handled")
+	}
+	if m.follow {
+		t.Fatalf("expected follow to remain paused when scrolling up")
 	}
 }
 

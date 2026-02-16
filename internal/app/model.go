@@ -2043,30 +2043,30 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
-	before := m.viewport.YOffset()
 	wasFollowing := m.follow
+	scrolledDown := false
 	switch msg.String() {
 	case "up":
 		m.pauseFollow(true)
 		m.viewport.ScrollUp(1)
 	case "down":
-		m.pauseFollow(true)
 		m.viewport.ScrollDown(1)
+		scrolledDown = true
 	case "pgup":
 		m.pauseFollow(true)
 		m.viewport.PageUp()
 	case "pgdown":
-		m.pauseFollow(true)
 		m.viewport.PageDown()
+		scrolledDown = true
 	case "ctrl+f":
-		m.pauseFollow(true)
 		m.viewport.PageDown()
+		scrolledDown = true
 	case "ctrl+u":
 		m.pauseFollow(true)
 		m.viewport.HalfPageUp()
 	case "ctrl+d":
-		m.pauseFollow(true)
 		m.viewport.HalfPageDown()
+		scrolledDown = true
 	case "home":
 		m.pauseFollow(true)
 		m.viewport.GotoTop()
@@ -2076,9 +2076,7 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	default:
 		return false
 	}
-	if !wasFollowing && before < m.maxViewportYOffset() && m.isViewportAtBottom() {
-		m.setFollowEnabled(true, true)
-	}
+	m.maybeResumeFollowAfterManualScroll(wasFollowing, scrolledDown)
 	return true
 }
 
@@ -2179,6 +2177,15 @@ func (m *Model) maxViewportYOffset() int {
 
 func (m *Model) isViewportAtBottom() bool {
 	return m.viewport.YOffset() >= m.maxViewportYOffset()
+}
+
+func (m *Model) maybeResumeFollowAfterManualScroll(wasFollowing, scrolledDown bool) {
+	if wasFollowing || !scrolledDown {
+		return
+	}
+	if m.isViewportAtBottom() {
+		m.setFollowEnabled(true, true)
+	}
 }
 
 func (m *Model) setFollowEnabled(enabled, announce bool) {
