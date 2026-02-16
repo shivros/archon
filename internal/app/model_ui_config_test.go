@@ -13,6 +13,9 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 			MultilineMinHeight: 4,
 			MultilineMaxHeight: 6,
 		},
+		Chat: config.UIChatConfig{
+			TimestampMode: "iso",
+		},
 	})
 
 	if m.chatInput == nil || m.noteInput == nil {
@@ -35,5 +38,8 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 	}
 	if got := m.noteInput.Height(); got != 4 {
 		t.Fatalf("expected note input min height 4, got %d", got)
+	}
+	if m.timestampMode != ChatTimestampModeISO {
+		t.Fatalf("expected timestamp mode ISO, got %q", m.timestampMode)
 	}
 }

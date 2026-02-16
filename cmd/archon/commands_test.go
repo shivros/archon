@@ -410,6 +410,13 @@ func TestConfigCommandScopeUIOnly(t *testing.T) {
 	if path, _ := keybindings["path"].(string); path == "" {
 		t.Fatalf("expected keybindings.path in ui-only output")
 	}
+	chat, ok := payload["chat"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected chat object in ui-only output, got %#v", payload["chat"])
+	}
+	if chat["timestamp_mode"] != "relative" {
+		t.Fatalf("expected default chat timestamp mode relative, got %#v", chat["timestamp_mode"])
+	}
 }
 
 func TestConfigCommandScopeKeybindingsDefault(t *testing.T) {

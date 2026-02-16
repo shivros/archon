@@ -175,6 +175,7 @@ func (c *CodexStreamController) ConsumeTick() (changed bool, closed bool, events
 }
 
 func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
+	eventAt := codexEventTimestamp(event)
 	switch event.Method {
 	case "item/started":
 		item := parseEventItem(event.Params)
@@ -190,12 +191,12 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			}
 			c.agentDeltaSeen = false
 			if c.transcript != nil {
-				c.transcript.StartAgentBlock()
+				c.transcript.StartAgentBlockAt(eventAt)
 			}
 			return true
 		}
 		if typ == "reasoning" {
-			return c.applyReasoningItem(item)
+			return c.applyReasoningItemAt(item, eventAt)
 		}
 	case "item/agentMessage/delta":
 		delta := extractDelta(event.Params)
@@ -204,7 +205,7 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 		}
 		c.agentDeltaSeen = true
 		if c.transcript != nil {
-			c.transcript.AppendAgentDelta(delta)
+			c.transcript.AppendAgentDeltaAt(delta, eventAt)
 		}
 		return true
 	case "item/updated":
@@ -214,12 +215,12 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 		}
 		typ := asString(item["type"])
 		if typ == "reasoning" {
-			return c.applyReasoningItem(item)
+			return c.applyReasoningItemAt(item, eventAt)
 		}
 		if typ == "agentMessage" {
 			if delta := strings.TrimSpace(asString(item["delta"])); delta != "" && c.transcript != nil {
 				c.agentDeltaSeen = true
-				c.transcript.AppendAgentDelta(delta)
+				c.transcript.AppendAgentDeltaAt(delta, eventAt)
 				return true
 			}
 		}
@@ -236,7 +237,7 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 					text = extractContentText(item["content"])
 				}
 				if text != "" && c.transcript != nil {
-					c.transcript.AppendAgentDelta(text)
+					c.transcript.AppendAgentDeltaAt(text, eventAt)
 				}
 			}
 			if c.transcript != nil {
@@ -247,7 +248,7 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			return true
 		}
 		if typ == "reasoning" {
-			return c.applyReasoningItem(item)
+			return c.applyReasoningItemAt(item, eventAt)
 		}
 	case "error", "codex/event/error":
 		if msg := parseCodexError(event.Params); msg != "" {
@@ -280,6 +281,10 @@ func parseEventItem(params json.RawMessage) map[string]any {
 }
 
 func (c *CodexStreamController) applyReasoningItem(item map[string]any) bool {
+	return c.applyReasoningItemAt(item, time.Now().UTC())
+}
+
+func (c *CodexStreamController) applyReasoningItemAt(item map[string]any, createdAt time.Time) bool {
 	if c == nil || c.transcript == nil || item == nil {
 		return false
 	}
@@ -295,7 +300,7 @@ func (c *CodexStreamController) applyReasoningItem(item map[string]any) bool {
 	if strings.TrimSpace(aggregateID) == "" || strings.TrimSpace(aggregateText) == "" {
 		return false
 	}
-	return c.transcript.UpsertReasoning(aggregateID, aggregateText)
+	return c.transcript.UpsertReasoningAt(aggregateID, aggregateText, createdAt)
 }
 
 func (c *CodexStreamController) resetReasoningAccumulator() {
@@ -322,12 +327,7 @@ func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
 		}
 	}
 	presentation := approvalPresentationFromParams(event.Method, params)
-	createdAt := time.Now().UTC()
-	if ts := strings.TrimSpace(event.TS); ts != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			createdAt = parsed
-		}
-	}
+	createdAt := codexEventTimestamp(event)
 	return &ApprovalRequest{
 		RequestID: *event.ID,
 		Method:    event.Method,
@@ -336,6 +336,18 @@ func parseApprovalRequest(event types.CodexEvent) *ApprovalRequest {
 		Context:   cloneStringSlice(presentation.Context),
 		CreatedAt: createdAt,
 	}
+}
+
+func codexEventTimestamp(event types.CodexEvent) time.Time {
+	if ts := strings.TrimSpace(event.TS); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			return parsed.UTC()
+		}
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Now().UTC()
 }
 
 func parseCodexError(params []byte) string {

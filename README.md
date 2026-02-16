@@ -94,6 +94,9 @@ Example `ui.toml`:
 ```toml
 [keybindings]
 path = "keybindings.json"
+
+[chat]
+timestamp_mode = "relative" # relative | iso
 ```
 
 Example `keybindings.json` (VS Code-style array):

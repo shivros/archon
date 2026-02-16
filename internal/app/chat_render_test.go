@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -64,6 +65,68 @@ func TestRenderChatBlocksShowsCopyControlPerMessage(t *testing.T) {
 	}
 	if spans[0].CopyLine < 0 || spans[0].CopyStart < 0 || spans[0].CopyEnd < spans[0].CopyStart {
 		t.Fatalf("expected copy hitbox metadata, got %#v", spans[0])
+	}
+}
+
+func TestRenderChatBlocksAssistantTimestampAppearsOnRight(t *testing.T) {
+	now := time.Date(2026, 2, 16, 12, 0, 0, 0, time.UTC)
+	blocks := []ChatBlock{
+		{
+			Role:      ChatRoleAgent,
+			Text:      "hello",
+			CreatedAt: now.Add(-2 * time.Minute),
+		},
+	}
+	rendered, _ := renderChatBlocksWithRendererAndContext(
+		blocks,
+		80,
+		2000,
+		-1,
+		defaultChatBlockRenderer{},
+		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: now},
+	)
+	plain := xansi.Strip(rendered)
+	lines := strings.Split(plain, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("expected rendered lines")
+	}
+	meta := lines[0]
+	if !strings.Contains(meta, "Assistant [Copy] [Pin]") || !strings.Contains(meta, "2 minutes ago") {
+		t.Fatalf("expected controls and timestamp in assistant meta line: %q", meta)
+	}
+	if strings.Index(meta, "Assistant [Copy] [Pin]") > strings.Index(meta, "2 minutes ago") {
+		t.Fatalf("expected assistant controls before timestamp: %q", meta)
+	}
+}
+
+func TestRenderChatBlocksUserTimestampAppearsOnLeft(t *testing.T) {
+	now := time.Date(2026, 2, 16, 12, 0, 0, 0, time.UTC)
+	blocks := []ChatBlock{
+		{
+			Role:      ChatRoleUser,
+			Text:      "hello",
+			CreatedAt: now.Add(-3 * time.Minute),
+		},
+	}
+	rendered, _ := renderChatBlocksWithRendererAndContext(
+		blocks,
+		80,
+		2000,
+		-1,
+		defaultChatBlockRenderer{},
+		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: now},
+	)
+	plain := xansi.Strip(rendered)
+	lines := strings.Split(plain, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("expected rendered lines")
+	}
+	meta := lines[0]
+	if !strings.Contains(meta, "3 minutes ago") || !strings.Contains(meta, "You [Copy] [Pin]") {
+		t.Fatalf("expected timestamp and controls in user meta line: %q", meta)
+	}
+	if strings.Index(meta, "3 minutes ago") > strings.Index(meta, "You [Copy] [Pin]") {
+		t.Fatalf("expected user timestamp before controls: %q", meta)
 	}
 }
 

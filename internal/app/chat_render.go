@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
@@ -34,6 +35,7 @@ type ChatBlock struct {
 	Role      ChatRole
 	Text      string
 	Status    ChatStatus
+	CreatedAt time.Time
 	Collapsed bool
 	RequestID int
 	SessionID string
@@ -112,6 +114,11 @@ type renderedChatBlock struct {
 	SessionFilterEnd     int
 }
 
+type chatRenderContext struct {
+	TimestampMode ChatTimestampMode
+	Now           time.Time
+}
+
 const (
 	reasoningPreviewLines = 3
 	reasoningPreviewChars = 280
@@ -122,10 +129,28 @@ func renderChatBlocks(blocks []ChatBlock, width int, maxLines int) (string, []re
 }
 
 func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int) (string, []renderedBlockSpan) {
-	return renderChatBlocksWithRenderer(blocks, width, maxLines, selectedBlockIndex, defaultChatBlockRenderer{})
+	return renderChatBlocksWithRendererAndContext(
+		blocks,
+		width,
+		maxLines,
+		selectedBlockIndex,
+		defaultChatBlockRenderer{},
+		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()},
+	)
 }
 
 func renderChatBlocksWithRenderer(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int, renderer chatBlockRenderer) (string, []renderedBlockSpan) {
+	return renderChatBlocksWithRendererAndContext(
+		blocks,
+		width,
+		maxLines,
+		selectedBlockIndex,
+		renderer,
+		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()},
+	)
+}
+
+func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int, renderer chatBlockRenderer, ctx chatRenderContext) (string, []renderedBlockSpan) {
 	if len(blocks) == 0 {
 		return "", nil
 	}
@@ -138,7 +163,7 @@ func renderChatBlocksWithRenderer(blocks []ChatBlock, width int, maxLines int, s
 	lines := make([]string, 0, len(blocks)*4)
 	spans := make([]renderedBlockSpan, 0, len(blocks))
 	for i, block := range blocks {
-		rendered := renderer.RenderChatBlock(block, width, i == selectedBlockIndex)
+		rendered := renderer.RenderChatBlock(block, width, i == selectedBlockIndex, ctx)
 		if len(rendered.Lines) == 0 {
 			continue
 		}
@@ -432,7 +457,7 @@ func renderChatBlocksWithRenderer(blocks []ChatBlock, width int, maxLines int, s
 	return strings.Join(lines, "\n"), next
 }
 
-func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBlock {
+func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderContext) renderedChatBlock {
 	if width <= 0 {
 		width = 80
 	}
@@ -657,8 +682,25 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 		}
 		metaDisplay = strings.Join(parts, "")
 	}
-	metaLine := lipgloss.PlaceHorizontal(width, align, metaDisplay)
-	metaPlain := xansi.Strip(metaLine)
+	timestampLabel := ""
+	if shouldShowTimestampForBlock(block) {
+		formatter := defaultChatTimestampFormatter{}
+		timestampLabel = formatter.FormatTimestamp(block.CreatedAt, ctx.Now, normalizeChatTimestampMode(ctx.TimestampMode))
+	}
+	if width > 0 {
+		timestampLabel = truncateToWidth(timestampLabel, width)
+	}
+	timestampDisplay := metaStyle.Render(timestampLabel)
+	controlsOnRight := block.Role == ChatRoleUser
+	metaLine, metaPlain := composeChatMetaLine(
+		width,
+		align,
+		meta,
+		metaDisplay,
+		timestampLabel,
+		timestampDisplay,
+		controlsOnRight,
+	)
 	copyStart := -1
 	copyEnd := -1
 	if idx := strings.Index(metaPlain, copyLabel); idx >= 0 {
@@ -787,6 +829,61 @@ func renderChatBlock(block ChatBlock, width int, selected bool) renderedChatBloc
 		SessionFilterLine:    copyLine,
 		SessionFilterStart:   sessionFilterStart,
 		SessionFilterEnd:     sessionFilterEnd,
+	}
+}
+
+func composeChatMetaLine(
+	width int,
+	align lipgloss.Position,
+	controlsPlain string,
+	controlsDisplay string,
+	timestampPlain string,
+	timestampDisplay string,
+	controlsOnRight bool,
+) (string, string) {
+	if width <= 0 {
+		width = 80
+	}
+	if strings.TrimSpace(timestampPlain) == "" {
+		line := lipgloss.PlaceHorizontal(width, align, controlsDisplay)
+		return line, xansi.Strip(line)
+	}
+	if strings.TrimSpace(controlsPlain) == "" {
+		tsAlign := lipgloss.Right
+		if controlsOnRight {
+			tsAlign = lipgloss.Left
+		}
+		line := lipgloss.PlaceHorizontal(width, tsAlign, timestampDisplay)
+		return line, xansi.Strip(line)
+	}
+	controlsWidth := xansi.StringWidth(controlsPlain)
+	timestampWidth := xansi.StringWidth(timestampPlain)
+	if controlsWidth+1+timestampWidth > width {
+		line := lipgloss.PlaceHorizontal(width, align, controlsDisplay)
+		return line, xansi.Strip(line)
+	}
+	spaces := strings.Repeat(" ", width-controlsWidth-timestampWidth)
+	if controlsOnRight {
+		return timestampDisplay + spaces + controlsDisplay, timestampPlain + spaces + controlsPlain
+	}
+	return controlsDisplay + spaces + timestampDisplay, controlsPlain + spaces + timestampPlain
+}
+
+func shouldShowTimestampForBlock(block ChatBlock) bool {
+	if block.CreatedAt.IsZero() {
+		return false
+	}
+	if isNoteRole(block.Role) {
+		return false
+	}
+	if isNotesScopeHeaderBlock(block) {
+		return false
+	}
+	switch block.Role {
+	case ChatRoleUser, ChatRoleAgent, ChatRoleReasoning, ChatRoleSystem, ChatRoleApproval, ChatRoleApprovalResolved:
+		return true
+	default:
+		return false
 	}
 }
 

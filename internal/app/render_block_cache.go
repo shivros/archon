@@ -9,19 +9,21 @@ import (
 )
 
 type chatBlockRenderer interface {
-	RenderChatBlock(block ChatBlock, width int, selected bool) renderedChatBlock
+	RenderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderContext) renderedChatBlock
 }
 
 type defaultChatBlockRenderer struct{}
 
-func (defaultChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, selected bool) renderedChatBlock {
-	return renderChatBlock(block, width, selected)
+func (defaultChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderContext) renderedChatBlock {
+	return renderChatBlock(block, width, selected, ctx)
 }
 
 type blockRenderKey struct {
-	blockHash uint64
-	width     int
-	selected  bool
+	blockHash      uint64
+	width          int
+	selected       bool
+	timestampMode  ChatTimestampMode
+	relativeBucket int64
 }
 
 type blockRenderCache struct {
@@ -84,19 +86,22 @@ func newCachedChatBlockRenderer(next chatBlockRenderer, cache *blockRenderCache)
 	return &cachedChatBlockRenderer{next: next, cache: cache}
 }
 
-func (r *cachedChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, selected bool) renderedChatBlock {
+func (r *cachedChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderContext) renderedChatBlock {
 	if r == nil || r.next == nil {
 		return renderedChatBlock{}
 	}
+	mode := normalizeChatTimestampMode(ctx.TimestampMode)
 	key := blockRenderKey{
-		blockHash: hashChatBlock(block),
-		width:     width,
-		selected:  selected,
+		blockHash:      hashChatBlock(block),
+		width:          width,
+		selected:       selected,
+		timestampMode:  mode,
+		relativeBucket: chatTimestampRenderBucket(mode, ctx.Now),
 	}
 	if cached, ok := r.cache.Get(key); ok {
 		return cached
 	}
-	rendered := r.next.RenderChatBlock(block, width, selected)
+	rendered := r.next.RenderChatBlock(block, width, selected, ctx)
 	r.cache.Set(key, rendered)
 	return rendered
 }
@@ -110,6 +115,7 @@ func hashChatBlock(block ChatBlock) uint64 {
 	writeHashString(hasher, block.SessionID)
 	writeHashBool(hasher, block.Collapsed)
 	writeHashInt(hasher, block.RequestID)
+	writeHashInt64(hasher, block.CreatedAt.UTC().UnixNano())
 	return hasher.Sum64()
 }
 
@@ -123,6 +129,15 @@ func writeHashString(hasher hash.Hash64, value string) {
 }
 
 func writeHashInt(hasher hash.Hash64, value int) {
+	if hasher == nil {
+		return
+	}
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(value))
+	_, _ = hasher.Write(buf)
+}
+
+func writeHashInt64(hasher hash.Hash64, value int64) {
 	if hasher == nil {
 		return
 	}

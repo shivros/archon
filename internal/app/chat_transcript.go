@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"time"
 )
 
 type ChatTranscript struct {
@@ -55,6 +56,10 @@ func (t *ChatTranscript) Blocks() []ChatBlock {
 }
 
 func (t *ChatTranscript) AppendUserMessage(text string) int {
+	return t.AppendUserMessageAt(text, time.Now().UTC())
+}
+
+func (t *ChatTranscript) AppendUserMessageAt(text string, createdAt time.Time) int {
 	if t == nil {
 		return -1
 	}
@@ -64,15 +69,20 @@ func (t *ChatTranscript) AppendUserMessage(text string) int {
 	}
 	headerIndex := len(t.blocks)
 	t.blocks = append(t.blocks, ChatBlock{
-		Role:   ChatRoleUser,
-		Text:   text,
-		Status: ChatStatusNone,
+		Role:      ChatRoleUser,
+		Text:      text,
+		Status:    ChatStatusNone,
+		CreatedAt: createdAt,
 	})
 	t.trim()
 	return headerIndex
 }
 
 func (t *ChatTranscript) StartAgentBlock() {
+	t.StartAgentBlockAt(time.Now().UTC())
+}
+
+func (t *ChatTranscript) StartAgentBlockAt(createdAt time.Time) {
 	if t == nil {
 		return
 	}
@@ -83,9 +93,10 @@ func (t *ChatTranscript) StartAgentBlock() {
 		return
 	}
 	t.blocks = append(t.blocks, ChatBlock{
-		Role:   ChatRoleAgent,
-		Text:   "",
-		Status: ChatStatusNone,
+		Role:      ChatRoleAgent,
+		Text:      "",
+		Status:    ChatStatusNone,
+		CreatedAt: createdAt,
 	})
 	t.activeAgentIndex = len(t.blocks) - 1
 	t.pendingAgentBlock = true
@@ -94,12 +105,16 @@ func (t *ChatTranscript) StartAgentBlock() {
 }
 
 func (t *ChatTranscript) AppendAgentDelta(delta string) {
+	t.AppendAgentDeltaAt(delta, time.Now().UTC())
+}
+
+func (t *ChatTranscript) AppendAgentDeltaAt(delta string, createdAt time.Time) {
 	if t == nil {
 		return
 	}
 	if t.activeAgentIndex < 0 || t.activeAgentIndex >= len(t.blocks) {
 		if !t.pendingAgentBlock {
-			t.StartAgentBlock()
+			t.StartAgentBlockAt(createdAt)
 		}
 	}
 	if t.activeAgentIndex < 0 || t.activeAgentIndex >= len(t.blocks) {
@@ -110,6 +125,9 @@ func (t *ChatTranscript) AppendAgentDelta(delta string) {
 		t.agentSegmentBreak = false
 	} else {
 		t.blocks[t.activeAgentIndex].Text += delta
+	}
+	if t.blocks[t.activeAgentIndex].CreatedAt.IsZero() && !createdAt.IsZero() {
+		t.blocks[t.activeAgentIndex].CreatedAt = createdAt
 	}
 	t.trim()
 }
@@ -167,6 +185,10 @@ func (t *ChatTranscript) MarkUserMessageSent(headerIndex int) bool {
 }
 
 func (t *ChatTranscript) UpsertReasoning(itemID, text string) bool {
+	return t.UpsertReasoningAt(itemID, text, time.Now().UTC())
+}
+
+func (t *ChatTranscript) UpsertReasoningAt(itemID, text string, createdAt time.Time) bool {
 	if t == nil {
 		return false
 	}
@@ -176,7 +198,7 @@ func (t *ChatTranscript) UpsertReasoning(itemID, text string) bool {
 	}
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
-		t.appendBlock(ChatRoleReasoning, text)
+		t.appendBlockAt(ChatRoleReasoning, text, createdAt)
 		return true
 	}
 	blockID := "reasoning:" + itemID
@@ -188,6 +210,9 @@ func (t *ChatTranscript) UpsertReasoning(itemID, text string) bool {
 			return false
 		}
 		t.blocks[i].Text = text
+		if t.blocks[i].CreatedAt.IsZero() && !createdAt.IsZero() {
+			t.blocks[i].CreatedAt = createdAt
+		}
 		return true
 	}
 	t.blocks = append(t.blocks, ChatBlock{
@@ -195,6 +220,7 @@ func (t *ChatTranscript) UpsertReasoning(itemID, text string) bool {
 		Role:      ChatRoleReasoning,
 		Text:      text,
 		Status:    ChatStatusNone,
+		CreatedAt: createdAt,
 		Collapsed: true,
 	})
 	t.trim()
@@ -225,52 +251,53 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 	if t == nil || item == nil {
 		return
 	}
+	createdAt := chatItemCreatedAt(item)
 	typ, _ := item["type"].(string)
 	switch typ {
 	case "log":
 		if text := asString(item["text"]); text != "" {
-			t.appendBlock(ChatRoleSystem, text)
+			t.appendBlockAt(ChatRoleSystem, text, createdAt)
 		}
 	case "agentMessageDelta":
 		if delta := asString(item["delta"]); delta != "" {
-			t.AppendAgentDelta(delta)
+			t.AppendAgentDeltaAt(delta, createdAt)
 		}
 	case "agentMessageEnd":
 		t.FinishAgentBlock()
 	case "userMessage":
 		if text := extractContentText(item["content"]); text != "" {
-			t.AppendUserMessage(text)
+			t.AppendUserMessageAt(text, createdAt)
 			return
 		}
 		if text := asString(item["text"]); text != "" {
-			t.AppendUserMessage(text)
+			t.AppendUserMessageAt(text, createdAt)
 		}
 	case "agentMessage":
 		if text := asString(item["text"]); text != "" {
-			t.appendBlock(ChatRoleAgent, text)
+			t.appendBlockAt(ChatRoleAgent, text, createdAt)
 			return
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlock(ChatRoleAgent, text)
+			t.appendBlockAt(ChatRoleAgent, text, createdAt)
 		}
 	case "assistant":
 		if msg, ok := item["message"].(map[string]any); ok {
 			if text := extractContentText(msg["content"]); text != "" {
-				t.appendBlock(ChatRoleAgent, text)
+				t.appendBlockAt(ChatRoleAgent, text, createdAt)
 				return
 			}
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlock(ChatRoleAgent, text)
+			t.appendBlockAt(ChatRoleAgent, text, createdAt)
 		}
 	case "result":
 		if text := asString(item["result"]); text != "" {
-			t.appendBlock(ChatRoleAgent, text)
+			t.appendBlockAt(ChatRoleAgent, text, createdAt)
 			return
 		}
 		if result, ok := item["result"].(map[string]any); ok {
 			if text := asString(result["result"]); text != "" {
-				t.appendBlock(ChatRoleAgent, text)
+				t.appendBlockAt(ChatRoleAgent, text, createdAt)
 				return
 			}
 		}
@@ -284,23 +311,23 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		if status != "" {
 			lines = append(lines, "", "Status: "+status)
 		}
-		t.appendBlock(ChatRoleSystem, strings.Join(lines, "\n"))
+		t.appendBlockAt(ChatRoleSystem, strings.Join(lines, "\n"), createdAt)
 	case "fileChange":
 		paths := extractChangePaths(item["changes"])
 		if len(paths) > 0 {
-			t.appendBlock(ChatRoleSystem, "File change\n\n"+strings.Join(paths, ", "))
+			t.appendBlockAt(ChatRoleSystem, "File change\n\n"+strings.Join(paths, ", "), createdAt)
 		}
 	case "enteredReviewMode":
 		if text := asString(item["review"]); text != "" {
-			t.appendBlock(ChatRoleSystem, "Review started\n\n"+text)
+			t.appendBlockAt(ChatRoleSystem, "Review started\n\n"+text, createdAt)
 		}
 	case "exitedReviewMode":
 		if text := asString(item["review"]); text != "" {
-			t.appendBlock(ChatRoleSystem, "Review completed\n\n"+text)
+			t.appendBlockAt(ChatRoleSystem, "Review completed\n\n"+text, createdAt)
 		}
 	case "reasoning":
 		if text := reasoningText(item); text != "" {
-			t.UpsertReasoning(asString(item["id"]), text)
+			t.UpsertReasoningAt(asString(item["id"]), text, createdAt)
 		}
 	case "system":
 		// Internal metadata (init, session info, etc.) — not shown to users.
@@ -308,12 +335,12 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 	default:
 		if typ != "" {
 			if data, err := json.Marshal(item); err == nil {
-				t.appendBlock(ChatRoleSystem, fmt.Sprintf("%s: %s", typ, string(data)))
+				t.appendBlockAt(ChatRoleSystem, fmt.Sprintf("%s: %s", typ, string(data)), createdAt)
 				return
 			}
 		}
 		if data, err := json.Marshal(item); err == nil {
-			t.appendBlock(ChatRoleSystem, string(data))
+			t.appendBlockAt(ChatRoleSystem, string(data), createdAt)
 		}
 	}
 }
@@ -343,6 +370,10 @@ func reasoningText(item map[string]any) string {
 }
 
 func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
+	t.appendBlockAt(role, text, time.Now().UTC())
+}
+
+func (t *ChatTranscript) appendBlockAt(role ChatRole, text string, createdAt time.Time) {
 	if t == nil || strings.TrimSpace(text) == "" {
 		return
 	}
@@ -350,6 +381,9 @@ func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
 		last := len(t.blocks) - 1
 		if t.blocks[last].Role == ChatRoleAgent {
 			t.blocks[last].Text = concatAdjacentAgentText(t.blocks[last].Text, text)
+			if t.blocks[last].CreatedAt.IsZero() || (!createdAt.IsZero() && createdAt.Before(t.blocks[last].CreatedAt)) {
+				t.blocks[last].CreatedAt = createdAt
+			}
 			return
 		}
 	}
@@ -358,6 +392,7 @@ func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
 		Role:      role,
 		Text:      text,
 		Status:    ChatStatusNone,
+		CreatedAt: createdAt,
 		Collapsed: role == ChatRoleReasoning,
 	}
 	t.blocks = append(t.blocks, block)

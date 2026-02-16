@@ -31,6 +31,7 @@ type configOutput struct {
 	CoreConfigPath  string                    `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
 	UIConfigPath    string                    `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
 	KeybindingsPath string                    `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
+	Chat            *uiChatConfigOutput       `json:"chat,omitempty" toml:"chat,omitempty"`
 	Daemon          *effectiveDaemonConfig    `json:"daemon,omitempty" toml:"daemon,omitempty"`
 	Logging         *effectiveLoggingConfig   `json:"logging,omitempty" toml:"logging,omitempty"`
 	Debug           *effectiveDebugConfig     `json:"debug,omitempty" toml:"debug,omitempty"`
@@ -51,10 +52,15 @@ type coreDaemonConfigOut struct {
 
 type uiConfigOutput struct {
 	Keybindings uiKeybindingsConfigOutput `json:"keybindings" toml:"keybindings"`
+	Chat        uiChatConfigOutput        `json:"chat" toml:"chat"`
 }
 
 type uiKeybindingsConfigOutput struct {
 	Path string `json:"path,omitempty" toml:"path,omitempty"`
+}
+
+type uiChatConfigOutput struct {
+	TimestampMode string `json:"timestamp_mode" toml:"timestamp_mode"`
 }
 
 type effectiveDaemonConfig struct {
@@ -169,6 +175,9 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 		if includeUI {
 			out.UIConfigPath = uiPath
 			out.KeybindingsPath = keybindingsPath
+			out.Chat = &uiChatConfigOutput{
+				TimestampMode: uiCfg.ChatTimestampMode(),
+			}
 		}
 	}
 
@@ -287,10 +296,15 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 		return payload.Keybindings
 	}
 	if scopeSelected(scopes, configScopeUI) {
+		chat := uiChatConfigOutput{TimestampMode: "relative"}
+		if payload.Chat != nil {
+			chat = *payload.Chat
+		}
 		return uiConfigOutput{
 			Keybindings: uiKeybindingsConfigOutput{
 				Path: payload.KeybindingsPath,
 			},
+			Chat: chat,
 		}
 	}
 	if scopeSelected(scopes, configScopeCore) {

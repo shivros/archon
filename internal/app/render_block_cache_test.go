@@ -6,7 +6,7 @@ type countingChatBlockRenderer struct {
 	calls int
 }
 
-func (r *countingChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, selected bool) renderedChatBlock {
+func (r *countingChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, selected bool, _ chatRenderContext) renderedChatBlock {
 	r.calls++
 	line := block.Text
 	if selected {

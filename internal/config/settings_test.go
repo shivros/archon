@@ -233,6 +233,9 @@ func TestLoadUIConfigDefaults(t *testing.T) {
 	if minHeight != 3 || maxHeight != 8 {
 		t.Fatalf("unexpected shared multiline input defaults: min=%d max=%d", minHeight, maxHeight)
 	}
+	if mode := cfg.ChatTimestampMode(); mode != "relative" {
+		t.Fatalf("unexpected default chat timestamp mode: %q", mode)
+	}
 	path, err := cfg.ResolveKeybindingsPath()
 	if err != nil {
 		t.Fatalf("ResolveKeybindingsPath: %v", err)
@@ -249,7 +252,7 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n\n[input]\nmultiline_min_height = 4\nmultiline_max_height = 10\n")
+	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n\n[input]\nmultiline_min_height = 4\nmultiline_max_height = 10\n\n[chat]\ntimestamp_mode = \"iso\"\n")
 	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -268,6 +271,9 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	minHeight, maxHeight := cfg.SharedMultilineInputHeights()
 	if minHeight != 4 || maxHeight != 10 {
 		t.Fatalf("unexpected shared multiline input values: min=%d max=%d", minHeight, maxHeight)
+	}
+	if mode := cfg.ChatTimestampMode(); mode != "iso" {
+		t.Fatalf("unexpected chat timestamp mode: %q", mode)
 	}
 }
 
@@ -456,6 +462,21 @@ func TestUIConfigSharedMultilineInputHeightsClampsInvalidValues(t *testing.T) {
 	minHeight, maxHeight := cfg.SharedMultilineInputHeights()
 	if minHeight != 3 || maxHeight != 3 {
 		t.Fatalf("unexpected clamped multiline input heights: min=%d max=%d", minHeight, maxHeight)
+	}
+}
+
+func TestUIConfigChatTimestampModeNormalizesInvalidValue(t *testing.T) {
+	cfg := UIConfig{
+		Chat: UIChatConfig{
+			TimestampMode: " weird ",
+		},
+	}
+	if mode := cfg.ChatTimestampMode(); mode != "relative" {
+		t.Fatalf("expected invalid mode to normalize to relative, got %q", mode)
+	}
+	cfg.Chat.TimestampMode = " ISO "
+	if mode := cfg.ChatTimestampMode(); mode != "iso" {
+		t.Fatalf("expected ISO mode to normalize, got %q", mode)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"strings"
 	"sync"
+	"time"
 
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -19,6 +20,8 @@ type RenderRequest struct {
 	EscapeMarkdown     bool
 	Blocks             []ChatBlock
 	SelectedBlockIndex int
+	TimestampMode      ChatTimestampMode
+	TimestampNow       time.Time
 }
 
 type RenderResult struct {
@@ -64,11 +67,20 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 	}
 
 	if req.Blocks != nil {
-		key := hashRenderRequestBlocks(req.Blocks, width, req.MaxLines, req.SelectedBlockIndex)
+		mode := normalizeChatTimestampMode(req.TimestampMode)
+		now := req.TimestampNow
+		if now.IsZero() {
+			now = time.Now()
+		}
+		ctx := chatRenderContext{
+			TimestampMode: mode,
+			Now:           now,
+		}
+		key := hashRenderRequestBlocks(req.Blocks, width, req.MaxLines, req.SelectedBlockIndex, mode, chatTimestampRenderBucket(mode, now))
 		if cached, ok := p.resultCache.Get(key); ok {
 			return cached
 		}
-		text, spans := renderChatBlocksWithRenderer(req.Blocks, width, req.MaxLines, req.SelectedBlockIndex, p.blockRenderer)
+		text, spans := renderChatBlocksWithRendererAndContext(req.Blocks, width, req.MaxLines, req.SelectedBlockIndex, p.blockRenderer, ctx)
 		result := newRenderResult(text, spans)
 		p.resultCache.Set(key, result)
 		return result
@@ -151,11 +163,13 @@ func (c *renderResultCache) Set(key uint64, value RenderResult) {
 	}
 }
 
-func hashRenderRequestBlocks(blocks []ChatBlock, width, maxLines, selected int) uint64 {
+func hashRenderRequestBlocks(blocks []ChatBlock, width, maxLines, selected int, mode ChatTimestampMode, relativeBucket int64) uint64 {
 	hasher := fnv.New64a()
 	writeHashInt(hasher, width)
 	writeHashInt(hasher, maxLines)
 	writeHashInt(hasher, selected)
+	writeHashString(hasher, string(mode))
+	writeHashInt64(hasher, relativeBucket)
 	writeHashInt(hasher, len(blocks))
 	for _, block := range blocks {
 		buf := make([]byte, 8)

@@ -620,6 +620,7 @@ func approvalRequestToBlock(req *ApprovalRequest) ChatBlock {
 		Role:      ChatRoleApproval,
 		Text:      strings.Join(lines, "\n"),
 		Status:    ChatStatusNone,
+		CreatedAt: req.CreatedAt,
 		RequestID: req.RequestID,
 		SessionID: req.SessionID,
 	}
@@ -661,6 +662,7 @@ func approvalResolutionToBlock(resolution *ApprovalResolution) ChatBlock {
 		Role:      ChatRoleApprovalResolved,
 		Text:      strings.Join(lines, "\n"),
 		Status:    ChatStatusNone,
+		CreatedAt: resolution.ResolvedAt,
 		RequestID: resolution.RequestID,
 		SessionID: resolution.SessionID,
 	}

@@ -149,6 +149,8 @@ type Model struct {
 	renderedForWidth           int
 	renderedForContent         int
 	renderedForSelection       int
+	renderedForTimestampMode   ChatTimestampMode
+	renderedForRelativeBucket  int64
 	searchQuery                string
 	searchMatches              []int
 	searchIndex                int
@@ -208,6 +210,8 @@ type Model struct {
 	historyLoadPolicy          SessionHistoryLoadPolicy
 	renderPipeline             RenderPipeline
 	layerComposer              LayerComposer
+	timestampMode              ChatTimestampMode
+	clockNow                   time.Time
 }
 
 type newSessionTarget struct {
@@ -326,6 +330,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		searchVersion:              -1,
 		messageSelectIndex:         -1,
 		renderedForSelection:       -2,
+		renderedForRelativeBucket:  -1,
 		sectionVersion:             -1,
 		transcriptCache:            map[string][]ChatBlock{},
 		reasoningExpanded:          map[string]bool{},
@@ -349,6 +354,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		historyLoadPolicy:          defaultSessionHistoryLoadPolicy{},
 		renderPipeline:             NewDefaultRenderPipeline(),
 		layerComposer:              NewTextLayerComposer(),
+		timestampMode:              ChatTimestampModeRelative,
+		clockNow:                   now,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -576,6 +583,13 @@ func (m *Model) View() tea.View {
 
 func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	minHeight, maxHeight := uiConfig.SharedMultilineInputHeights()
+	nextTimestampMode := parseChatTimestampMode(uiConfig.ChatTimestampMode())
+	timestampModeChanged := nextTimestampMode != m.timestampMode
+	if timestampModeChanged {
+		m.timestampMode = nextTimestampMode
+		m.renderedForTimestampMode = ""
+		m.renderedForRelativeBucket = -1
+	}
 	cfg := DefaultTextInputConfig()
 	cfg.Height = minHeight
 	cfg.MinHeight = minHeight
@@ -587,8 +601,14 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	if m.noteInput != nil {
 		m.noteInput.SetConfig(cfg)
 	}
-	if m.consumeInputHeightChanges(m.chatInput, m.noteInput) && m.width > 0 && m.height > 0 {
+	inputHeightChanged := m.consumeInputHeightChanges(m.chatInput, m.noteInput)
+	if inputHeightChanged && m.width > 0 && m.height > 0 {
 		m.resize(m.width, m.height)
+		return
+	}
+	if timestampModeChanged && m.width > 0 && m.height > 0 {
+		m.renderViewport()
+		m.renderNotesPanel()
 	}
 }
 
@@ -1367,6 +1387,7 @@ func (m *Model) tickCmd() tea.Cmd {
 
 func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	now := time.Time(msg)
+	m.clockNow = now
 	m.consumeStreamTick()
 	m.consumeCodexTick()
 	m.consumeItemTick()
@@ -1393,8 +1414,23 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if cmd := m.maybeAutoRefreshSessionMeta(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	m.maybeRefreshRelativeTimestampLabels(now)
 	cmds = append(cmds, m.tickCmd())
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) maybeRefreshRelativeTimestampLabels(now time.Time) {
+	if m == nil || normalizeChatTimestampMode(m.timestampMode) != ChatTimestampModeRelative {
+		return
+	}
+	if m.contentBlocks == nil {
+		return
+	}
+	nextBucket := chatTimestampRenderBucket(m.timestampMode, now)
+	if nextBucket < 0 || nextBucket == m.renderedForRelativeBucket {
+		return
+	}
+	m.renderViewport()
 }
 
 func (m *Model) resetStream() {
@@ -1789,9 +1825,17 @@ func (m *Model) renderViewport() {
 		renderWidth -= 1
 	}
 	selectedRenderIndex := m.selectedMessageRenderIndex()
+	now := m.clockNow
+	if now.IsZero() {
+		now = time.Now()
+	}
+	mode := normalizeChatTimestampMode(m.timestampMode)
+	relativeBucket := chatTimestampRenderBucket(mode, now)
 	needsRender := m.renderedForWidth != renderWidth ||
 		m.renderedForContent != m.contentVersion ||
-		m.renderedForSelection != selectedRenderIndex
+		m.renderedForSelection != selectedRenderIndex ||
+		m.renderedForTimestampMode != mode ||
+		m.renderedForRelativeBucket != relativeBucket
 	if needsRender {
 		pipeline := m.renderPipeline
 		if pipeline == nil {
@@ -1805,6 +1849,8 @@ func (m *Model) renderViewport() {
 			EscapeMarkdown:     m.contentEsc,
 			Blocks:             m.contentBlocks,
 			SelectedBlockIndex: selectedRenderIndex,
+			TimestampMode:      mode,
+			TimestampNow:       now,
 		})
 		m.renderedText = result.Text
 		m.renderedLines = result.Lines
@@ -1813,6 +1859,8 @@ func (m *Model) renderViewport() {
 		m.renderedForWidth = renderWidth
 		m.renderedForContent = m.contentVersion
 		m.renderedForSelection = selectedRenderIndex
+		m.renderedForTimestampMode = mode
+		m.renderedForRelativeBucket = relativeBucket
 		m.renderVersion++
 	}
 	m.viewport.SetContent(m.renderedText)

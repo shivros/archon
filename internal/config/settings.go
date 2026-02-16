@@ -83,6 +83,7 @@ type CoreClaudeProviderConfig struct {
 type UIConfig struct {
 	Keybindings UIKeybindingsConfig `toml:"keybindings"`
 	Input       UIInputConfig       `toml:"input"`
+	Chat        UIChatConfig        `toml:"chat"`
 }
 
 type UIKeybindingsConfig struct {
@@ -92,6 +93,10 @@ type UIKeybindingsConfig struct {
 type UIInputConfig struct {
 	MultilineMinHeight int `toml:"multiline_min_height"`
 	MultilineMaxHeight int `toml:"multiline_max_height"`
+}
+
+type UIChatConfig struct {
+	TimestampMode string `toml:"timestamp_mode"`
 }
 
 func DefaultCoreConfig() CoreConfig {
@@ -282,6 +287,9 @@ func DefaultUIConfig() UIConfig {
 			MultilineMinHeight: 3,
 			MultilineMaxHeight: 8,
 		},
+		Chat: UIChatConfig{
+			TimestampMode: "relative",
+		},
 	}
 }
 
@@ -298,6 +306,16 @@ func (c UIConfig) SharedMultilineInputHeights() (minHeight, maxHeight int) {
 		maxHeight = minHeight
 	}
 	return minHeight, maxHeight
+}
+
+func (c UIConfig) ChatTimestampMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Chat.TimestampMode))
+	switch mode {
+	case "iso":
+		return "iso"
+	default:
+		return "relative"
+	}
 }
 
 func LoadUIConfig() (UIConfig, error) {
