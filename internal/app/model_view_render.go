@@ -96,53 +96,68 @@ func (m *Model) renderedBodyHeight() int {
 }
 
 func (m *Model) overlayTransientViews(body string) string {
+	if body == "" {
+		return body
+	}
+	composer := m.layerComposer
+	if composer == nil {
+		composer = NewTextLayerComposer()
+		m.layerComposer = composer
+	}
+	overlays := make([]LayerOverlay, 0, 6)
+
 	menuBar := ""
 	if m.menu != nil {
 		menuBar = m.menu.MenuBarView(m.width)
 	}
-	body = overlayLine(body, menuBar, 0)
+	if menuBar != "" {
+		overlays = append(overlays, LayerOverlay{Row: 0, Block: menuBar})
+	}
 	if m.menu != nil && m.menu.IsDropdownOpen() {
 		menuDrop := m.menu.DropdownView(m.sidebarWidth())
 		if menuDrop != "" {
 			if m.menu.HasSubmenu() {
 				submenu := m.menu.SubmenuView(0)
-				combined := combineBlocks(menuDrop, submenu, 1)
-				body = overlayBlock(body, combined, 1)
+				combined := composer.CombineHorizontal(menuDrop, submenu, 1)
+				overlays = append(overlays, LayerOverlay{Row: 1, Block: combined})
 			} else {
-				body = overlayBlock(body, menuDrop, 1)
+				overlays = append(overlays, LayerOverlay{Row: 1, Block: menuDrop})
 			}
 		}
 	}
+	bodyHeight := len(strings.Split(body, "\n"))
 	if m.contextMenu != nil && m.contextMenu.IsOpen() {
-		bodyHeight := len(strings.Split(body, "\n"))
 		menuBlock, row := m.contextMenu.View(m.width, bodyHeight)
 		if menuBlock != "" {
-			body = overlayBlock(body, menuBlock, row)
+			overlays = append(overlays, LayerOverlay{Row: row, Block: menuBlock})
 		}
 	}
 	if m.confirm != nil && m.confirm.IsOpen() {
-		bodyHeight := len(strings.Split(body, "\n"))
 		confirmBlock, row := m.confirm.View(m.width, bodyHeight)
 		if confirmBlock != "" {
-			body = overlayBlock(body, confirmBlock, row)
+			overlays = append(overlays, LayerOverlay{Row: row, Block: confirmBlock})
 		}
 	}
 	if popup, row := m.composeOptionPopupView(); popup != "" {
-		body = overlayBlock(body, popup, row)
+		overlays = append(overlays, LayerOverlay{Row: row, Block: popup})
 	}
-	body = m.overlayToast(body)
-	return body
+	if line, row, ok := m.toastOverlay(bodyHeight); ok {
+		overlays = append(overlays, LayerOverlay{Row: row, Block: line})
+	}
+	return composer.Compose(body, overlays)
 }
 
-func (m *Model) overlayToast(body string) string {
+func (m *Model) toastOverlay(bodyHeight int) (string, int, bool) {
+	if bodyHeight < 1 {
+		return "", 0, false
+	}
 	line := m.toastLine(m.width)
 	if line == "" {
-		return body
+		return "", 0, false
 	}
-	bodyHeight := len(strings.Split(body, "\n"))
 	row := bodyHeight - 1
 	if row < 0 {
-		return body
+		return "", 0, false
 	}
-	return overlayLine(body, line, row)
+	return line, row, true
 }

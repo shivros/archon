@@ -122,16 +122,23 @@ func renderChatBlocks(blocks []ChatBlock, width int, maxLines int) (string, []re
 }
 
 func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int) (string, []renderedBlockSpan) {
+	return renderChatBlocksWithRenderer(blocks, width, maxLines, selectedBlockIndex, defaultChatBlockRenderer{})
+}
+
+func renderChatBlocksWithRenderer(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int, renderer chatBlockRenderer) (string, []renderedBlockSpan) {
 	if len(blocks) == 0 {
 		return "", nil
 	}
 	if width <= 0 {
 		width = 80
 	}
+	if renderer == nil {
+		renderer = defaultChatBlockRenderer{}
+	}
 	lines := make([]string, 0, len(blocks)*4)
 	spans := make([]renderedBlockSpan, 0, len(blocks))
 	for i, block := range blocks {
-		rendered := renderChatBlock(block, width, i == selectedBlockIndex)
+		rendered := renderer.RenderChatBlock(block, width, i == selectedBlockIndex)
 		if len(rendered.Lines) == 0 {
 			continue
 		}

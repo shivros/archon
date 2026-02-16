@@ -112,9 +112,20 @@ func BenchmarkModelActionSwitchSession(b *testing.B) {
 func BenchmarkModelRenderViewportLargeTranscript(b *testing.B) {
 	m := benchmarkModelWithSessions(40)
 	blocks := benchmarkBlocks(500)
+	// Warm up caches so the benchmark captures steady-state interaction cost.
+	m.applyBlocks(blocks)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		m.applyBlocks(blocks)
+	}
+}
+
+func BenchmarkModelViewLargeTranscript(b *testing.B) {
+	m := benchmarkModelWithSessions(40)
+	m.applyBlocks(benchmarkBlocks(500))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.View()
 	}
 }
 

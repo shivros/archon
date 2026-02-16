@@ -205,6 +205,8 @@ type Model struct {
 	noteMoveReturnMode         uiMode
 	uiLatency                  *uiLatencyTracker
 	selectionLoadPolicy        SessionSelectionLoadPolicy
+	renderPipeline             RenderPipeline
+	layerComposer              LayerComposer
 }
 
 type newSessionTarget struct {
@@ -343,6 +345,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		notesByScope:               map[types.NoteScope][]*types.Note{},
 		uiLatency:                  newUILatencyTracker(nil),
 		selectionLoadPolicy:        defaultSessionSelectionLoadPolicy{},
+		renderPipeline:             NewDefaultRenderPipeline(),
+		layerComposer:              NewTextLayerComposer(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -1289,34 +1293,6 @@ func (m *Model) confirmDeleteNote(noteID string) {
 	m.confirm.Open("Delete Note", message, "Delete", "Cancel")
 }
 
-func overlayLine(body, line string, row int) string {
-	if body == "" || line == "" || row < 0 {
-		return body
-	}
-	lines := strings.Split(body, "\n")
-	if row >= len(lines) {
-		return body
-	}
-	lines[row] = line
-	return strings.Join(lines, "\n")
-}
-
-func overlayBlock(body, block string, row int) string {
-	if body == "" || block == "" || row < 0 {
-		return body
-	}
-	lines := strings.Split(body, "\n")
-	blockLines := strings.Split(block, "\n")
-	for i := 0; i < len(blockLines); i++ {
-		idx := row + i
-		if idx >= len(lines) {
-			break
-		}
-		lines[idx] = blockLines[i]
-	}
-	return strings.Join(lines, "\n")
-}
-
 func combineBlocks(left, right string, gap int) string {
 	if left == "" {
 		return right
@@ -1810,31 +1786,23 @@ func (m *Model) renderViewport() {
 		m.renderedForContent != m.contentVersion ||
 		m.renderedForSelection != selectedRenderIndex
 	if needsRender {
-		var rendered string
-		if m.contentBlocks != nil {
-			var spans []renderedBlockSpan
-			rendered, spans = renderChatBlocksWithSelection(m.contentBlocks, renderWidth, maxViewportLines, selectedRenderIndex)
-			m.contentBlockSpans = spans
-		} else {
-			content := m.contentRaw
-			if m.contentEsc {
-				content = escapeMarkdown(content)
-			}
-			rendered = renderMarkdown(content, renderWidth)
-			m.contentBlockSpans = nil
+		pipeline := m.renderPipeline
+		if pipeline == nil {
+			pipeline = NewDefaultRenderPipeline()
+			m.renderPipeline = pipeline
 		}
-		m.renderedText = rendered
-		m.renderedLines = nil
-		m.renderedPlain = nil
-		if rendered != "" {
-			lines := strings.Split(rendered, "\n")
-			m.renderedLines = lines
-			plain := make([]string, len(lines))
-			for i, line := range lines {
-				plain[i] = xansi.Strip(line)
-			}
-			m.renderedPlain = plain
-		}
+		result := pipeline.Render(RenderRequest{
+			Width:              renderWidth,
+			MaxLines:           maxViewportLines,
+			RawContent:         m.contentRaw,
+			EscapeMarkdown:     m.contentEsc,
+			Blocks:             m.contentBlocks,
+			SelectedBlockIndex: selectedRenderIndex,
+		})
+		m.renderedText = result.Text
+		m.renderedLines = result.Lines
+		m.renderedPlain = result.PlainLines
+		m.contentBlockSpans = result.Spans
 		m.renderedForWidth = renderWidth
 		m.renderedForContent = m.contentVersion
 		m.renderedForSelection = selectedRenderIndex
