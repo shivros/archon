@@ -14,36 +14,63 @@ const (
 )
 
 type Repository interface {
+	Workspaces() WorkspaceStore
+	Worktrees() WorktreeStore
+	Groups() WorkspaceGroupStore
 	AppState() AppStateStore
 	SessionMeta() SessionMetaStore
 	SessionIndex() SessionIndexStore
+	Approvals() ApprovalStore
 	Notes() NoteStore
 	Backend() string
 	Close() error
 }
 
 type RepositoryPaths struct {
+	WorkspacesPath   string
 	AppStatePath     string
 	SessionMetaPath  string
 	SessionIndexPath string
+	ApprovalsPath    string
 	NotesPath        string
 	DBPath           string
 }
 
 type fileRepository struct {
-	appState AppStateStore
-	meta     SessionMetaStore
-	sessions SessionIndexStore
-	notes    NoteStore
+	workspaces WorkspaceStore
+	worktrees  WorktreeStore
+	groups     WorkspaceGroupStore
+	appState   AppStateStore
+	meta       SessionMetaStore
+	sessions   SessionIndexStore
+	approvals  ApprovalStore
+	notes      NoteStore
 }
 
 func NewFileRepository(paths RepositoryPaths) Repository {
+	workspaces := NewFileWorkspaceStore(paths.WorkspacesPath)
 	return &fileRepository{
-		appState: NewFileAppStateStore(paths.AppStatePath),
-		meta:     NewFileSessionMetaStore(paths.SessionMetaPath),
-		sessions: NewFileSessionIndexStore(paths.SessionIndexPath),
-		notes:    NewFileNoteStore(paths.NotesPath),
+		workspaces: workspaces,
+		worktrees:  workspaces,
+		groups:     workspaces,
+		appState:   NewFileAppStateStore(paths.AppStatePath),
+		meta:       NewFileSessionMetaStore(paths.SessionMetaPath),
+		sessions:   NewFileSessionIndexStore(paths.SessionIndexPath),
+		approvals:  NewFileApprovalStore(paths.ApprovalsPath),
+		notes:      NewFileNoteStore(paths.NotesPath),
 	}
+}
+
+func (r *fileRepository) Workspaces() WorkspaceStore {
+	return r.workspaces
+}
+
+func (r *fileRepository) Worktrees() WorktreeStore {
+	return r.worktrees
+}
+
+func (r *fileRepository) Groups() WorkspaceGroupStore {
+	return r.groups
 }
 
 func (r *fileRepository) AppState() AppStateStore {
@@ -56,6 +83,10 @@ func (r *fileRepository) SessionMeta() SessionMetaStore {
 
 func (r *fileRepository) SessionIndex() SessionIndexStore {
 	return r.sessions
+}
+
+func (r *fileRepository) Approvals() ApprovalStore {
+	return r.approvals
 }
 
 func (r *fileRepository) Notes() NoteStore {
@@ -102,6 +133,21 @@ func SeedRepositoryFromFiles(ctx context.Context, dst Repository, paths Reposito
 	}
 	if err := seedSessionIndex(ctx, dst.SessionIndex(), src.SessionIndex()); err != nil {
 		return err
+	}
+	if err := seedApprovals(ctx, dst.Approvals(), src.Approvals(), dst.SessionIndex(), src.SessionIndex()); err != nil {
+		return err
+	}
+	if err := seedWorkspaceGroups(ctx, dst.Groups(), src.Groups()); err != nil {
+		return err
+	}
+	seededWorkspaces, err := seedWorkspaces(ctx, dst.Workspaces(), src.Workspaces())
+	if err != nil {
+		return err
+	}
+	if seededWorkspaces {
+		if err := seedWorktrees(ctx, dst.Worktrees(), src.Worktrees(), src.Workspaces()); err != nil {
+			return err
+		}
 	}
 	if err := seedNotes(ctx, dst.Notes(), src.Notes()); err != nil {
 		return err
@@ -194,6 +240,120 @@ func seedNotes(ctx context.Context, dst NoteStore, src NoteStore) error {
 	for _, item := range legacy {
 		if _, err := dst.Upsert(ctx, item); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func seedApprovals(ctx context.Context, dst ApprovalStore, src ApprovalStore, dstSessions SessionIndexStore, srcSessions SessionIndexStore) error {
+	if dst == nil || src == nil || dstSessions == nil || srcSessions == nil {
+		return nil
+	}
+	sessionIDs := map[string]struct{}{}
+	srcRecords, err := srcSessions.ListRecords(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range srcRecords {
+		if record == nil || record.Session == nil || strings.TrimSpace(record.Session.ID) == "" {
+			continue
+		}
+		sessionIDs[record.Session.ID] = struct{}{}
+	}
+	dstRecords, err := dstSessions.ListRecords(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range dstRecords {
+		if record == nil || record.Session == nil || strings.TrimSpace(record.Session.ID) == "" {
+			continue
+		}
+		sessionIDs[record.Session.ID] = struct{}{}
+	}
+	for sessionID := range sessionIDs {
+		current, err := dst.ListBySession(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		if len(current) > 0 {
+			continue
+		}
+		legacy, err := src.ListBySession(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		for _, approval := range legacy {
+			if _, err := dst.Upsert(ctx, approval); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func seedWorkspaceGroups(ctx context.Context, dst WorkspaceGroupStore, src WorkspaceGroupStore) error {
+	if dst == nil || src == nil {
+		return nil
+	}
+	current, err := dst.ListGroups(ctx)
+	if err != nil {
+		return err
+	}
+	if len(current) > 0 {
+		return nil
+	}
+	legacy, err := src.ListGroups(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range legacy {
+		if _, err := dst.AddGroup(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedWorkspaces(ctx context.Context, dst WorkspaceStore, src WorkspaceStore) (bool, error) {
+	if dst == nil || src == nil {
+		return false, nil
+	}
+	current, err := dst.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(current) > 0 {
+		return false, nil
+	}
+	legacy, err := src.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, item := range legacy {
+		if _, err := dst.Add(ctx, item); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func seedWorktrees(ctx context.Context, dst WorktreeStore, src WorktreeStore, srcWorkspaces WorkspaceStore) error {
+	if dst == nil || src == nil || srcWorkspaces == nil {
+		return nil
+	}
+	workspaces, err := srcWorkspaces.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ws := range workspaces {
+		worktrees, err := src.ListWorktrees(ctx, ws.ID)
+		if err != nil {
+			return err
+		}
+		for _, wt := range worktrees {
+			if _, err := dst.AddWorktree(ctx, ws.ID, wt); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

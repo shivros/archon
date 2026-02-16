@@ -113,16 +113,16 @@ func runDaemonProcess(background bool) error {
 	if err != nil {
 		return err
 	}
-	workspaceStore := store.NewFileWorkspaceStore(workspacesPath)
 	repositoryPaths := store.RepositoryPaths{
+		WorkspacesPath:   workspacesPath,
 		AppStatePath:     statePath,
 		SessionMetaPath:  sessionsMetaPath,
 		SessionIndexPath: sessionsIndexPath,
+		ApprovalsPath:    approvalsPath,
 		NotesPath:        notesPath,
 		DBPath:           storagePath,
 	}
-	backend := strings.ToLower(strings.TrimSpace(os.Getenv("ARCHON_STORE_BACKEND")))
-	repository, err := store.OpenRepository(repositoryPaths, backend)
+	repository, err := store.OpenRepository(repositoryPaths, store.RepositoryBackendBbolt)
 	if err != nil {
 		return err
 	}
@@ -130,16 +130,14 @@ func runDaemonProcess(background bool) error {
 	if err := store.SeedRepositoryFromFiles(context.Background(), repository, repositoryPaths); err != nil {
 		return err
 	}
-
-	approvalStore := store.NewFileApprovalStore(approvalsPath)
 	stores := &daemon.Stores{
-		Workspaces:  workspaceStore,
-		Worktrees:   workspaceStore,
-		Groups:      workspaceStore,
+		Workspaces:  repository.Workspaces(),
+		Worktrees:   repository.Worktrees(),
+		Groups:      repository.Groups(),
 		AppState:    repository.AppState(),
 		SessionMeta: repository.SessionMeta(),
 		Sessions:    repository.SessionIndex(),
-		Approvals:   approvalStore,
+		Approvals:   repository.Approvals(),
 		Notes:       repository.Notes(),
 	}
 	coreCfg, err := config.LoadCoreConfig()
