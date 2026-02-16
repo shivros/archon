@@ -96,4 +96,12 @@ func TestPaths(t *testing.T) {
 	if !strings.HasSuffix(notesPath, filepath.Join(".archon", "notes.json")) {
 		t.Fatalf("unexpected notes path: %s", notesPath)
 	}
+
+	storagePath, err := StoragePath()
+	if err != nil {
+		t.Fatalf("StoragePath: %v", err)
+	}
+	if !strings.HasSuffix(storagePath, filepath.Join(".archon", "storage.db")) {
+		t.Fatalf("unexpected storage path: %s", storagePath)
+	}
 }

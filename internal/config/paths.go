@@ -114,3 +114,12 @@ func NotesPath() (string, error) {
 	}
 	return filepath.Join(dataDir, "notes.json"), nil
 }
+
+// StoragePath returns the path to the transactional metadata database.
+func StoragePath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "storage.db"), nil
+}
