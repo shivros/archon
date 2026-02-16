@@ -104,6 +104,12 @@ func fetchNotesCmd(api NoteListAPI, scope noteScopeTarget) tea.Cmd {
 	}
 }
 
+func notesPanelReflowCmd() tea.Cmd {
+	return func() tea.Msg {
+		return notesPanelReflowMsg{}
+	}
+}
+
 func createNoteCmd(api NoteCreateAPI, scope noteScopeTarget, body string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)

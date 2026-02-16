@@ -200,6 +200,8 @@ type Model struct {
 	notesPanelVisible          bool
 	notesPanelWidth            int
 	notesPanelMainWidth        int
+	notesPanelPendingScopes    map[types.NoteScope]struct{}
+	notesPanelLoadErrors       int
 	notesPanelBlocks           []ChatBlock
 	notesPanelSpans            []renderedBlockSpan
 	notesPanelViewport         viewport.Model
@@ -349,6 +351,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		contextMenu:                NewContextMenuController(),
 		confirm:                    NewConfirmController(),
 		notesByScope:               map[types.NoteScope][]*types.Note{},
+		notesPanelPendingScopes:    map[types.NoteScope]struct{}{},
 		uiLatency:                  newUILatencyTracker(nil),
 		selectionLoadPolicy:        defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:          defaultSessionHistoryLoadPolicy{},
@@ -631,6 +634,12 @@ func (m *Model) consumeInputHeightChanges(inputs ...*TextInput) bool {
 }
 
 func (m *Model) resize(width, height int) {
+	m.resizeWithoutRender(width, height)
+	m.renderViewport()
+	m.renderNotesPanel()
+}
+
+func (m *Model) resizeWithoutRender(width, height int) {
 	m.width = width
 	m.height = height
 
@@ -708,8 +717,6 @@ func (m *Model) resize(width, height int) {
 	if m.noteInput != nil {
 		m.noteInput.Resize(mainViewportWidth)
 	}
-	m.renderViewport()
-	m.renderNotesPanel()
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {

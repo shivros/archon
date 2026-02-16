@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -22,8 +23,12 @@ func (m *Model) toggleNotesPanel() tea.Cmd {
 	m.notesPanelOpen = !m.notesPanelOpen
 	if m.notesPanelOpen {
 		m.setStatusMessage("notes panel opened")
-		m.resize(m.width, m.height)
-		return m.syncNotesPanelToCurrentSelection(true)
+		m.resizeWithoutRender(m.width, m.height)
+		syncCmd := m.syncNotesPanelToCurrentSelection(true)
+		if syncCmd != nil {
+			return tea.Batch(syncCmd, notesPanelReflowCmd())
+		}
+		return notesPanelReflowCmd()
 	}
 	m.setStatusMessage("notes panel closed")
 	m.resize(m.width, m.height)
@@ -49,6 +54,7 @@ func (m *Model) syncNotesPanelToCurrentSelection(force bool) tea.Cmd {
 	if !ok {
 		m.notesScope = noteScopeTarget{}
 		m.notesByScope = map[types.NoteScope][]*types.Note{}
+		m.resetNotesPanelLoadState()
 		m.notes = nil
 		m.notesPanelBlocks = []ChatBlock{
 			{
@@ -73,6 +79,7 @@ func (m *Model) setNotesRootScope(scope noteScopeTarget) {
 	}
 	m.notesScope = scope
 	m.notesByScope = map[types.NoteScope][]*types.Note{}
+	m.resetNotesPanelLoadState()
 	m.notes = nil
 	m.notesFilters = defaultNotesFilterState(scope)
 	m.renderNotesViewsFromState()
@@ -101,12 +108,15 @@ func isNotesScopeAvailable(root noteScopeTarget, scope types.NoteScope) bool {
 
 func (m *Model) refreshNotesForCurrentScope() tea.Cmd {
 	if m.notesScope.IsZero() {
+		m.resetNotesPanelLoadState()
 		return nil
 	}
 	requests := notesScopeRequestsForRoot(m.notesScope)
 	if len(requests) == 0 {
+		m.resetNotesPanelLoadState()
 		return nil
 	}
+	m.startNotesPanelLoadScopes(requests, true)
 	cmds := make([]tea.Cmd, 0, len(requests))
 	for _, scope := range requests {
 		cmds = append(cmds, fetchNotesCmd(m.notesAPI, scope))
@@ -167,7 +177,7 @@ func (m *Model) renderNotesViewsFromState() {
 		m.setSnapshotBlocks(notesToBlocksWithNewKey(m.notes, m.notesScope, m.notesFilters, notesNewKey))
 	}
 	if m.notesPanelOpen {
-		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters)
+		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters, m.notesPanelLoadState())
 		m.renderNotesPanel()
 	}
 }
@@ -259,7 +269,9 @@ func (m *Model) toggleNotesFilterScope(scope types.NoteScope) tea.Cmd {
 		m.notesByScope = map[types.NoteScope][]*types.Note{}
 	}
 	if _, ok := m.notesByScope[scope]; !ok {
-		return fetchNotesCmd(m.notesAPI, noteScopeRequestForRoot(m.notesScope, scope))
+		request := noteScopeRequestForRoot(m.notesScope, scope)
+		m.startNotesPanelLoadScopes([]noteScopeTarget{request}, false)
+		return fetchNotesCmd(m.notesAPI, request)
 	}
 	return nil
 }
@@ -273,7 +285,65 @@ func (m *Model) enableAllNotesFilters() tea.Cmd {
 	return nil
 }
 
-func notesPanelBlocksFromState(notes []*types.Note, scope noteScopeTarget, filters notesFilterState) []ChatBlock {
+type notesPanelLoadState struct {
+	Loading    bool
+	ErrorCount int
+}
+
+func (m *Model) notesPanelLoadState() notesPanelLoadState {
+	return notesPanelLoadState{
+		Loading:    len(m.notesPanelPendingScopes) > 0,
+		ErrorCount: m.notesPanelLoadErrors,
+	}
+}
+
+func (m *Model) resetNotesPanelLoadState() {
+	m.notesPanelLoadErrors = 0
+	if m.notesPanelPendingScopes == nil {
+		m.notesPanelPendingScopes = map[types.NoteScope]struct{}{}
+		return
+	}
+	for scope := range m.notesPanelPendingScopes {
+		delete(m.notesPanelPendingScopes, scope)
+	}
+}
+
+func (m *Model) startNotesPanelLoadScopes(requests []noteScopeTarget, reset bool) {
+	if reset {
+		m.resetNotesPanelLoadState()
+	}
+	if m.notesPanelPendingScopes == nil {
+		m.notesPanelPendingScopes = map[types.NoteScope]struct{}{}
+	}
+	for _, request := range requests {
+		if request.Scope == "" {
+			continue
+		}
+		m.notesPanelPendingScopes[request.Scope] = struct{}{}
+	}
+	if m.notesPanelOpen {
+		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters, m.notesPanelLoadState())
+		m.renderNotesPanel()
+	}
+}
+
+func (m *Model) settleNotesPanelLoadScope(scope noteScopeTarget, failed bool) {
+	if m.notesScope.IsZero() || scope.Scope == "" {
+		return
+	}
+	expected := noteScopeRequestForRoot(m.notesScope, scope.Scope)
+	if !noteScopeEqual(expected, scope) {
+		return
+	}
+	if _, ok := m.notesPanelPendingScopes[scope.Scope]; ok {
+		delete(m.notesPanelPendingScopes, scope.Scope)
+		if failed {
+			m.notesPanelLoadErrors++
+		}
+	}
+}
+
+func notesPanelBlocksFromState(notes []*types.Note, scope noteScopeTarget, filters notesFilterState, loadState notesPanelLoadState) []ChatBlock {
 	filterSection := notesFilterSection(scope, filters)
 	header := ChatBlock{
 		ID:   "notes-panel-scope",
@@ -290,6 +360,50 @@ func notesPanelBlocksFromState(notes []*types.Note, scope noteScopeTarget, filte
 				ID:   "notes-panel-empty-filters",
 				Role: ChatRoleSystem,
 				Text: "No scopes selected.\n\nToggle a filter to view notes.",
+			},
+		}
+	}
+	if loadState.Loading {
+		loadingText := "Loading notes..."
+		if loadState.ErrorCount > 0 {
+			loadingText += fmt.Sprintf("\n\nRetrying after %d failed request(s).", loadState.ErrorCount)
+		}
+		if len(notes) == 0 {
+			return []ChatBlock{
+				header,
+				{
+					ID:   "notes-panel-loading",
+					Role: ChatRoleSystem,
+					Text: loadingText,
+				},
+			}
+		}
+		blocks := make([]ChatBlock, 0, len(notes)+2)
+		blocks = append(blocks, header)
+		blocks = append(blocks, ChatBlock{
+			ID:   "notes-panel-loading",
+			Role: ChatRoleSystem,
+			Text: loadingText,
+		})
+		for _, note := range notes {
+			if note == nil {
+				continue
+			}
+			blocks = append(blocks, ChatBlock{
+				ID:   note.ID,
+				Role: chatRoleForNoteScope(note.Scope),
+				Text: renderNoteBlockText(note),
+			})
+		}
+		return blocks
+	}
+	if loadState.ErrorCount > 0 && len(notes) == 0 {
+		return []ChatBlock{
+			header,
+			{
+				ID:   "notes-panel-load-error",
+				Role: ChatRoleSystem,
+				Text: "Unable to load notes for one or more scopes.\n\nPress r in notes view to retry.",
 			},
 		}
 	}
@@ -329,7 +443,7 @@ func (m *Model) renderNotesPanel() {
 		return
 	}
 	if len(m.notesPanelBlocks) == 0 {
-		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters)
+		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters, m.notesPanelLoadState())
 	}
 	rendered, spans := renderChatBlocks(m.notesPanelBlocks, width, maxViewportLines)
 	m.notesPanelSpans = spans

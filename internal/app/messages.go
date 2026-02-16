@@ -100,6 +100,8 @@ type notesMsg struct {
 	err   error
 }
 
+type notesPanelReflowMsg struct{}
+
 type noteCreatedMsg struct {
 	note  *types.Note
 	scope noteScopeTarget

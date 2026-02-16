@@ -219,8 +219,13 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.applySidebarItems()
 		return true, nil
 	case notesMsg:
+		m.settleNotesPanelLoadScope(msg.scope, msg.err != nil)
 		if msg.err != nil {
 			m.setBackgroundError("notes error: " + msg.err.Error())
+			if m.notesPanelOpen {
+				m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters, m.notesPanelLoadState())
+				m.renderNotesPanel()
+			}
 			if (m.mode == uiModeNotes || m.mode == uiModeAddNote) && !m.notesScope.IsZero() {
 				m.setContentText("Error loading notes.")
 			}
@@ -230,6 +235,13 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.setBackgroundStatus("notes updated")
+		return true, nil
+	case notesPanelReflowMsg:
+		if !m.notesPanelOpen {
+			return true, nil
+		}
+		m.renderViewport()
+		m.renderNotesPanel()
 		return true, nil
 	case noteCreatedMsg:
 		if msg.err != nil {

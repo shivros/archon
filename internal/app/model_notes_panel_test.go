@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,103 @@ func TestToggleNotesPanelOpensAndFetchesCurrentScope(t *testing.T) {
 	}
 	if !m.notesFilters.ShowWorkspace || !m.notesFilters.ShowWorktree || !m.notesFilters.ShowSession {
 		t.Fatalf("expected all available filters on by default, got %#v", m.notesFilters)
+	}
+}
+
+func TestToggleNotesPanelOpensImmediatelyWithLoadingIndicator(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection")
+	}
+	m.setSnapshotBlocks([]ChatBlock{
+		{ID: "b1", Role: ChatRoleAgent, Text: strings.Repeat("render me\n", 50)},
+	})
+	m.resize(160, 40)
+	beforeRenderVersion := m.renderVersion
+
+	cmd := m.toggleNotesPanel()
+	if cmd == nil {
+		t.Fatalf("expected command batch when opening notes panel")
+	}
+	if !m.notesPanelOpen {
+		t.Fatalf("expected notes panel open")
+	}
+	if m.renderVersion != beforeRenderVersion {
+		t.Fatalf("expected viewport render to be deferred until reflow message")
+	}
+	if len(m.notesPanelPendingScopes) == 0 {
+		t.Fatalf("expected pending scope fetches for loading state")
+	}
+	panelText := xansi.Strip(m.renderNotesPanelView())
+	if !strings.Contains(panelText, "Loading notes...") {
+		t.Fatalf("expected loading indicator in panel, got %q", panelText)
+	}
+}
+
+func TestNotesPanelReflowMsgRendersDeferredViewport(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection")
+	}
+	m.setSnapshotBlocks([]ChatBlock{
+		{ID: "b1", Role: ChatRoleAgent, Text: strings.Repeat("deferred reflow\n", 40)},
+	})
+	m.resize(160, 40)
+	_ = m.toggleNotesPanel()
+	before := m.renderVersion
+
+	handled, _ := m.reduceStateMessages(notesPanelReflowMsg{})
+	if !handled {
+		t.Fatalf("expected reflow msg to be handled")
+	}
+	if m.renderVersion <= before {
+		t.Fatalf("expected deferred reflow to render viewport")
+	}
+}
+
+func TestNotesPanelLoadingStateSettlesOnNotesErrors(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection")
+	}
+	m.resize(160, 40)
+	_ = m.toggleNotesPanel()
+
+	handled, _ := m.reduceStateMessages(notesMsg{
+		scope: noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: "ws1"},
+		err:   errors.New("boom"),
+	})
+	if !handled {
+		t.Fatalf("expected notes error to be handled")
+	}
+	if len(m.notesPanelPendingScopes) == 0 {
+		t.Fatalf("expected remaining pending scopes after first error")
+	}
+	panelText := xansi.Strip(m.renderNotesPanelView())
+	if !strings.Contains(panelText, "Loading notes...") {
+		t.Fatalf("expected panel to remain loading, got %q", panelText)
+	}
+
+	handled, _ = m.reduceStateMessages(notesMsg{
+		scope: noteScopeTarget{Scope: types.NoteScopeWorktree, WorkspaceID: "ws1", WorktreeID: ""},
+		notes: []*types.Note{},
+	})
+	if !handled {
+		t.Fatalf("expected worktree notes message to be handled")
+	}
+	handled, _ = m.reduceStateMessages(notesMsg{
+		scope: noteScopeTarget{Scope: types.NoteScopeSession, WorkspaceID: "ws1", WorktreeID: "", SessionID: "s1"},
+		notes: []*types.Note{},
+	})
+	if !handled {
+		t.Fatalf("expected session notes message to be handled")
+	}
+	if len(m.notesPanelPendingScopes) != 0 {
+		t.Fatalf("expected loading to settle after all scope results")
+	}
+	panelText = xansi.Strip(m.renderNotesPanelView())
+	if !strings.Contains(panelText, "Unable to load notes") {
+		t.Fatalf("expected settled error state in panel, got %q", panelText)
 	}
 }
 
