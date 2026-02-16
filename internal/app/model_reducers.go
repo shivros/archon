@@ -333,7 +333,7 @@ func (m *Model) reduceMenuMode(msg tea.Msg) (bool, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if m.handleMenuGroupChange(previous) {
-			cmds = append(cmds, m.saveAppStateCmd())
+			cmds = append(cmds, m.requestAppStateSaveCmd())
 		}
 		return true, tea.Batch(cmds...)
 	}
@@ -604,7 +604,7 @@ func isTextInputMsg(msg tea.Msg) bool {
 func (m *Model) cancelComposeInput() tea.Cmd {
 	m.closeComposeOptionPicker()
 	m.exitCompose("compose canceled")
-	return m.saveAppStateCmd()
+	return m.requestAppStateSaveCmd()
 }
 
 func (m *Model) submitComposeInput(text string) tea.Cmd {
@@ -632,7 +632,7 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 	}
 	m.clearComposeDraft(sessionID)
 	m.recordComposeHistory(sessionID, text)
-	saveHistoryCmd := m.saveAppStateCmd()
+	saveHistoryCmd := m.requestAppStateSaveCmd()
 	provider := m.providerForSessionID(sessionID)
 	m.enableFollow(false)
 	m.startRequestActivity(sessionID, provider)

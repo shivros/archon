@@ -22,7 +22,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.hasAppState = true
 			m.updateDelegate()
 			m.exitAddWorkspace("workspace added: " + msg.workspace.Name)
-			return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(false), m.saveAppStateCmd())
+			return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(false), m.requestAppStateSaveCmd())
 		}
 		m.exitAddWorkspace("workspace added")
 		return true, nil
@@ -36,7 +36,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			previous := m.menu.SelectedGroupIDs()
 			m.menu.SetGroups(msg.groups)
 			if m.handleMenuGroupChange(previous) {
-				return true, m.saveAppStateCmd()
+				return true, m.requestAppStateSaveCmd()
 			}
 		}
 		return true, nil
@@ -153,7 +153,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.hasAppState = true
 		}
 		m.setStatusInfo("workspace deleted")
-		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(false), m.saveAppStateCmd())
+		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(false), m.requestAppStateSaveCmd())
 	default:
 		return false, nil
 	}
@@ -171,6 +171,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setBackgroundError("error: " + msg.err.Error())
 			return true, nil
 		}
+		previousSelection := m.selectedSessionSnapshot()
 		m.sessions = msg.sessions
 		m.sessionMeta = normalizeSessionMeta(msg.meta)
 		m.applySidebarItems()
@@ -179,8 +180,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				m.pendingSelectID = ""
 			}
 		}
+		nextSelection := m.selectedSessionSnapshot()
 		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
-		return true, m.onSelectionChanged()
+		if m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection) {
+			return true, m.onSelectionChangedImmediate()
+		}
+		return true, nil
 	case workspacesMsg:
 		if msg.err != nil {
 			m.setBackgroundError("workspaces error: " + msg.err.Error())
@@ -264,16 +269,25 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.resize(m.width, m.height)
 		}
 		return true, nil
+	case appStateSaveFlushMsg:
+		return true, m.flushAppStateSaveCmd(msg.requestSeq)
 	case appStateSavedMsg:
 		if msg.requestSeq > 0 && msg.requestSeq < m.appStateSaveSeq {
 			return true, nil
 		}
+		m.appStateSaveInFlight = false
 		if msg.err != nil {
 			m.setBackgroundError("state save error: " + msg.err.Error())
+			if m.appStateSaveDirty {
+				return true, m.requestAppStateSaveCmd()
+			}
 			return true, nil
 		}
 		if msg.state != nil {
 			m.applyAppState(msg.state)
+		}
+		if m.appStateSaveDirty {
+			return true, m.requestAppStateSaveCmd()
 		}
 		return true, nil
 	case providerOptionsMsg:
@@ -399,7 +413,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		provider := m.providerForSessionID(msg.id)
-		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, msg.id, msg.key, maxViewportLines)}
+		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, maxViewportLines)}
 		if shouldStreamItems(provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
 		}
@@ -523,7 +537,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.pendingSessionKey = key
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		m.setStatusInfo("session started")
-		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionAPI, msg.session.ID, key, maxViewportLines)}
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, maxViewportLines)}
 		if shouldStreamItems(msg.session.Provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.session.ID))
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))

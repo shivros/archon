@@ -38,6 +38,10 @@ type appStateSavedMsg struct {
 	err        error
 }
 
+type appStateSaveFlushMsg struct {
+	requestSeq int
+}
+
 type providerOptionsMsg struct {
 	provider string
 	options  *types.ProviderOptionCatalog

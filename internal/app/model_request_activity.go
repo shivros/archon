@@ -129,7 +129,7 @@ func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {
 		m.setBackgroundStatus("still working; refreshing thread")
 	}
 	provider := m.providerForSessionID(sessionID)
-	historyCmd := fetchHistoryCmd(m.sessionAPI, sessionID, key, maxViewportLines)
+	historyCmd := fetchHistoryCmd(m.sessionHistoryAPI, sessionID, key, maxViewportLines)
 	if shouldStreamItems(provider) && providerSupportsApprovals(provider) {
 		return tea.Batch(historyCmd, fetchApprovalsCmd(m.sessionAPI, sessionID))
 	}

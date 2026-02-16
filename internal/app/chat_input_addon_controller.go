@@ -252,7 +252,7 @@ func (c *ChatInputAddonController) applyComposeOptionSelection(m *Model, value s
 	}
 	provider := m.composeProvider()
 	m.setComposeDefaultForProvider(provider, options)
-	saveDefaults := m.saveAppStateCmd()
+	saveDefaults := m.requestAppStateSaveCmd()
 	if m.newSession != nil {
 		m.newSession.runtimeOptions = types.CloneRuntimeOptions(options)
 		m.setStatusMessage("session options updated")

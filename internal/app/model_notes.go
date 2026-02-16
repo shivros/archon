@@ -105,7 +105,7 @@ func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
 	if !draftsChanged {
 		return refreshCmd
 	}
-	saveCmd := m.saveAppStateCmd()
+	saveCmd := m.requestAppStateSaveCmd()
 	if saveCmd == nil {
 		return refreshCmd
 	}
@@ -152,7 +152,7 @@ func (m *Model) exitNotes(status string) tea.Cmd {
 	if !draftsChanged {
 		return nextCmd
 	}
-	saveCmd := m.saveAppStateCmd()
+	saveCmd := m.requestAppStateSaveCmd()
 	if saveCmd == nil {
 		return nextCmd
 	}
@@ -241,7 +241,7 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 		keyMatchesCommand: m.keyMatchesCommand,
 		onCancel: func() tea.Cmd {
 			m.exitAddNote("add note canceled")
-			return m.saveAppStateCmd()
+			return m.requestAppStateSaveCmd()
 		},
 		onSubmit: m.submitAddNoteInput,
 	}
@@ -263,7 +263,7 @@ func (m *Model) submitAddNoteInput(body string) tea.Cmd {
 	}
 	m.exitAddNote("saving note")
 	createCmd := createNoteCmd(m.notesAPI, m.notesScope, body)
-	saveCmd := m.saveAppStateCmd()
+	saveCmd := m.requestAppStateSaveCmd()
 	if saveCmd == nil {
 		return createCmd
 	}

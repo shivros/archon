@@ -104,6 +104,10 @@ type SessionHistoryAPI interface {
 	History(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error)
 }
 
+type SessionSelectionAPI interface {
+	SessionListWithMetaAPI
+}
+
 type SessionTailStreamAPI interface {
 	TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
 }

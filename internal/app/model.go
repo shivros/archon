@@ -26,9 +26,9 @@ const (
 	maxViewportLines          = 2000
 	maxEventsPerTick          = 64
 	tickInterval              = 100 * time.Millisecond
-	selectionDebounce         = 500 * time.Millisecond
 	sidebarWheelCooldown      = 30 * time.Millisecond
 	sidebarWheelSettle        = 120 * time.Millisecond
+	appStateSaveDebounce      = 250 * time.Millisecond
 	historyPollDelay          = 500 * time.Millisecond
 	historyPollMax            = 20
 	composeHistoryMaxEntries  = 200
@@ -77,6 +77,8 @@ const (
 type Model struct {
 	workspaceAPI               WorkspaceAPI
 	sessionAPI                 SessionAPI
+	sessionSelectionAPI        SessionSelectionAPI
+	sessionHistoryAPI          SessionHistoryAPI
 	notesAPI                   NotesAPI
 	stateAPI                   StateAPI
 	sidebar                    *SidebarController
@@ -122,6 +124,10 @@ type Model struct {
 	hasAppState                bool
 	initialStateLoaded         bool
 	appStateSaveSeq            int
+	appStateSaveDirty          bool
+	appStateSaveScheduled      bool
+	appStateSaveScheduledSeq   int
+	appStateSaveInFlight       bool
 	stream                     *StreamController
 	codexStream                *CodexStreamController
 	itemStream                 *ItemStreamController
@@ -198,6 +204,7 @@ type Model struct {
 	noteMoveNoteID             string
 	noteMoveReturnMode         uiMode
 	uiLatency                  *uiLatencyTracker
+	selectionLoadPolicy        SessionSelectionLoadPolicy
 }
 
 type newSessionTarget struct {
@@ -276,6 +283,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	model := Model{
 		workspaceAPI:               api,
 		sessionAPI:                 api,
+		sessionSelectionAPI:        api,
+		sessionHistoryAPI:          api,
 		notesAPI:                   api,
 		stateAPI:                   api,
 		sidebar:                    NewSidebarController(),
@@ -333,6 +342,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		confirm:                    NewConfirmController(),
 		notesByScope:               map[types.NoteScope][]*types.Note{},
 		uiLatency:                  newUILatencyTracker(nil),
+		selectionLoadPolicy:        defaultSessionSelectionLoadPolicy{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -443,7 +453,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.pendingMouseCmd
 			m.pendingMouseCmd = nil
 			if m.menu != nil && m.handleMenuGroupChange(previous) {
-				save := m.saveAppStateCmd()
+				save := m.requestAppStateSaveCmd()
 				if cmd != nil && save != nil {
 					cmd = tea.Batch(cmd, save)
 				} else if save != nil {
@@ -690,7 +700,7 @@ func (m *Model) resize(width, height int) {
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {
-	return m.onSelectionChangedWithDelay(selectionDebounce)
+	return m.onSelectionChangedWithDelay(0)
 }
 
 func (m *Model) onSelectionChangedImmediate() tea.Cmd {
@@ -699,15 +709,32 @@ func (m *Model) onSelectionChangedImmediate() tea.Cmd {
 
 func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	item := m.selectedItem()
+	handled, stateChanged, draftChanged := m.applySelectionState(item)
+	var cmd tea.Cmd
+	if !handled {
+		cmd = m.scheduleSessionLoad(item, delay)
+	}
+	if stateChanged || draftChanged {
+		save := m.requestAppStateSaveCmd()
+		if cmd != nil && save != nil {
+			cmd = tea.Batch(cmd, save)
+		} else if save != nil {
+			cmd = save
+		}
+	}
+	return m.batchWithNotesPanelSync(cmd)
+}
+
+func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChanged bool, draftChanged bool) {
 	if item == nil {
 		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
 		m.resetStream()
 		m.setContentText("No sessions.")
-		return m.batchWithNotesPanelSync(nil)
+		return true, false, false
 	}
-	if item.kind == sidebarWorkspace {
+	switch item.kind {
+	case sidebarWorkspace:
 		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
-		stateChanged := false
 		maybeID := item.workspaceID()
 		if maybeID == unassignedWorkspaceID {
 			maybeID = ""
@@ -725,14 +752,9 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 			stateChanged = true
 		}
 		m.setStatusMessage("workspace selected")
-		if stateChanged {
-			return m.batchWithNotesPanelSync(m.saveAppStateCmd())
-		}
-		return m.batchWithNotesPanelSync(nil)
-	}
-	if item.kind == sidebarWorktree {
+		return true, stateChanged, false
+	case sidebarWorktree:
 		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
-		stateChanged := false
 		wsID := item.workspaceID()
 		if wsID != "" && wsID != m.appState.ActiveWorkspaceID {
 			m.appState.ActiveWorkspaceID = wsID
@@ -747,16 +769,14 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 			stateChanged = true
 		}
 		m.setStatusMessage("worktree selected")
-		if stateChanged {
-			return m.batchWithNotesPanelSync(m.saveAppStateCmd())
+		return true, stateChanged, false
+	default:
+		if !item.isSession() {
+			m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+			return true, false, false
 		}
-		return m.batchWithNotesPanelSync(nil)
 	}
-	if !item.isSession() {
-		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
-		return m.batchWithNotesPanelSync(nil)
-	}
-	draftChanged := false
+
 	if m.mode == uiModeCompose && m.compose != nil && item.session != nil {
 		nextSessionID := strings.TrimSpace(item.session.ID)
 		previousSessionID := strings.TrimSpace(m.composeSessionID())
@@ -777,7 +797,6 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 			m.resize(m.width, m.height)
 		}
 	}
-	stateChanged := false
 	if wsID := item.workspaceID(); wsID != "" && wsID != unassignedWorkspaceID && wsID != m.appState.ActiveWorkspaceID {
 		m.appState.ActiveWorkspaceID = wsID
 		m.hasAppState = true
@@ -794,25 +813,14 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 		m.updateDelegate()
 		stateChanged = true
 	}
-	cmd := m.scheduleSessionLoad(item, delay)
-	if item.session != nil && strings.TrimSpace(item.session.Provider) != "" {
-		fetchProviderCmd := fetchProviderOptionsCmd(m.sessionAPI, item.session.Provider)
-		if cmd != nil {
-			cmd = tea.Batch(cmd, fetchProviderCmd)
-		} else {
-			cmd = fetchProviderCmd
-		}
-	}
-	if stateChanged || draftChanged {
-		return m.batchWithNotesPanelSync(tea.Batch(cmd, m.saveAppStateCmd()))
-	}
-	return m.batchWithNotesPanelSync(cmd)
+	return false, stateChanged, draftChanged
 }
 
 func (m *Model) scheduleSessionLoad(item *sidebarItem, delay time.Duration) tea.Cmd {
 	if item == nil || item.session == nil {
 		return nil
 	}
+	delay = m.selectionLoadPolicyOrDefault().SelectionLoadDelay(delay)
 	if delay <= 0 {
 		return m.loadSelectedSession(item)
 	}
@@ -843,7 +851,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		m.loadingKey = token
 		m.setLoadingContent()
 	}
-	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionAPI, id, token, maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
+	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, id, token, maxViewportLines), fetchApprovalsCmd(m.sessionAPI, id)}
 	if isActiveStatus(item.session.Status) {
 		if shouldStreamItems(item.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
@@ -1524,6 +1532,9 @@ func (m *Model) consumeItemTick() {
 }
 
 func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
+	if m == nil || m.sessionSelectionAPI == nil {
+		return nil
+	}
 	opts := fetchSessionsOptions{
 		refresh:          refresh,
 		includeDismissed: m.showDismissed,
@@ -1531,11 +1542,11 @@ func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
 	if refresh {
 		opts.workspaceID = m.refreshWorkspaceID()
 	}
-	return fetchSessionsWithMetaCmd(m.sessionAPI, opts)
+	return fetchSessionsWithMetaCmd(m.sessionSelectionAPI, opts)
 }
 
 func (m *Model) maybeAutoRefreshSessionMeta(now time.Time) tea.Cmd {
-	if m == nil || m.sessionAPI == nil {
+	if m == nil || m.sessionSelectionAPI == nil {
 		return nil
 	}
 	if m.sessionMetaSyncPending || m.sessionMetaRefreshPending {
@@ -2463,6 +2474,46 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 		updated, err := m.stateAPI.UpdateAppState(ctx, &state)
 		return appStateSavedMsg{requestSeq: requestSeq, state: updated, err: err}
 	}
+}
+
+func appStateSaveFlushCmd(requestSeq int) tea.Cmd {
+	return tea.Tick(appStateSaveDebounce, func(time.Time) tea.Msg {
+		return appStateSaveFlushMsg{requestSeq: requestSeq}
+	})
+}
+
+func (m *Model) requestAppStateSaveCmd() tea.Cmd {
+	if m == nil || m.stateAPI == nil || !m.hasAppState {
+		return nil
+	}
+	m.appStateSaveDirty = true
+	if m.appStateSaveInFlight || m.appStateSaveScheduled {
+		return nil
+	}
+	m.appStateSaveScheduled = true
+	m.appStateSaveScheduledSeq++
+	return appStateSaveFlushCmd(m.appStateSaveScheduledSeq)
+}
+
+func (m *Model) flushAppStateSaveCmd(requestSeq int) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	if requestSeq > 0 && requestSeq != m.appStateSaveScheduledSeq {
+		return nil
+	}
+	m.appStateSaveScheduled = false
+	if !m.appStateSaveDirty || m.appStateSaveInFlight {
+		return nil
+	}
+	save := m.saveAppStateCmd()
+	if save == nil {
+		m.appStateSaveDirty = false
+		return nil
+	}
+	m.appStateSaveDirty = false
+	m.appStateSaveInFlight = true
+	return save
 }
 
 func (m *Model) enterAddWorkspace() {

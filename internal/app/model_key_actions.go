@@ -99,7 +99,7 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, tea.Quit
 	case "ctrl+b":
 		m.toggleSidebar()
-		return true, m.saveAppStateCmd()
+		return true, m.requestAppStateSaveCmd()
 	case "ctrl+o":
 		return true, m.toggleNotesPanel()
 	default:
