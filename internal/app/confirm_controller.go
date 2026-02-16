@@ -15,6 +15,10 @@ const (
 	confirmChoiceCancel
 )
 
+const (
+	confirmMaxWidth = 60
+)
+
 type ConfirmController struct {
 	active       bool
 	title        string
@@ -110,11 +114,16 @@ func (c *ConfirmController) HandleMouse(msg tea.MouseMsg, maxWidth, maxHeight in
 	if mouse.X < x || mouse.X >= x+width || mouse.Y < y || mouse.Y >= y+height {
 		return false, confirmChoiceNone
 	}
-	buttonRow := y + height - 1
+	buttonRow := y + height - 2
 	if mouse.Y != buttonRow {
 		return true, confirmChoiceNone
 	}
-	mid := x + width/2
+	contentX := x + 1
+	contentWidth := max(1, width-2)
+	if mouse.X < contentX || mouse.X >= contentX+contentWidth {
+		return true, confirmChoiceNone
+	}
+	mid := contentX + contentWidth/2
 	if mouse.X < mid {
 		c.selected = 0
 		return true, confirmChoiceConfirm
@@ -136,7 +145,8 @@ func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
 		return "", 0
 	}
 	x, y, width, height := c.layout(maxWidth, maxHeight)
-	contentWidth := max(1, width-2)
+	innerWidth := max(1, width-2)
+	contentWidth := max(1, innerWidth-2)
 	title := c.title
 	if title == "" {
 		title = "Confirm"
@@ -155,8 +165,12 @@ func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
 
 	confirm := "[" + c.confirmLabel + "]"
 	cancel := "[" + c.cancelLabel + "]"
-	confirm = padToWidth(confirm, contentWidth/2)
-	cancel = padToWidth(cancel, contentWidth-contentWidth/2)
+	leftWidth := contentWidth / 2
+	rightWidth := contentWidth - leftWidth
+	confirm = truncateToWidth(confirm, leftWidth)
+	cancel = truncateToWidth(cancel, rightWidth)
+	confirm = padToWidth(confirm, leftWidth)
+	cancel = padToWidth(cancel, rightWidth)
 	if c.selected == 0 {
 		confirm = selectedStyle.Render(confirm)
 		cancel = menuDropStyle.Render(cancel)
@@ -165,17 +179,17 @@ func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
 		cancel = selectedStyle.Render(cancel)
 	}
 	buttonLine := " " + confirm + cancel + " "
-	if xansi.StringWidth(buttonLine) < width {
-		buttonLine = padToWidth(buttonLine, width)
+	if xansi.StringWidth(buttonLine) < innerWidth {
+		buttonLine = padToWidth(buttonLine, innerWidth)
 	}
 	lines = append(lines, buttonLine)
 
-	block := strings.Join(lines, "\n")
+	block := confirmDialogBorderStyle.Render(strings.Join(lines, "\n"))
 	if x > 0 {
 		block = indentBlock(block, x)
 	}
-	if height < len(lines) {
-		height = len(lines)
+	if height < len(lines)+2 {
+		height = len(lines) + 2
 	}
 	return block, y
 }
@@ -212,8 +226,15 @@ func (c *ConfirmController) menuWidth() int {
 	if c == nil {
 		return width
 	}
+	if confirmMaxWidth > 0 && width > confirmMaxWidth {
+		width = confirmMaxWidth
+	}
 	contentWidth := 0
-	if w := xansi.StringWidth(c.title); w > contentWidth {
+	title := strings.TrimSpace(c.title)
+	if title == "" {
+		title = "Confirm"
+	}
+	if w := xansi.StringWidth(title); w > contentWidth {
 		contentWidth = w
 	}
 	if w := xansi.StringWidth(c.message); w > contentWidth {
@@ -223,17 +244,21 @@ func (c *ConfirmController) menuWidth() int {
 	if buttonWidth > contentWidth {
 		contentWidth = buttonWidth
 	}
-	if contentWidth+2 > width {
-		width = contentWidth + 2
+	if contentWidth+4 > width {
+		width = contentWidth + 4
+	}
+	if confirmMaxWidth > 0 && width > confirmMaxWidth {
+		width = confirmMaxWidth
 	}
 	return width
 }
 
 func (c *ConfirmController) menuHeight(width int) int {
-	contentWidth := max(1, width-2)
+	innerWidth := max(1, width-2)
+	contentWidth := max(1, innerWidth-2)
 	height := 2
 	if strings.TrimSpace(c.message) != "" {
 		height += len(strings.Split(xansi.Hardwrap(c.message, contentWidth, true), "\n"))
 	}
-	return height
+	return height + 2
 }

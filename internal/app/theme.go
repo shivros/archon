@@ -27,6 +27,7 @@ var (
 	menuBarActiveStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("239")).Bold(true)
 	menuDropStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235"))
 	contextMenuHeaderStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Background(lipgloss.Color("235")).Bold(true)
+	confirmDialogBorderStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("208"))
 	userBubbleStyle             = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Background(lipgloss.Color("236")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
 	agentBubbleStyle            = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
 	systemBubbleStyle           = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("237")).Foreground(lipgloss.Color("245")).Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
