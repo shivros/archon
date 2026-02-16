@@ -1452,7 +1452,9 @@ func (m *Model) consumeStreamTick() {
 		m.setBackgroundStatus("stream closed")
 	}
 	if changed {
-		m.applyLines(lines, true)
+		if m.transcriptViewportVisible() {
+			m.applyLines(lines, true)
+		}
 	}
 }
 
@@ -1478,11 +1480,15 @@ func (m *Model) consumeCodexTick() {
 			m.codexStream.SetSnapshotBlocks(blocks)
 			blocks = m.codexStream.Blocks()
 		}
-		m.applyBlocks(blocks)
+		if m.transcriptViewportVisible() {
+			m.applyBlocks(blocks)
+		}
 		if sessionID != "" {
-			m.noteRequestVisibleUpdate(sessionID)
+			if m.transcriptViewportVisible() {
+				m.noteRequestVisibleUpdate(sessionID)
+			}
 			if key := m.selectedKey(); key != "" {
-				m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+				m.cacheTranscriptBlocks(key, blocks)
 			}
 		}
 	}
@@ -1494,12 +1500,15 @@ func (m *Model) consumeCodexTick() {
 			updated := m.upsertApprovalForSession(sessionID, approval)
 			requests := m.sessionApprovals[sessionID]
 			if updated {
-				blocks := mergeApprovalBlocks(m.currentBlocks(), requests, m.sessionApprovalResolutions[sessionID])
+				base := m.codexStream.Blocks()
+				blocks := mergeApprovalBlocks(base, requests, m.sessionApprovalResolutions[sessionID])
 				m.codexStream.SetSnapshotBlocks(blocks)
 				blocks = m.codexStream.Blocks()
-				m.applyBlocks(blocks)
+				if m.transcriptViewportVisible() {
+					m.applyBlocks(blocks)
+				}
 				if key := m.selectedKey(); key != "" {
-					m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+					m.cacheTranscriptBlocks(key, blocks)
 				}
 			}
 			m.pendingApproval = latestApprovalRequest(requests)
@@ -1533,10 +1542,18 @@ func (m *Model) consumeItemTick() {
 		}
 	}
 	if changed {
-		m.applyBlocks(m.itemStream.Blocks())
+		blocks := m.itemStream.Blocks()
+		if m.transcriptViewportVisible() {
+			m.applyBlocks(blocks)
+		}
 		if sessionID != "" {
 			m.noteRequestEvent(sessionID, 1)
-			m.noteRequestVisibleUpdate(sessionID)
+			if m.transcriptViewportVisible() {
+				m.noteRequestVisibleUpdate(sessionID)
+			}
+			if key := m.selectedKey(); key != "" {
+				m.cacheTranscriptBlocks(key, blocks)
+			}
 		}
 	}
 }
@@ -2300,6 +2317,18 @@ func (m *Model) currentBlocks() []ChatBlock {
 	return nil
 }
 
+func (m *Model) transcriptViewportVisible() bool {
+	return m.mode != uiModeNotes && m.mode != uiModeAddNote
+}
+
+func (m *Model) cacheTranscriptBlocks(key string, blocks []ChatBlock) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+}
+
 func (m *Model) setApprovalsForSession(sessionID string, requests []*ApprovalRequest) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -2423,13 +2452,20 @@ func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
 	if strings.TrimSpace(sessionID) == "" || sessionID != m.selectedSessionID() {
 		return
 	}
+	provider := m.providerForSessionID(sessionID)
 	base := m.currentBlocks()
+	if !m.transcriptViewportVisible() {
+		if provider == "codex" && m.codexStream != nil {
+			base = m.codexStream.Blocks()
+		} else if shouldStreamItems(provider) && m.itemStream != nil {
+			base = m.itemStream.Blocks()
+		}
+	}
 	requests := m.sessionApprovals[sessionID]
 	if len(base) == 0 && len(requests) == 0 {
 		return
 	}
 	blocks := mergeApprovalBlocks(base, requests, m.sessionApprovalResolutions[sessionID])
-	provider := m.providerForSessionID(sessionID)
 	if provider == "codex" && m.codexStream != nil {
 		m.codexStream.SetSnapshotBlocks(blocks)
 		blocks = m.codexStream.Blocks()
@@ -2437,9 +2473,11 @@ func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
 		m.itemStream.SetSnapshotBlocks(blocks)
 		blocks = m.itemStream.Blocks()
 	}
-	m.applyBlocks(blocks)
+	if m.transcriptViewportVisible() {
+		m.applyBlocks(blocks)
+	}
 	if key := m.selectedKey(); key != "" {
-		m.transcriptCache[key] = append([]ChatBlock(nil), blocks...)
+		m.cacheTranscriptBlocks(key, blocks)
 	}
 }
 

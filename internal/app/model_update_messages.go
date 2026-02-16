@@ -353,18 +353,22 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		provider := m.providerForSessionID(msg.id)
 		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
 			if msg.key != "" {
-				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
+				m.cacheTranscriptBlocks(msg.key, m.activeTranscriptBlocks(provider))
 				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
 			}
 			m.setBackgroundStatus("tail refreshed")
 			return true, nil
 		}
 		blocks := m.buildSessionBlocksFromItems(msg.id, provider, msg.items, m.currentBlocks())
-		m.setSnapshotBlocks(blocks)
-		m.noteRequestVisibleUpdate(msg.id)
+		if m.transcriptViewportVisible() {
+			m.setSnapshotBlocks(blocks)
+			m.noteRequestVisibleUpdate(msg.id)
+		}
 		if msg.key != "" {
-			m.transcriptCache[msg.key] = blocks
+			m.cacheTranscriptBlocks(msg.key, blocks)
 			m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
+		} else if msg.id == m.selectedSessionID() {
+			m.cacheTranscriptBlocks(m.selectedKey(), blocks)
 		}
 		m.setBackgroundStatus("tail updated")
 		return true, nil
@@ -389,18 +393,22 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		provider := m.providerForSessionID(msg.id)
 		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
 			if msg.key != "" {
-				m.transcriptCache[msg.key] = append([]ChatBlock(nil), m.currentBlocks()...)
+				m.cacheTranscriptBlocks(msg.key, m.activeTranscriptBlocks(provider))
 				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
 			}
 			m.setBackgroundStatus("history refreshed")
 			return true, nil
 		}
 		blocks := m.buildSessionBlocksFromItems(msg.id, provider, msg.items, m.currentBlocks())
-		m.setSnapshotBlocks(blocks)
-		m.noteRequestVisibleUpdate(msg.id)
+		if m.transcriptViewportVisible() {
+			m.setSnapshotBlocks(blocks)
+			m.noteRequestVisibleUpdate(msg.id)
+		}
 		if msg.key != "" {
-			m.transcriptCache[msg.key] = blocks
+			m.cacheTranscriptBlocks(msg.key, blocks)
 			m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
+		} else if msg.id == m.selectedSessionID() {
+			m.cacheTranscriptBlocks(m.selectedKey(), blocks)
 		}
 		m.setBackgroundStatus("history updated")
 		return true, nil
@@ -642,6 +650,16 @@ func (m *Model) shouldKeepLiveCodexSnapshot(provider, sessionID string) bool {
 		return false
 	}
 	return strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(sessionID) && m.requestActivity.eventCount > 0
+}
+
+func (m *Model) activeTranscriptBlocks(provider string) []ChatBlock {
+	if provider == "codex" && m.codexStream != nil {
+		return m.codexStream.Blocks()
+	}
+	if shouldStreamItems(provider) && m.itemStream != nil {
+		return m.itemStream.Blocks()
+	}
+	return m.currentBlocks()
 }
 
 func (m *Model) shouldSkipSelectionReloadOnSessionsUpdate(previous, next sessionSelectionSnapshot) bool {
