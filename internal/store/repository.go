@@ -370,6 +370,8 @@ func isZeroAppState(state *types.AppState) bool {
 		return false
 	}
 	return len(state.ActiveWorkspaceGroupIDs) == 0 &&
+		len(state.SidebarWorkspaceExpanded) == 0 &&
+		len(state.SidebarWorktreeExpanded) == 0 &&
 		len(state.ComposeHistory) == 0 &&
 		len(state.ComposeDrafts) == 0 &&
 		len(state.NoteDrafts) == 0 &&

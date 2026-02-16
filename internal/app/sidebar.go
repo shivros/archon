@@ -69,6 +69,8 @@ type sidebarItem struct {
 	session      *types.Session
 	meta         *types.SessionMeta
 	sessionCount int
+	collapsible  bool
+	expanded     bool
 }
 
 func (s *sidebarItem) Title() string {
@@ -179,6 +181,15 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if entry.sessionCount > 0 {
 			label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
 		}
+		prefix := "  "
+		if entry.collapsible {
+			if entry.expanded {
+				prefix = "▾ "
+			} else {
+				prefix = "▸ "
+			}
+		}
+		label = prefix + label
 		label = truncateToWidth(label, maxWidth)
 		style := workspaceStyle
 		if entry.workspace != nil && entry.workspace.ID == d.activeWorkspaceID {
@@ -193,7 +204,15 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if entry.sessionCount > 0 {
 			label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
 		}
-		line := "  ↳ " + label
+		marker := " "
+		if entry.collapsible {
+			if entry.expanded {
+				marker = "▾"
+			} else {
+				marker = "▸"
+			}
+		}
+		line := "  " + marker + " " + label
 		line = truncateToWidth(line, maxWidth)
 		style := worktreeStyle
 		if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
@@ -344,7 +363,33 @@ func normalizeProviderBadgeOverrides(overrides map[string]*types.ProviderBadgeCo
 	return normalized
 }
 
+type sidebarExpansionResolver struct {
+	workspace map[string]bool
+	worktree  map[string]bool
+	defaultOn bool
+}
+
+func (r sidebarExpansionResolver) workspaceExpanded(id string) bool {
+	if value, ok := r.workspace[id]; ok {
+		return value
+	}
+	return r.defaultOn
+}
+
+func (r sidebarExpansionResolver) worktreeExpanded(id string) bool {
+	if value, ok := r.worktree[id]; ok {
+		return value
+	}
+	return r.defaultOn
+}
+
 func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []list.Item {
+	return buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, showDismissed, sidebarExpansionResolver{
+		defaultOn: true,
+	})
+}
+
+func buildSidebarItemsWithExpansion(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool, expansion sidebarExpansionResolver) []list.Item {
 	visibleSessions := filterVisibleSessions(sessions, meta, showDismissed)
 	knownWorkspaces := make(map[string]struct{}, len(workspaces))
 	for _, workspace := range workspaces {
@@ -390,63 +435,85 @@ func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*ty
 
 	items := make([]list.Item, 0)
 	for _, workspace := range workspaces {
+		if workspace == nil {
+			continue
+		}
 		wsID := workspace.ID
 		sessionsForWorkspace := grouped[wsID]
 		worktreesForWorkspace := worktrees[wsID]
 		totalSessions := len(sessionsForWorkspace)
+		worktreeCount := 0
 		for _, wt := range worktreesForWorkspace {
 			if wt == nil {
 				continue
 			}
+			worktreeCount++
 			totalSessions += len(groupedWorktrees[wt.ID])
 		}
+		workspaceHasChildren := len(sessionsForWorkspace) > 0 || worktreeCount > 0
+		workspaceExpanded := !workspaceHasChildren || expansion.workspaceExpanded(wsID)
 		items = append(items, &sidebarItem{
 			kind:         sidebarWorkspace,
 			workspace:    workspace,
 			sessionCount: totalSessions,
+			collapsible:  workspaceHasChildren,
+			expanded:     workspaceExpanded,
 		})
-		for _, session := range sortSessionsDesc(sessionsForWorkspace) {
-			items = append(items, &sidebarItem{
-				kind:    sidebarSession,
-				session: session,
-				meta:    meta[session.ID],
-			})
-		}
-		for _, wt := range worktreesForWorkspace {
-			if wt == nil {
-				continue
-			}
-			wtSessions := groupedWorktrees[wt.ID]
-			items = append(items, &sidebarItem{
-				kind:         sidebarWorktree,
-				worktree:     wt,
-				sessionCount: len(wtSessions),
-			})
-			for _, session := range sortSessionsDesc(wtSessions) {
+		if workspaceExpanded {
+			for _, session := range sortSessionsDesc(sessionsForWorkspace) {
 				items = append(items, &sidebarItem{
 					kind:    sidebarSession,
 					session: session,
 					meta:    meta[session.ID],
 				})
 			}
-			delete(groupedWorktrees, wt.ID)
+			for _, wt := range worktreesForWorkspace {
+				if wt == nil {
+					continue
+				}
+				wtSessions := groupedWorktrees[wt.ID]
+				worktreeHasChildren := len(wtSessions) > 0
+				worktreeExpanded := !worktreeHasChildren || expansion.worktreeExpanded(wt.ID)
+				items = append(items, &sidebarItem{
+					kind:         sidebarWorktree,
+					worktree:     wt,
+					sessionCount: len(wtSessions),
+					collapsible:  worktreeHasChildren,
+					expanded:     worktreeExpanded,
+				})
+				if worktreeExpanded {
+					for _, session := range sortSessionsDesc(wtSessions) {
+						items = append(items, &sidebarItem{
+							kind:    sidebarSession,
+							session: session,
+							meta:    meta[session.ID],
+						})
+					}
+				}
+				delete(groupedWorktrees, wt.ID)
+			}
 		}
 		delete(grouped, wsID)
 	}
 
 	if unassigned := grouped[""]; len(unassigned) > 0 {
 		ws := &types.Workspace{ID: unassignedWorkspaceID, Name: unassignedWorkspaceTag}
+		workspaceExpanded := expansion.workspaceExpanded(unassignedWorkspaceID)
 		items = append(items, &sidebarItem{
 			kind:         sidebarWorkspace,
 			workspace:    ws,
 			sessionCount: len(unassigned),
+			collapsible:  true,
+			expanded:     workspaceExpanded,
 		})
-		for _, session := range sortSessionsDesc(unassigned) {
-			items = append(items, &sidebarItem{
-				kind:    sidebarSession,
-				session: session,
-				meta:    meta[session.ID],
-			})
+		if workspaceExpanded {
+			for _, session := range sortSessionsDesc(unassigned) {
+				items = append(items, &sidebarItem{
+					kind:    sidebarSession,
+					session: session,
+					meta:    meta[session.ID],
+				})
+			}
 		}
 	}
 

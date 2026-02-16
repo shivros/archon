@@ -752,7 +752,17 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 	mouse := msg.Mouse()
 	if layout.listWidth > 0 && mouse.X < layout.listWidth {
 		if m.sidebar != nil {
+			entry := m.sidebar.ItemAtRow(mouse.Y)
+			if entry == nil {
+				return false
+			}
 			m.sidebar.SelectByRow(mouse.Y)
+			if (entry.kind == sidebarWorkspace || entry.kind == sidebarWorktree) && entry.collapsible {
+				if m.sidebar.ToggleSelectedContainer() {
+					m.pendingMouseCmd = m.syncSidebarExpansionChange()
+					return true
+				}
+			}
 			m.pendingMouseCmd = m.onSelectionChanged()
 			return true
 		}

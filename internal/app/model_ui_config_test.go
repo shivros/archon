@@ -8,6 +8,7 @@ import (
 
 func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 	m := NewModel(nil)
+	expandByDefault := false
 	m.applyUIConfig(config.UIConfig{
 		Input: config.UIInputConfig{
 			MultilineMinHeight: 4,
@@ -15,6 +16,9 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 		},
 		Chat: config.UIChatConfig{
 			TimestampMode: "iso",
+		},
+		Sidebar: config.UISidebarConfig{
+			ExpandByDefault: &expandByDefault,
 		},
 	})
 
@@ -41,5 +45,11 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 	}
 	if m.timestampMode != ChatTimestampModeISO {
 		t.Fatalf("expected timestamp mode ISO, got %q", m.timestampMode)
+	}
+	if m.sidebar == nil {
+		t.Fatalf("expected sidebar controller")
+	}
+	if m.sidebar.IsWorkspaceExpanded("ws-any") {
+		t.Fatalf("expected sidebar expand_by_default=false from UI config")
 	}
 }

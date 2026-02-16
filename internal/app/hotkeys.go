@@ -50,6 +50,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "D", Command: KeyCommandToggleDismissed, Label: "toggle dismissed", Context: HotkeySidebar, Priority: 33},
 		{Key: "ctrl+g", Command: KeyCommandCopySessionID, Label: "copy id", Context: HotkeySidebar, Priority: 34},
 		{Key: "i", Command: KeyCommandInterruptSession, Label: "interrupt", Context: HotkeySidebar, Priority: 35},
+		{Key: "←/→", Label: "collapse/expand", Context: HotkeySidebar, Priority: 39},
 		{Key: "esc", Label: "close", Context: HotkeyContextMenu, Priority: 5},
 		{Key: "enter", Label: "select", Context: HotkeyContextMenu, Priority: 6},
 		{Key: "j/k/↑/↓", Label: "move", Context: HotkeyContextMenu, Priority: 7},

@@ -97,6 +97,9 @@ path = "keybindings.json"
 
 [chat]
 timestamp_mode = "relative" # relative | iso
+
+[sidebar]
+expand_by_default = true
 ```
 
 Example `keybindings.json` (VS Code-style array):

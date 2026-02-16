@@ -84,6 +84,7 @@ type UIConfig struct {
 	Keybindings UIKeybindingsConfig `toml:"keybindings"`
 	Input       UIInputConfig       `toml:"input"`
 	Chat        UIChatConfig        `toml:"chat"`
+	Sidebar     UISidebarConfig     `toml:"sidebar"`
 }
 
 type UIKeybindingsConfig struct {
@@ -97,6 +98,10 @@ type UIInputConfig struct {
 
 type UIChatConfig struct {
 	TimestampMode string `toml:"timestamp_mode"`
+}
+
+type UISidebarConfig struct {
+	ExpandByDefault *bool `toml:"expand_by_default"`
 }
 
 func DefaultCoreConfig() CoreConfig {
@@ -290,6 +295,9 @@ func DefaultUIConfig() UIConfig {
 		Chat: UIChatConfig{
 			TimestampMode: "relative",
 		},
+		Sidebar: UISidebarConfig{
+			ExpandByDefault: boolPtr(true),
+		},
 	}
 }
 
@@ -316,6 +324,13 @@ func (c UIConfig) ChatTimestampMode() string {
 	default:
 		return "relative"
 	}
+}
+
+func (c UIConfig) SidebarExpandByDefault() bool {
+	if c.Sidebar.ExpandByDefault == nil {
+		return true
+	}
+	return *c.Sidebar.ExpandByDefault
 }
 
 func LoadUIConfig() (UIConfig, error) {
@@ -416,4 +431,9 @@ func normalizedList(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func boolPtr(value bool) *bool {
+	v := value
+	return &v
 }

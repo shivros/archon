@@ -31,6 +31,22 @@ func (m *Model) reduceSidebarArrowKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 	switch msg.String() {
+	case "left":
+		if m.menu != nil && m.menu.IsActive() {
+			return false, nil
+		}
+		if m.sidebar.SetSelectedContainerExpanded(false) {
+			return true, m.syncSidebarExpansionChange()
+		}
+		return false, nil
+	case "right":
+		if m.menu != nil && m.menu.IsActive() {
+			return false, nil
+		}
+		if m.sidebar.SetSelectedContainerExpanded(true) {
+			return true, m.syncSidebarExpansionChange()
+		}
+		return false, nil
 	case "up":
 		m.sidebar.CursorUp()
 		if m.mode == uiModeNotes {
@@ -182,6 +198,13 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 	case "O":
 		return true, m.enterNotesForSelection()
 	case "enter":
+		item := m.selectedItem()
+		if item != nil && (item.kind == sidebarWorkspace || item.kind == sidebarWorktree) && item.collapsible {
+			if m.sidebar.ToggleSelectedContainer() {
+				return true, m.syncSidebarExpansionChange()
+			}
+			return true, nil
+		}
 		id := m.selectedSessionID()
 		if id == "" {
 			m.setValidationStatus("select a session to chat")

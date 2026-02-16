@@ -584,11 +584,16 @@ func (m *Model) View() tea.View {
 func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	minHeight, maxHeight := uiConfig.SharedMultilineInputHeights()
 	nextTimestampMode := parseChatTimestampMode(uiConfig.ChatTimestampMode())
+	sidebarExpandByDefault := uiConfig.SidebarExpandByDefault()
 	timestampModeChanged := nextTimestampMode != m.timestampMode
 	if timestampModeChanged {
 		m.timestampMode = nextTimestampMode
 		m.renderedForTimestampMode = ""
 		m.renderedForRelativeBucket = -1
+	}
+	sidebarExpansionChanged := false
+	if m.sidebar != nil {
+		sidebarExpansionChanged = m.sidebar.SetExpandByDefault(sidebarExpandByDefault)
 	}
 	cfg := DefaultTextInputConfig()
 	cfg.Height = minHeight
@@ -609,6 +614,9 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	if timestampModeChanged && m.width > 0 && m.height > 0 {
 		m.renderViewport()
 		m.renderNotesPanel()
+	}
+	if sidebarExpansionChanged {
+		m.applySidebarItems()
 	}
 }
 
@@ -915,6 +923,21 @@ func (m *Model) selectedKey() string {
 		return ""
 	}
 	return m.sidebar.SelectedKey()
+}
+
+func (m *Model) syncSidebarExpansionChange() tea.Cmd {
+	cmd := m.onSelectionChangedImmediate()
+	if !m.syncAppStateSidebarExpansion() {
+		return cmd
+	}
+	save := m.requestAppStateSaveCmd()
+	if cmd != nil && save != nil {
+		return tea.Batch(cmd, save)
+	}
+	if save != nil {
+		return save
+	}
+	return cmd
 }
 
 func sessionIDFromSidebarKey(key string) string {
@@ -2472,6 +2495,7 @@ func (m *Model) applyAppState(state *types.AppState) {
 			m.menu.SetSelectedGroupIDs(state.ActiveWorkspaceGroupIDs)
 		}
 	}
+	m.syncSidebarExpansionFromAppState()
 	m.updateDelegate()
 }
 
@@ -2480,6 +2504,28 @@ func (m *Model) updateDelegate() {
 		m.sidebar.SetActive(m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID)
 		m.sidebar.SetProviderBadges(m.appState.ProviderBadges)
 	}
+}
+
+func (m *Model) syncSidebarExpansionFromAppState() {
+	if m == nil || m.sidebar == nil {
+		return
+	}
+	m.sidebar.SetExpansionOverrides(m.appState.SidebarWorkspaceExpanded, m.appState.SidebarWorktreeExpanded)
+}
+
+func (m *Model) syncAppStateSidebarExpansion() bool {
+	if m == nil || m.sidebar == nil {
+		return false
+	}
+	workspaceExpanded, worktreeExpanded := m.sidebar.ExpansionOverrides()
+	if mapStringBoolEqual(m.appState.SidebarWorkspaceExpanded, workspaceExpanded) &&
+		mapStringBoolEqual(m.appState.SidebarWorktreeExpanded, worktreeExpanded) {
+		return false
+	}
+	m.appState.SidebarWorkspaceExpanded = workspaceExpanded
+	m.appState.SidebarWorktreeExpanded = worktreeExpanded
+	m.hasAppState = true
+	return true
 }
 
 func (m *Model) saveAppStateCmd() tea.Cmd {
@@ -3731,6 +3777,18 @@ func countAgentRepliesBlocks(blocks []ChatBlock) int {
 		}
 	}
 	return count
+}
+
+func mapStringBoolEqual(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if other, ok := b[key]; !ok || other != value {
+			return false
+		}
+	}
+	return true
 }
 
 func clamp(value, minValue, maxValue int) int {

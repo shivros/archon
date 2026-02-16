@@ -186,3 +186,79 @@ func TestResolveProviderBadgeUnknownProviderFallback(t *testing.T) {
 		t.Fatalf("expected fallback color %q, got %q", defaultBadgeColor, resolved.Color)
 	}
 }
+
+func TestBuildSidebarItemsCollapsedWorkspaceHidesNestedItems(t *testing.T) {
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace One"},
+	}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree One"},
+		},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1"},
+	}
+
+	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, false, sidebarExpansionResolver{
+		workspace: map[string]bool{"ws1": false},
+		defaultOn: true,
+	})
+	if len(items) != 1 {
+		t.Fatalf("expected only workspace row when collapsed, got %d", len(items))
+	}
+	ws := items[0].(*sidebarItem)
+	if ws.kind != sidebarWorkspace || ws.workspace == nil || ws.workspace.ID != "ws1" {
+		t.Fatalf("expected workspace ws1 row")
+	}
+	if !ws.collapsible || ws.expanded {
+		t.Fatalf("expected workspace ws1 collapsible and collapsed")
+	}
+}
+
+func TestBuildSidebarItemsCollapsedWorktreeHidesWorktreeSessions(t *testing.T) {
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace One"},
+	}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree One"},
+		},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1"},
+	}
+
+	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, false, sidebarExpansionResolver{
+		workspace: map[string]bool{"ws1": true},
+		worktree:  map[string]bool{"wt1": false},
+		defaultOn: true,
+	})
+	if len(items) != 3 {
+		t.Fatalf("expected workspace + direct session + collapsed worktree, got %d", len(items))
+	}
+	if items[0].(*sidebarItem).kind != sidebarWorkspace {
+		t.Fatalf("expected first item workspace")
+	}
+	directSession := items[1].(*sidebarItem)
+	if directSession.kind != sidebarSession || directSession.session == nil || directSession.session.ID != "s1" {
+		t.Fatalf("expected direct workspace session s1")
+	}
+	wt := items[2].(*sidebarItem)
+	if wt.kind != sidebarWorktree || wt.worktree == nil || wt.worktree.ID != "wt1" {
+		t.Fatalf("expected collapsed worktree row wt1")
+	}
+	if !wt.collapsible || wt.expanded {
+		t.Fatalf("expected worktree wt1 collapsible and collapsed")
+	}
+}

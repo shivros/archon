@@ -175,17 +175,28 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.sessions = msg.sessions
 		m.sessionMeta = normalizeSessionMeta(msg.meta)
 		m.applySidebarItems()
+		saveSidebarExpansionCmd := tea.Cmd(nil)
 		if m.pendingSelectID != "" && m.sidebar != nil {
 			if m.sidebar.SelectBySessionID(m.pendingSelectID) {
 				m.pendingSelectID = ""
+				if m.syncAppStateSidebarExpansion() {
+					saveSidebarExpansionCmd = m.requestAppStateSaveCmd()
+				}
 			}
 		}
 		nextSelection := m.selectedSessionSnapshot()
 		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
 		if m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection) {
-			return true, m.onSelectionChangedImmediate()
+			selectionCmd := m.onSelectionChangedImmediate()
+			if selectionCmd != nil && saveSidebarExpansionCmd != nil {
+				return true, tea.Batch(selectionCmd, saveSidebarExpansionCmd)
+			}
+			if selectionCmd != nil {
+				return true, selectionCmd
+			}
+			return true, saveSidebarExpansionCmd
 		}
-		return true, nil
+		return true, saveSidebarExpansionCmd
 	case workspacesMsg:
 		if msg.err != nil {
 			m.setBackgroundError("workspaces error: " + msg.err.Error())

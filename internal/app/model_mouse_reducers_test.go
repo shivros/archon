@@ -75,6 +75,39 @@ func TestMouseReducerRightReleaseDoesNotOpenContextMenu(t *testing.T) {
 	}
 }
 
+func TestMouseReducerSidebarClickTogglesWorkspaceExpansion(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkspace {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible workspace row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if len(m.sidebar.Items()) != 1 {
+		t.Fatalf("expected workspace collapse to hide nested session, got %d rows", len(m.sidebar.Items()))
+	}
+}
+
 func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

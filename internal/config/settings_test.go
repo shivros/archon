@@ -236,6 +236,9 @@ func TestLoadUIConfigDefaults(t *testing.T) {
 	if mode := cfg.ChatTimestampMode(); mode != "relative" {
 		t.Fatalf("unexpected default chat timestamp mode: %q", mode)
 	}
+	if !cfg.SidebarExpandByDefault() {
+		t.Fatalf("expected sidebar expand_by_default=true by default")
+	}
 	path, err := cfg.ResolveKeybindingsPath()
 	if err != nil {
 		t.Fatalf("ResolveKeybindingsPath: %v", err)
@@ -274,6 +277,30 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	}
 	if mode := cfg.ChatTimestampMode(); mode != "iso" {
 		t.Fatalf("unexpected chat timestamp mode: %q", mode)
+	}
+	if !cfg.SidebarExpandByDefault() {
+		t.Fatalf("expected sidebar expand_by_default to remain true when omitted")
+	}
+}
+
+func TestLoadUIConfigSidebarExpandByDefaultOverride(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte("[sidebar]\nexpand_by_default = false\n")
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadUIConfig()
+	if err != nil {
+		t.Fatalf("LoadUIConfig: %v", err)
+	}
+	if cfg.SidebarExpandByDefault() {
+		t.Fatalf("expected sidebar expand_by_default=false from config")
 	}
 }
 

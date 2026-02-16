@@ -255,6 +255,59 @@ func TestSpaceDoesNotEnableSessionMultiSelect(t *testing.T) {
 	}
 }
 
+func TestEnterTogglesWorkspaceExpansion(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	selectSidebarItemKind(t, &m, sidebarWorkspace)
+
+	handled, _ := m.reduceComposeAndWorkspaceEntryKeys(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter key to be handled")
+	}
+	if len(m.sidebar.Items()) != 1 {
+		t.Fatalf("expected workspace collapse to hide nested session, got %d rows", len(m.sidebar.Items()))
+	}
+	if expanded := m.appState.SidebarWorkspaceExpanded["ws1"]; expanded {
+		t.Fatalf("expected persisted workspace expansion override ws1=false")
+	}
+}
+
+func TestSidebarArrowLeftRightCollapseAndExpandSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	selectSidebarItemKind(t, &m, sidebarWorkspace)
+
+	handled, _ := m.reduceSidebarArrowKey(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if !handled {
+		t.Fatalf("expected left arrow to be handled")
+	}
+	if len(m.sidebar.Items()) != 1 {
+		t.Fatalf("expected collapsed workspace list length 1, got %d", len(m.sidebar.Items()))
+	}
+
+	handled, _ = m.reduceSidebarArrowKey(tea.KeyPressMsg{Code: tea.KeyRight})
+	if !handled {
+		t.Fatalf("expected right arrow to be handled")
+	}
+	if len(m.sidebar.Items()) != 2 {
+		t.Fatalf("expected expanded workspace list length 2, got %d", len(m.sidebar.Items()))
+	}
+}
+
 func selectSidebarItemKind(t *testing.T, m *Model, kind sidebarItemKind) {
 	t.Helper()
 	if m == nil || m.sidebar == nil {
