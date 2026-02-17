@@ -272,6 +272,55 @@ network_access = false
 	if notificationsCfg["enabled"] != true {
 		t.Fatalf("unexpected notifications enabled: %#v", notificationsCfg["enabled"])
 	}
+	guidedCfg, _ := payload["guided_workflows"].(map[string]any)
+	if guidedCfg["enabled"] != false {
+		t.Fatalf("unexpected guided workflows enabled: %#v", guidedCfg["enabled"])
+	}
+	if guidedCfg["auto_start"] != false {
+		t.Fatalf("unexpected guided workflows auto_start: %#v", guidedCfg["auto_start"])
+	}
+	if guidedCfg["checkpoint_style"] != "confidence_weighted" {
+		t.Fatalf("unexpected guided workflows checkpoint_style: %#v", guidedCfg["checkpoint_style"])
+	}
+	if guidedCfg["mode"] != "guarded_autopilot" {
+		t.Fatalf("unexpected guided workflows mode: %#v", guidedCfg["mode"])
+	}
+	policyCfg, _ := guidedCfg["policy"].(map[string]any)
+	if policyCfg["confidence_threshold"] != 0.7 {
+		t.Fatalf("unexpected guided workflows confidence_threshold: %#v", policyCfg["confidence_threshold"])
+	}
+	if policyCfg["pause_threshold"] != 0.6 {
+		t.Fatalf("unexpected guided workflows pause_threshold: %#v", policyCfg["pause_threshold"])
+	}
+	if policyCfg["high_blast_radius_file_count"] != float64(20) {
+		t.Fatalf("unexpected guided workflows high_blast_radius_file_count: %#v", policyCfg["high_blast_radius_file_count"])
+	}
+	hardGates, _ := policyCfg["hard_gates"].(map[string]any)
+	if hardGates["ambiguity_blocker"] != true || hardGates["sensitive_files"] != true || hardGates["failing_checks"] != true {
+		t.Fatalf("unexpected guided workflows hard_gates: %#v", hardGates)
+	}
+	rolloutCfg, _ := guidedCfg["rollout"].(map[string]any)
+	if rolloutCfg["telemetry_enabled"] != true {
+		t.Fatalf("unexpected rollout telemetry_enabled: %#v", rolloutCfg["telemetry_enabled"])
+	}
+	if rolloutCfg["max_active_runs"] != float64(3) {
+		t.Fatalf("unexpected rollout max_active_runs: %#v", rolloutCfg["max_active_runs"])
+	}
+	if rolloutCfg["automation_enabled"] != false {
+		t.Fatalf("unexpected rollout automation_enabled: %#v", rolloutCfg["automation_enabled"])
+	}
+	if rolloutCfg["allow_quality_checks"] != false {
+		t.Fatalf("unexpected rollout allow_quality_checks: %#v", rolloutCfg["allow_quality_checks"])
+	}
+	if rolloutCfg["allow_commit"] != false {
+		t.Fatalf("unexpected rollout allow_commit: %#v", rolloutCfg["allow_commit"])
+	}
+	if rolloutCfg["require_commit_approval"] != true {
+		t.Fatalf("unexpected rollout require_commit_approval: %#v", rolloutCfg["require_commit_approval"])
+	}
+	if rolloutCfg["max_retry_attempts"] != float64(2) {
+		t.Fatalf("unexpected rollout max_retry_attempts: %#v", rolloutCfg["max_retry_attempts"])
+	}
 	providers, _ := payload["providers"].(map[string]any)
 	codex, _ := providers["codex"].(map[string]any)
 	if codex["default_model"] != "gpt-5.3-codex" {

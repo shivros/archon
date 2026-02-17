@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"control/internal/config"
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -368,6 +369,82 @@ func (c *Client) UpdateAppState(ctx context.Context, state *types.AppState) (*ty
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (c *Client) CreateWorkflowRun(ctx context.Context, req CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
+	var run guidedworkflows.WorkflowRun
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/workflow-runs", req, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/start", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) DecideWorkflowRun(ctx context.Context, runID string, req WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/decision", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s", runID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var resp WorkflowRunTimelineResponse
+	path := fmt.Sprintf("/v1/workflow-runs/%s/timeline", runID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Timeline, nil
+}
+
+func (c *Client) GetWorkflowRunMetrics(ctx context.Context) (*guidedworkflows.RunMetricsSnapshot, error) {
+	var metrics guidedworkflows.RunMetricsSnapshot
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/workflow-runs/metrics", nil, true, &metrics); err != nil {
+		return nil, err
+	}
+	return &metrics, nil
+}
+
+func (c *Client) ResetWorkflowRunMetrics(ctx context.Context) (*guidedworkflows.RunMetricsSnapshot, error) {
+	var metrics guidedworkflows.RunMetricsSnapshot
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/workflow-runs/metrics/reset", nil, true, &metrics); err != nil {
+		return nil, err
+	}
+	return &metrics, nil
 }
 
 func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*types.Session, error) {

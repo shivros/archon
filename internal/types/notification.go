@@ -50,6 +50,7 @@ type NotificationEvent struct {
 	TurnID      string              `json:"turn_id,omitempty"`
 	Cwd         string              `json:"cwd,omitempty"`
 	Source      string              `json:"source,omitempty"`
+	Payload     map[string]any      `json:"payload,omitempty"`
 }
 
 func DefaultNotificationSettings() NotificationSettings {

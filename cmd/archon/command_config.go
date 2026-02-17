@@ -28,24 +28,26 @@ const (
 )
 
 type configOutput struct {
-	CoreConfigPath  string                        `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
-	UIConfigPath    string                        `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
-	KeybindingsPath string                        `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
-	Chat            *uiChatConfigOutput           `json:"chat,omitempty" toml:"chat,omitempty"`
-	Daemon          *effectiveDaemonConfig        `json:"daemon,omitempty" toml:"daemon,omitempty"`
-	Logging         *effectiveLoggingConfig       `json:"logging,omitempty" toml:"logging,omitempty"`
-	Debug           *effectiveDebugConfig         `json:"debug,omitempty" toml:"debug,omitempty"`
-	Notifications   *effectiveNotificationsConfig `json:"notifications,omitempty" toml:"notifications,omitempty"`
-	Providers       *effectiveProvidersConfig     `json:"providers,omitempty" toml:"providers,omitempty"`
-	Keybindings     map[string]string             `json:"keybindings,omitempty" toml:"keybindings,omitempty"`
+	CoreConfigPath  string                          `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
+	UIConfigPath    string                          `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
+	KeybindingsPath string                          `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
+	Chat            *uiChatConfigOutput             `json:"chat,omitempty" toml:"chat,omitempty"`
+	Daemon          *effectiveDaemonConfig          `json:"daemon,omitempty" toml:"daemon,omitempty"`
+	Logging         *effectiveLoggingConfig         `json:"logging,omitempty" toml:"logging,omitempty"`
+	Debug           *effectiveDebugConfig           `json:"debug,omitempty" toml:"debug,omitempty"`
+	Notifications   *effectiveNotificationsConfig   `json:"notifications,omitempty" toml:"notifications,omitempty"`
+	GuidedWorkflows *effectiveGuidedWorkflowsConfig `json:"guided_workflows,omitempty" toml:"guided_workflows,omitempty"`
+	Providers       *effectiveProvidersConfig       `json:"providers,omitempty" toml:"providers,omitempty"`
+	Keybindings     map[string]string               `json:"keybindings,omitempty" toml:"keybindings,omitempty"`
 }
 
 type coreConfigOutput struct {
-	Daemon        coreDaemonConfigOut          `json:"daemon" toml:"daemon"`
-	Logging       effectiveLoggingConfig       `json:"logging" toml:"logging"`
-	Debug         effectiveDebugConfig         `json:"debug" toml:"debug"`
-	Notifications effectiveNotificationsConfig `json:"notifications" toml:"notifications"`
-	Providers     effectiveProvidersConfig     `json:"providers" toml:"providers"`
+	Daemon          coreDaemonConfigOut            `json:"daemon" toml:"daemon"`
+	Logging         effectiveLoggingConfig         `json:"logging" toml:"logging"`
+	Debug           effectiveDebugConfig           `json:"debug" toml:"debug"`
+	Notifications   effectiveNotificationsConfig   `json:"notifications" toml:"notifications"`
+	GuidedWorkflows effectiveGuidedWorkflowsConfig `json:"guided_workflows" toml:"guided_workflows"`
+	Providers       effectiveProvidersConfig       `json:"providers" toml:"providers"`
 }
 
 type coreDaemonConfigOut struct {
@@ -85,6 +87,42 @@ type effectiveNotificationsConfig struct {
 	ScriptCommands       []string `json:"script_commands,omitempty" toml:"script_commands,omitempty"`
 	ScriptTimeoutSeconds int      `json:"script_timeout_seconds" toml:"script_timeout_seconds"`
 	DedupeWindowSeconds  int      `json:"dedupe_window_seconds" toml:"dedupe_window_seconds"`
+}
+
+type effectiveGuidedWorkflowsConfig struct {
+	Enabled         bool                                  `json:"enabled" toml:"enabled"`
+	AutoStart       bool                                  `json:"auto_start" toml:"auto_start"`
+	CheckpointStyle string                                `json:"checkpoint_style" toml:"checkpoint_style"`
+	Mode            string                                `json:"mode" toml:"mode"`
+	Policy          effectiveGuidedWorkflowsPolicyConfig  `json:"policy" toml:"policy"`
+	Rollout         effectiveGuidedWorkflowsRolloutConfig `json:"rollout" toml:"rollout"`
+}
+
+type effectiveGuidedWorkflowsPolicyConfig struct {
+	ConfidenceThreshold      float64                                   `json:"confidence_threshold" toml:"confidence_threshold"`
+	PauseThreshold           float64                                   `json:"pause_threshold" toml:"pause_threshold"`
+	HighBlastRadiusFileCount int                                       `json:"high_blast_radius_file_count" toml:"high_blast_radius_file_count"`
+	HardGates                effectiveGuidedWorkflowsPolicyGatesConfig `json:"hard_gates" toml:"hard_gates"`
+	ConditionalGates         effectiveGuidedWorkflowsPolicyGatesConfig `json:"conditional_gates" toml:"conditional_gates"`
+}
+
+type effectiveGuidedWorkflowsPolicyGatesConfig struct {
+	AmbiguityBlocker         bool `json:"ambiguity_blocker" toml:"ambiguity_blocker"`
+	ConfidenceBelowThreshold bool `json:"confidence_below_threshold" toml:"confidence_below_threshold"`
+	HighBlastRadius          bool `json:"high_blast_radius" toml:"high_blast_radius"`
+	SensitiveFiles           bool `json:"sensitive_files" toml:"sensitive_files"`
+	PreCommitApproval        bool `json:"pre_commit_approval" toml:"pre_commit_approval"`
+	FailingChecks            bool `json:"failing_checks" toml:"failing_checks"`
+}
+
+type effectiveGuidedWorkflowsRolloutConfig struct {
+	TelemetryEnabled      bool `json:"telemetry_enabled" toml:"telemetry_enabled"`
+	MaxActiveRuns         int  `json:"max_active_runs" toml:"max_active_runs"`
+	AutomationEnabled     bool `json:"automation_enabled" toml:"automation_enabled"`
+	AllowQualityChecks    bool `json:"allow_quality_checks" toml:"allow_quality_checks"`
+	AllowCommit           bool `json:"allow_commit" toml:"allow_commit"`
+	RequireCommitApproval bool `json:"require_commit_approval" toml:"require_commit_approval"`
+	MaxRetryAttempts      int  `json:"max_retry_attempts" toml:"max_retry_attempts"`
 }
 
 type effectiveProvidersConfig struct {
@@ -229,6 +267,42 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 			ScriptTimeoutSeconds: coreCfg.NotificationScriptTimeoutSeconds(),
 			DedupeWindowSeconds:  coreCfg.NotificationDedupeWindowSeconds(),
 		}
+		out.GuidedWorkflows = &effectiveGuidedWorkflowsConfig{
+			Enabled:         coreCfg.GuidedWorkflowsEnabled(),
+			AutoStart:       coreCfg.GuidedWorkflowsAutoStart(),
+			CheckpointStyle: coreCfg.GuidedWorkflowsCheckpointStyle(),
+			Mode:            coreCfg.GuidedWorkflowsMode(),
+			Policy: effectiveGuidedWorkflowsPolicyConfig{
+				ConfidenceThreshold:      coreCfg.GuidedWorkflowsPolicyConfidenceThreshold(),
+				PauseThreshold:           coreCfg.GuidedWorkflowsPolicyPauseThreshold(),
+				HighBlastRadiusFileCount: coreCfg.GuidedWorkflowsPolicyHighBlastRadiusFileCount(),
+				HardGates: effectiveGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker:         coreCfg.GuidedWorkflowsPolicyHardGateAmbiguityBlocker(),
+					ConfidenceBelowThreshold: coreCfg.GuidedWorkflowsPolicyHardGateConfidenceBelowThreshold(),
+					HighBlastRadius:          coreCfg.GuidedWorkflowsPolicyHardGateHighBlastRadius(),
+					SensitiveFiles:           coreCfg.GuidedWorkflowsPolicyHardGateSensitiveFiles(),
+					PreCommitApproval:        coreCfg.GuidedWorkflowsPolicyHardGatePreCommitApproval(),
+					FailingChecks:            coreCfg.GuidedWorkflowsPolicyHardGateFailingChecks(),
+				},
+				ConditionalGates: effectiveGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker:         coreCfg.GuidedWorkflowsPolicyConditionalGateAmbiguityBlocker(),
+					ConfidenceBelowThreshold: coreCfg.GuidedWorkflowsPolicyConditionalGateConfidenceBelowThreshold(),
+					HighBlastRadius:          coreCfg.GuidedWorkflowsPolicyConditionalGateHighBlastRadius(),
+					SensitiveFiles:           coreCfg.GuidedWorkflowsPolicyConditionalGateSensitiveFiles(),
+					PreCommitApproval:        coreCfg.GuidedWorkflowsPolicyConditionalGatePreCommitApproval(),
+					FailingChecks:            coreCfg.GuidedWorkflowsPolicyConditionalGateFailingChecks(),
+				},
+			},
+			Rollout: effectiveGuidedWorkflowsRolloutConfig{
+				TelemetryEnabled:      coreCfg.GuidedWorkflowsRolloutTelemetryEnabled(),
+				MaxActiveRuns:         coreCfg.GuidedWorkflowsRolloutMaxActiveRuns(),
+				AutomationEnabled:     coreCfg.GuidedWorkflowsRolloutAutomationEnabled(),
+				AllowQualityChecks:    coreCfg.GuidedWorkflowsRolloutAllowQualityChecks(),
+				AllowCommit:           coreCfg.GuidedWorkflowsRolloutAllowCommit(),
+				RequireCommitApproval: coreCfg.GuidedWorkflowsRolloutRequireCommitApproval(),
+				MaxRetryAttempts:      coreCfg.GuidedWorkflowsRolloutMaxRetryAttempts(),
+			},
+		}
 		out.Providers = &effectiveProvidersConfig{
 			Codex: effectiveCodexProviderConfig{
 				Command:        coreCfg.ProviderCommand("codex"),
@@ -342,6 +416,33 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 				ScriptTimeoutSeconds: 10,
 				DedupeWindowSeconds:  5,
 			},
+			GuidedWorkflows: effectiveGuidedWorkflowsConfig{
+				Enabled:         false,
+				AutoStart:       false,
+				CheckpointStyle: "confidence_weighted",
+				Mode:            "guarded_autopilot",
+				Policy: effectiveGuidedWorkflowsPolicyConfig{
+					ConfidenceThreshold:      0.70,
+					PauseThreshold:           0.60,
+					HighBlastRadiusFileCount: 20,
+					HardGates: effectiveGuidedWorkflowsPolicyGatesConfig{
+						AmbiguityBlocker:         true,
+						ConfidenceBelowThreshold: false,
+						HighBlastRadius:          false,
+						SensitiveFiles:           true,
+						PreCommitApproval:        false,
+						FailingChecks:            true,
+					},
+					ConditionalGates: effectiveGuidedWorkflowsPolicyGatesConfig{
+						AmbiguityBlocker:         true,
+						ConfidenceBelowThreshold: true,
+						HighBlastRadius:          true,
+						SensitiveFiles:           false,
+						PreCommitApproval:        false,
+						FailingChecks:            true,
+					},
+				},
+			},
 		}
 		if payload.Daemon != nil {
 			out.Daemon.Address = payload.Daemon.Address
@@ -354,6 +455,9 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 		}
 		if payload.Notifications != nil {
 			out.Notifications = *payload.Notifications
+		}
+		if payload.GuidedWorkflows != nil {
+			out.GuidedWorkflows = *payload.GuidedWorkflows
 		}
 		if payload.Providers != nil {
 			out.Providers = *payload.Providers

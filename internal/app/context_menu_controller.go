@@ -23,12 +23,14 @@ const (
 	ContextMenuWorktreeAdd
 	ContextMenuWorktreeOpenNotes
 	ContextMenuWorktreeAddNote
+	ContextMenuWorktreeStartGuidedWorkflow
 	ContextMenuWorktreeCopyPath
 	ContextMenuWorktreeDelete
 	ContextMenuSessionChat
 	ContextMenuSessionRename
 	ContextMenuSessionOpenNotes
 	ContextMenuSessionAddNote
+	ContextMenuSessionStartGuidedWorkflow
 	ContextMenuSessionDismiss
 	ContextMenuSessionKill
 	ContextMenuSessionInterrupt
@@ -152,6 +154,7 @@ func (c *ContextMenuController) OpenWorktree(worktreeID, workspaceID, label stri
 		{Label: "Add Worktree", Action: ContextMenuWorktreeAdd},
 		{Label: "Open Notes", Action: ContextMenuWorktreeOpenNotes},
 		{Label: "Add Note", Action: ContextMenuWorktreeAddNote},
+		{Label: "Start Guided Workflow", Action: ContextMenuWorktreeStartGuidedWorkflow},
 		{Label: "Copy Worktree Path", Action: ContextMenuWorktreeCopyPath},
 		{Label: "Delete Worktree", Action: ContextMenuWorktreeDelete},
 	}
@@ -176,6 +179,7 @@ func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, 
 		{Label: "Rename Session", Action: ContextMenuSessionRename},
 		{Label: "Open Notes", Action: ContextMenuSessionOpenNotes},
 		{Label: "Add Note", Action: ContextMenuSessionAddNote},
+		{Label: "Start Guided Workflow", Action: ContextMenuSessionStartGuidedWorkflow},
 		{Label: "Dismiss Session", Action: ContextMenuSessionDismiss},
 		{Label: "Kill Session", Action: ContextMenuSessionKill},
 		{Label: "Interrupt Session", Action: ContextMenuSessionInterrupt},

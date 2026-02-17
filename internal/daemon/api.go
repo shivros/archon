@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"control/internal/guidedworkflows"
 	"control/internal/logging"
 	"control/internal/types"
 )
@@ -19,6 +20,8 @@ type API struct {
 	LiveCodex        *CodexLiveManager
 	CodexHistoryPool CodexHistoryPool
 	Notifier         NotificationPublisher
+	GuidedWorkflows  guidedworkflows.Orchestrator
+	WorkflowRuns     GuidedWorkflowRunService
 	Logger           logging.Logger
 }
 
@@ -64,6 +67,31 @@ type ApproveSessionRequest struct {
 	AcceptSettings map[string]any `json:"accept_settings,omitempty"`
 }
 
+type CreateWorkflowRunRequest struct {
+	TemplateID      string                                    `json:"template_id,omitempty"`
+	WorkspaceID     string                                    `json:"workspace_id,omitempty"`
+	WorktreeID      string                                    `json:"worktree_id,omitempty"`
+	SessionID       string                                    `json:"session_id,omitempty"`
+	TaskID          string                                    `json:"task_id,omitempty"`
+	PolicyOverrides *guidedworkflows.CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
+}
+
+type WorkflowRunDecisionRequest struct {
+	Action     guidedworkflows.DecisionAction `json:"action"`
+	DecisionID string                         `json:"decision_id,omitempty"`
+	Note       string                         `json:"note,omitempty"`
+}
+
+type GuidedWorkflowRunService interface {
+	CreateRun(ctx context.Context, req guidedworkflows.CreateRunRequest) (*guidedworkflows.WorkflowRun, error)
+	StartRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	PauseRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	ResumeRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	HandleDecision(ctx context.Context, runID string, req guidedworkflows.DecisionActionRequest) (*guidedworkflows.WorkflowRun, error)
+	GetRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	GetRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)
+}
+
 func parseLines(raw string) int {
 	if raw == "" {
 		return 200
@@ -96,5 +124,15 @@ func (a *API) newSessionService() *SessionService {
 	if a != nil && a.Notifier != nil {
 		opts = append(opts, WithNotificationPublisher(a.Notifier))
 	}
+	if a != nil && a.GuidedWorkflows != nil {
+		opts = append(opts, WithGuidedWorkflowOrchestrator(a.GuidedWorkflows))
+	}
 	return NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger, opts...)
+}
+
+func (a *API) workflowRunService() GuidedWorkflowRunService {
+	if a == nil {
+		return nil
+	}
+	return a.WorkflowRuns
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +13,90 @@ import (
 
 func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case workflowRunCreatedMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetCreateError(msg.err)
+			m.setStatusError("guided workflow create error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		runID := ""
+		if msg.run != nil {
+			m.guidedWorkflow.SetRun(msg.run)
+			runID = strings.TrimSpace(msg.run.ID)
+		}
+		if runID == "" {
+			m.guidedWorkflow.SetCreateError(fmt.Errorf("guided workflow run id is missing"))
+			m.setStatusError("guided workflow create error: missing run id")
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.setStatusMessage("starting guided workflow run")
+		m.renderGuidedWorkflowContent()
+		return true, startWorkflowRunCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunStartedMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetStartError(msg.err)
+			m.setStatusError("guided workflow start error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.guidedWorkflow.SetRun(msg.run)
+		m.setStatusInfo("guided workflow running")
+		m.renderGuidedWorkflowContent()
+		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+		if runID == "" {
+			return true, nil
+		}
+		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
+		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunSnapshotMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetSnapshotError(msg.err)
+			m.setBackgroundError("guided workflow refresh error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
+		if msg.run != nil {
+			switch msg.run.Status {
+			case guidedworkflows.WorkflowRunStatusPaused:
+				m.setStatusInfo("guided workflow paused: decision needed")
+			case guidedworkflows.WorkflowRunStatusCompleted:
+				m.setStatusInfo("guided workflow completed")
+			case guidedworkflows.WorkflowRunStatusFailed:
+				m.setStatusError("guided workflow failed")
+			}
+		}
+		m.renderGuidedWorkflowContent()
+		return true, nil
+	case workflowRunDecisionMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetDecisionError(msg.err)
+			m.setStatusError("guided workflow decision error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.guidedWorkflow.SetRun(msg.run)
+		m.renderGuidedWorkflowContent()
+		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+		if runID == "" {
+			return true, nil
+		}
+		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
+		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
 	case createWorkspaceMsg:
 		if msg.err != nil {
 			m.exitAddWorkspace("add workspace error: " + msg.err.Error())

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/logging"
 	"control/internal/providers"
 	"control/internal/store"
@@ -23,6 +24,7 @@ type SessionService struct {
 	history      *conversationHistoryStrategyRegistry
 	codexPool    CodexHistoryPool
 	approvalSync *ApprovalResyncService
+	guided       guidedworkflows.Orchestrator
 	migrateOnce  sync.Once
 }
 
@@ -55,6 +57,15 @@ func WithNotificationPublisher(notifier NotificationPublisher) SessionServiceOpt
 	}
 }
 
+func WithGuidedWorkflowOrchestrator(orchestrator guidedworkflows.Orchestrator) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || orchestrator == nil {
+			return
+		}
+		s.guided = orchestrator
+	}
+}
+
 func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
@@ -84,6 +95,13 @@ func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveM
 		svc.codexPool = NewCodexHistoryPool(logger)
 	}
 	return svc
+}
+
+func (s *SessionService) StartGuidedWorkflowRun(ctx context.Context, req guidedworkflows.StartRunRequest) (*guidedworkflows.Run, error) {
+	if s == nil || s.guided == nil {
+		return nil, guidedworkflows.ErrDisabled
+	}
+	return s.guided.StartRun(ctx, req)
 }
 
 func (s *SessionService) publishTurnCompleted(session *types.Session, meta *types.SessionMeta, turnID string, source string) {

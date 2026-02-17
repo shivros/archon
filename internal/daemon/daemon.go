@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/logging"
 	"control/internal/store"
 	"control/internal/types"
@@ -111,8 +112,8 @@ func New(addr, token, version string, manager *SessionManager, stores *Stores) *
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	coreCfg := loadCoreConfigOrDefault()
 	if d.logger == nil {
-		coreCfg := loadCoreConfigOrDefault()
 		d.logger = logging.New(log.Writer(), logging.ParseLevel(coreCfg.LogLevel()))
 	}
 	api := &API{
@@ -122,21 +123,30 @@ func (d *Daemon) Run(ctx context.Context) error {
 		Logger:  d.logger,
 	}
 	notifier := NewNotificationService(
-		NewNotificationPolicyResolver(notificationDefaultsFromCoreConfig(loadCoreConfigOrDefault()), d.stores, d.logger),
+		NewNotificationPolicyResolver(notificationDefaultsFromCoreConfig(coreCfg), d.stores, d.logger),
 		NewNotificationDispatcher(defaultNotificationSinks(), d.logger),
 		d.logger,
 	)
 	defer notifier.Close()
-	if d.manager != nil {
-		d.manager.SetNotificationPublisher(notifier)
+	guided := newGuidedWorkflowOrchestrator(coreCfg)
+	workflowRuns := newGuidedWorkflowRunService(coreCfg, d.stores)
+	var turnProcessor guidedworkflows.TurnEventProcessor
+	if processor, ok := any(workflowRuns).(guidedworkflows.TurnEventProcessor); ok {
+		turnProcessor = processor
 	}
-	api.Notifier = notifier
+	eventPublisher := NewGuidedWorkflowNotificationPublisher(notifier, guided, turnProcessor)
+	if d.manager != nil {
+		d.manager.SetNotificationPublisher(eventPublisher)
+	}
+	api.Notifier = eventPublisher
+	api.GuidedWorkflows = guided
+	api.WorkflowRuns = workflowRuns
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)
 	api.Syncer = syncer
 	api.LiveCodex = NewCodexLiveManager(d.stores, d.logger)
-	api.LiveCodex.SetNotificationPublisher(notifier)
+	api.LiveCodex.SetNotificationPublisher(eventPublisher)
 	approvalSync := NewApprovalResyncService(d.stores, d.logger)
 
 	mux := http.NewServeMux()

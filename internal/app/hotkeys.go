@@ -15,6 +15,7 @@ const (
 	HotkeyContextMenu
 	HotkeyConfirm
 	HotkeyApproval
+	HotkeyGuidedWorkflow
 )
 
 type Hotkey struct {
@@ -72,6 +73,11 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "p", Command: KeyCommandPauseFollow, Label: "pause", Context: HotkeySidebar, Priority: 70},
 		{Key: "esc", Label: "cancel", Context: HotkeySearch, Priority: 10},
 		{Key: "enter", Label: "search", Context: HotkeySearch, Priority: 11},
+		{Key: "j/k/↑/↓", Label: "setup choice", Context: HotkeyGuidedWorkflow, Priority: 10},
+		{Key: "enter", Label: "continue/start", Context: HotkeyGuidedWorkflow, Priority: 11},
+		{Key: "a/v/p", Label: "checkpoint action", Context: HotkeyGuidedWorkflow, Priority: 12},
+		{Key: "r", Label: "refresh timeline", Context: HotkeyGuidedWorkflow, Priority: 13},
+		{Key: "esc", Label: "close", Context: HotkeyGuidedWorkflow, Priority: 14},
 		{Key: "esc", Label: "cancel", Context: HotkeyAddWorkspace, Priority: 10},
 		{Key: "enter", Label: "continue", Context: HotkeyAddWorkspace, Priority: 11},
 		{Key: "esc", Label: "cancel", Context: HotkeyAddWorktree, Priority: 10},
@@ -120,6 +126,9 @@ func (r DefaultHotkeyResolver) ActiveContexts(m *Model) []HotkeyContext {
 	}
 	if m.mode == uiModeSearch {
 		return []HotkeyContext{HotkeySearch}
+	}
+	if m.mode == uiModeGuidedWorkflow {
+		return []HotkeyContext{HotkeyGlobal, HotkeyGuidedWorkflow}
 	}
 	contexts := []HotkeyContext{HotkeyGlobal}
 	switch m.mode {

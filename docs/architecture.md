@@ -23,6 +23,12 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
    - claude provider (`provider_claude.go`)
    - opencode/kilocode server provider (`provider_opencode.go`)
    - generic process provider (`provider_exec.go`)
+7. Guided workflow orchestration is isolated behind `internal/guidedworkflows` and wired through daemon adapters (`guided_workflows_bridge.go`), so it can later move to a plugin boundary.
+8. Guided workflow run lifecycle HTTP endpoints are exposed by daemon handlers in `internal/daemon/api_workflow_runs_handlers.go` (`/v1/workflow-runs` and `/v1/workflow-runs/:id/...`).
+9. Guided workflow policy evaluation (confidence-weighted with hard/conditional gates) is part of run progression in `internal/guidedworkflows/policy.go` and persisted into run decision metadata.
+10. Turn-completed notifications are also consumed by the guided workflow bridge to advance matching runs and publish actionable decision-needed notifications when policy pauses are triggered.
+11. Guided workflow rollout guardrails are read from core config (`guided_workflows.rollout`) and translated by daemon bridge adapters into run-service options (max active runs, automation controls, retries, commit approval requirements).
+12. Guided workflow telemetry lives inside `internal/guidedworkflows` as a snapshot API (`GetRunMetrics`), is persisted through daemon adapters into app state, and is exposed at `GET /v1/workflow-runs/metrics` with operational reset support at `POST /v1/workflow-runs/metrics/reset`.
 
 ## Streaming and Persistence
 

@@ -287,6 +287,58 @@ func updateSessionRuntimeCmd(api SessionUpdateAPI, id string, runtimeOptions *ty
 	}
 }
 
+func createWorkflowRunCmd(api GuidedWorkflowAPI, req client.CreateWorkflowRunRequest) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunCreatedMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.CreateWorkflowRun(ctx, req)
+		return workflowRunCreatedMsg{run: run, err: err}
+	}
+}
+
+func startWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunStartedMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.StartWorkflowRun(ctx, runID)
+		return workflowRunStartedMsg{run: run, err: err}
+	}
+}
+
+func fetchWorkflowRunSnapshotCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunSnapshotMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.GetWorkflowRun(ctx, runID)
+		if err != nil {
+			return workflowRunSnapshotMsg{err: err}
+		}
+		timeline, err := api.GetWorkflowRunTimeline(ctx, runID)
+		return workflowRunSnapshotMsg{run: run, timeline: timeline, err: err}
+	}
+}
+
+func decideWorkflowRunCmd(api GuidedWorkflowAPI, runID string, req client.WorkflowRunDecisionRequest) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunDecisionMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.DecideWorkflowRun(ctx, runID, req)
+		return workflowRunDecisionMsg{run: run, err: err}
+	}
+}
+
 func assignGroupWorkspacesCmd(api WorkspaceUpdateAPI, groupID string, workspaceIDs []string, workspaces []*types.Workspace) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)

@@ -321,6 +321,19 @@ func TestNotificationDedupeKeyUsesTurnIDThenStatusSource(t *testing.T) {
 	}
 }
 
+func TestNotificationDedupeKeyGuidedWorkflowDecisionIncludesSource(t *testing.T) {
+	key := notificationDedupeKey(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess",
+		TurnID:    "turn-a",
+		Status:    "decision_needed",
+		Source:    "guided_workflow_decision:gwf-1:cd-1",
+	})
+	if key != "turn.completed|sess|turn-a|guided_workflow_decision:gwf-1:cd-1" {
+		t.Fatalf("unexpected guided workflow decision dedupe key: %q", key)
+	}
+}
+
 func TestNotificationTitleBody(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -369,6 +382,29 @@ func TestNotificationTitleBody(t *testing.T) {
 				t.Fatalf("unexpected body: %q", body)
 			}
 		})
+	}
+}
+
+func TestNotificationTitleBodyGuidedWorkflowDecision(t *testing.T) {
+	summary, body := notificationTitleBody(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-decision",
+		Status:    "decision_needed",
+		Source:    "guided_workflow_decision:gwf-1:cd-1",
+		Payload: map[string]any{
+			"reason":             "confidence_below_threshold",
+			"risk_summary":       "severity=high tier=tier_2 score=0.62 pause_threshold=0.60",
+			"recommended_action": "request_revision",
+		},
+	})
+	if summary != "Archon workflow decision needed" {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	if !strings.Contains(body, "reason: confidence_below_threshold") {
+		t.Fatalf("expected reason in body, got %q", body)
+	}
+	if !strings.Contains(body, "recommended: request_revision") {
+		t.Fatalf("expected recommendation in body, got %q", body)
 	}
 }
 

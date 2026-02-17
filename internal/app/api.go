@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"control/internal/client"
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -227,6 +228,14 @@ type StateAPI interface {
 	AppStateUpdateAPI
 }
 
+type GuidedWorkflowAPI interface {
+	CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error)
+	StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	DecideWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error)
+	GetWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)
+}
+
 type ClientAPI struct {
 	client *client.Client
 }
@@ -393,4 +402,24 @@ func (a *ClientAPI) GetAppState(ctx context.Context) (*types.AppState, error) {
 
 func (a *ClientAPI) UpdateAppState(ctx context.Context, state *types.AppState) (*types.AppState, error) {
 	return a.client.UpdateAppState(ctx, state)
+}
+
+func (a *ClientAPI) CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.CreateWorkflowRun(ctx, req)
+}
+
+func (a *ClientAPI) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.StartWorkflowRun(ctx, runID)
+}
+
+func (a *ClientAPI) DecideWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.DecideWorkflowRun(ctx, runID, req)
+}
+
+func (a *ClientAPI) GetWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.GetWorkflowRun(ctx, runID)
+}
+
+func (a *ClientAPI) GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error) {
+	return a.client.GetWorkflowRunTimeline(ctx, runID)
 }

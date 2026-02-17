@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 type AppState struct {
 	ActiveWorkspaceID         string                            `json:"active_workspace_id"`
 	ActiveWorktreeID          string                            `json:"active_worktree_id"`
@@ -13,6 +15,7 @@ type AppState struct {
 	ComposeDefaultsByProvider map[string]*SessionRuntimeOptions `json:"compose_defaults_by_provider,omitempty"`
 	ProviderBadges            map[string]*ProviderBadgeConfig   `json:"provider_badges,omitempty"`
 	Recents                   *AppStateRecents                  `json:"recents,omitempty"`
+	GuidedWorkflowTelemetry   *GuidedWorkflowTelemetryState     `json:"guided_workflow_telemetry,omitempty"`
 }
 
 type ProviderBadgeConfig struct {
@@ -44,4 +47,17 @@ type AppStateReadyItem struct {
 type AppStateReadyQueueEntry struct {
 	SessionID string `json:"session_id"`
 	Seq       int64  `json:"seq"`
+}
+
+type GuidedWorkflowTelemetryState struct {
+	CapturedAt           time.Time      `json:"captured_at,omitempty"`
+	RunsStarted          int            `json:"runs_started,omitempty"`
+	RunsCompleted        int            `json:"runs_completed,omitempty"`
+	RunsFailed           int            `json:"runs_failed,omitempty"`
+	PauseCount           int            `json:"pause_count,omitempty"`
+	PauseRate            float64        `json:"pause_rate,omitempty"`
+	ApprovalCount        int            `json:"approval_count,omitempty"`
+	ApprovalLatencyAvgMS int64          `json:"approval_latency_avg_ms,omitempty"`
+	ApprovalLatencyMaxMS int64          `json:"approval_latency_max_ms,omitempty"`
+	InterventionCauses   map[string]int `json:"intervention_causes,omitempty"`
 }

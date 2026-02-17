@@ -46,6 +46,37 @@ script_commands = ["~/.archon/scripts/notify.sh"]
 script_timeout_seconds = 20
 dedupe_window_seconds = 8
 
+[guided_workflows]
+enabled = true
+auto_start = true
+checkpoint_style = "confidence-weighted"
+mode = "guarded_autopilot"
+
+[guided_workflows.policy]
+confidence_threshold = 0.75
+pause_threshold = 0.55
+high_blast_radius_file_count = 30
+
+[guided_workflows.policy.hard_gates]
+ambiguity_blocker = true
+sensitive_files = true
+pre_commit_approval = true
+failing_checks = true
+
+[guided_workflows.policy.conditional_gates]
+confidence_below_threshold = true
+high_blast_radius = true
+sensitive_files = false
+
+[guided_workflows.rollout]
+telemetry_enabled = false
+max_active_runs = 5
+automation_enabled = true
+allow_quality_checks = true
+allow_commit = true
+require_commit_approval = false
+max_retry_attempts = 4
+
 [providers.codex]
 command = "/usr/local/bin/codex"
 default_model = "gpt-5.3-codex"
@@ -116,6 +147,54 @@ command = "/usr/local/bin/gemini"
 	}
 	if got := cfg.NotificationScriptCommands(); len(got) != 1 || got[0] != "~/.archon/scripts/notify.sh" {
 		t.Fatalf("unexpected notification script commands: %#v", got)
+	}
+	if !cfg.GuidedWorkflowsEnabled() {
+		t.Fatalf("expected guided workflows enabled=true")
+	}
+	if !cfg.GuidedWorkflowsAutoStart() {
+		t.Fatalf("expected guided workflows auto_start=true")
+	}
+	if got := cfg.GuidedWorkflowsCheckpointStyle(); got != "confidence_weighted" {
+		t.Fatalf("unexpected guided workflows checkpoint style: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
+		t.Fatalf("unexpected guided workflows mode: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.75 {
+		t.Fatalf("unexpected guided workflows confidence threshold: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyPauseThreshold(); got != 0.55 {
+		t.Fatalf("unexpected guided workflows pause threshold: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyHighBlastRadiusFileCount(); got != 30 {
+		t.Fatalf("unexpected guided workflows high blast radius file count: %d", got)
+	}
+	if !cfg.GuidedWorkflowsPolicyHardGatePreCommitApproval() {
+		t.Fatalf("expected guided workflows hard gate pre-commit approval=true")
+	}
+	if !cfg.GuidedWorkflowsPolicyConditionalGateConfidenceBelowThreshold() {
+		t.Fatalf("expected guided workflows conditional confidence gate=true")
+	}
+	if cfg.GuidedWorkflowsRolloutTelemetryEnabled() {
+		t.Fatalf("expected guided workflow rollout telemetry enabled=false from config")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxActiveRuns(); got != 5 {
+		t.Fatalf("unexpected guided workflows rollout max active runs: %d", got)
+	}
+	if !cfg.GuidedWorkflowsRolloutAutomationEnabled() {
+		t.Fatalf("expected guided workflows rollout automation enabled=true")
+	}
+	if !cfg.GuidedWorkflowsRolloutAllowQualityChecks() {
+		t.Fatalf("expected guided workflows rollout allow_quality_checks=true")
+	}
+	if !cfg.GuidedWorkflowsRolloutAllowCommit() {
+		t.Fatalf("expected guided workflows rollout allow_commit=true")
+	}
+	if cfg.GuidedWorkflowsRolloutRequireCommitApproval() {
+		t.Fatalf("expected guided workflows rollout require_commit_approval=false")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxRetryAttempts(); got != 4 {
+		t.Fatalf("unexpected guided workflows rollout max retry attempts: %d", got)
 	}
 	if got := cfg.ProviderCommand("codex"); got != "/usr/local/bin/codex" {
 		t.Fatalf("unexpected codex command: %q", got)
@@ -243,6 +322,57 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	}
 	if got := cfg.NotificationMethods(); len(got) == 0 || got[0] != "auto" {
 		t.Fatalf("unexpected default notification methods: %#v", got)
+	}
+	if cfg.GuidedWorkflowsEnabled() {
+		t.Fatalf("expected guided workflows disabled by default")
+	}
+	if cfg.GuidedWorkflowsAutoStart() {
+		t.Fatalf("expected guided workflows auto start disabled by default")
+	}
+	if got := cfg.GuidedWorkflowsCheckpointStyle(); got != "confidence_weighted" {
+		t.Fatalf("unexpected default guided workflows checkpoint style: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
+		t.Fatalf("unexpected default guided workflows mode: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.70 {
+		t.Fatalf("unexpected default guided workflows confidence threshold: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyPauseThreshold(); got != 0.60 {
+		t.Fatalf("unexpected default guided workflows pause threshold: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyHighBlastRadiusFileCount(); got != 20 {
+		t.Fatalf("unexpected default guided workflows high blast radius file count: %d", got)
+	}
+	if !cfg.GuidedWorkflowsPolicyHardGateAmbiguityBlocker() {
+		t.Fatalf("expected default hard gate ambiguity blocker=true")
+	}
+	if cfg.GuidedWorkflowsPolicyHardGatePreCommitApproval() {
+		t.Fatalf("expected default hard gate pre-commit approval=false")
+	}
+	if !cfg.GuidedWorkflowsPolicyConditionalGateHighBlastRadius() {
+		t.Fatalf("expected default conditional high blast radius gate=true")
+	}
+	if !cfg.GuidedWorkflowsRolloutTelemetryEnabled() {
+		t.Fatalf("expected guided workflow rollout telemetry enabled by default")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxActiveRuns(); got != 3 {
+		t.Fatalf("unexpected guided workflow rollout max active runs: %d", got)
+	}
+	if cfg.GuidedWorkflowsRolloutAutomationEnabled() {
+		t.Fatalf("expected guided workflow rollout automation disabled by default")
+	}
+	if cfg.GuidedWorkflowsRolloutAllowQualityChecks() {
+		t.Fatalf("expected guided workflow rollout quality checks disabled by default")
+	}
+	if cfg.GuidedWorkflowsRolloutAllowCommit() {
+		t.Fatalf("expected guided workflow rollout commit disabled by default")
+	}
+	if !cfg.GuidedWorkflowsRolloutRequireCommitApproval() {
+		t.Fatalf("expected guided workflow rollout commit approval required by default")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxRetryAttempts(); got != 2 {
+		t.Fatalf("unexpected guided workflow rollout max retry attempts: %d", got)
 	}
 	if got := cfg.OpenCodeUsername("opencode"); got != "opencode" {
 		t.Fatalf("unexpected default opencode username: %q", got)
@@ -411,6 +541,42 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 		Debug: CoreDebugConfig{
 			StreamDebug: true,
 		},
+		GuidedWorkflows: CoreGuidedWorkflowsConfig{
+			Enabled:         boolPtr(true),
+			AutoStart:       boolPtr(true),
+			CheckpointStyle: " confidence-weighted ",
+			Mode:            " guarded-autopilot ",
+			Policy: CoreGuidedWorkflowsPolicyConfig{
+				ConfidenceThreshold:      0.80,
+				PauseThreshold:           0.65,
+				HighBlastRadiusFileCount: 40,
+				HardGates: CoreGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker:         boolPtr(false),
+					ConfidenceBelowThreshold: boolPtr(true),
+					HighBlastRadius:          boolPtr(true),
+					SensitiveFiles:           boolPtr(false),
+					PreCommitApproval:        boolPtr(true),
+					FailingChecks:            boolPtr(false),
+				},
+				ConditionalGates: CoreGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker:         boolPtr(false),
+					ConfidenceBelowThreshold: boolPtr(true),
+					HighBlastRadius:          boolPtr(false),
+					SensitiveFiles:           boolPtr(true),
+					PreCommitApproval:        boolPtr(false),
+					FailingChecks:            boolPtr(true),
+				},
+			},
+			Rollout: CoreGuidedWorkflowsRolloutConfig{
+				TelemetryEnabled:      boolPtr(false),
+				MaxActiveRuns:         9,
+				AutomationEnabled:     boolPtr(true),
+				AllowQualityChecks:    boolPtr(true),
+				AllowCommit:           boolPtr(true),
+				RequireCommitApproval: boolPtr(false),
+				MaxRetryAttempts:      99,
+			},
+		},
 		Providers: CoreProvidersConfig{
 			Codex: CoreCodexProviderConfig{
 				Command:        " codex-bin ",
@@ -526,6 +692,57 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	if got, ok := cfg.CodexNetworkAccess(); !ok || !got {
 		t.Fatalf("expected network access true, got value=%v ok=%v", got, ok)
 	}
+	if !cfg.GuidedWorkflowsEnabled() {
+		t.Fatalf("expected guided workflows enabled")
+	}
+	if !cfg.GuidedWorkflowsAutoStart() {
+		t.Fatalf("expected guided workflows auto_start enabled")
+	}
+	if got := cfg.GuidedWorkflowsCheckpointStyle(); got != "confidence_weighted" {
+		t.Fatalf("unexpected guided workflows checkpoint style: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
+		t.Fatalf("unexpected guided workflows mode: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.80 {
+		t.Fatalf("unexpected guided workflows confidence threshold: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyPauseThreshold(); got != 0.65 {
+		t.Fatalf("unexpected guided workflows pause threshold: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyHighBlastRadiusFileCount(); got != 40 {
+		t.Fatalf("unexpected guided workflows high blast radius file count: %d", got)
+	}
+	if cfg.GuidedWorkflowsPolicyHardGateAmbiguityBlocker() {
+		t.Fatalf("expected hard gate ambiguity blocker=false")
+	}
+	if !cfg.GuidedWorkflowsPolicyHardGatePreCommitApproval() {
+		t.Fatalf("expected hard gate pre-commit approval=true")
+	}
+	if cfg.GuidedWorkflowsPolicyConditionalGateHighBlastRadius() {
+		t.Fatalf("expected conditional high blast radius=false")
+	}
+	if cfg.GuidedWorkflowsRolloutTelemetryEnabled() {
+		t.Fatalf("expected rollout telemetry enabled=false")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxActiveRuns(); got != 9 {
+		t.Fatalf("unexpected rollout max active runs: %d", got)
+	}
+	if !cfg.GuidedWorkflowsRolloutAutomationEnabled() {
+		t.Fatalf("expected rollout automation enabled=true")
+	}
+	if !cfg.GuidedWorkflowsRolloutAllowQualityChecks() {
+		t.Fatalf("expected rollout allow quality checks=true")
+	}
+	if !cfg.GuidedWorkflowsRolloutAllowCommit() {
+		t.Fatalf("expected rollout allow commit=true")
+	}
+	if cfg.GuidedWorkflowsRolloutRequireCommitApproval() {
+		t.Fatalf("expected rollout require commit approval=false")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxRetryAttempts(); got != 5 {
+		t.Fatalf("expected rollout max retry attempts clamped to 5, got %d", got)
+	}
 }
 
 func TestUIConfigResolveKeybindingsAbsolutePath(t *testing.T) {
@@ -601,5 +818,82 @@ func TestCoreConfigLogLevelDefaultsWhenBlank(t *testing.T) {
 	}
 	if got := cfg.LogLevel(); got != "info" {
 		t.Fatalf("expected info default, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowsConfigFallbacks(t *testing.T) {
+	cfg := CoreConfig{
+		GuidedWorkflows: CoreGuidedWorkflowsConfig{
+			CheckpointStyle: "risk_based",
+			Mode:            "manual",
+			Policy: CoreGuidedWorkflowsPolicyConfig{
+				ConfidenceThreshold:      0,
+				PauseThreshold:           10,
+				HighBlastRadiusFileCount: -1,
+				HardGates: CoreGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker: nil,
+				},
+				ConditionalGates: CoreGuidedWorkflowsPolicyGatesConfig{
+					HighBlastRadius: nil,
+				},
+			},
+			Rollout: CoreGuidedWorkflowsRolloutConfig{
+				TelemetryEnabled:      nil,
+				MaxActiveRuns:         0,
+				AutomationEnabled:     nil,
+				AllowQualityChecks:    nil,
+				AllowCommit:           nil,
+				RequireCommitApproval: nil,
+				MaxRetryAttempts:      0,
+			},
+		},
+	}
+	if cfg.GuidedWorkflowsEnabled() {
+		t.Fatalf("expected guided workflows disabled when enabled unset")
+	}
+	if cfg.GuidedWorkflowsAutoStart() {
+		t.Fatalf("expected guided workflows auto_start disabled when unset")
+	}
+	if got := cfg.GuidedWorkflowsCheckpointStyle(); got != "confidence_weighted" {
+		t.Fatalf("unexpected checkpoint fallback: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
+		t.Fatalf("unexpected mode fallback: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.70 {
+		t.Fatalf("unexpected confidence threshold fallback: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyPauseThreshold(); got != 0.60 {
+		t.Fatalf("unexpected pause threshold fallback: %v", got)
+	}
+	if got := cfg.GuidedWorkflowsPolicyHighBlastRadiusFileCount(); got != 20 {
+		t.Fatalf("unexpected high blast radius file count fallback: %d", got)
+	}
+	if !cfg.GuidedWorkflowsPolicyHardGateAmbiguityBlocker() {
+		t.Fatalf("expected default hard gate ambiguity blocker=true")
+	}
+	if !cfg.GuidedWorkflowsPolicyConditionalGateHighBlastRadius() {
+		t.Fatalf("expected default conditional gate high blast radius=true")
+	}
+	if !cfg.GuidedWorkflowsRolloutTelemetryEnabled() {
+		t.Fatalf("expected default rollout telemetry enabled=true")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxActiveRuns(); got != 3 {
+		t.Fatalf("unexpected default rollout max active runs: %d", got)
+	}
+	if cfg.GuidedWorkflowsRolloutAutomationEnabled() {
+		t.Fatalf("expected default rollout automation enabled=false")
+	}
+	if cfg.GuidedWorkflowsRolloutAllowQualityChecks() {
+		t.Fatalf("expected default rollout allow quality checks=false")
+	}
+	if cfg.GuidedWorkflowsRolloutAllowCommit() {
+		t.Fatalf("expected default rollout allow commit=false")
+	}
+	if !cfg.GuidedWorkflowsRolloutRequireCommitApproval() {
+		t.Fatalf("expected default rollout require commit approval=true")
+	}
+	if got := cfg.GuidedWorkflowsRolloutMaxRetryAttempts(); got != 2 {
+		t.Fatalf("unexpected default rollout max retry attempts: %d", got)
 	}
 }

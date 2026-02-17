@@ -377,9 +377,32 @@ func isZeroAppState(state *types.AppState) bool {
 		len(state.NoteDrafts) == 0 &&
 		len(state.ComposeDefaultsByProvider) == 0 &&
 		len(state.ProviderBadges) == 0 &&
-		(state.Recents == nil ||
-			(len(state.Recents.Running) == 0 &&
-				len(state.Recents.Ready) == 0 &&
-				len(state.Recents.ReadyQueue) == 0 &&
-				len(state.Recents.DismissedTurn) == 0))
+		isZeroRecentsState(state.Recents) &&
+		isZeroGuidedWorkflowTelemetryState(state.GuidedWorkflowTelemetry)
+}
+
+func isZeroRecentsState(state *types.AppStateRecents) bool {
+	if state == nil {
+		return true
+	}
+	return len(state.Running) == 0 &&
+		len(state.Ready) == 0 &&
+		len(state.ReadyQueue) == 0 &&
+		len(state.DismissedTurn) == 0
+}
+
+func isZeroGuidedWorkflowTelemetryState(state *types.GuidedWorkflowTelemetryState) bool {
+	if state == nil {
+		return true
+	}
+	return state.CapturedAt.IsZero() &&
+		state.RunsStarted == 0 &&
+		state.RunsCompleted == 0 &&
+		state.RunsFailed == 0 &&
+		state.PauseCount == 0 &&
+		state.PauseRate == 0 &&
+		state.ApprovalCount == 0 &&
+		state.ApprovalLatencyAvgMS == 0 &&
+		state.ApprovalLatencyMaxMS == 0 &&
+		len(state.InterventionCauses) == 0
 }

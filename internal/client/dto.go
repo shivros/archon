@@ -1,6 +1,9 @@
 package client
 
-import "control/internal/types"
+import (
+	"control/internal/guidedworkflows"
+	"control/internal/types"
+)
 
 type SessionsResponse struct {
 	Sessions []*types.Session `json:"sessions"`
@@ -111,4 +114,23 @@ type HealthResponse struct {
 	OK      bool   `json:"ok"`
 	Version string `json:"version"`
 	PID     int    `json:"pid"`
+}
+
+type CreateWorkflowRunRequest struct {
+	TemplateID      string                                    `json:"template_id,omitempty"`
+	WorkspaceID     string                                    `json:"workspace_id,omitempty"`
+	WorktreeID      string                                    `json:"worktree_id,omitempty"`
+	SessionID       string                                    `json:"session_id,omitempty"`
+	TaskID          string                                    `json:"task_id,omitempty"`
+	PolicyOverrides *guidedworkflows.CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
+}
+
+type WorkflowRunDecisionRequest struct {
+	Action     guidedworkflows.DecisionAction `json:"action"`
+	DecisionID string                         `json:"decision_id,omitempty"`
+	Note       string                         `json:"note,omitempty"`
+}
+
+type WorkflowRunTimelineResponse struct {
+	Timeline []guidedworkflows.RunTimelineEvent `json:"timeline"`
 }

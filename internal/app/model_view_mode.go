@@ -92,6 +92,8 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		if m.renameInput != nil {
 			bodyText = m.renameInput.View()
 		}
+	case uiModeGuidedWorkflow:
+		headerText = "Guided Workflow"
 	}
 	return headerText, bodyText
 }

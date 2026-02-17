@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -286,6 +287,27 @@ type selectDebounceMsg struct {
 type clipboardResultMsg struct {
 	success string
 	err     error
+}
+
+type workflowRunCreatedMsg struct {
+	run *guidedworkflows.WorkflowRun
+	err error
+}
+
+type workflowRunStartedMsg struct {
+	run *guidedworkflows.WorkflowRun
+	err error
+}
+
+type workflowRunSnapshotMsg struct {
+	run      *guidedworkflows.WorkflowRun
+	timeline []guidedworkflows.RunTimelineEvent
+	err      error
+}
+
+type workflowRunDecisionMsg struct {
+	run *guidedworkflows.WorkflowRun
+	err error
 }
 
 type tickMsg time.Time

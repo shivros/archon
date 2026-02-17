@@ -44,6 +44,7 @@ const (
 	sessionMetaRefreshDelay    = 15 * time.Second
 	sessionMetaSyncDelay       = 2 * time.Minute
 	selectionHistoryMaxEntries = 256
+	guidedWorkflowPollInterval = 1500 * time.Millisecond
 )
 
 type uiMode int
@@ -74,11 +75,13 @@ const (
 	uiModePickNoteMoveTarget
 	uiModePickNoteMoveWorktree
 	uiModePickNoteMoveSession
+	uiModeGuidedWorkflow
 )
 
 type Model struct {
 	workspaceAPI                        WorkspaceAPI
 	sessionAPI                          SessionAPI
+	guidedWorkflowAPI                   GuidedWorkflowAPI
 	sessionSelectionAPI                 SessionSelectionAPI
 	sessionHistoryAPI                   SessionHistoryAPI
 	notesAPI                            NotesAPI
@@ -226,6 +229,7 @@ type Model struct {
 	notesPanelViewport                  viewport.Model
 	noteMoveNoteID                      string
 	noteMoveReturnMode                  uiMode
+	guidedWorkflow                      *GuidedWorkflowUIController
 	uiLatency                           *uiLatencyTracker
 	selectionLoadPolicy                 SessionSelectionLoadPolicy
 	historyLoadPolicy                   SessionHistoryLoadPolicy
@@ -340,6 +344,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	model := Model{
 		workspaceAPI:                        api,
 		sessionAPI:                          api,
+		guidedWorkflowAPI:                   api,
 		sessionSelectionAPI:                 api,
 		sessionHistoryAPI:                   api,
 		notesAPI:                            api,
@@ -403,6 +408,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		menu:                                NewMenuController(),
 		contextMenu:                         NewContextMenuController(),
 		confirm:                             NewConfirmController(),
+		guidedWorkflow:                      NewGuidedWorkflowUIController(),
 		recents:                             NewRecentsTracker(),
 		recentsExpandedSessions:             map[string]bool{},
 		recentsPreviews:                     map[string]recentsPreview{},
@@ -578,6 +584,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.reduceAddNoteMode(msg); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.reduceGuidedWorkflowMode(msg); handled {
+		return m, cmd
+	}
 	if _, ok := msg.(tea.PasteMsg); ok {
 		if handled, cmd := m.reduceSearchModeKey(msg); handled {
 			return m, cmd
@@ -613,7 +622,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.handleViewportScroll(msg) {
 			return m, nil
 		}
-		if m.mode == uiModeNotes || m.mode == uiModeAddNote {
+		if m.mode == uiModeNotes || m.mode == uiModeAddNote || m.mode == uiModeGuidedWorkflow {
 			return m, nil
 		}
 		if handled, cmd := m.reduceNormalModeKey(msg); handled {
@@ -811,6 +820,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	}
 	if m.recentsReplyInput != nil {
 		m.recentsReplyInput.Resize(mainViewportWidth)
+	}
+	if m.mode == uiModeGuidedWorkflow {
+		m.renderGuidedWorkflowContent()
 	}
 }
 
@@ -1579,6 +1591,9 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if cmd := m.maybeAutoRefreshSessionMeta(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	if cmd := m.maybeAutoRefreshGuidedWorkflow(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	m.maybeRefreshRelativeTimestampLabels(now)
 	cmds = append(cmds, m.tickCmd())
 	return tea.Batch(cmds...)
@@ -1976,7 +1991,7 @@ func (m *Model) shouldAutoExpandNewestReasoning() bool {
 
 func (m *Model) usesViewport() bool {
 	switch m.mode {
-	case uiModeNormal, uiModeCompose, uiModeRecents, uiModeSearch, uiModeNotes, uiModeAddNote:
+	case uiModeNormal, uiModeCompose, uiModeRecents, uiModeSearch, uiModeNotes, uiModeAddNote, uiModeGuidedWorkflow:
 		return true
 	default:
 		return false
@@ -2252,7 +2267,7 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 }
 
 func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
-	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeRecents && m.mode != uiModeNotes && m.mode != uiModeAddNote {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeRecents && m.mode != uiModeNotes && m.mode != uiModeAddNote && m.mode != uiModeGuidedWorkflow {
 		return false
 	}
 	wasFollowing := m.follow
