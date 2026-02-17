@@ -197,6 +197,7 @@ type Model struct {
 	recentsExpandedSessions             map[string]bool
 	recentsReplySessionID               string
 	recentsPreviews                     map[string]recentsPreview
+	recentsCompletionWatching           map[string]string
 	newSession                          *newSessionTarget
 	pendingSelectID                     string
 	selectSeq                           int
@@ -383,6 +384,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		recents:                             NewRecentsTracker(),
 		recentsExpandedSessions:             map[string]bool{},
 		recentsPreviews:                     map[string]recentsPreview{},
+		recentsCompletionWatching:           map[string]string{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
 		uiLatency:                           newUILatencyTracker(nil),
@@ -3643,6 +3645,10 @@ func shouldStreamItems(provider string) bool {
 
 func providerSupportsApprovals(provider string) bool {
 	return providers.CapabilitiesFor(provider).SupportsApprovals
+}
+
+func providerSupportsEvents(provider string) bool {
+	return providers.CapabilitiesFor(provider).SupportsEvents
 }
 
 func (m *Model) composeSessionID() string {

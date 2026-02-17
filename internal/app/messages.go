@@ -153,6 +153,13 @@ type recentsPreviewMsg struct {
 	err      error
 }
 
+type recentsTurnCompletedMsg struct {
+	id           string
+	expectedTurn string
+	turnID       string
+	err          error
+}
+
 type historyPollMsg struct {
 	id        string
 	key       string

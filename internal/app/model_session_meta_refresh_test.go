@@ -68,6 +68,36 @@ func TestSendMsgMarksNonSelectedSessionUnread(t *testing.T) {
 	}
 }
 
+func TestSendMsgRunTransitionsToReadyOnMetaAdvance(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.showRecents = true
+	m.sessionMeta["s1"].LastTurnID = "turn-old"
+
+	handled, _ := m.reduceStateMessages(sendMsg{id: "s1", turnID: "turn-new"})
+	if !handled {
+		t.Fatalf("expected sendMsg to be handled")
+	}
+	if m.recents == nil || !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to be tracked as running after send")
+	}
+
+	handled, _ = m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: m.sessions,
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-new"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if !m.recents.IsReady("s1") {
+		t.Fatalf("expected s1 to move into ready queue after metadata advance")
+	}
+	if m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to leave running queue after metadata advance")
+	}
+}
+
 func TestMaybeAutoRefreshSessionMetaPrefersSyncWhenDue(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()

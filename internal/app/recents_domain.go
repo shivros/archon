@@ -28,6 +28,8 @@ type RecentsTracker struct {
 	dismissedTurn map[string]string
 }
 
+const recentsUnknownCompletionTurn = "__unknown_completion__"
+
 func NewRecentsTracker() *RecentsTracker {
 	return &RecentsTracker{
 		running:       map[string]recentsRun{},
@@ -93,13 +95,39 @@ func (t *RecentsTracker) ObserveMeta(meta map[string]*types.SessionMeta, observe
 		if turnID == "" || turnID == strings.TrimSpace(run.BaselineTurnID) {
 			continue
 		}
-		delete(t.running, sessionID)
-		item, enqueued := t.enqueueReady(sessionID, turnID, observedAt)
+		item, enqueued := t.CompleteRun(sessionID, "", turnID, observedAt)
 		if enqueued {
 			ready = append(ready, item)
 		}
 	}
 	return ready
+}
+
+func (t *RecentsTracker) CompleteRun(sessionID, expectedTurn, completionTurn string, completedAt time.Time) (recentsReadyItem, bool) {
+	if t == nil {
+		return recentsReadyItem{}, false
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return recentsReadyItem{}, false
+	}
+	run, ok := t.running[sessionID]
+	if !ok {
+		return recentsReadyItem{}, false
+	}
+	expectedTurn = strings.TrimSpace(expectedTurn)
+	if expectedTurn != "" && strings.TrimSpace(run.BaselineTurnID) != expectedTurn {
+		return recentsReadyItem{}, false
+	}
+	completionTurn = strings.TrimSpace(completionTurn)
+	if completionTurn == "" {
+		completionTurn = strings.TrimSpace(run.BaselineTurnID)
+	}
+	if completionTurn == "" {
+		completionTurn = recentsUnknownCompletionTurn
+	}
+	delete(t.running, sessionID)
+	return t.enqueueReady(sessionID, completionTurn, completedAt)
 }
 
 func (t *RecentsTracker) ObserveSessions(sessions []*types.Session) {

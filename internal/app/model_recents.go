@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"control/internal/types"
 )
@@ -291,7 +292,8 @@ func (m *Model) syncRecentsSelection(entries []recentsEntry) {
 func (m *Model) renderRecentsContent(state recentsViewState) string {
 	var builder strings.Builder
 	builder.WriteString("Recents overview\n")
-	builder.WriteString("Use j/k to choose • r reply • x expand • enter open • d dismiss ready\n\n")
+	builder.WriteString("Use j/k to choose • r reply • x expand • enter open • d dismiss ready\n")
+	builder.WriteString("Buttons are shown above each preview bubble.\n\n")
 	switch state.Filter {
 	case sidebarRecentsFilterReady:
 		m.renderRecentsSection(&builder, "Ready", state.Ready)
@@ -306,8 +308,8 @@ func (m *Model) renderRecentsContent(state recentsViewState) string {
 }
 
 func (m *Model) renderRecentsSection(builder *strings.Builder, title string, entries []recentsEntry) {
-	builder.WriteString(fmt.Sprintf("%s (%d)\n", title, len(entries)))
-	builder.WriteString(strings.Repeat("-", max(8, len(title)+6)))
+	heading := fmt.Sprintf("%s (%d)", title, len(entries))
+	builder.WriteString(headerStyle.Render(heading))
 	builder.WriteString("\n")
 	if len(entries) == 0 {
 		builder.WriteString("No sessions.\n")
@@ -319,21 +321,94 @@ func (m *Model) renderRecentsSection(builder *strings.Builder, title string, ent
 }
 
 func (m *Model) renderRecentsCard(builder *strings.Builder, entry recentsEntry) {
+	width := m.recentsContentWidth()
 	sessionTitleText := sessionTitle(entry.Session, entry.Meta)
 	if strings.TrimSpace(sessionTitleText) == "" {
 		sessionTitleText = entry.SessionID
 	}
-	marker := " "
-	if strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID {
-		marker = ">"
+	selected := strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID
+	if selected {
+		builder.WriteString(selectedMessageStyle.Render("▶ Selected"))
+		builder.WriteString("\n")
 	}
-	statusLabel := "RUNNING"
+	statusLabel := "Running"
 	if entry.Status == recentsEntryReady {
-		statusLabel = "READY"
+		statusLabel = "Ready"
 	}
-	since := formatSince(sessionLastActive(entry.Session, entry.Meta))
-	builder.WriteString(fmt.Sprintf("%s %s [%s] • %s • %s\n", marker, sessionTitleText, statusLabel, entry.WorkspaceName, since))
 	expanded := m.recentsExpandedSessions[entry.SessionID]
+	controlsLine := m.renderRecentsControlsLine(entry, expanded, selected, width)
+	if controlsLine != "" {
+		builder.WriteString(controlsLine)
+		builder.WriteString("\n")
+	}
+	metaSummary := fmt.Sprintf("%s • %s • %s • %s", statusLabel, sessionTitleText, entry.WorkspaceName, formatSince(sessionLastActive(entry.Session, entry.Meta)))
+	if width > 0 {
+		metaSummary = truncateToWidth(metaSummary, width)
+	}
+	builder.WriteString(chatMetaStyle.Render(metaSummary))
+	builder.WriteString("\n")
+	text := recentsPreviewText(entry, expanded)
+	bubble := m.renderRecentsBubble(text, selected, width)
+	builder.WriteString(bubble)
+	builder.WriteString("\n\n")
+}
+
+func (m *Model) recentsContentWidth() int {
+	if m == nil {
+		return 80
+	}
+	width := m.viewport.Width()
+	if width <= 0 {
+		width = m.width - m.sidebarWidth() - 2
+	}
+	if width <= 0 {
+		width = 80
+	}
+	return max(40, width)
+}
+
+func (m *Model) renderRecentsControlsLine(entry recentsEntry, expanded bool, selected bool, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	expandLabel := "[Expand]"
+	if expanded {
+		expandLabel = "[Collapse]"
+	}
+	controls := []struct {
+		label string
+		style lipgloss.Style
+	}{
+		{label: "[Reply]", style: copyButtonStyle},
+		{label: expandLabel, style: copyButtonStyle},
+		{label: "[Open]", style: pinButtonStyle},
+	}
+	if entry.Status == recentsEntryReady {
+		controls = append(controls, struct {
+			label string
+			style lipgloss.Style
+		}{
+			label: "[Dismiss]",
+			style: deleteButtonStyle,
+		})
+	}
+	plainParts := make([]string, 0, len(controls))
+	displayParts := make([]string, 0, len(controls))
+	for _, control := range controls {
+		plainParts = append(plainParts, control.label)
+		displayParts = append(displayParts, control.style.Render(control.label))
+	}
+	metaPlain := strings.Join(plainParts, " ")
+	metaDisplay := strings.Join(displayParts, chatMetaStyle.Render(" "))
+	metaStyle := chatMetaStyle
+	if selected {
+		metaStyle = chatMetaSelectedStyle
+	}
+	metaLine, _ := composeChatMetaLine(width, lipgloss.Left, metaPlain, metaDisplay, "", "", false)
+	return metaStyle.Render(metaLine)
+}
+
+func recentsPreviewText(entry recentsEntry, expanded bool) string {
 	previewText := strings.TrimSpace(entry.Preview.Preview)
 	fullText := strings.TrimSpace(entry.Preview.Full)
 	if entry.Preview.Loading {
@@ -349,22 +424,30 @@ func (m *Model) renderRecentsCard(builder *strings.Builder, entry recentsEntry) 
 		if fullText == "" {
 			fullText = previewText
 		}
-		for _, line := range strings.Split(fullText, "\n") {
-			builder.WriteString("    ")
-			builder.WriteString(line)
-			builder.WriteString("\n")
-		}
-	} else {
-		builder.WriteString("    ")
-		builder.WriteString(previewText)
-		builder.WriteString("\n")
+		return fullText
 	}
-	actionLine := "    [r] reply  [x] expand  [enter] open thread"
-	if entry.Status == recentsEntryReady {
-		actionLine += "  [d] dismiss"
+	return previewText
+}
+
+func (m *Model) renderRecentsBubble(text string, selected bool, width int) string {
+	if width <= 0 {
+		width = 80
 	}
-	builder.WriteString(actionLine)
-	builder.WriteString("\n\n")
+	maxBubbleWidth := width - 4
+	if maxBubbleWidth < 10 {
+		maxBubbleWidth = width
+	}
+	innerWidth := maxBubbleWidth - 2 - 2
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	rendered := renderChatText(ChatRoleAgent, text, innerWidth)
+	style := agentBubbleStyle
+	if selected {
+		style = style.Copy().BorderForeground(lipgloss.Color("117"))
+	}
+	bubble := style.Render(rendered)
+	return lipgloss.PlaceHorizontal(width, lipgloss.Left, bubble)
 }
 
 func (m *Model) selectedRecentsEntry() (recentsEntry, bool) {
@@ -564,6 +647,75 @@ func (m *Model) handleRecentsPreview(msg recentsPreviewMsg) tea.Cmd {
 		m.refreshRecentsContent()
 	}
 	return nil
+}
+
+func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.Cmd {
+	if m == nil || m.sessionAPI == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	expectedTurn = strings.TrimSpace(expectedTurn)
+	if sessionID == "" {
+		return nil
+	}
+	provider := m.providerForSessionID(sessionID)
+	if !providerSupportsEvents(provider) {
+		return nil
+	}
+	if m.recentsCompletionWatching == nil {
+		m.recentsCompletionWatching = map[string]string{}
+	}
+	if current, ok := m.recentsCompletionWatching[sessionID]; ok && strings.TrimSpace(current) == expectedTurn {
+		return nil
+	}
+	m.recentsCompletionWatching[sessionID] = expectedTurn
+	return watchRecentsTurnCompletionCmd(m.sessionAPI, sessionID, expectedTurn)
+}
+
+func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd {
+	if m == nil || m.recents == nil {
+		return nil
+	}
+	sessionID := strings.TrimSpace(msg.id)
+	if sessionID == "" {
+		return nil
+	}
+	expectedTurn := strings.TrimSpace(msg.expectedTurn)
+	if len(m.recentsCompletionWatching) > 0 {
+		if current, ok := m.recentsCompletionWatching[sessionID]; ok {
+			if expectedTurn == "" || strings.TrimSpace(current) == expectedTurn {
+				delete(m.recentsCompletionWatching, sessionID)
+			}
+		}
+	}
+	if msg.err != nil {
+		return nil
+	}
+	completionTurn := strings.TrimSpace(msg.turnID)
+	if completionTurn == "" {
+		if meta := m.sessionMeta[sessionID]; meta != nil {
+			completionTurn = strings.TrimSpace(meta.LastTurnID)
+		}
+	}
+	if _, ok := m.recents.CompleteRun(sessionID, expectedTurn, completionTurn, time.Now().UTC()); !ok {
+		return nil
+	}
+	m.refreshRecentsSidebarState()
+	if m.mode == uiModeRecents {
+		m.refreshRecentsContent()
+	}
+	return nil
+}
+
+func (m *Model) syncRecentsCompletionWatches() {
+	if m == nil || m.recents == nil || len(m.recentsCompletionWatching) == 0 {
+		return
+	}
+	for sessionID := range m.recentsCompletionWatching {
+		if !m.recents.IsRunning(sessionID) {
+			delete(m.recentsCompletionWatching, sessionID)
+		}
+	}
 }
 
 func (m *Model) reduceRecentsMode(msg tea.Msg) (bool, tea.Cmd) {

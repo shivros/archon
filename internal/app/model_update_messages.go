@@ -176,6 +176,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.recents != nil {
 			m.recents.ObserveSessions(msg.sessions)
 			m.recents.ObserveMeta(m.sessionMeta, now)
+			m.syncRecentsCompletionWatches()
 		}
 		m.applySidebarItemsIfDirty()
 		saveSidebarExpansionCmd := tea.Cmd(nil)
@@ -456,6 +457,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case recentsPreviewMsg:
 		return true, m.handleRecentsPreview(msg)
+	case recentsTurnCompletedMsg:
+		return true, m.handleRecentsTurnCompleted(msg)
 	case historyPollMsg:
 		if msg.id == "" || msg.key == "" {
 			return true, nil
@@ -496,16 +499,18 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		now := time.Now().UTC()
-		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
+		baselineTurnID := ""
 		if m.recents != nil {
-			baseline := strings.TrimSpace(msg.turnID)
-			if baseline == "" {
-				if entry := m.sessionMeta[msg.id]; entry != nil {
-					baseline = strings.TrimSpace(entry.LastTurnID)
-				}
+			if entry := m.sessionMeta[msg.id]; entry != nil {
+				baselineTurnID = strings.TrimSpace(entry.LastTurnID)
 			}
-			m.recents.StartRun(msg.id, baseline, now)
+		}
+		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
+		watchCmd := tea.Cmd(nil)
+		if m.recents != nil {
+			m.recents.StartRun(msg.id, baselineTurnID, now)
 			m.refreshRecentsSidebarState()
+			watchCmd = m.beginRecentsCompletionWatch(msg.id, baselineTurnID)
 		}
 		if m.sidebar != nil {
 			m.sidebar.updateUnreadSessions(m.sessions, m.sessionMeta)
@@ -517,6 +522,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.lastSessionMetaRefreshAt = now
 		provider := m.providerForSessionID(msg.id)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
+		if watchCmd != nil {
+			cmds = append(cmds, watchCmd)
+		}
 		if m.mode == uiModeRecents {
 			m.refreshRecentsContent()
 		}
@@ -629,6 +637,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.scrollOnLoad = true
 		m.setLoadingContent()
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
+		watchCmd := tea.Cmd(nil)
 		if m.recents != nil {
 			baseline := ""
 			if entry := m.sessionMeta[msg.session.ID]; entry != nil {
@@ -636,10 +645,14 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			m.recents.StartRun(msg.session.ID, baseline, time.Now().UTC())
 			m.refreshRecentsSidebarState()
+			watchCmd = m.beginRecentsCompletionWatch(msg.session.ID, baseline)
 		}
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, initialLines)}
+		if watchCmd != nil {
+			cmds = append(cmds, watchCmd)
+		}
 		if shouldStreamItems(msg.session.Provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.session.ID))
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))

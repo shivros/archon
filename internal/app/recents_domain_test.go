@@ -57,3 +57,24 @@ func TestRecentsTrackerDismissLifecycle(t *testing.T) {
 		t.Fatalf("expected s1 to return to ready on new completion cycle")
 	}
 }
+
+func TestRecentsTrackerCompleteRunGuardsExpectedTurn(t *testing.T) {
+	tracker := NewRecentsTracker()
+	now := time.Now().UTC()
+
+	tracker.StartRun("s1", "turn-new", now)
+
+	if _, ok := tracker.CompleteRun("s1", "turn-old", "turn-old", now.Add(time.Second)); ok {
+		t.Fatalf("expected stale completion to be ignored")
+	}
+	if !tracker.IsRunning("s1") {
+		t.Fatalf("expected run to remain running after stale completion")
+	}
+
+	if _, ok := tracker.CompleteRun("s1", "turn-new", "turn-new", now.Add(2*time.Second)); !ok {
+		t.Fatalf("expected matching completion to transition to ready")
+	}
+	if !tracker.IsReady("s1") {
+		t.Fatalf("expected s1 in ready queue")
+	}
+}

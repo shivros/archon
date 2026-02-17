@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"strings"
@@ -443,6 +444,57 @@ func openEventsCmd(api SessionEventStreamAPI, id string) tea.Cmd {
 		ch, cancel, err := api.EventStream(context.Background(), id)
 		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
+}
+
+func watchRecentsTurnCompletionCmd(api SessionEventStreamAPI, id, expectedTurn string) tea.Cmd {
+	return func() tea.Msg {
+		id = strings.TrimSpace(id)
+		expectedTurn = strings.TrimSpace(expectedTurn)
+		if id == "" {
+			return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: errors.New("session id is required")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		defer cancel()
+		ch, streamCancel, err := api.EventStream(ctx, id)
+		if err != nil {
+			return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: err}
+		}
+		defer streamCancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: ctx.Err()}
+			case event, ok := <-ch:
+				if !ok {
+					// The daemon stream endpoint closes after turn completion.
+					return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn}
+				}
+				if strings.TrimSpace(event.Method) != "turn/completed" {
+					continue
+				}
+				return recentsTurnCompletedMsg{
+					id:           id,
+					expectedTurn: expectedTurn,
+					turnID:       parseRecentsCompletionTurnID(event.Params),
+				}
+			}
+		}
+	}
+}
+
+func parseRecentsCompletionTurnID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Turn.ID)
 }
 
 func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {
