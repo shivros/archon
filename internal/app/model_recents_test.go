@@ -135,3 +135,16 @@ func TestRecentsTurnCompletedMessageMovesRunToReady(t *testing.T) {
 		t.Fatalf("expected completion watcher to clear")
 	}
 }
+
+func TestFormatRecentsPreviewTextRemovesANSIEscapeFragments(t *testing.T) {
+	preview, full := formatRecentsPreviewText("\x1b[38;5;117mhello\x1b[0m\nworld")
+	if strings.TrimSpace(full) == "" {
+		t.Fatalf("expected full text to be retained")
+	}
+	if strings.Contains(preview, "[38;5;117m") || strings.Contains(preview, "[0m") {
+		t.Fatalf("expected preview to strip ANSI escape fragments, got %q", preview)
+	}
+	if !strings.Contains(preview, "hello world") {
+		t.Fatalf("expected flattened preview text, got %q", preview)
+	}
+}

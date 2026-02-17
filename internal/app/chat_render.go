@@ -101,6 +101,15 @@ type renderedBlockSpan struct {
 	SessionFilterLine    int
 	SessionFilterStart   int
 	SessionFilterEnd     int
+	MetaControls         []renderedMetaControlHit
+}
+
+type renderedMetaControlHit struct {
+	Label string
+	Tone  ChatMetaControlTone
+	Line  int
+	Start int
+	End   int
 }
 
 type renderedChatBlock struct {
@@ -135,6 +144,7 @@ type renderedChatBlock struct {
 	SessionFilterLine    int
 	SessionFilterStart   int
 	SessionFilterEnd     int
+	MetaControls         []renderedMetaControlHit
 }
 
 type chatRenderContext struct {
@@ -224,6 +234,7 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 		sessionFilterLine := -1
 		sessionFilterStart := -1
 		sessionFilterEnd := -1
+		metaControls := make([]renderedMetaControlHit, 0, len(rendered.MetaControls))
 		if rendered.CopyLine >= 0 {
 			copyLine = start + rendered.CopyLine
 			copyStart = rendered.CopyStart
@@ -274,6 +285,18 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 			sessionFilterStart = rendered.SessionFilterStart
 			sessionFilterEnd = rendered.SessionFilterEnd
 		}
+		for _, control := range rendered.MetaControls {
+			if control.Line < 0 {
+				continue
+			}
+			metaControls = append(metaControls, renderedMetaControlHit{
+				Label: strings.TrimSpace(control.Label),
+				Tone:  control.Tone,
+				Line:  start + control.Line,
+				Start: control.Start,
+				End:   control.End,
+			})
+		}
 		spans = append(spans, renderedBlockSpan{
 			BlockIndex:           i,
 			ID:                   block.ID,
@@ -311,6 +334,7 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 			SessionFilterLine:    sessionFilterLine,
 			SessionFilterStart:   sessionFilterStart,
 			SessionFilterEnd:     sessionFilterEnd,
+			MetaControls:         metaControls,
 		})
 		lines = append(lines, "")
 		if maxLines > 0 && len(lines) > maxLines {
@@ -406,6 +430,17 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 						span.SessionFilterEnd = -1
 					}
 				}
+				if len(span.MetaControls) > 0 {
+					controls := make([]renderedMetaControlHit, 0, len(span.MetaControls))
+					for _, control := range span.MetaControls {
+						control.Line -= drop
+						if control.Line < 0 {
+							continue
+						}
+						controls = append(controls, control)
+					}
+					span.MetaControls = controls
+				}
 				next = append(next, span)
 			}
 			spans = next
@@ -475,6 +510,16 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 			span.SessionFilterLine = -1
 			span.SessionFilterStart = -1
 			span.SessionFilterEnd = -1
+		}
+		if len(span.MetaControls) > 0 {
+			controls := make([]renderedMetaControlHit, 0, len(span.MetaControls))
+			for _, control := range span.MetaControls {
+				if control.Line > maxLine {
+					continue
+				}
+				controls = append(controls, control)
+			}
+			span.MetaControls = controls
 		}
 		next = append(next, span)
 	}
@@ -580,6 +625,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 	}
 	meta := ""
 	metaDisplay := ""
+	customControlDefs := make([]ChatMetaControl, 0)
 	override, customMeta := ctx.metaForBlock(block)
 	if customMeta {
 		meta = strings.TrimSpace(override.Label)
@@ -592,6 +638,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 			if label == "" {
 				continue
 			}
+			customControlDefs = append(customControlDefs, ChatMetaControl{Label: label, Tone: control.Tone})
 			meta += " " + label
 			parts = append(parts, metaStyle.Render(" "), renderCustomMetaControl(label, control.Tone))
 		}
@@ -755,6 +802,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 		timestampDisplay,
 		controlsOnRight,
 	)
+	customControlHits := make([]renderedMetaControlHit, 0, len(customControlDefs))
 	copyStart := -1
 	copyEnd := -1
 	if idx := strings.Index(metaPlain, copyLabel); idx >= 0 {
@@ -841,6 +889,32 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 	bubble := bubbleStyle.Render(renderedText)
 	placed := lipgloss.PlaceHorizontal(width, align, bubble)
 	metaLineIndex := len(lines)
+	if customMeta && len(customControlDefs) > 0 {
+		searchFrom := 0
+		for _, control := range customControlDefs {
+			label := strings.TrimSpace(control.Label)
+			if label == "" {
+				continue
+			}
+			idx := strings.Index(metaPlain[searchFrom:], label)
+			if idx >= 0 {
+				idx += searchFrom
+				searchFrom = idx + len(label)
+			} else {
+				idx = strings.Index(metaPlain, label)
+			}
+			if idx < 0 {
+				continue
+			}
+			customControlHits = append(customControlHits, renderedMetaControlHit{
+				Label: label,
+				Tone:  control.Tone,
+				Line:  metaLineIndex,
+				Start: idx,
+				End:   idx + len(label) - 1,
+			})
+		}
+	}
 	lines = append(lines, metaLine)
 	lines = append(lines, strings.Split(placed, "\n")...)
 	copyLine := -1
@@ -923,6 +997,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 		SessionFilterLine:    sessionFilterLine,
 		SessionFilterStart:   sessionFilterStart,
 		SessionFilterEnd:     sessionFilterEnd,
+		MetaControls:         customControlHits,
 	}
 }
 

@@ -171,6 +171,15 @@ func TestRenderChatBlocksCustomMetaControlsOverrideDefaults(t *testing.T) {
 	if spans[0].CopyStart >= 0 || spans[0].PinStart >= 0 {
 		t.Fatalf("expected no default copy/pin hitboxes for custom controls, got %#v", spans[0])
 	}
+	if len(spans[0].MetaControls) != 2 {
+		t.Fatalf("expected two custom control hitboxes, got %#v", spans[0].MetaControls)
+	}
+	if spans[0].MetaControls[0].Label != "[Reply]" || spans[0].MetaControls[0].Line < 0 {
+		t.Fatalf("expected reply hitbox metadata, got %#v", spans[0].MetaControls[0])
+	}
+	if spans[0].MetaControls[1].Label != "[Open]" || spans[0].MetaControls[1].Line < 0 {
+		t.Fatalf("expected open hitbox metadata, got %#v", spans[0].MetaControls[1])
+	}
 }
 
 func TestRenderChatBlocksReasoningShowsToggleControlAndHitbox(t *testing.T) {

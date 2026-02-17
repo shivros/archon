@@ -2477,6 +2477,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceNotesPanelLeftPressMouse(msg, layout) {
 		return true
 	}
+	if m.reduceRecentsControlsLeftPressMouse(msg, layout) {
+		return true
+	}
 	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {
 		return true
 	}

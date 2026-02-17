@@ -400,6 +400,89 @@ func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 	return false
 }
 
+func (m *Model) reduceRecentsControlsLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart {
+		return false
+	}
+	if m.mode != uiModeRecents {
+		return false
+	}
+	if mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
+		return false
+	}
+	col := mouse.X - layout.rightStart
+	absolute := m.viewport.YOffset() + mouse.Y - 1
+
+	clickedSessionID := ""
+	clickedControl := ""
+	for _, span := range m.contentBlockSpans {
+		sessionID, ok := recentsSessionIDFromBlockID(span.ID)
+		if !ok {
+			continue
+		}
+		if absolute < span.StartLine || absolute > span.EndLine {
+			continue
+		}
+		clickedSessionID = sessionID
+		for _, control := range span.MetaControls {
+			if control.Line != absolute {
+				continue
+			}
+			if control.Start < 0 || control.End < control.Start {
+				continue
+			}
+			if col < control.Start || col > control.End {
+				continue
+			}
+			clickedControl = strings.ToLower(strings.TrimSpace(control.Label))
+			break
+		}
+		break
+	}
+	if clickedSessionID == "" {
+		return false
+	}
+
+	selectionChanged := m.setRecentsSelection(clickedSessionID)
+	if selectionChanged {
+		m.refreshRecentsContent()
+	}
+	if clickedControl == "" {
+		if cmd := m.ensureRecentsPreviewForSelection(); cmd != nil {
+			m.pendingMouseCmd = cmd
+		}
+		return true
+	}
+
+	switch clickedControl {
+	case "[reply]":
+		if !m.startRecentsReply() {
+			m.setValidationStatus("select a session to reply")
+		}
+	case "[expand]", "[collapse]":
+		if m.toggleSelectedRecentsExpand() {
+			if cmd := m.ensureRecentsPreviewForSelection(); cmd != nil {
+				m.pendingMouseCmd = cmd
+			}
+		}
+	case "[open]":
+		if cmd := m.openSelectedRecentsThread(); cmd != nil {
+			m.pendingMouseCmd = cmd
+		}
+	case "[dismiss]":
+		if !m.dismissSelectedRecentsReady() {
+			m.setValidationStatus("select a ready session to dismiss")
+		}
+	default:
+		// Unknown custom controls are still consumed to avoid accidental fallback actions.
+	}
+	return true
+}
+
 func (m *Model) reduceTranscriptReasoningButtonLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
 	if !isMouseClickMsg(msg) {
 		return false

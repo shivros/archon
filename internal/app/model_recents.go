@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
 )
@@ -258,11 +259,12 @@ func formatRecentsPreviewText(text string) (preview string, full string) {
 	if full == "" {
 		return "", ""
 	}
-	flat := cleanTitle(strings.ReplaceAll(full, "\n", " "))
+	plain := strings.TrimSpace(xansi.Strip(full))
+	flat := cleanTitle(strings.ReplaceAll(plain, "\n", " "))
 	if flat == "" {
-		flat = cleanTitle(full)
+		flat = cleanTitle(plain)
 	}
-	preview = truncateText(flat, recentsPreviewMaxChars)
+	preview = truncateToWidth(flat, recentsPreviewMaxChars)
 	return preview, full
 }
 
@@ -384,6 +386,27 @@ func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlock
 	}
 }
 
+func recentsSessionIDFromBlockID(blockID string) (string, bool) {
+	blockID = strings.TrimSpace(blockID)
+	if !strings.HasPrefix(blockID, "recents:") {
+		return "", false
+	}
+	parts := strings.SplitN(blockID, ":", 3)
+	if len(parts) != 3 {
+		return "", false
+	}
+	switch strings.TrimSpace(parts[1]) {
+	case string(recentsEntryReady), string(recentsEntryRunning):
+	default:
+		return "", false
+	}
+	sessionID := strings.TrimSpace(parts[2])
+	if sessionID == "" {
+		return "", false
+	}
+	return sessionID, true
+}
+
 func recentsPreviewText(entry recentsEntry, expanded bool) string {
 	previewText := strings.TrimSpace(entry.Preview.Preview)
 	fullText := strings.TrimSpace(entry.Preview.Full)
@@ -419,6 +442,21 @@ func (m *Model) selectedRecentsEntry() (recentsEntry, bool) {
 		}
 	}
 	return state.Entries[0], true
+}
+
+func (m *Model) setRecentsSelection(sessionID string) bool {
+	if m == nil {
+		return false
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	if strings.TrimSpace(m.recentsSelectedSessionID) == sessionID {
+		return false
+	}
+	m.recentsSelectedSessionID = sessionID
+	return true
 }
 
 func (m *Model) moveRecentsSelection(delta int) bool {
