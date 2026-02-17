@@ -103,18 +103,21 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	if m.mode != uiModeGuidedWorkflow {
 		return false, nil
 	}
+	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
+		return true, cmd
+	}
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if ok {
 		key := m.keyString(keyMsg)
-		switch key {
-		case "q":
+		switch {
+		case m.keyMatchesCommand(keyMsg, KeyCommandQuit, "q"):
 			return true, tea.Quit
-		case "ctrl+b":
+		case m.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b"):
 			m.toggleSidebar()
 			return true, m.requestAppStateSaveCmd()
-		case "ctrl+o":
+		case m.keyMatchesCommand(keyMsg, KeyCommandToggleNotesPanel, "ctrl+o"):
 			return true, m.toggleNotesPanel()
-		case "ctrl+m":
+		case m.keyMatchesCommand(keyMsg, KeyCommandMenu, "ctrl+m"):
 			if m.menu != nil {
 				if m.contextMenu != nil {
 					m.contextMenu.Close()
@@ -122,14 +125,11 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				m.menu.Toggle()
 			}
 			return true, nil
+		}
+		switch key {
 		case "esc":
 			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
-				m.guidedWorkflow.OpenLauncher()
-				if m.guidedWorkflowPromptInput != nil {
-					m.guidedWorkflowPromptInput.Blur()
-				}
-				m.setStatusMessage("guided workflow launcher")
-				m.renderGuidedWorkflowContent()
+				m.openGuidedWorkflowLauncherFromSetup()
 				return true, nil
 			}
 			m.exitGuidedWorkflow("guided workflow closed")
@@ -202,9 +202,6 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 			}
 		}
 	}
-	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
-		return true, cmd
-	}
 	return false, nil
 }
 
@@ -219,7 +216,7 @@ func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {
 			m.guidedWorkflowPromptInput.Focus()
 		}
 		m.setStatusMessage("guided workflow setup")
-		m.renderGuidedWorkflowContent()
+		m.reflowGuidedWorkflowLayout()
 		return nil
 	case guidedWorkflowStageSetup:
 		return m.startGuidedWorkflowRun()
@@ -336,16 +333,55 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 		input:             m.guidedWorkflowPromptInput,
 		keyString:         m.keyString,
 		keyMatchesCommand: m.keyMatchesCommand,
+		onCancel: func() tea.Cmd {
+			m.openGuidedWorkflowLauncherFromSetup()
+			return nil
+		},
 		onSubmit: func(string) tea.Cmd {
 			return m.startGuidedWorkflowRun()
+		},
+		preHandle: func(key string, keyMsg tea.KeyMsg) (bool, tea.Cmd) {
+			switch {
+			case m.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b"):
+				m.toggleSidebar()
+				return true, m.requestAppStateSaveCmd()
+			case m.keyMatchesCommand(keyMsg, KeyCommandToggleNotesPanel, "ctrl+o"):
+				return true, m.toggleNotesPanel()
+			case m.keyMatchesCommand(keyMsg, KeyCommandMenu, "ctrl+m"):
+				if m.menu != nil {
+					if m.contextMenu != nil {
+						m.contextMenu.Close()
+					}
+					m.menu.Toggle()
+				}
+				return true, nil
+			}
+			switch key {
+			case "down":
+				m.guidedWorkflow.CycleSensitivity(1)
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			case "up":
+				m.guidedWorkflow.CycleSensitivity(-1)
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			}
+			return false, nil
 		},
 	}
 	handled, cmd := controller.Update(msg)
 	if !handled {
 		return false, nil
 	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return true, cmd
+	}
 	m.syncGuidedWorkflowPromptInput()
-	m.renderGuidedWorkflowContent()
+	if m.consumeInputHeightChanges(m.guidedWorkflowPromptInput) && m.width > 0 && m.height > 0 {
+		m.resize(m.width, m.height)
+	} else {
+		m.renderGuidedWorkflowContent()
+	}
 	return handled, cmd
 }
 
@@ -394,9 +430,37 @@ func (m *Model) guidedWorkflowSetupInputView() (line string, scrollable bool) {
 }
 
 func (m *Model) guidedWorkflowSetupInputLineCount() int {
-	line, _ := m.guidedWorkflowSetupInputView()
-	if strings.TrimSpace(line) == "" {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
 		return 0
 	}
-	return max(1, strings.Count(line, "\n")+1)
+	inputLines := 1
+	if m.guidedWorkflowPromptInput != nil {
+		inputLines = max(1, m.guidedWorkflowPromptInput.Height())
+	}
+	const footerLines = 4
+	const frameLines = 2
+	return inputLines + footerLines + frameLines
+}
+
+func (m *Model) openGuidedWorkflowLauncherFromSetup() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	m.guidedWorkflow.OpenLauncher()
+	if m.guidedWorkflowPromptInput != nil {
+		m.guidedWorkflowPromptInput.Blur()
+	}
+	m.setStatusMessage("guided workflow launcher")
+	m.reflowGuidedWorkflowLayout()
+}
+
+func (m *Model) reflowGuidedWorkflowLayout() {
+	if m == nil {
+		return
+	}
+	if m.width > 0 && m.height > 0 {
+		m.resize(m.width, m.height)
+		return
+	}
+	m.renderGuidedWorkflowContent()
 }

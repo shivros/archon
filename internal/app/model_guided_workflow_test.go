@@ -270,6 +270,32 @@ func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowSetupTypingQDoesNotQuit(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	m = asModel(t, updated)
+	if cmd != nil {
+		if _, quitting := cmd().(tea.QuitMsg); quitting {
+			t.Fatalf("expected typing q in setup prompt not to quit")
+		}
+	}
+	if got := m.guidedWorkflow.UserPrompt(); got != "q" {
+		t.Fatalf("expected q to be captured in prompt input, got %q", got)
+	}
+}
+
 func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
 	api := &guidedWorkflowAPIMock{
@@ -310,6 +336,47 @@ func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 	}
 	if api.createReqs[0].UserPrompt != "Fix bug in request routing" {
 		t.Fatalf("expected user prompt in create request, got %q", api.createReqs[0].UserPrompt)
+	}
+}
+
+func TestGuidedWorkflowSetupResizesViewportOnEnterAndInputGrowth(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	m.resize(120, 40)
+	launcherViewportHeight := m.viewport.Height()
+	if launcherViewportHeight <= 0 {
+		t.Fatalf("expected launcher viewport height > 0")
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+	setupViewportHeight := m.viewport.Height()
+	if setupViewportHeight >= launcherViewportHeight {
+		t.Fatalf("expected setup viewport to shrink for input panel: launcher=%d setup=%d", launcherViewportHeight, setupViewportHeight)
+	}
+
+	updated, _ = m.Update(tea.PasteMsg{Content: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11"})
+	m = asModel(t, updated)
+	if got := m.guidedWorkflowPromptInput.Height(); got < 8 {
+		t.Fatalf("expected prompt input to auto-grow on multiline paste, got height=%d", got)
+	}
+	grownViewportHeight := m.viewport.Height()
+	if grownViewportHeight >= setupViewportHeight {
+		t.Fatalf("expected viewport to shrink after prompt growth: before=%d after=%d", setupViewportHeight, grownViewportHeight)
+	}
+
+	visibleLines := 1 + m.viewport.Height() + 1 + m.guidedWorkflowSetupInputLineCount()
+	maxContentLines := m.height - 1
+	if visibleLines > maxContentLines {
+		t.Fatalf("expected guided setup layout to fit viewport; visible=%d max=%d", visibleLines, maxContentLines)
 	}
 }
 
