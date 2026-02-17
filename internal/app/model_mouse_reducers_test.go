@@ -75,7 +75,43 @@ func TestMouseReducerRightReleaseDoesNotOpenContextMenu(t *testing.T) {
 	}
 }
 
-func TestMouseReducerSidebarClickTogglesWorkspaceExpansion(t *testing.T) {
+func TestMouseReducerSidebarWorkspaceRowClickSelectsWithoutToggle(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkspace {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible workspace row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if len(m.sidebar.Items()) != 2 {
+		t.Fatalf("expected workspace row click to keep expansion, got %d rows", len(m.sidebar.Items()))
+	}
+	if m.appState.ActiveWorkspaceID != "ws1" {
+		t.Fatalf("expected workspace row click to select ws1, got %q", m.appState.ActiveWorkspaceID)
+	}
+}
+
+func TestMouseReducerSidebarWorkspaceCaretClickTogglesExpansion(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
@@ -104,7 +140,80 @@ func TestMouseReducerSidebarClickTogglesWorkspaceExpansion(t *testing.T) {
 		t.Fatalf("expected sidebar click to be handled")
 	}
 	if len(m.sidebar.Items()) != 1 {
-		t.Fatalf("expected workspace collapse to hide nested session, got %d rows", len(m.sidebar.Items()))
+		t.Fatalf("expected workspace caret click to collapse nested session, got %d rows", len(m.sidebar.Items()))
+	}
+}
+
+func TestMouseReducerSidebarWorktreeRowClickSelectsWithoutToggle(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {&types.Worktree{ID: "wt1", WorkspaceID: "ws1", Name: "feature"}},
+	}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorktree {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible worktree row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if len(m.sidebar.Items()) != 3 {
+		t.Fatalf("expected worktree row click to keep expansion, got %d rows", len(m.sidebar.Items()))
+	}
+	if m.appState.ActiveWorkspaceID != "ws1" || m.appState.ActiveWorktreeID != "wt1" {
+		t.Fatalf("expected worktree row click to select ws1/wt1, got %q/%q", m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID)
+	}
+}
+
+func TestMouseReducerSidebarWorktreeCaretClickTogglesExpansion(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {&types.Worktree{ID: "wt1", WorkspaceID: "ws1", Name: "feature"}},
+	}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorktree {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible worktree row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if len(m.sidebar.Items()) != 2 {
+		t.Fatalf("expected worktree caret click to collapse nested session, got %d rows", len(m.sidebar.Items()))
 	}
 }
 

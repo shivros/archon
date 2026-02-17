@@ -753,7 +753,7 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 				return false
 			}
 			m.sidebar.SelectByRow(mouse.Y)
-			if (entry.kind == sidebarWorkspace || entry.kind == sidebarWorktree) && entry.collapsible {
+			if sidebarToggleHitboxClicked(entry, mouse.X) {
 				if m.sidebar.ToggleSelectedContainer() {
 					m.pendingMouseCmd = m.syncSidebarExpansionChange()
 					return true
@@ -764,4 +764,22 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 		}
 	}
 	return false
+}
+
+func sidebarToggleHitboxClicked(entry *sidebarItem, x int) bool {
+	if entry == nil || !entry.collapsible {
+		return false
+	}
+	switch entry.kind {
+	case sidebarWorkspace:
+		return sidebarColumnMatches(x, 0)
+	case sidebarWorktree:
+		return sidebarColumnMatches(x, 2)
+	default:
+		return false
+	}
+}
+
+func sidebarColumnMatches(x, zeroBasedCol int) bool {
+	return x == zeroBasedCol || x == zeroBasedCol+1
 }
