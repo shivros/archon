@@ -105,5 +105,9 @@ func (m *Model) modeInputView() (line string, scrollable bool) {
 			Footer: ctx.footer,
 		}.View()
 	}
+	switch m.mode {
+	case uiModeGuidedWorkflow:
+		return m.guidedWorkflowSetupInputView()
+	}
 	return "", false
 }

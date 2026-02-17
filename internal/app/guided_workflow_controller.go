@@ -392,9 +392,9 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 		fmt.Sprintf("Policy sensitivity: %s", sensitivity),
 		"",
 		"Workflow prompt (required)",
-		"- Input focus: active in editor panel below",
+		"- Input focus: active in the framed task description panel below",
 		fmt.Sprintf("- Prompt stats: %d chars across %d lines", chars, linesCount),
-		"- Paste support: terminal paste works in the same editor used elsewhere",
+		"- Paste support: uses the same editor behavior as chat/notes input",
 	}
 	lines = append(lines,
 		"",

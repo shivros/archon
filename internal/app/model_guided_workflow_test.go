@@ -264,8 +264,52 @@ func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 	if got := m.guidedWorkflow.UserPrompt(); got != "Fix flaky retry logic\nand add coverage" {
 		t.Fatalf("expected prompt input to capture pasted text, got %q", got)
 	}
-	if !strings.Contains(m.contentRaw, "Prompt Editor") {
-		t.Fatalf("expected setup content to show prompt editor guidance, got %q", m.contentRaw)
+	inputView, _ := m.modeInputView()
+	if !strings.Contains(inputView, "Task Description") {
+		t.Fatalf("expected setup input panel guidance, got %q", inputView)
+	}
+}
+
+func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+	api := &guidedWorkflowAPIMock{
+		createRun: newWorkflowRunFixture("gwf-remap", guidedworkflows.WorkflowRunStatusCreated, now),
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputSubmit:  "f6",
+		KeyCommandComposeModel: "f6",
+	}))
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	m.guidedWorkflowPromptInput.SetValue("Fix bug in request routing")
+	m.syncGuidedWorkflowPromptInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected create workflow command from remapped submit key")
+	}
+	if _, ok := cmd().(workflowRunCreatedMsg); !ok {
+		t.Fatalf("expected workflowRunCreatedMsg, got %T", cmd())
+	}
+	if len(api.createReqs) != 1 {
+		t.Fatalf("expected one create request, got %d", len(api.createReqs))
+	}
+	if api.createReqs[0].UserPrompt != "Fix bug in request routing" {
+		t.Fatalf("expected user prompt in create request, got %q", api.createReqs[0].UserPrompt)
 	}
 }
 

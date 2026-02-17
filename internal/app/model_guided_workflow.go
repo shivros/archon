@@ -81,19 +81,6 @@ func (m *Model) renderGuidedWorkflowContent() {
 		m.syncGuidedWorkflowPromptInput()
 	}
 	content := m.guidedWorkflow.Render()
-	if m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.guidedWorkflowPromptInput != nil {
-		panel, _ := (InputPanel{
-			Input: m.guidedWorkflowPromptInput,
-			Footer: InputFooterFunc(func() string {
-				return strings.Join([]string{
-					"Prompt Editor",
-					"- Placeholder disappears as soon as you type",
-					"- Paste is supported (for example: Ctrl+Shift+V)",
-				}, "\n")
-			}),
-		}).View()
-		content = strings.TrimRight(content, "\n") + "\n\n" + panel
-	}
 	m.setContentText(content)
 }
 
@@ -345,10 +332,21 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 	if !isTextInputMsg(msg) {
 		return false, nil
 	}
-	cmd := m.guidedWorkflowPromptInput.Update(msg)
+	controller := textInputModeController{
+		input:             m.guidedWorkflowPromptInput,
+		keyString:         m.keyString,
+		keyMatchesCommand: m.keyMatchesCommand,
+		onSubmit: func(string) tea.Cmd {
+			return m.startGuidedWorkflowRun()
+		},
+	}
+	handled, cmd := controller.Update(msg)
+	if !handled {
+		return false, nil
+	}
 	m.syncGuidedWorkflowPromptInput()
 	m.renderGuidedWorkflowContent()
-	return true, cmd
+	return handled, cmd
 }
 
 func (m *Model) resetGuidedWorkflowPromptInput() {
@@ -372,4 +370,33 @@ func (m *Model) syncGuidedWorkflowPromptInput() {
 		return
 	}
 	m.guidedWorkflow.SetUserPrompt(m.guidedWorkflowPromptInput.Value())
+}
+
+func (m *Model) guidedWorkflowSetupInputView() (line string, scrollable bool) {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowPromptInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return "", false
+	}
+	panel, scrollable := (InputPanel{
+		Input: m.guidedWorkflowPromptInput,
+		Footer: InputFooterFunc(func() string {
+			return strings.Join([]string{
+				"Task Description",
+				"- Paste is supported",
+				"- Shift+Enter inserts a newline",
+				"- Enter starts the guided run",
+			}, "\n")
+		}),
+	}).View()
+	if panel == "" {
+		return "", scrollable
+	}
+	return guidedWorkflowPromptFrameStyle.Render(panel), scrollable
+}
+
+func (m *Model) guidedWorkflowSetupInputLineCount() int {
+	line, _ := m.guidedWorkflowSetupInputView()
+	if strings.TrimSpace(line) == "" {
+		return 0
+	}
+	return max(1, strings.Count(line, "\n")+1)
 }

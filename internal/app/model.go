@@ -775,6 +775,10 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		} else {
 			extraLines = 3
 		}
+	} else if m.mode == uiModeGuidedWorkflow {
+		if inputLines := m.guidedWorkflowSetupInputLineCount(); inputLines > 0 {
+			extraLines = inputLines + 1
+		}
 	}
 	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.SetWidth(contentWidth)
