@@ -1,6 +1,9 @@
 package guidedworkflows
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const (
 	TemplateIDSolidPhaseDelivery = "solid_phase_delivery"
@@ -20,8 +23,9 @@ type WorkflowTemplatePhase struct {
 }
 
 type WorkflowTemplateStep struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Prompt string `json:"prompt,omitempty"`
 }
 
 type WorkflowRunStatus string
@@ -88,15 +92,18 @@ type PhaseRun struct {
 }
 
 type StepRun struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Status      StepRunStatus `json:"status"`
-	StartedAt   *time.Time    `json:"started_at,omitempty"`
-	CompletedAt *time.Time    `json:"completed_at,omitempty"`
-	Attempts    int           `json:"attempts,omitempty"`
-	Outcome     string        `json:"outcome,omitempty"`
-	Output      string        `json:"output,omitempty"`
-	Error       string        `json:"error,omitempty"`
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Prompt       string        `json:"prompt,omitempty"`
+	Status       StepRunStatus `json:"status"`
+	AwaitingTurn bool          `json:"awaiting_turn,omitempty"`
+	TurnID       string        `json:"turn_id,omitempty"`
+	StartedAt    *time.Time    `json:"started_at,omitempty"`
+	CompletedAt  *time.Time    `json:"completed_at,omitempty"`
+	Attempts     int           `json:"attempts,omitempty"`
+	Outcome      string        `json:"outcome,omitempty"`
+	Output       string        `json:"output,omitempty"`
+	Error        string        `json:"error,omitempty"`
 }
 
 type CheckpointDecision struct {
@@ -161,6 +168,27 @@ type TurnSignal struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	WorktreeID  string `json:"worktree_id,omitempty"`
 	TurnID      string `json:"turn_id,omitempty"`
+}
+
+type StepPromptDispatchRequest struct {
+	RunID       string `json:"run_id"`
+	TemplateID  string `json:"template_id,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	WorktreeID  string `json:"worktree_id,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	PhaseID     string `json:"phase_id,omitempty"`
+	StepID      string `json:"step_id,omitempty"`
+	Prompt      string `json:"prompt"`
+}
+
+type StepPromptDispatchResult struct {
+	Dispatched bool   `json:"dispatched"`
+	SessionID  string `json:"session_id,omitempty"`
+	TurnID     string `json:"turn_id,omitempty"`
+}
+
+type StepPromptDispatcher interface {
+	DispatchStepPrompt(ctx context.Context, req StepPromptDispatchRequest) (StepPromptDispatchResult, error)
 }
 
 type RunStatusSnapshot struct {

@@ -9,6 +9,7 @@ import (
 
 	"control/internal/config"
 	"control/internal/guidedworkflows"
+	"control/internal/logging"
 	"control/internal/types"
 )
 
@@ -47,19 +48,192 @@ func newGuidedWorkflowOrchestrator(coreCfg config.CoreConfig) guidedworkflows.Or
 	return guidedworkflows.New(guidedWorkflowsConfigFromCoreConfig(coreCfg))
 }
 
-func newGuidedWorkflowRunService(coreCfg config.CoreConfig, stores *Stores) guidedworkflows.RunService {
+func newGuidedWorkflowRunService(
+	coreCfg config.CoreConfig,
+	stores *Stores,
+	manager *SessionManager,
+	live *CodexLiveManager,
+	logger logging.Logger,
+) guidedworkflows.RunService {
 	controls := guidedWorkflowsExecutionControlsFromCoreConfig(coreCfg)
 	opts := []guidedworkflows.RunServiceOption{
 		guidedworkflows.WithMaxActiveRuns(coreCfg.GuidedWorkflowsRolloutMaxActiveRuns()),
 		guidedworkflows.WithTelemetryEnabled(coreCfg.GuidedWorkflowsRolloutTelemetryEnabled()),
 	}
+	if templateProvider := newGuidedWorkflowTemplateProvider(stores); templateProvider != nil {
+		opts = append(opts, guidedworkflows.WithTemplateProvider(templateProvider))
+	}
 	if metricsStore := newGuidedWorkflowMetricsStore(stores); metricsStore != nil {
 		opts = append(opts, guidedworkflows.WithRunMetricsStore(metricsStore))
+	}
+	if promptDispatcher := newGuidedWorkflowPromptDispatcher(manager, stores, live, logger); promptDispatcher != nil {
+		opts = append(opts, guidedworkflows.WithStepPromptDispatcher(promptDispatcher))
 	}
 	if controls.Enabled {
 		opts = append(opts, guidedworkflows.WithRunExecutionControls(controls))
 	}
 	return guidedworkflows.NewRunService(guidedWorkflowsConfigFromCoreConfig(coreCfg), opts...)
+}
+
+type guidedWorkflowTemplateProvider struct {
+	store WorkflowTemplateStore
+}
+
+func newGuidedWorkflowTemplateProvider(stores *Stores) guidedworkflows.TemplateProvider {
+	if stores == nil || stores.WorkflowTemplates == nil {
+		return nil
+	}
+	return &guidedWorkflowTemplateProvider{store: stores.WorkflowTemplates}
+}
+
+func (p *guidedWorkflowTemplateProvider) ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	if p == nil || p.store == nil {
+		return nil, nil
+	}
+	return p.store.ListWorkflowTemplates(ctx)
+}
+
+type guidedWorkflowSessionGateway interface {
+	ListWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
+	SendMessage(ctx context.Context, id string, input []map[string]any) (string, error)
+}
+
+type guidedWorkflowPromptDispatcher struct {
+	sessions guidedWorkflowSessionGateway
+}
+
+func newGuidedWorkflowPromptDispatcher(
+	manager *SessionManager,
+	stores *Stores,
+	live *CodexLiveManager,
+	logger logging.Logger,
+) guidedworkflows.StepPromptDispatcher {
+	if manager == nil || stores == nil {
+		return nil
+	}
+	return &guidedWorkflowPromptDispatcher{
+		sessions: NewSessionService(manager, stores, live, logger),
+	}
+}
+
+func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
+	ctx context.Context,
+	req guidedworkflows.StepPromptDispatchRequest,
+) (guidedworkflows.StepPromptDispatchResult, error) {
+	if d == nil || d.sessions == nil {
+		return guidedworkflows.StepPromptDispatchResult{}, nil
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		return guidedworkflows.StepPromptDispatchResult{}, nil
+	}
+	sessionID, provider, err := d.resolveSession(ctx, req)
+	if err != nil {
+		return guidedworkflows.StepPromptDispatchResult{}, err
+	}
+	if strings.TrimSpace(sessionID) == "" || !guidedWorkflowProviderSupportsPromptDispatch(provider) {
+		return guidedworkflows.StepPromptDispatchResult{}, nil
+	}
+	turnID, err := d.sessions.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": prompt},
+	})
+	if err != nil {
+		return guidedworkflows.StepPromptDispatchResult{}, err
+	}
+	return guidedworkflows.StepPromptDispatchResult{
+		Dispatched: true,
+		SessionID:  sessionID,
+		TurnID:     strings.TrimSpace(turnID),
+	}, nil
+}
+
+func guidedWorkflowProviderSupportsPromptDispatch(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex", "opencode":
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *guidedWorkflowPromptDispatcher) resolveSession(
+	ctx context.Context,
+	req guidedworkflows.StepPromptDispatchRequest,
+) (string, string, error) {
+	explicitSessionID := strings.TrimSpace(req.SessionID)
+	sessions, meta, err := d.sessions.ListWithMeta(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if explicitSessionID != "" {
+		for _, session := range sessions {
+			if session == nil {
+				continue
+			}
+			if strings.TrimSpace(session.ID) == explicitSessionID {
+				return explicitSessionID, strings.TrimSpace(session.Provider), nil
+			}
+		}
+		return "", "", nil
+	}
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	worktreeID := strings.TrimSpace(req.WorktreeID)
+	if workspaceID == "" && worktreeID == "" {
+		return "", "", nil
+	}
+	metaBySessionID := make(map[string]*types.SessionMeta, len(meta))
+	for _, item := range meta {
+		if item == nil {
+			continue
+		}
+		metaBySessionID[strings.TrimSpace(item.SessionID)] = item
+	}
+	var selected *types.Session
+	var selectedAt time.Time
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		if !isGuidedWorkflowDispatchableSessionStatus(session.Status) {
+			continue
+		}
+		sessionID := strings.TrimSpace(session.ID)
+		if sessionID == "" {
+			continue
+		}
+		sessionMeta := metaBySessionID[sessionID]
+		if sessionMeta == nil {
+			continue
+		}
+		if worktreeID != "" {
+			if strings.TrimSpace(sessionMeta.WorktreeID) != worktreeID {
+				continue
+			}
+		} else if workspaceID != "" && strings.TrimSpace(sessionMeta.WorkspaceID) != workspaceID {
+			continue
+		}
+		candidateAt := session.CreatedAt
+		if sessionMeta.LastActiveAt != nil {
+			candidateAt = sessionMeta.LastActiveAt.UTC()
+		}
+		if selected == nil || candidateAt.After(selectedAt) {
+			selected = session
+			selectedAt = candidateAt
+		}
+	}
+	if selected == nil {
+		return "", "", nil
+	}
+	return strings.TrimSpace(selected.ID), strings.TrimSpace(selected.Provider), nil
+}
+
+func isGuidedWorkflowDispatchableSessionStatus(status types.SessionStatus) bool {
+	switch status {
+	case types.SessionStatusCreated, types.SessionStatusStarting, types.SessionStatusRunning, types.SessionStatusInactive:
+		return true
+	default:
+		return false
+	}
 }
 
 func guidedWorkflowsExecutionControlsFromCoreConfig(cfg config.CoreConfig) guidedworkflows.ExecutionControls {

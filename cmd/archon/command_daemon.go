@@ -89,6 +89,10 @@ func runDaemonProcess(background bool) error {
 	if err != nil {
 		return err
 	}
+	workflowTemplatesPath, err := config.WorkflowTemplatesPath()
+	if err != nil {
+		return err
+	}
 	statePath, err := config.StatePath()
 	if err != nil {
 		return err
@@ -114,13 +118,14 @@ func runDaemonProcess(background bool) error {
 		return err
 	}
 	repositoryPaths := store.RepositoryPaths{
-		WorkspacesPath:   workspacesPath,
-		AppStatePath:     statePath,
-		SessionMetaPath:  sessionsMetaPath,
-		SessionIndexPath: sessionsIndexPath,
-		ApprovalsPath:    approvalsPath,
-		NotesPath:        notesPath,
-		DBPath:           storagePath,
+		WorkspacesPath:        workspacesPath,
+		WorkflowTemplatesPath: workflowTemplatesPath,
+		AppStatePath:          statePath,
+		SessionMetaPath:       sessionsMetaPath,
+		SessionIndexPath:      sessionsIndexPath,
+		ApprovalsPath:         approvalsPath,
+		NotesPath:             notesPath,
+		DBPath:                storagePath,
 	}
 	repository, err := store.OpenRepository(repositoryPaths, store.RepositoryBackendBbolt)
 	if err != nil {
@@ -131,14 +136,15 @@ func runDaemonProcess(background bool) error {
 		return err
 	}
 	stores := &daemon.Stores{
-		Workspaces:  repository.Workspaces(),
-		Worktrees:   repository.Worktrees(),
-		Groups:      repository.Groups(),
-		AppState:    repository.AppState(),
-		SessionMeta: repository.SessionMeta(),
-		Sessions:    repository.SessionIndex(),
-		Approvals:   repository.Approvals(),
-		Notes:       repository.Notes(),
+		Workspaces:        repository.Workspaces(),
+		Worktrees:         repository.Worktrees(),
+		Groups:            repository.Groups(),
+		WorkflowTemplates: repository.WorkflowTemplates(),
+		AppState:          repository.AppState(),
+		SessionMeta:       repository.SessionMeta(),
+		Sessions:          repository.SessionIndex(),
+		Approvals:         repository.Approvals(),
+		Notes:             repository.Notes(),
 	}
 	coreCfg, err := config.LoadCoreConfig()
 	if err != nil {

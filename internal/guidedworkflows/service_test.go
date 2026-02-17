@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -11,6 +12,51 @@ type stubRunMetricsStore struct {
 	loadSnapshot RunMetricsSnapshot
 	loadErr      error
 	saved        []RunMetricsSnapshot
+}
+
+type stubTemplateProvider struct {
+	templates []WorkflowTemplate
+	err       error
+}
+
+type stubStepPromptDispatcher struct {
+	calls     []StepPromptDispatchRequest
+	responses []StepPromptDispatchResult
+	err       error
+}
+
+func (s *stubTemplateProvider) ListWorkflowTemplates(context.Context) ([]WorkflowTemplate, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make([]WorkflowTemplate, len(s.templates))
+	for i := range s.templates {
+		out[i] = cloneTemplate(s.templates[i])
+	}
+	return out, nil
+}
+
+func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req StepPromptDispatchRequest) (StepPromptDispatchResult, error) {
+	if s == nil {
+		return StepPromptDispatchResult{}, nil
+	}
+	s.calls = append(s.calls, req)
+	if s.err != nil {
+		return StepPromptDispatchResult{}, s.err
+	}
+	if len(s.responses) == 0 {
+		return StepPromptDispatchResult{Dispatched: true, SessionID: "sess-dispatch"}, nil
+	}
+	result := s.responses[0]
+	if len(s.responses) == 1 {
+		s.responses = s.responses[:0]
+	} else {
+		s.responses = s.responses[1:]
+	}
+	return result, nil
 }
 
 func (s *stubRunMetricsStore) LoadRunMetrics(context.Context) (RunMetricsSnapshot, error) {
@@ -48,6 +94,12 @@ func TestRunLifecycleNoopEndToEnd(t *testing.T) {
 	}
 	if run.Status != WorkflowRunStatusCreated {
 		t.Fatalf("expected created status, got %q", run.Status)
+	}
+	if len(run.Phases) == 0 || len(run.Phases[0].Steps) == 0 {
+		t.Fatalf("expected default template phases/steps")
+	}
+	if run.Phases[0].Steps[0].Prompt == "" {
+		t.Fatalf("expected first step prompt to be snapshotted on run creation")
 	}
 
 	run, err = service.StartRun(context.Background(), run.ID)
@@ -88,6 +140,45 @@ func TestRunLifecycleNoopEndToEnd(t *testing.T) {
 	last := timeline[len(timeline)-1]
 	if last.Type != "run_completed" {
 		t.Fatalf("unexpected final event: %q", last.Type)
+	}
+}
+
+func TestRunLifecycleTemplateProviderOverridesBuiltinTemplate(t *testing.T) {
+	custom := WorkflowTemplate{
+		ID:          TemplateIDSolidPhaseDelivery,
+		Name:        "Custom SOLID",
+		Description: "customized template",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_custom",
+				Name: "Custom",
+				Steps: []WorkflowTemplateStep{
+					{ID: "phase_plan", Name: "phase plan", Prompt: "custom phase plan prompt"},
+				},
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{templates: []WorkflowTemplate{custom}}),
+	)
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if run.TemplateName != "Custom SOLID" {
+		t.Fatalf("expected custom template name, got %q", run.TemplateName)
+	}
+	if len(run.Phases) != 1 || len(run.Phases[0].Steps) != 1 {
+		t.Fatalf("expected custom template steps, got %#v", run.Phases)
+	}
+	if run.Phases[0].Steps[0].Prompt != "custom phase plan prompt" {
+		t.Fatalf("expected custom step prompt, got %q", run.Phases[0].Steps[0].Prompt)
 	}
 }
 
@@ -429,6 +520,189 @@ func TestRunLifecycleOnTurnCompletedIdempotent(t *testing.T) {
 	}
 	if len(updated) != 0 {
 		t.Fatalf("expected duplicate turn event to be deduped, got %d updates", len(updated))
+	}
+}
+
+func TestRunLifecyclePromptDispatchWaitsForTurnThenAdvances(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted",
+		Name: "Prompted",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+					{ID: "step_2", Name: "step 2", Prompt: "prompt 2"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-b"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected running after start, got %q", run.Status)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected first prompt dispatch on start, got %d calls", len(dispatcher.calls))
+	}
+	first := run.Phases[0].Steps[0]
+	if !first.AwaitingTurn || first.Status != StepRunStatusRunning {
+		t.Fatalf("expected first step awaiting turn after dispatch, got %#v", first)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted turn-a: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after turn-a, got %d", len(updated))
+	}
+	run = updated[0]
+	if run.Phases[0].Steps[0].Status != StepRunStatusCompleted {
+		t.Fatalf("expected first step completed after turn-a, got %q", run.Phases[0].Steps[0].Status)
+	}
+	if run.Phases[0].Steps[1].Status != StepRunStatusRunning || !run.Phases[0].Steps[1].AwaitingTurn {
+		t.Fatalf("expected second step awaiting turn after turn-a, got %#v", run.Phases[0].Steps[1])
+	}
+	if len(dispatcher.calls) != 2 {
+		t.Fatalf("expected second prompt dispatch after turn-a, got %d calls", len(dispatcher.calls))
+	}
+
+	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-b",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted turn-b: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after turn-b, got %d", len(updated))
+	}
+	run = updated[0]
+	if run.Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected completed status after final turn, got %q", run.Status)
+	}
+}
+
+func TestRunLifecycleAdvanceRunDoesNotBypassAwaitingTurn(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted",
+		Name: "Prompted",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected initial dispatch count=1, got %d", len(dispatcher.calls))
+	}
+	run, err = service.AdvanceRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("AdvanceRun: %v", err)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected no additional dispatch while awaiting turn, got %d", len(dispatcher.calls))
+	}
+	if run.Phases[0].Steps[0].Status != StepRunStatusRunning || !run.Phases[0].Steps[0].AwaitingTurn {
+		t.Fatalf("expected step to remain awaiting turn after manual advance, got %#v", run.Phases[0].Steps[0])
+	}
+}
+
+func TestRunLifecyclePromptDispatchFailureFailsRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted",
+		Name: "Prompted",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(&stubStepPromptDispatcher{err: errors.New("dispatch failed")}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err == nil {
+		t.Fatalf("expected start to fail when prompt dispatch fails")
+	}
+	run, err = service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run after dispatch error, got %q", run.Status)
+	}
+	if !strings.Contains(strings.ToLower(run.LastError), "dispatch failed") {
+		t.Fatalf("expected dispatch failure in LastError, got %q", run.LastError)
 	}
 }
 

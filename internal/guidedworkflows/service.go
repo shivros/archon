@@ -37,10 +37,16 @@ type TurnEventProcessor interface {
 	OnTurnCompleted(ctx context.Context, signal TurnSignal) ([]*WorkflowRun, error)
 }
 
+type TemplateProvider interface {
+	ListWorkflowTemplates(ctx context.Context) ([]WorkflowTemplate, error)
+}
+
 type InMemoryRunService struct {
-	cfg       Config
-	engine    *Engine
-	templates map[string]WorkflowTemplate
+	cfg              Config
+	engine           *Engine
+	templates        map[string]WorkflowTemplate
+	templateProvider TemplateProvider
+	stepDispatcher   StepPromptDispatcher
 
 	mu        sync.RWMutex
 	sequence  int
@@ -86,6 +92,24 @@ func WithTemplate(template WorkflowTemplate) RunServiceOption {
 			s.templates = map[string]WorkflowTemplate{}
 		}
 		s.templates[template.ID] = cloneTemplate(template)
+	}
+}
+
+func WithTemplateProvider(provider TemplateProvider) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || provider == nil {
+			return
+		}
+		s.templateProvider = provider
+	}
+}
+
+func WithStepPromptDispatcher(dispatcher StepPromptDispatcher) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || dispatcher == nil {
+			return
+		}
+		s.stepDispatcher = dispatcher
 	}
 }
 
@@ -170,7 +194,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	return service
 }
 
-func (s *InMemoryRunService) CreateRun(_ context.Context, req CreateRunRequest) (*WorkflowRun, error) {
+func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error) {
 	if s == nil {
 		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
 	}
@@ -184,7 +208,7 @@ func (s *InMemoryRunService) CreateRun(_ context.Context, req CreateRunRequest) 
 	if templateID == "" {
 		templateID = TemplateIDSolidPhaseDelivery
 	}
-	template, ok := s.templates[templateID]
+	template, ok := s.resolveTemplates(ctx)[templateID]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTemplateNotFound, templateID)
 	}
@@ -237,6 +261,40 @@ func (s *InMemoryRunService) CreateRun(_ context.Context, req CreateRunRequest) 
 		Message: "workflow run created",
 	})
 	return cloneWorkflowRun(run), nil
+}
+
+func (s *InMemoryRunService) resolveTemplates(ctx context.Context) map[string]WorkflowTemplate {
+	out := make(map[string]WorkflowTemplate, len(s.templates))
+	for id, tpl := range s.templates {
+		out[id] = cloneTemplate(tpl)
+	}
+	if s.templateProvider == nil {
+		return out
+	}
+	templates, err := s.templateProvider.ListWorkflowTemplates(ctx)
+	if err != nil {
+		return out
+	}
+	for _, tpl := range templates {
+		id := strings.TrimSpace(tpl.ID)
+		if id == "" {
+			continue
+		}
+		if !templateHasSteps(tpl) {
+			continue
+		}
+		out[id] = cloneTemplate(tpl)
+	}
+	return out
+}
+
+func templateHasSteps(template WorkflowTemplate) bool {
+	for _, phase := range template.Phases {
+		if len(phase.Steps) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *InMemoryRunService) StartRun(ctx context.Context, runID string) (*WorkflowRun, error) {
@@ -374,6 +432,15 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 				continue
 			}
 			s.turnSeen[receipt] = struct{}{}
+		}
+		beforeStatus := run.Status
+		if _, err := s.completeAwaitingTurnStepLocked(run, normalized); err != nil {
+			return nil, err
+		}
+		if run.Status != WorkflowRunStatusRunning {
+			s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+			updated = append(updated, cloneWorkflowRun(run))
+			continue
 		}
 		if err := s.advanceOnceLocked(ctx, run); err != nil {
 			return nil, err
@@ -517,8 +584,18 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 	if run == nil {
 		return fmt.Errorf("%w: run is required", ErrInvalidTransition)
 	}
+	if isRunAwaitingTurn(run) {
+		return nil
+	}
 	beforeStatus := run.Status
 	if paused := s.applyPolicyDecisionLocked(run, defaultPolicyEvaluationInput(run)); paused {
+		return nil
+	}
+	if dispatched, err := s.dispatchNextStepPromptLocked(ctx, run); err != nil {
+		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+		return err
+	} else if dispatched {
+		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 		return nil
 	}
 	timeline := s.timelines[run.ID]
@@ -530,6 +607,240 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 	s.timelines[run.ID] = timeline
 	s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 	return nil
+}
+
+func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, run *WorkflowRun) (bool, error) {
+	if s == nil || run == nil || s.stepDispatcher == nil {
+		return false, nil
+	}
+	phaseIndex, stepIndex, ok := findNextPending(run)
+	if !ok || phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return false, nil
+	}
+	phase := &run.Phases[phaseIndex]
+	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
+		return false, nil
+	}
+	step := &phase.Steps[stepIndex]
+	prompt := strings.TrimSpace(step.Prompt)
+	if prompt == "" {
+		return false, nil
+	}
+	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
+		RunID:       strings.TrimSpace(run.ID),
+		TemplateID:  strings.TrimSpace(run.TemplateID),
+		WorkspaceID: strings.TrimSpace(run.WorkspaceID),
+		WorktreeID:  strings.TrimSpace(run.WorktreeID),
+		SessionID:   strings.TrimSpace(run.SessionID),
+		PhaseID:     strings.TrimSpace(phase.ID),
+		StepID:      strings.TrimSpace(step.ID),
+		Prompt:      prompt,
+	})
+	if err != nil {
+		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
+		return false, err
+	}
+	if !result.Dispatched {
+		return false, nil
+	}
+	now := s.engine.now()
+	run.CurrentPhaseIndex = phaseIndex
+	run.CurrentStepIndex = stepIndex
+	if phase.Status == PhaseRunStatusPending {
+		phase.Status = PhaseRunStatusRunning
+		phase.StartedAt = &now
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "phase",
+			Action:  "phase_started",
+			PhaseID: phase.ID,
+			Outcome: "running",
+			Detail:  phase.Name,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "phase_started",
+			RunID:   run.ID,
+			PhaseID: phase.ID,
+		})
+	}
+	step.Status = StepRunStatusRunning
+	step.AwaitingTurn = true
+	step.StartedAt = &now
+	step.CompletedAt = nil
+	step.Error = ""
+	step.Outcome = "awaiting_turn"
+	step.Output = strings.TrimSpace(result.TurnID)
+	step.TurnID = strings.TrimSpace(result.TurnID)
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_prompt_dispatched",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "awaiting_turn",
+		Detail:  "session=" + strings.TrimSpace(result.SessionID),
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_dispatched",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: "awaiting turn completion",
+	})
+	if run.SessionID == "" {
+		run.SessionID = strings.TrimSpace(result.SessionID)
+	}
+	return true, nil
+}
+
+func (s *InMemoryRunService) failRunForStepDispatchLocked(run *WorkflowRun, phaseIndex, stepIndex int, cause error) {
+	if s == nil || run == nil {
+		return
+	}
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return
+	}
+	phase := &run.Phases[phaseIndex]
+	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
+		return
+	}
+	step := &phase.Steps[stepIndex]
+	now := s.engine.now()
+	if phase.Status == PhaseRunStatusPending {
+		phase.Status = PhaseRunStatusRunning
+		phase.StartedAt = &now
+	}
+	step.Status = StepRunStatusFailed
+	step.AwaitingTurn = false
+	step.CompletedAt = &now
+	step.Error = strings.TrimSpace(cause.Error())
+	step.Outcome = "failed"
+	phase.Status = PhaseRunStatusFailed
+	phase.CompletedAt = &now
+	run.Status = WorkflowRunStatusFailed
+	run.CompletedAt = &now
+	run.LastError = strings.TrimSpace(cause.Error())
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_dispatch_failed",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "failed",
+		Detail:  run.LastError,
+	})
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_failed",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "failed",
+		Detail:  run.LastError,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_failed",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: run.LastError,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_failed",
+		RunID:   run.ID,
+		Message: run.LastError,
+	})
+}
+
+func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, signal TurnSignal) (bool, error) {
+	if s == nil || run == nil {
+		return false, nil
+	}
+	phaseIndex, stepIndex, ok := findAwaitingTurn(run)
+	if !ok {
+		return false, nil
+	}
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return false, fmt.Errorf("%w: awaiting phase index out of range", ErrInvalidTransition)
+	}
+	phase := &run.Phases[phaseIndex]
+	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
+		return false, fmt.Errorf("%w: awaiting step index out of range", ErrInvalidTransition)
+	}
+	step := &phase.Steps[stepIndex]
+	now := s.engine.now()
+	step.Status = StepRunStatusCompleted
+	step.AwaitingTurn = false
+	step.CompletedAt = &now
+	step.Error = ""
+	step.Outcome = "success"
+	if strings.TrimSpace(signal.TurnID) != "" {
+		step.TurnID = strings.TrimSpace(signal.TurnID)
+		if strings.TrimSpace(step.Output) == "" {
+			step.Output = step.TurnID
+		}
+	}
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_completed",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "success",
+		Detail:  "completed by turn signal",
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_completed",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: "completed by turn",
+	})
+	if phaseComplete(phase) {
+		phase.Status = PhaseRunStatusCompleted
+		phase.CompletedAt = &now
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "phase",
+			Action:  "phase_completed",
+			PhaseID: phase.ID,
+			Outcome: "success",
+			Detail:  phase.Name,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "phase_completed",
+			RunID:   run.ID,
+			PhaseID: phase.ID,
+		})
+	}
+	nextPhase, nextStep, hasNext := findNextPending(run)
+	if hasNext {
+		run.CurrentPhaseIndex = nextPhase
+		run.CurrentStepIndex = nextStep
+		return true, nil
+	}
+	run.Status = WorkflowRunStatusCompleted
+	run.CompletedAt = &now
+	run.LastError = ""
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_completed",
+		Outcome: "success",
+		Detail:  "all workflow steps completed",
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:    now,
+		Type:  "run_completed",
+		RunID: run.ID,
+	})
+	return true, nil
 }
 
 func (s *InMemoryRunService) resumeAndAdvanceWithoutPolicyLocked(ctx context.Context, run *WorkflowRun, note string) error {
@@ -695,6 +1006,7 @@ func instantiatePhases(template WorkflowTemplate) []PhaseRun {
 			steps = append(steps, StepRun{
 				ID:     step.ID,
 				Name:   step.Name,
+				Prompt: strings.TrimSpace(step.Prompt),
 				Status: StepRunStatusPending,
 			})
 		}
@@ -888,6 +1200,28 @@ func currentRunPosition(run *WorkflowRun) (phaseID string, stepID string) {
 	}
 	stepID = strings.TrimSpace(phase.Steps[sIdx].ID)
 	return phaseID, stepID
+}
+
+func isRunAwaitingTurn(run *WorkflowRun) bool {
+	_, _, ok := findAwaitingTurn(run)
+	return ok
+}
+
+func findAwaitingTurn(run *WorkflowRun) (phaseIndex int, stepIndex int, ok bool) {
+	if run == nil {
+		return 0, 0, false
+	}
+	for pIndex, phase := range run.Phases {
+		for sIndex, step := range phase.Steps {
+			if step.Status != StepRunStatusRunning {
+				continue
+			}
+			if step.AwaitingTurn || strings.EqualFold(strings.TrimSpace(step.Outcome), "awaiting_turn") {
+				return pIndex, sIndex, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 func (s *InMemoryRunService) activeRunsLocked() int {

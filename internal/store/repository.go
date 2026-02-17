@@ -17,6 +17,7 @@ type Repository interface {
 	Workspaces() WorkspaceStore
 	Worktrees() WorktreeStore
 	Groups() WorkspaceGroupStore
+	WorkflowTemplates() WorkflowTemplateStore
 	AppState() AppStateStore
 	SessionMeta() SessionMetaStore
 	SessionIndex() SessionIndexStore
@@ -27,37 +28,40 @@ type Repository interface {
 }
 
 type RepositoryPaths struct {
-	WorkspacesPath   string
-	AppStatePath     string
-	SessionMetaPath  string
-	SessionIndexPath string
-	ApprovalsPath    string
-	NotesPath        string
-	DBPath           string
+	WorkspacesPath        string
+	WorkflowTemplatesPath string
+	AppStatePath          string
+	SessionMetaPath       string
+	SessionIndexPath      string
+	ApprovalsPath         string
+	NotesPath             string
+	DBPath                string
 }
 
 type fileRepository struct {
-	workspaces WorkspaceStore
-	worktrees  WorktreeStore
-	groups     WorkspaceGroupStore
-	appState   AppStateStore
-	meta       SessionMetaStore
-	sessions   SessionIndexStore
-	approvals  ApprovalStore
-	notes      NoteStore
+	workspaces        WorkspaceStore
+	worktrees         WorktreeStore
+	groups            WorkspaceGroupStore
+	workflowTemplates WorkflowTemplateStore
+	appState          AppStateStore
+	meta              SessionMetaStore
+	sessions          SessionIndexStore
+	approvals         ApprovalStore
+	notes             NoteStore
 }
 
 func NewFileRepository(paths RepositoryPaths) Repository {
 	workspaces := NewFileWorkspaceStore(paths.WorkspacesPath)
 	return &fileRepository{
-		workspaces: workspaces,
-		worktrees:  workspaces,
-		groups:     workspaces,
-		appState:   NewFileAppStateStore(paths.AppStatePath),
-		meta:       NewFileSessionMetaStore(paths.SessionMetaPath),
-		sessions:   NewFileSessionIndexStore(paths.SessionIndexPath),
-		approvals:  NewFileApprovalStore(paths.ApprovalsPath),
-		notes:      NewFileNoteStore(paths.NotesPath),
+		workspaces:        workspaces,
+		worktrees:         workspaces,
+		groups:            workspaces,
+		workflowTemplates: NewFileWorkflowTemplateStore(paths.WorkflowTemplatesPath),
+		appState:          NewFileAppStateStore(paths.AppStatePath),
+		meta:              NewFileSessionMetaStore(paths.SessionMetaPath),
+		sessions:          NewFileSessionIndexStore(paths.SessionIndexPath),
+		approvals:         NewFileApprovalStore(paths.ApprovalsPath),
+		notes:             NewFileNoteStore(paths.NotesPath),
 	}
 }
 
@@ -71,6 +75,10 @@ func (r *fileRepository) Worktrees() WorktreeStore {
 
 func (r *fileRepository) Groups() WorkspaceGroupStore {
 	return r.groups
+}
+
+func (r *fileRepository) WorkflowTemplates() WorkflowTemplateStore {
+	return r.workflowTemplates
 }
 
 func (r *fileRepository) AppState() AppStateStore {
@@ -128,6 +136,9 @@ func SeedRepositoryFromFiles(ctx context.Context, dst Repository, paths Reposito
 	if err := seedAppState(ctx, dst.AppState(), src.AppState()); err != nil {
 		return err
 	}
+	if err := seedWorkflowTemplates(ctx, dst.WorkflowTemplates(), src.WorkflowTemplates()); err != nil {
+		return err
+	}
 	if err := seedSessionMeta(ctx, dst.SessionMeta(), src.SessionMeta()); err != nil {
 		return err
 	}
@@ -151,6 +162,29 @@ func SeedRepositoryFromFiles(ctx context.Context, dst Repository, paths Reposito
 	}
 	if err := seedNotes(ctx, dst.Notes(), src.Notes()); err != nil {
 		return err
+	}
+	return nil
+}
+
+func seedWorkflowTemplates(ctx context.Context, dst WorkflowTemplateStore, src WorkflowTemplateStore) error {
+	if dst == nil || src == nil {
+		return nil
+	}
+	current, err := dst.ListWorkflowTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	if len(current) > 0 {
+		return nil
+	}
+	legacy, err := src.ListWorkflowTemplates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range legacy {
+		if _, err := dst.UpsertWorkflowTemplate(ctx, item); err != nil {
+			return err
+		}
 	}
 	return nil
 }

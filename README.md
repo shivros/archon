@@ -36,12 +36,14 @@ Archon now separates core/daemon config, UI config, and UI keybindings:
 - `~/.archon/config.toml` (core daemon/client config)
 - `~/.archon/ui.toml` (UI config)
 - `~/.archon/keybindings.json` (UI hotkey overrides)
+- `~/.archon/workflow_templates.json` (guided workflow templates + per-step prompts)
 
 Configuration is file-based:
 
 - `config.toml` controls daemon/core behavior (daemon address, provider defaults, logging/debug settings).
 - `ui.toml` controls UI-level settings.
 - `keybindings.json` overrides UI hotkeys.
+- `workflow_templates.json` stores user-defined guided workflow templates and prompts.
 
 Example `config.toml`:
 
@@ -180,7 +182,7 @@ Use `POST /v1/workflow-runs/metrics/reset` to reset aggregate counters for a fre
 
 Manual start flow:
 
-- from task/worktree context in the TUI, choose `Start Guided Workflow`
+- from workspace/worktree/session context in the TUI, choose `Start Guided Workflow`
 - configure run setup (template + policy sensitivity)
 - launch run and monitor the timeline/decision inbox surfaces
 

@@ -18,6 +18,7 @@ const (
 	ContextMenuWorkspaceOpenNotes
 	ContextMenuWorkspaceAddNote
 	ContextMenuWorkspaceAddWorktree
+	ContextMenuWorkspaceStartGuidedWorkflow
 	ContextMenuWorkspaceCopyPath
 	ContextMenuWorkspaceDelete
 	ContextMenuWorktreeAdd
@@ -132,6 +133,7 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 		{Label: "Open Notes", Action: ContextMenuWorkspaceOpenNotes},
 		{Label: "Add Note", Action: ContextMenuWorkspaceAddNote},
 		{Label: "Add Worktree", Action: ContextMenuWorkspaceAddWorktree},
+		{Label: "Start Guided Workflow", Action: ContextMenuWorkspaceStartGuidedWorkflow},
 		{Label: "Copy Workspace Path", Action: ContextMenuWorkspaceCopyPath},
 		{Label: "Delete Workspace", Action: ContextMenuWorkspaceDelete},
 	}

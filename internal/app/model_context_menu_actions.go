@@ -61,6 +61,15 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 		}
 		m.enterAddWorktree(target.id)
 		return true, nil
+	case ContextMenuWorkspaceStartGuidedWorkflow:
+		if target.id == "" || target.id == unassignedWorkspaceID {
+			m.setValidationStatus("select a workspace")
+			return true, nil
+		}
+		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+			workspaceID: target.id,
+		})
+		return true, nil
 	case ContextMenuWorkspaceCopyPath:
 		if target.id == "" || target.id == unassignedWorkspaceID {
 			m.setValidationStatus("select a workspace")

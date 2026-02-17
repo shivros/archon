@@ -4,11 +4,51 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"control/internal/config"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
+
+type stubWorkflowTemplateStore struct {
+	templates []guidedworkflows.WorkflowTemplate
+}
+
+type stubGuidedWorkflowSessionGateway struct {
+	sessions  []*types.Session
+	meta      []*types.SessionMeta
+	sendErr   error
+	turnID    string
+	sendCalls []struct {
+		sessionID string
+		input     []map[string]any
+	}
+}
+
+func (s *stubWorkflowTemplateStore) ListWorkflowTemplates(context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	out := make([]guidedworkflows.WorkflowTemplate, len(s.templates))
+	copy(out, s.templates)
+	return out, nil
+}
+
+func (s *stubGuidedWorkflowSessionGateway) ListWithMeta(context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return s.sessions, s.meta, nil
+}
+
+func (s *stubGuidedWorkflowSessionGateway) SendMessage(_ context.Context, id string, input []map[string]any) (string, error) {
+	s.sendCalls = append(s.sendCalls, struct {
+		sessionID string
+		input     []map[string]any
+	}{
+		sessionID: id,
+		input:     input,
+	})
+	if s.sendErr != nil {
+		return "", s.sendErr
+	}
+	return s.turnID, nil
+}
 
 func TestGuidedWorkflowsConfigFromCoreConfigDefaults(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
@@ -81,7 +121,7 @@ func TestNewGuidedWorkflowNotificationPublisherSkipsWrapperWhenDisabled(t *testi
 
 func TestNewGuidedWorkflowRunServiceBuildsService(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
-	service := newGuidedWorkflowRunService(cfg, nil)
+	service := newGuidedWorkflowRunService(cfg, nil, nil, nil, nil)
 	if service == nil {
 		t.Fatalf("expected run service")
 	}
@@ -99,7 +139,7 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 	cfg.GuidedWorkflows.Rollout.TelemetryEnabled = boolPtr(false)
 	cfg.GuidedWorkflows.Rollout.MaxActiveRuns = 1
 
-	service := newGuidedWorkflowRunService(cfg, nil)
+	service := newGuidedWorkflowRunService(cfg, nil, nil, nil, nil)
 	if service == nil {
 		t.Fatalf("expected run service")
 	}
@@ -125,6 +165,135 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 	}
 	if metrics.Enabled {
 		t.Fatalf("expected rollout telemetry_enabled=false to disable telemetry")
+	}
+}
+
+func TestNewGuidedWorkflowRunServiceLoadsTemplatesFromStore(t *testing.T) {
+	cfg := config.DefaultCoreConfig()
+	cfg.GuidedWorkflows.Enabled = boolPtr(true)
+	custom := guidedworkflows.WorkflowTemplate{
+		ID:   "custom_flow",
+		Name: "Custom Flow",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{
+						ID:     "step_1",
+						Name:   "Step 1",
+						Prompt: "custom prompt",
+					},
+				},
+			},
+		},
+	}
+	stores := &Stores{
+		WorkflowTemplates: &stubWorkflowTemplateStore{templates: []guidedworkflows.WorkflowTemplate{custom}},
+	}
+
+	service := newGuidedWorkflowRunService(cfg, stores, nil, nil, nil)
+	run, err := service.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		TemplateID:  "custom_flow",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun with custom template: %v", err)
+	}
+	if run.TemplateID != "custom_flow" || run.TemplateName != "Custom Flow" {
+		t.Fatalf("expected custom template to be used, got id=%q name=%q", run.TemplateID, run.TemplateName)
+	}
+	if len(run.Phases) != 1 || len(run.Phases[0].Steps) != 1 || run.Phases[0].Steps[0].Prompt != "custom prompt" {
+		t.Fatalf("expected custom prompt to be snapshotted, got %#v", run.Phases)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-1", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+		},
+		turnID: "turn-1",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-1" || result.TurnID != "turn-1" {
+		t.Fatalf("unexpected dispatch result: %#v", result)
+	}
+	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-1" {
+		t.Fatalf("expected prompt to be sent to explicit session, got %#v", gateway.sendCalls)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherResolvesMostRecentContextSession(t *testing.T) {
+	older := time.Now().UTC().Add(-2 * time.Hour)
+	newer := time.Now().UTC()
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-old", Provider: "codex", Status: types.SessionStatusRunning},
+			{ID: "sess-new", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-old", WorkspaceID: "ws-1", WorktreeID: "wt-1", LastActiveAt: &older},
+			{SessionID: "sess-new", WorkspaceID: "ws-1", WorktreeID: "wt-1", LastActiveAt: &newer},
+		},
+		turnID: "turn-2",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-new" {
+		t.Fatalf("expected newest matching session, got %#v", result)
+	}
+	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-new" {
+		t.Fatalf("expected send to sess-new, got %#v", gateway.sendCalls)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherSkipsUnsupportedProvider(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "claude", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-1", WorkspaceID: "ws-1"},
+		},
+		turnID: "turn-3",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected unsupported provider to skip dispatch, got %#v", result)
+	}
+	if len(gateway.sendCalls) != 0 {
+		t.Fatalf("expected no send calls for unsupported provider, got %#v", gateway.sendCalls)
 	}
 }
 

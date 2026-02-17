@@ -72,6 +72,39 @@ func TestWorkspaceContextActionAddWorktreeRequiresSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceContextActionStartGuidedWorkflowRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorkspaceContextMenuAction(ContextMenuWorkspaceStartGuidedWorkflow, contextMenuTarget{})
+	if !handled {
+		t.Fatalf("expected workspace action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.status != "select a workspace" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestWorkspaceContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorkspaceContextMenuAction(ContextMenuWorkspaceStartGuidedWorkflow, contextMenuTarget{id: "ws1"})
+	if !handled {
+		t.Fatalf("expected workspace action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected guided workflow launcher stage")
+	}
+}
+
 func TestWorkspaceContextActionAddNoteEntersAddNoteMode(t *testing.T) {
 	m := NewModel(nil)
 
@@ -370,6 +403,7 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 	foundOpen := false
 	foundNote := false
 	foundAdd := false
+	foundGuided := false
 	found := false
 	for _, item := range c.items {
 		if item.Action == ContextMenuWorkspaceOpenNotes {
@@ -380,6 +414,9 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 		}
 		if item.Action == ContextMenuWorkspaceAddWorktree {
 			foundAdd = true
+		}
+		if item.Action == ContextMenuWorkspaceStartGuidedWorkflow {
+			foundGuided = true
 		}
 		if item.Action == ContextMenuWorkspaceCopyPath {
 			found = true
@@ -393,6 +430,9 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 	}
 	if !foundAdd {
 		t.Fatalf("expected workspace context menu to include add worktree action")
+	}
+	if !foundGuided {
+		t.Fatalf("expected workspace context menu to include guided workflow action")
 	}
 	if !found {
 		t.Fatalf("expected workspace context menu to include copy path action")

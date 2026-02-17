@@ -24,14 +24,15 @@ type Daemon struct {
 }
 
 type Stores struct {
-	Workspaces  WorkspaceStore
-	Worktrees   WorktreeStore
-	Groups      WorkspaceGroupStore
-	AppState    AppStateStore
-	SessionMeta SessionMetaStore
-	Sessions    SessionIndexStore
-	Approvals   ApprovalStore
-	Notes       NoteStore
+	Workspaces        WorkspaceStore
+	Worktrees         WorktreeStore
+	Groups            WorkspaceGroupStore
+	WorkflowTemplates WorkflowTemplateStore
+	AppState          AppStateStore
+	SessionMeta       SessionMetaStore
+	Sessions          SessionIndexStore
+	Approvals         ApprovalStore
+	Notes             NoteStore
 }
 
 type WorkspaceStore interface {
@@ -60,6 +61,10 @@ type WorkspaceGroupStore interface {
 type AppStateStore interface {
 	Load(ctx context.Context) (*types.AppState, error)
 	Save(ctx context.Context, state *types.AppState) error
+}
+
+type WorkflowTemplateStore interface {
+	ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error)
 }
 
 type ProviderRegistry interface {
@@ -128,8 +133,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.logger,
 	)
 	defer notifier.Close()
+	liveCodex := NewCodexLiveManager(d.stores, d.logger)
 	guided := newGuidedWorkflowOrchestrator(coreCfg)
-	workflowRuns := newGuidedWorkflowRunService(coreCfg, d.stores)
+	workflowRuns := newGuidedWorkflowRunService(coreCfg, d.stores, d.manager, liveCodex, d.logger)
 	var turnProcessor guidedworkflows.TurnEventProcessor
 	if processor, ok := any(workflowRuns).(guidedworkflows.TurnEventProcessor); ok {
 		turnProcessor = processor
@@ -145,7 +151,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)
 	api.Syncer = syncer
-	api.LiveCodex = NewCodexLiveManager(d.stores, d.logger)
+	api.LiveCodex = liveCodex
 	api.LiveCodex.SetNotificationPublisher(eventPublisher)
 	approvalSync := NewApprovalResyncService(d.stores, d.logger)
 

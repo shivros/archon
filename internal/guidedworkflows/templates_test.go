@@ -32,5 +32,8 @@ func TestBuiltinTemplateSolidPhaseDeliverySequence(t *testing.T) {
 		if steps[i].Name != want {
 			t.Fatalf("unexpected step %d: got=%q want=%q", i, steps[i].Name, want)
 		}
+		if steps[i].Prompt == "" {
+			t.Fatalf("expected step %d (%s) to include default prompt", i, steps[i].ID)
+		}
 	}
 }
