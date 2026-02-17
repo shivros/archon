@@ -117,8 +117,9 @@ func (c *AddWorktreeController) SetAvailable(available []*types.GitWorktree, exi
 }
 
 func (c *AddWorktreeController) Update(msg tea.Msg, host addWorktreeHost) (bool, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		if handled, cmd := c.handleKey(keyMsg, host); handled {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if handled, cmd := c.handleKey(msg, host); handled {
 			return true, cmd
 		}
 		if c.mode == worktreeModeExisting && c.step == 0 {
@@ -132,7 +133,14 @@ func (c *AddWorktreeController) Update(msg tea.Msg, host addWorktreeHost) (bool,
 				return c.advance(host)
 			},
 		}
-		return controller.Update(keyMsg)
+		return controller.Update(msg)
+	case tea.PasteMsg:
+		if c.mode == worktreeModeExisting && c.step == 0 {
+			picker := addWorktreeQueryPicker{controller: c}
+			typeAhead := newPickerTypeAheadController(host.keyString, defaultPickerPasteNormalizer{})
+			typeAhead.handlePaste(msg, picker)
+			return true, nil
+		}
 	}
 	if c.mode == worktreeModeExisting && c.step == 0 {
 		return true, nil
@@ -197,20 +205,14 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 				c.setListIndex(len(c.filtered) - 1)
 				return true, nil
 			}
-			switch host.keyString(keyMsg) {
-			case "backspace", "ctrl+h":
-				if c.backspaceQuery() {
-					return true, nil
-				}
-			case "ctrl+u":
-				if c.clearQuery() {
-					return true, nil
-				}
+			picker := addWorktreeQueryPicker{controller: c}
+			typeAhead := newPickerTypeAheadController(host.keyString, defaultPickerPasteNormalizer{})
+			if typeAhead.handleKey(keyMsg, picker) {
+				return true, nil
 			}
-			if text := pickerTypeAheadText(keyMsg); text != "" {
-				if c.appendQuery(text) {
-					return true, nil
-				}
+			if pickerTypeAheadText(keyMsg) != "" {
+				// Consume plain text key input while filtering existing worktrees.
+				return true, nil
 			}
 			return true, nil
 		}
@@ -524,6 +526,38 @@ func (c *AddWorktreeController) selectedAvailableIndex() int {
 		return -1
 	}
 	return c.filtered[c.listIndex]
+}
+
+type addWorktreeQueryPicker struct {
+	controller *AddWorktreeController
+}
+
+func (p addWorktreeQueryPicker) Query() string {
+	if p.controller == nil {
+		return ""
+	}
+	return p.controller.query
+}
+
+func (p addWorktreeQueryPicker) AppendQuery(text string) bool {
+	if p.controller == nil {
+		return false
+	}
+	return p.controller.appendQuery(text)
+}
+
+func (p addWorktreeQueryPicker) BackspaceQuery() bool {
+	if p.controller == nil {
+		return false
+	}
+	return p.controller.backspaceQuery()
+}
+
+func (p addWorktreeQueryPicker) ClearQuery() bool {
+	if p.controller == nil {
+		return false
+	}
+	return p.controller.clearQuery()
 }
 
 func (c *AddWorktreeController) setQuery(query string) bool {

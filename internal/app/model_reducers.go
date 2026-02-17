@@ -508,6 +508,11 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 	if !isTextInputMsg(msg) {
 		return false, nil
 	}
+	if pasteMsg, ok := msg.(tea.PasteMsg); ok && m.composeOptionPickerOpen() {
+		composePicker := composeOptionQueryPicker{model: m}
+		m.applyPickerPaste(pasteMsg, composePicker)
+		return true, nil
+	}
 	controller := textInputModeController{
 		input:             m.chatInput,
 		keyString:         m.keyString,
@@ -538,20 +543,13 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 					m.moveComposeOptionPicker(-1)
 					return true, nil
 				}
-				switch m.keyString(msg) {
-				case "backspace", "ctrl+h":
-					if m.composeOptionPickerBackspaceQuery() {
-						return true, nil
-					}
-				case "ctrl+u":
-					if m.composeOptionPickerClearQuery() {
-						return true, nil
-					}
+				composePicker := composeOptionQueryPicker{model: m}
+				if m.applyPickerTypeAhead(msg, composePicker) {
+					return true, nil
 				}
-				if text := pickerTypeAheadText(msg); text != "" {
-					if m.composeOptionPickerAppendQuery(text) {
-						return true, nil
-					}
+				if pickerTypeAheadText(msg) != "" {
+					// Consume plain text input while picker is open, even if query does not change.
+					return true, nil
 				}
 			}
 			if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {

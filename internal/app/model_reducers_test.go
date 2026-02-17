@@ -381,3 +381,77 @@ func TestPickProviderReducerEnterSelectsProvider(t *testing.T) {
 		t.Fatalf("expected provider to be selected, got %#v", m.newSession)
 	}
 }
+
+func TestPickProviderReducerPasteAppendsToQuery(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+
+	handled, _ := m.reducePickProviderMode(tea.PasteMsg{Content: "claude"})
+	if !handled {
+		t.Fatalf("expected pick provider reducer to handle paste")
+	}
+	if m.providerPicker == nil {
+		t.Fatalf("expected provider picker to exist")
+	}
+	if m.providerPicker.Query() != "claude" {
+		t.Fatalf("expected query to be 'claude', got %q", m.providerPicker.Query())
+	}
+}
+
+func TestPickProviderPasteViaUpdate(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+
+	_, _ = m.Update(tea.PasteMsg{Content: "claude"})
+	if m.providerPicker == nil {
+		t.Fatalf("expected provider picker to exist")
+	}
+	if m.providerPicker.Query() != "claude" {
+		t.Fatalf("expected query to be 'claude' via Update, got %q", m.providerPicker.Query())
+	}
+}
+
+func TestPickProviderReducerPasteSanitizesContent(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+
+	handled, _ := m.reducePickProviderMode(tea.PasteMsg{Content: " \x1b[31mcld\x1b[0m\n "})
+	if !handled {
+		t.Fatalf("expected pick provider reducer to handle paste")
+	}
+	if m.providerPicker == nil {
+		t.Fatalf("expected provider picker to exist")
+	}
+	if got := m.providerPicker.Query(); got != "cld" {
+		t.Fatalf("expected sanitized query 'cld', got %q", got)
+	}
+}
+
+func TestReduceComposeInputKeyPasteRoutesToComposeOptionPicker(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if m.input == nil || m.chatInput == nil {
+		t.Fatalf("expected compose input controllers")
+	}
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected compose option picker to open")
+	}
+	m.input.FocusChatInput()
+	m.chatInput.Focus()
+	m.chatInput.SetValue("existing")
+
+	handled, _ := m.reduceComposeInputKey(tea.PasteMsg{Content: "\x1b[32m53c\x1b[0m\n"})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle paste while option picker is open")
+	}
+	if got := m.composeOptionPickerQuery(); got != "53c" {
+		t.Fatalf("expected option picker query to be updated, got %q", got)
+	}
+	if got := m.chatInput.Value(); got != "existing" {
+		t.Fatalf("expected compose input to remain unchanged, got %q", got)
+	}
+}

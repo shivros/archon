@@ -367,3 +367,23 @@ func TestUpdateNotesMsgWhileAddNoteModeRendersNotes(t *testing.T) {
 		t.Fatalf("expected note block id n1, got %q", m.contentBlocks[1].ID)
 	}
 }
+
+func TestReduceNoteMovePickerModePasteSanitizesQuery(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModePickNoteMoveSession
+	if m.groupSelectPicker == nil {
+		t.Fatalf("expected session picker")
+	}
+	m.groupSelectPicker.SetOptions([]selectOption{
+		{id: "s1", label: "alpha"},
+		{id: "s2", label: "beta"},
+	})
+
+	handled, _ := m.reduceNoteMovePickerMode(tea.PasteMsg{Content: " \x1b[31mbe\x1b[0m\n "})
+	if !handled {
+		t.Fatalf("expected note move picker reducer to handle paste")
+	}
+	if got := m.groupSelectPicker.Query(); got != "be" {
+		t.Fatalf("expected sanitized picker query, got %q", got)
+	}
+}

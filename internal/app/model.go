@@ -82,6 +82,7 @@ type Model struct {
 	notesAPI                   NotesAPI
 	stateAPI                   StateAPI
 	clipboard                  ClipboardService
+	pickerPasteNormalizer      PickerPasteNormalizer
 	sidebar                    *SidebarController
 	viewport                   viewport.Model
 	mode                       uiMode
@@ -317,6 +318,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		notesAPI:                   api,
 		stateAPI:                   api,
 		clipboard:                  defaultClipboardService{},
+		pickerPasteNormalizer:      defaultPickerPasteNormalizer{},
 		sidebar:                    NewSidebarController(),
 		viewport:                   vp,
 		notesPanelViewport:         notesPanelVP,

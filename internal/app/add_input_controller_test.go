@@ -103,6 +103,35 @@ func TestAddWorktreeControllerExistingTypeAheadSelectsFilteredEntry(t *testing.T
 	}
 }
 
+func TestAddWorktreeControllerExistingPasteUpdatesFilterQuery(t *testing.T) {
+	controller := NewAddWorktreeController(80)
+	host := &stubAddWorktreeHost{}
+	controller.Enter("ws1", "/tmp/repo")
+	controller.mode = worktreeModeExisting
+	controller.step = 0
+	controller.SetAvailable([]*types.GitWorktree{
+		{Path: "/tmp/repo/feature-ui", Branch: "feature-ui"},
+		{Path: "/tmp/repo/fix-api", Branch: "fix-api"},
+		{Path: "/tmp/repo/chore", Branch: "chore"},
+	}, nil, "/tmp/repo")
+
+	handled, _ := controller.Update(tea.PasteMsg{Content: " \x1b[31mfxapi\x1b[0m\n "}, host)
+	if !handled {
+		t.Fatalf("expected paste to be handled while filtering existing worktrees")
+	}
+	if got := controller.query; got != "fxapi" {
+		t.Fatalf("expected sanitized query, got %q", got)
+	}
+	if len(controller.filtered) != 1 {
+		t.Fatalf("expected one filtered worktree, got %d", len(controller.filtered))
+	}
+	if idx := controller.selectedAvailableIndex(); idx < 0 || idx >= len(controller.available) {
+		t.Fatalf("expected selected index in range, got %d", idx)
+	} else if controller.available[idx].Path != "/tmp/repo/fix-api" {
+		t.Fatalf("expected filtered worktree to be fix-api, got %q", controller.available[idx].Path)
+	}
+}
+
 type stubAddWorkspaceHost struct {
 	submitKey  string
 	status     string
