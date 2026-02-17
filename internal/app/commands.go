@@ -415,6 +415,22 @@ func fetchHistoryCmd(api SessionHistoryAPI, id, key string, lines int) tea.Cmd {
 	}
 }
 
+func fetchRecentsPreviewCmd(api SessionHistoryAPI, id, revision string, lines int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		resp, err := api.History(ctx, id, lines)
+		if err != nil {
+			return recentsPreviewMsg{id: id, revision: revision, err: err}
+		}
+		text := ""
+		if resp != nil {
+			text = latestAssistantBlockText(itemsToBlocks(resp.Items))
+		}
+		return recentsPreviewMsg{id: id, revision: revision, text: text}
+	}
+}
+
 func openStreamCmd(api SessionTailStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ch, cancel, err := api.TailStream(context.Background(), id, "combined")

@@ -119,6 +119,7 @@ type UIChatConfig struct {
 
 type UISidebarConfig struct {
 	ExpandByDefault *bool `toml:"expand_by_default"`
+	ShowRecents     *bool `toml:"show_recents"`
 }
 
 func DefaultCoreConfig() CoreConfig {
@@ -362,6 +363,7 @@ func DefaultUIConfig() UIConfig {
 		},
 		Sidebar: UISidebarConfig{
 			ExpandByDefault: boolPtr(true),
+			ShowRecents:     boolPtr(true),
 		},
 	}
 }
@@ -396,6 +398,13 @@ func (c UIConfig) SidebarExpandByDefault() bool {
 		return true
 	}
 	return *c.Sidebar.ExpandByDefault
+}
+
+func (c UIConfig) SidebarShowRecents() bool {
+	if c.Sidebar.ShowRecents == nil {
+		return true
+	}
+	return *c.Sidebar.ShowRecents
 }
 
 func LoadUIConfig() (UIConfig, error) {

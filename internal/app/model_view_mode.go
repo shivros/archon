@@ -70,6 +70,8 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		}
 	case uiModeCompose:
 		headerText = "Chat"
+	case uiModeRecents:
+		headerText = m.recentsHeader()
 	case uiModeApprovalResponse:
 		headerText = "Approval Response"
 		bodyText = m.approvalResponseBody()
@@ -110,6 +112,13 @@ func (m *Model) modeInputView() (line string, scrollable bool) {
 		return InputPanel{Input: m.noteInput}.View()
 	case uiModeSearch:
 		return InputPanel{Input: m.searchInput}.View()
+	case uiModeRecents:
+		if m.recentsReplySessionID != "" {
+			return InputPanel{
+				Input:  m.recentsReplyInput,
+				Footer: InputFooterFunc(m.recentsReplyFooter),
+			}.View()
+		}
 	}
 	return "", false
 }

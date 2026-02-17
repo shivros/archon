@@ -57,6 +57,7 @@ const (
 	uiModeAddWorktree
 	uiModePickProvider
 	uiModeCompose
+	uiModeRecents
 	uiModeApprovalResponse
 	uiModeSearch
 	uiModeRenameWorkspace
@@ -102,6 +103,7 @@ type Model struct {
 	workspaceMulti                      *MultiSelectPicker
 	noteInput                           *TextInput
 	approvalInput                       *TextInput
+	recentsReplyInput                   *TextInput
 	renameWorkspaceID                   string
 	renameWorktreeWorkspaceID           string
 	renameWorktreeID                    string
@@ -118,6 +120,7 @@ type Model struct {
 	height                              int
 	follow                              bool
 	showDismissed                       bool
+	showRecents                         bool
 	workspaces                          []*types.Workspace
 	groups                              []*types.WorkspaceGroup
 	worktrees                           map[string][]*types.Worktree
@@ -189,6 +192,11 @@ type Model struct {
 	keybindings                         *Keybindings
 	contextMenu                         *ContextMenuController
 	confirm                             *ConfirmController
+	recents                             *RecentsTracker
+	recentsSelectedSessionID            string
+	recentsExpandedSessions             map[string]bool
+	recentsReplySessionID               string
+	recentsPreviews                     map[string]recentsPreview
 	newSession                          *newSessionTarget
 	pendingSelectID                     string
 	selectSeq                           int
@@ -339,6 +347,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		workspaceMulti:                      NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
 		noteInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		approvalInput:                       NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		recentsReplyInput:                   NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
 		status:                              "",
 		toastLevel:                          toastLevelInfo,
 		follow:                              true,
@@ -371,6 +380,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		menu:                                NewMenuController(),
 		contextMenu:                         NewContextMenuController(),
 		confirm:                             NewConfirmController(),
+		recents:                             NewRecentsTracker(),
+		recentsExpandedSessions:             map[string]bool{},
+		recentsPreviews:                     map[string]recentsPreview{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
 		uiLatency:                           newUILatencyTracker(nil),
@@ -532,6 +544,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.reduceComposeMode(msg); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.reduceRecentsMode(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.reduceAddNoteMode(msg); handled {
 		return m, cmd
 	}
@@ -616,12 +631,15 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	minHeight, maxHeight := uiConfig.SharedMultilineInputHeights()
 	nextTimestampMode := parseChatTimestampMode(uiConfig.ChatTimestampMode())
 	sidebarExpandByDefault := uiConfig.SidebarExpandByDefault()
+	showRecents := uiConfig.SidebarShowRecents()
 	timestampModeChanged := nextTimestampMode != m.timestampMode
 	if timestampModeChanged {
 		m.timestampMode = nextTimestampMode
 		m.renderedForTimestampMode = ""
 		m.renderedForRelativeBucket = -1
 	}
+	recentsVisibilityChanged := m.showRecents != showRecents
+	m.showRecents = showRecents
 	sidebarExpansionChanged := false
 	if m.sidebar != nil {
 		sidebarExpansionChanged = m.sidebar.SetExpandByDefault(sidebarExpandByDefault)
@@ -649,7 +667,7 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 		m.renderViewport()
 		m.renderNotesPanel()
 	}
-	if sidebarExpansionChanged {
+	if sidebarExpansionChanged || recentsVisibilityChanged {
 		m.applySidebarItems()
 	}
 }
@@ -706,6 +724,12 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		}
 	} else if m.mode == uiModeSearch {
 		extraLines = 2
+	} else if m.mode == uiModeRecents && strings.TrimSpace(m.recentsReplySessionID) != "" {
+		if m.recentsReplyInput != nil {
+			extraLines = m.recentsReplyInput.Height() + 2
+		} else {
+			extraLines = 3
+		}
 	}
 	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.SetWidth(contentWidth)
@@ -754,6 +778,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	if m.noteInput != nil {
 		m.noteInput.Resize(mainViewportWidth)
 	}
+	if m.recentsReplyInput != nil {
+		m.recentsReplyInput.Resize(mainViewportWidth)
+	}
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {
@@ -770,6 +797,8 @@ func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
 	var cmd tea.Cmd
 	if !handled {
 		cmd = m.scheduleSessionLoad(item, delay)
+	} else if m.mode == uiModeRecents {
+		cmd = m.ensureRecentsPreviewForSelection()
 	}
 	if stateChanged || draftChanged {
 		save := m.requestAppStateSaveCmd()
@@ -790,8 +819,18 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		return true, false, false
 	}
 	switch item.kind {
-	case sidebarWorkspace:
+	case sidebarRecentsAll, sidebarRecentsReady, sidebarRecentsRunning:
 		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		m.enterRecentsView(item)
+		return true, false, false
+	case sidebarWorkspace:
+		if m.mode == uiModeRecents {
+			m.exitRecentsView()
+		}
+		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		if m.mode == uiModeRecents {
+			m.exitRecentsView()
+		}
 		maybeID := item.workspaceID()
 		if maybeID == unassignedWorkspaceID {
 			maybeID = ""
@@ -811,7 +850,13 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		m.setStatusMessage("workspace selected")
 		return true, stateChanged, false
 	case sidebarWorktree:
+		if m.mode == uiModeRecents {
+			m.exitRecentsView()
+		}
 		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		if m.mode == uiModeRecents {
+			m.exitRecentsView()
+		}
 		wsID := item.workspaceID()
 		if wsID != "" && wsID != m.appState.ActiveWorkspaceID {
 			m.appState.ActiveWorkspaceID = wsID
@@ -853,6 +898,9 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		if m.consumeInputHeightChanges(m.chatInput) {
 			m.resize(m.width, m.height)
 		}
+	}
+	if m.mode == uiModeRecents {
+		m.exitRecentsView()
 	}
 	if wsID := item.workspaceID(); wsID != "" && wsID != unassignedWorkspaceID && wsID != m.appState.ActiveWorkspaceID {
 		m.appState.ActiveWorkspaceID = wsID
@@ -1010,6 +1058,9 @@ func (m *Model) setSessionsAndMeta(sessions []*types.Session, meta map[string]*t
 	}
 	m.sessions = sessions
 	m.sessionMeta = meta
+	if m.recents != nil {
+		m.recents.ObserveSessions(sessions)
+	}
 	m.invalidateSidebarProjection(sidebarProjectionChangeSessions)
 }
 
@@ -1054,18 +1105,8 @@ func (m *Model) applySidebarItems() {
 		m.setContentText("No sessions.")
 		return
 	}
-	builder := m.sidebarProjectionBuilder
-	if builder == nil {
-		builder = NewDefaultSidebarProjectionBuilder()
-		m.sidebarProjectionBuilder = builder
-	}
-	projection := builder.Build(SidebarProjectionInput{
-		Workspaces:         m.workspaces,
-		Worktrees:          m.worktrees,
-		Sessions:           m.sessions,
-		SessionMeta:        m.sessionMeta,
-		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
-	})
+	projection := m.buildSidebarProjection()
+	m.sidebar.recentsState = m.sidebarRecentsState(projection.Sessions)
 	item := m.sidebar.Apply(projection.Workspaces, m.worktrees, projection.Sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
 	m.sidebarProjectionApplied = m.sidebarProjectionRevision
 	if item == nil {
@@ -1075,7 +1116,69 @@ func (m *Model) applySidebarItems() {
 	}
 	if !item.isSession() {
 		m.resetStream()
+		if item.kind == sidebarRecentsAll || item.kind == sidebarRecentsReady || item.kind == sidebarRecentsRunning {
+			if m.mode != uiModeRecents {
+				m.enterRecentsView(item)
+			} else {
+				m.refreshRecentsContent()
+			}
+			return
+		}
 		m.setContentText("Select a session.")
+	}
+	if m.mode == uiModeRecents {
+		m.refreshRecentsContent()
+	}
+}
+
+func (m *Model) buildSidebarProjection() SidebarProjection {
+	if m == nil {
+		return SidebarProjection{}
+	}
+	builder := m.sidebarProjectionBuilder
+	if builder == nil {
+		builder = NewDefaultSidebarProjectionBuilder()
+		m.sidebarProjectionBuilder = builder
+	}
+	return builder.Build(SidebarProjectionInput{
+		Workspaces:         m.workspaces,
+		Worktrees:          m.worktrees,
+		Sessions:           m.sessions,
+		SessionMeta:        m.sessionMeta,
+		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
+	})
+}
+
+func (m *Model) sidebarRecentsState(visibleSessions []*types.Session) sidebarRecentsState {
+	if m == nil || !m.showRecents || m.recents == nil {
+		return sidebarRecentsState{}
+	}
+	if len(visibleSessions) == 0 {
+		return sidebarRecentsState{Enabled: true}
+	}
+	visible := make(map[string]struct{}, len(visibleSessions))
+	for _, session := range visibleSessions {
+		if session == nil || strings.TrimSpace(session.ID) == "" {
+			continue
+		}
+		visible[strings.TrimSpace(session.ID)] = struct{}{}
+	}
+	readyCount := 0
+	for _, id := range m.recents.ReadyIDs() {
+		if _, ok := visible[id]; ok {
+			readyCount++
+		}
+	}
+	runningCount := 0
+	for _, id := range m.recents.RunningIDs() {
+		if _, ok := visible[id]; ok {
+			runningCount++
+		}
+	}
+	return sidebarRecentsState{
+		Enabled:      true,
+		ReadyCount:   readyCount,
+		RunningCount: runningCount,
 	}
 }
 
@@ -1841,7 +1944,7 @@ func (m *Model) shouldAutoExpandNewestReasoning() bool {
 
 func (m *Model) usesViewport() bool {
 	switch m.mode {
-	case uiModeNormal, uiModeCompose, uiModeSearch, uiModeNotes, uiModeAddNote:
+	case uiModeNormal, uiModeCompose, uiModeRecents, uiModeSearch, uiModeNotes, uiModeAddNote:
 		return true
 	default:
 		return false
@@ -2115,7 +2218,7 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 }
 
 func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
-	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes && m.mode != uiModeAddNote {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeRecents && m.mode != uiModeNotes && m.mode != uiModeAddNote {
 		return false
 	}
 	wasFollowing := m.follow

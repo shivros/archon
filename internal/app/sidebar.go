@@ -60,7 +60,24 @@ const (
 	sidebarWorkspace sidebarItemKind = iota
 	sidebarWorktree
 	sidebarSession
+	sidebarRecentsAll
+	sidebarRecentsReady
+	sidebarRecentsRunning
 )
+
+type sidebarRecentsFilter string
+
+const (
+	sidebarRecentsFilterAll     sidebarRecentsFilter = "all"
+	sidebarRecentsFilterReady   sidebarRecentsFilter = "ready"
+	sidebarRecentsFilterRunning sidebarRecentsFilter = "running"
+)
+
+type sidebarRecentsState struct {
+	Enabled      bool
+	ReadyCount   int
+	RunningCount int
+}
 
 type sidebarItem struct {
 	kind         sidebarItemKind
@@ -68,6 +85,8 @@ type sidebarItem struct {
 	worktree     *types.Worktree
 	session      *types.Session
 	meta         *types.SessionMeta
+	recents      sidebarRecentsFilter
+	recentsCount int
 	sessionCount int
 	collapsible  bool
 	expanded     bool
@@ -75,6 +94,12 @@ type sidebarItem struct {
 
 func (s *sidebarItem) Title() string {
 	switch s.kind {
+	case sidebarRecentsAll:
+		return "Recents"
+	case sidebarRecentsReady:
+		return "Ready"
+	case sidebarRecentsRunning:
+		return "Running"
 	case sidebarWorkspace:
 		if s.workspace == nil {
 			return ""
@@ -105,6 +130,12 @@ func (s *sidebarItem) FilterValue() string {
 
 func (s *sidebarItem) key() string {
 	switch s.kind {
+	case sidebarRecentsAll:
+		return "recents:all"
+	case sidebarRecentsReady:
+		return "recents:ready"
+	case sidebarRecentsRunning:
+		return "recents:running"
 	case sidebarWorkspace:
 		if s.workspace == nil {
 			return "ws:"
@@ -176,6 +207,35 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 	isSelected := index == m.Index()
 	maxWidth := m.Width()
 	switch entry.kind {
+	case sidebarRecentsAll:
+		label := entry.Title()
+		total := max(0, entry.recentsCount)
+		label = fmt.Sprintf("%s (%d)", label, total)
+		line := "• " + label
+		line = truncateToWidth(line, maxWidth)
+		style := workspaceStyle
+		if isSelected {
+			style = selectedStyle
+		}
+		fmt.Fprint(w, style.Render(line))
+	case sidebarRecentsReady:
+		label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
+		line := "  - " + label
+		line = truncateToWidth(line, maxWidth)
+		style := worktreeStyle
+		if isSelected {
+			style = selectedStyle
+		}
+		fmt.Fprint(w, style.Render(line))
+	case sidebarRecentsRunning:
+		label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
+		line := "  - " + label
+		line = truncateToWidth(line, maxWidth)
+		style := worktreeStyle
+		if isSelected {
+			style = selectedStyle
+		}
+		fmt.Fprint(w, style.Render(line))
 	case sidebarWorkspace:
 		label := entry.Title()
 		if entry.sessionCount > 0 {
@@ -390,6 +450,18 @@ func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*ty
 }
 
 func buildSidebarItemsWithExpansion(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool, expansion sidebarExpansionResolver) []list.Item {
+	return buildSidebarItemsWithRecents(workspaces, worktrees, sessions, meta, showDismissed, sidebarRecentsState{}, expansion)
+}
+
+func buildSidebarItemsWithRecents(
+	workspaces []*types.Workspace,
+	worktrees map[string][]*types.Worktree,
+	sessions []*types.Session,
+	meta map[string]*types.SessionMeta,
+	showDismissed bool,
+	recents sidebarRecentsState,
+	expansion sidebarExpansionResolver,
+) []list.Item {
 	visibleSessions := filterVisibleSessions(sessions, meta, showDismissed)
 	knownWorkspaces := make(map[string]struct{}, len(workspaces))
 	for _, workspace := range workspaces {
@@ -433,7 +505,28 @@ func buildSidebarItemsWithExpansion(workspaces []*types.Workspace, worktrees map
 		}
 	}
 
-	items := make([]list.Item, 0)
+	items := make([]list.Item, 0, len(workspaces)+3)
+	if recents.Enabled {
+		readyCount := max(0, recents.ReadyCount)
+		runningCount := max(0, recents.RunningCount)
+		items = append(items,
+			&sidebarItem{
+				kind:         sidebarRecentsAll,
+				recents:      sidebarRecentsFilterAll,
+				recentsCount: readyCount + runningCount,
+			},
+			&sidebarItem{
+				kind:         sidebarRecentsReady,
+				recents:      sidebarRecentsFilterReady,
+				recentsCount: readyCount,
+			},
+			&sidebarItem{
+				kind:         sidebarRecentsRunning,
+				recents:      sidebarRecentsFilterRunning,
+				recentsCount: runningCount,
+			},
+		)
+	}
 	for _, workspace := range workspaces {
 		if workspace == nil {
 			continue

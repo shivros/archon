@@ -277,6 +277,9 @@ func TestLoadUIConfigDefaults(t *testing.T) {
 	if !cfg.SidebarExpandByDefault() {
 		t.Fatalf("expected sidebar expand_by_default=true by default")
 	}
+	if !cfg.SidebarShowRecents() {
+		t.Fatalf("expected sidebar show_recents=true by default")
+	}
 	path, err := cfg.ResolveKeybindingsPath()
 	if err != nil {
 		t.Fatalf("ResolveKeybindingsPath: %v", err)
@@ -319,6 +322,9 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	if !cfg.SidebarExpandByDefault() {
 		t.Fatalf("expected sidebar expand_by_default to remain true when omitted")
 	}
+	if !cfg.SidebarShowRecents() {
+		t.Fatalf("expected sidebar show_recents to remain true when omitted")
+	}
 }
 
 func TestLoadUIConfigSidebarExpandByDefaultOverride(t *testing.T) {
@@ -339,6 +345,27 @@ func TestLoadUIConfigSidebarExpandByDefaultOverride(t *testing.T) {
 	}
 	if cfg.SidebarExpandByDefault() {
 		t.Fatalf("expected sidebar expand_by_default=false from config")
+	}
+}
+
+func TestLoadUIConfigSidebarShowRecentsOverride(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte("[sidebar]\nshow_recents = false\n")
+	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := LoadUIConfig()
+	if err != nil {
+		t.Fatalf("LoadUIConfig: %v", err)
+	}
+	if cfg.SidebarShowRecents() {
+		t.Fatalf("expected sidebar show_recents=false from config")
 	}
 }
 

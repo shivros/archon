@@ -27,7 +27,7 @@ func (m *Model) reduceSidebarArrowKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.sidebar == nil {
 		return false, nil
 	}
-	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeNotes {
+	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeRecents && m.mode != uiModeNotes {
 		return false, nil
 	}
 	switch msg.String() {

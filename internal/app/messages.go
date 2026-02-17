@@ -146,6 +146,13 @@ type historyMsg struct {
 	key   string
 }
 
+type recentsPreviewMsg struct {
+	id       string
+	revision string
+	text     string
+	err      error
+}
+
 type historyPollMsg struct {
 	id        string
 	key       string

@@ -173,6 +173,10 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		previousSelection := m.selectedSessionSnapshot()
 		m.setSessionsAndMeta(msg.sessions, normalizeSessionMeta(msg.meta))
+		if m.recents != nil {
+			m.recents.ObserveSessions(msg.sessions)
+			m.recents.ObserveMeta(m.sessionMeta, now)
+		}
 		m.applySidebarItemsIfDirty()
 		saveSidebarExpansionCmd := tea.Cmd(nil)
 		if m.pendingSelectID != "" && m.sidebar != nil {
@@ -185,11 +189,27 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		nextSelection := m.selectedSessionSnapshot()
 		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
+		recentsCmd := tea.Cmd(nil)
+		if m.mode == uiModeRecents {
+			m.refreshRecentsContent()
+			recentsCmd = m.ensureRecentsPreviewForSelection()
+		}
 		if m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection) {
 			if m.shouldSkipSelectionReloadOnSessionsUpdate(previousSelection, nextSelection) {
+				if recentsCmd != nil && saveSidebarExpansionCmd != nil {
+					return true, tea.Batch(recentsCmd, saveSidebarExpansionCmd)
+				}
+				if recentsCmd != nil {
+					return true, recentsCmd
+				}
 				return true, saveSidebarExpansionCmd
 			}
 			selectionCmd := m.onSelectionChangedImmediate()
+			if recentsCmd != nil && selectionCmd != nil {
+				selectionCmd = tea.Batch(recentsCmd, selectionCmd)
+			} else if recentsCmd != nil {
+				selectionCmd = recentsCmd
+			}
 			if selectionCmd != nil && saveSidebarExpansionCmd != nil {
 				return true, tea.Batch(selectionCmd, saveSidebarExpansionCmd)
 			}
@@ -197,6 +217,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				return true, selectionCmd
 			}
 			return true, saveSidebarExpansionCmd
+		}
+		if recentsCmd != nil && saveSidebarExpansionCmd != nil {
+			return true, tea.Batch(recentsCmd, saveSidebarExpansionCmd)
+		}
+		if recentsCmd != nil {
+			return true, recentsCmd
 		}
 		return true, saveSidebarExpansionCmd
 	case workspacesMsg:
@@ -428,6 +454,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.setBackgroundStatus("history updated")
 		return true, nil
+	case recentsPreviewMsg:
+		return true, m.handleRecentsPreview(msg)
 	case historyPollMsg:
 		if msg.id == "" || msg.key == "" {
 			return true, nil
@@ -462,10 +490,23 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setStatusError("send error: " + msg.err.Error())
 			m.markPendingSendFailed(msg.token, msg.err)
 			m.stopRequestActivityFor(msg.id)
+			if m.mode == uiModeRecents {
+				m.refreshRecentsContent()
+			}
 			return true, nil
 		}
 		now := time.Now().UTC()
 		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
+		if m.recents != nil {
+			baseline := strings.TrimSpace(msg.turnID)
+			if baseline == "" {
+				if entry := m.sessionMeta[msg.id]; entry != nil {
+					baseline = strings.TrimSpace(entry.LastTurnID)
+				}
+			}
+			m.recents.StartRun(msg.id, baseline, now)
+			m.refreshRecentsSidebarState()
+		}
 		if m.sidebar != nil {
 			m.sidebar.updateUnreadSessions(m.sessions, m.sessionMeta)
 		}
@@ -476,6 +517,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.lastSessionMetaRefreshAt = now
 		provider := m.providerForSessionID(msg.id)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
+		if m.mode == uiModeRecents {
+			m.refreshRecentsContent()
+		}
 		if shouldStreamItems(provider) {
 			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
 		}
@@ -585,6 +629,14 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.scrollOnLoad = true
 		m.setLoadingContent()
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
+		if m.recents != nil {
+			baseline := ""
+			if entry := m.sessionMeta[msg.session.ID]; entry != nil {
+				baseline = strings.TrimSpace(entry.LastTurnID)
+			}
+			m.recents.StartRun(msg.session.ID, baseline, time.Now().UTC())
+			m.refreshRecentsSidebarState()
+		}
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, initialLines)}

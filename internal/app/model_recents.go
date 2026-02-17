@@ -1,0 +1,638 @@
+package app
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"control/internal/types"
+)
+
+const recentsPreviewMaxChars = 220
+
+type recentsPreview struct {
+	Revision string
+	Loading  bool
+	Preview  string
+	Full     string
+	Err      string
+}
+
+type recentsEntryStatus string
+
+const (
+	recentsEntryReady   recentsEntryStatus = "ready"
+	recentsEntryRunning recentsEntryStatus = "running"
+)
+
+type recentsEntry struct {
+	SessionID       string
+	Session         *types.Session
+	Meta            *types.SessionMeta
+	Status          recentsEntryStatus
+	WorkspaceName   string
+	CompletedAt     time.Time
+	PreviewRevision string
+	Preview         recentsPreview
+}
+
+type recentsViewState struct {
+	Filter  sidebarRecentsFilter
+	Ready   []recentsEntry
+	Running []recentsEntry
+	Entries []recentsEntry
+}
+
+func (m *Model) enterRecentsView(item *sidebarItem) {
+	if m == nil {
+		return
+	}
+	if m.mode == uiModeCompose {
+		_ = m.saveCurrentComposeDraft()
+		m.closeComposeOptionPicker()
+	}
+	m.mode = uiModeRecents
+	m.recentsReplySessionID = ""
+	if m.recentsReplyInput != nil {
+		m.recentsReplyInput.Blur()
+		m.recentsReplyInput.SetValue("")
+	}
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	m.pauseFollow(false)
+	m.refreshRecentsContent()
+	if item != nil {
+		switch item.kind {
+		case sidebarRecentsReady:
+			m.setStatusMessage("recents: ready")
+		case sidebarRecentsRunning:
+			m.setStatusMessage("recents: running")
+		default:
+			m.setStatusMessage("recents")
+		}
+	}
+}
+
+func (m *Model) exitRecentsView() {
+	if m == nil || m.mode != uiModeRecents {
+		return
+	}
+	m.mode = uiModeNormal
+	m.recentsReplySessionID = ""
+	if m.recentsReplyInput != nil {
+		m.recentsReplyInput.Blur()
+		m.recentsReplyInput.SetValue("")
+	}
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+}
+
+func (m *Model) recentsHeader() string {
+	state := m.recentsState()
+	switch state.Filter {
+	case sidebarRecentsFilterReady:
+		return fmt.Sprintf("Recents • Ready (%d)", len(state.Ready))
+	case sidebarRecentsFilterRunning:
+		return fmt.Sprintf("Recents • Running (%d)", len(state.Running))
+	default:
+		return fmt.Sprintf("Recents • Ready %d • Running %d", len(state.Ready), len(state.Running))
+	}
+}
+
+func (m *Model) recentsReplyFooter() string {
+	return "enter send • esc cancel"
+}
+
+func (m *Model) recentsFilter() sidebarRecentsFilter {
+	item := m.selectedItem()
+	if item == nil {
+		return sidebarRecentsFilterAll
+	}
+	switch item.kind {
+	case sidebarRecentsReady:
+		return sidebarRecentsFilterReady
+	case sidebarRecentsRunning:
+		return sidebarRecentsFilterRunning
+	default:
+		return sidebarRecentsFilterAll
+	}
+}
+
+func (m *Model) recentsState() recentsViewState {
+	state := recentsViewState{
+		Filter: m.recentsFilter(),
+	}
+	if m == nil || m.recents == nil {
+		return state
+	}
+	projection := m.buildSidebarProjection()
+	sessionByID := make(map[string]*types.Session, len(projection.Sessions))
+	for _, session := range projection.Sessions {
+		if session == nil || strings.TrimSpace(session.ID) == "" {
+			continue
+		}
+		sessionByID[strings.TrimSpace(session.ID)] = session
+	}
+	state.Ready = m.recentsReadyEntries(sessionByID)
+	state.Running = m.recentsRunningEntries(sessionByID)
+	switch state.Filter {
+	case sidebarRecentsFilterReady:
+		state.Entries = append(state.Entries, state.Ready...)
+	case sidebarRecentsFilterRunning:
+		state.Entries = append(state.Entries, state.Running...)
+	default:
+		state.Entries = append(state.Entries, state.Ready...)
+		state.Entries = append(state.Entries, state.Running...)
+	}
+	return state
+}
+
+func (m *Model) recentsReadyEntries(sessionByID map[string]*types.Session) []recentsEntry {
+	ids := m.recents.ReadyIDs()
+	entries := make([]recentsEntry, 0, len(ids))
+	for _, id := range ids {
+		session := sessionByID[id]
+		if session == nil {
+			continue
+		}
+		entry := m.buildRecentsEntry(session, recentsEntryReady)
+		if ready, ok := m.recents.ReadyItem(id); ok {
+			entry.CompletedAt = ready.CompletedAt
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func (m *Model) recentsRunningEntries(sessionByID map[string]*types.Session) []recentsEntry {
+	ids := m.recents.RunningIDs()
+	entries := make([]recentsEntry, 0, len(ids))
+	for _, id := range ids {
+		session := sessionByID[id]
+		if session == nil {
+			continue
+		}
+		entries = append(entries, m.buildRecentsEntry(session, recentsEntryRunning))
+	}
+	return entries
+}
+
+func (m *Model) buildRecentsEntry(session *types.Session, status recentsEntryStatus) recentsEntry {
+	if session == nil {
+		return recentsEntry{}
+	}
+	sessionID := strings.TrimSpace(session.ID)
+	meta := m.sessionMeta[sessionID]
+	workspaceName := "Unassigned"
+	if meta != nil {
+		if ws := m.workspaceByID(strings.TrimSpace(meta.WorkspaceID)); ws != nil && strings.TrimSpace(ws.Name) != "" {
+			workspaceName = ws.Name
+		}
+	}
+	revision := ""
+	if meta != nil {
+		revision = strings.TrimSpace(meta.LastTurnID)
+	}
+	preview := m.previewForSession(sessionID, revision)
+	return recentsEntry{
+		SessionID:       sessionID,
+		Session:         session,
+		Meta:            meta,
+		Status:          status,
+		WorkspaceName:   workspaceName,
+		PreviewRevision: revision,
+		Preview:         preview,
+	}
+}
+
+func (m *Model) previewForSession(sessionID, revision string) recentsPreview {
+	sessionID = strings.TrimSpace(sessionID)
+	revision = strings.TrimSpace(revision)
+	if sessionID == "" {
+		return recentsPreview{}
+	}
+	if m.recentsPreviews == nil {
+		m.recentsPreviews = map[string]recentsPreview{}
+	}
+	entry := m.recentsPreviews[sessionID]
+	if strings.TrimSpace(entry.Revision) != revision {
+		entry = recentsPreview{Revision: revision}
+	}
+	if strings.TrimSpace(entry.Preview) == "" {
+		if blocks := m.transcriptCache["sess:"+sessionID]; len(blocks) > 0 {
+			if latest := latestAssistantBlockText(blocks); latest != "" {
+				entry.Preview, entry.Full = formatRecentsPreviewText(latest)
+			}
+		}
+	}
+	m.recentsPreviews[sessionID] = entry
+	return entry
+}
+
+func latestAssistantBlockText(blocks []ChatBlock) string {
+	for i := len(blocks) - 1; i >= 0; i-- {
+		block := blocks[i]
+		if block.Role != ChatRoleAgent {
+			continue
+		}
+		text := strings.TrimSpace(block.Text)
+		if text == "" {
+			continue
+		}
+		return text
+	}
+	return ""
+}
+
+func formatRecentsPreviewText(text string) (preview string, full string) {
+	full = strings.TrimSpace(text)
+	if full == "" {
+		return "", ""
+	}
+	flat := cleanTitle(strings.ReplaceAll(full, "\n", " "))
+	if flat == "" {
+		flat = cleanTitle(full)
+	}
+	preview = truncateText(flat, recentsPreviewMaxChars)
+	return preview, full
+}
+
+func (m *Model) refreshRecentsContent() {
+	if m == nil || m.mode != uiModeRecents {
+		return
+	}
+	state := m.recentsState()
+	m.syncRecentsSelection(state.Entries)
+	content := m.renderRecentsContent(state)
+	m.setContentText(content)
+}
+
+func (m *Model) syncRecentsSelection(entries []recentsEntry) {
+	if len(entries) == 0 {
+		m.recentsSelectedSessionID = ""
+		m.recentsReplySessionID = ""
+		return
+	}
+	current := strings.TrimSpace(m.recentsSelectedSessionID)
+	if current != "" {
+		for _, entry := range entries {
+			if entry.SessionID == current {
+				return
+			}
+		}
+	}
+	m.recentsSelectedSessionID = entries[0].SessionID
+}
+
+func (m *Model) renderRecentsContent(state recentsViewState) string {
+	var builder strings.Builder
+	builder.WriteString("Recents overview\n")
+	builder.WriteString("Use j/k to choose • r reply • x expand • enter open • d dismiss ready\n\n")
+	switch state.Filter {
+	case sidebarRecentsFilterReady:
+		m.renderRecentsSection(&builder, "Ready", state.Ready)
+	case sidebarRecentsFilterRunning:
+		m.renderRecentsSection(&builder, "Running", state.Running)
+	default:
+		m.renderRecentsSection(&builder, "Ready", state.Ready)
+		builder.WriteString("\n")
+		m.renderRecentsSection(&builder, "Running", state.Running)
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func (m *Model) renderRecentsSection(builder *strings.Builder, title string, entries []recentsEntry) {
+	builder.WriteString(fmt.Sprintf("%s (%d)\n", title, len(entries)))
+	builder.WriteString(strings.Repeat("-", max(8, len(title)+6)))
+	builder.WriteString("\n")
+	if len(entries) == 0 {
+		builder.WriteString("No sessions.\n")
+		return
+	}
+	for _, entry := range entries {
+		m.renderRecentsCard(builder, entry)
+	}
+}
+
+func (m *Model) renderRecentsCard(builder *strings.Builder, entry recentsEntry) {
+	sessionTitleText := sessionTitle(entry.Session, entry.Meta)
+	if strings.TrimSpace(sessionTitleText) == "" {
+		sessionTitleText = entry.SessionID
+	}
+	marker := " "
+	if strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID {
+		marker = ">"
+	}
+	statusLabel := "RUNNING"
+	if entry.Status == recentsEntryReady {
+		statusLabel = "READY"
+	}
+	since := formatSince(sessionLastActive(entry.Session, entry.Meta))
+	builder.WriteString(fmt.Sprintf("%s %s [%s] • %s • %s\n", marker, sessionTitleText, statusLabel, entry.WorkspaceName, since))
+	expanded := m.recentsExpandedSessions[entry.SessionID]
+	previewText := strings.TrimSpace(entry.Preview.Preview)
+	fullText := strings.TrimSpace(entry.Preview.Full)
+	if entry.Preview.Loading {
+		previewText = "Loading latest assistant response..."
+	}
+	if strings.TrimSpace(entry.Preview.Err) != "" {
+		previewText = "Preview error: " + cleanTitle(entry.Preview.Err)
+	}
+	if previewText == "" {
+		previewText = "No assistant response cached yet."
+	}
+	if expanded {
+		if fullText == "" {
+			fullText = previewText
+		}
+		for _, line := range strings.Split(fullText, "\n") {
+			builder.WriteString("    ")
+			builder.WriteString(line)
+			builder.WriteString("\n")
+		}
+	} else {
+		builder.WriteString("    ")
+		builder.WriteString(previewText)
+		builder.WriteString("\n")
+	}
+	actionLine := "    [r] reply  [x] expand  [enter] open thread"
+	if entry.Status == recentsEntryReady {
+		actionLine += "  [d] dismiss"
+	}
+	builder.WriteString(actionLine)
+	builder.WriteString("\n\n")
+}
+
+func (m *Model) selectedRecentsEntry() (recentsEntry, bool) {
+	state := m.recentsState()
+	if len(state.Entries) == 0 {
+		return recentsEntry{}, false
+	}
+	selected := strings.TrimSpace(m.recentsSelectedSessionID)
+	if selected != "" {
+		for _, entry := range state.Entries {
+			if entry.SessionID == selected {
+				return entry, true
+			}
+		}
+	}
+	return state.Entries[0], true
+}
+
+func (m *Model) moveRecentsSelection(delta int) bool {
+	if m == nil || delta == 0 {
+		return false
+	}
+	state := m.recentsState()
+	entries := state.Entries
+	if len(entries) == 0 {
+		return false
+	}
+	current := 0
+	selected := strings.TrimSpace(m.recentsSelectedSessionID)
+	if selected != "" {
+		for i, entry := range entries {
+			if entry.SessionID == selected {
+				current = i
+				break
+			}
+		}
+	}
+	next := current + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(entries) {
+		next = len(entries) - 1
+	}
+	if next == current {
+		return false
+	}
+	m.recentsSelectedSessionID = entries[next].SessionID
+	m.refreshRecentsContent()
+	return true
+}
+
+func (m *Model) toggleSelectedRecentsExpand() bool {
+	entry, ok := m.selectedRecentsEntry()
+	if !ok {
+		return false
+	}
+	if m.recentsExpandedSessions == nil {
+		m.recentsExpandedSessions = map[string]bool{}
+	}
+	current := m.recentsExpandedSessions[entry.SessionID]
+	m.recentsExpandedSessions[entry.SessionID] = !current
+	m.refreshRecentsContent()
+	return true
+}
+
+func (m *Model) startRecentsReply() bool {
+	entry, ok := m.selectedRecentsEntry()
+	if !ok {
+		return false
+	}
+	if m.recentsReplyInput == nil {
+		return false
+	}
+	m.recentsReplySessionID = entry.SessionID
+	m.recentsReplyInput.SetPlaceholder("reply")
+	m.recentsReplyInput.SetValue("")
+	m.recentsReplyInput.Focus()
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
+	m.setStatusMessage("replying inline")
+	return true
+}
+
+func (m *Model) cancelRecentsReply() {
+	m.recentsReplySessionID = ""
+	if m.recentsReplyInput != nil {
+		m.recentsReplyInput.Blur()
+		m.recentsReplyInput.SetValue("")
+	}
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+}
+
+func (m *Model) submitRecentsReplyInput(text string) tea.Cmd {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		m.setValidationStatus("message is required")
+		return nil
+	}
+	sessionID := strings.TrimSpace(m.recentsReplySessionID)
+	if sessionID == "" {
+		m.setValidationStatus("select a session to reply")
+		return nil
+	}
+	provider := m.providerForSessionID(sessionID)
+	token := m.nextSendToken()
+	m.registerPendingSend(token, sessionID, provider)
+	m.cancelRecentsReply()
+	m.setStatusMessage("sending reply")
+	return sendSessionCmd(m.sessionAPI, sessionID, text, token)
+}
+
+func (m *Model) dismissSelectedRecentsReady() bool {
+	entry, ok := m.selectedRecentsEntry()
+	if !ok || entry.Status != recentsEntryReady || m.recents == nil {
+		return false
+	}
+	if !m.recents.DismissReady(entry.SessionID) {
+		return false
+	}
+	m.refreshRecentsSidebarState()
+	m.setStatusInfo("dismissed from recents")
+	m.refreshRecentsContent()
+	return true
+}
+
+func (m *Model) openSelectedRecentsThread() tea.Cmd {
+	entry, ok := m.selectedRecentsEntry()
+	if !ok || strings.TrimSpace(entry.SessionID) == "" {
+		m.setValidationStatus("select a session")
+		return nil
+	}
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID(entry.SessionID) {
+		m.setValidationStatus("session unavailable")
+		return nil
+	}
+	m.exitRecentsView()
+	return m.onSelectionChangedImmediate()
+}
+
+func (m *Model) ensureRecentsPreviewForSelection() tea.Cmd {
+	entry, ok := m.selectedRecentsEntry()
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(entry.SessionID) == "" || strings.TrimSpace(entry.PreviewRevision) == "" {
+		return nil
+	}
+	preview := entry.Preview
+	if strings.TrimSpace(preview.Preview) != "" || preview.Loading {
+		return nil
+	}
+	preview.Loading = true
+	preview.Err = ""
+	preview.Revision = entry.PreviewRevision
+	if m.recentsPreviews == nil {
+		m.recentsPreviews = map[string]recentsPreview{}
+	}
+	m.recentsPreviews[entry.SessionID] = preview
+	m.refreshRecentsContent()
+	lines := m.historyFetchLinesInitial()
+	if lines < defaultTailLines {
+		lines = defaultTailLines
+	}
+	return fetchRecentsPreviewCmd(m.sessionHistoryAPI, entry.SessionID, entry.PreviewRevision, lines)
+}
+
+func (m *Model) handleRecentsPreview(msg recentsPreviewMsg) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	id := strings.TrimSpace(msg.id)
+	if id == "" {
+		return nil
+	}
+	if m.recentsPreviews == nil {
+		m.recentsPreviews = map[string]recentsPreview{}
+	}
+	entry := m.recentsPreviews[id]
+	entry.Revision = strings.TrimSpace(msg.revision)
+	entry.Loading = false
+	entry.Err = ""
+	if msg.err != nil {
+		entry.Err = msg.err.Error()
+		m.recentsPreviews[id] = entry
+		if m.mode == uiModeRecents {
+			m.refreshRecentsContent()
+		}
+		return nil
+	}
+	entry.Preview, entry.Full = formatRecentsPreviewText(msg.text)
+	m.recentsPreviews[id] = entry
+	if m.mode == uiModeRecents {
+		m.refreshRecentsContent()
+	}
+	return nil
+}
+
+func (m *Model) reduceRecentsMode(msg tea.Msg) (bool, tea.Cmd) {
+	if m.mode != uiModeRecents {
+		return false, nil
+	}
+	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		if m.recentsReplySessionID == "" || m.recentsReplyInput == nil {
+			return false, nil
+		}
+		cmd := m.recentsReplyInput.Update(msg)
+		return true, cmd
+	case tea.KeyMsg:
+		if m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
+			switch m.keyString(msg) {
+			case "esc":
+				m.cancelRecentsReply()
+				m.setStatusMessage("reply canceled")
+				return true, nil
+			case "enter":
+				return true, m.submitRecentsReplyInput(m.recentsReplyInput.Value())
+			default:
+				cmd := m.recentsReplyInput.Update(msg)
+				return true, cmd
+			}
+		}
+		switch m.keyString(msg) {
+		case "j":
+			if m.moveRecentsSelection(1) {
+				return true, m.ensureRecentsPreviewForSelection()
+			}
+			return true, nil
+		case "k":
+			if m.moveRecentsSelection(-1) {
+				return true, m.ensureRecentsPreviewForSelection()
+			}
+			return true, nil
+		case "x", "e":
+			if m.toggleSelectedRecentsExpand() {
+				return true, m.ensureRecentsPreviewForSelection()
+			}
+			return true, nil
+		case "r":
+			if m.startRecentsReply() {
+				return true, nil
+			}
+			m.setValidationStatus("select a session to reply")
+			return true, nil
+		case "d":
+			if m.dismissSelectedRecentsReady() {
+				return true, nil
+			}
+			m.setValidationStatus("select a ready session to dismiss")
+			return true, nil
+		case "enter":
+			return true, m.openSelectedRecentsThread()
+		default:
+			return false, nil
+		}
+	default:
+		return false, nil
+	}
+}
+
+func (m *Model) refreshRecentsSidebarState() {
+	if m == nil || m.sidebar == nil {
+		return
+	}
+	projection := m.buildSidebarProjection()
+	m.sidebar.SetRecentsState(m.sidebarRecentsState(projection.Sessions))
+}

@@ -52,6 +52,11 @@ func (m *Model) mouseOverInput(y int) bool {
 		end := start + m.searchInput.Height() - 1
 		return y >= start && y <= end
 	}
+	if m.mode == uiModeRecents && m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
+		start := m.viewport.Height() + 2
+		end := start + m.recentsReplyInput.Height() - 1
+		return y >= start && y <= end
+	}
 	return false
 }
 
@@ -380,6 +385,13 @@ func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 	}
 	if m.mode == uiModeSearch && m.searchInput != nil {
 		m.searchInput.Focus()
+		if m.input != nil {
+			m.input.FocusChatInput()
+		}
+		return true
+	}
+	if m.mode == uiModeRecents && m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
+		m.recentsReplyInput.Focus()
 		if m.input != nil {
 			m.input.FocusChatInput()
 		}

@@ -52,4 +52,7 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 	if m.sidebar.IsWorkspaceExpanded("ws-any") {
 		t.Fatalf("expected sidebar expand_by_default=false from UI config")
 	}
+	if !m.showRecents {
+		t.Fatalf("expected recents to be shown by default when not overridden")
+	}
 }

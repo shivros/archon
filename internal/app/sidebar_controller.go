@@ -26,6 +26,7 @@ type SidebarController struct {
 	metaSnapshot          map[string]*types.SessionMeta
 	showDismissedSnapshot bool
 	sessionParents        map[string]sessionSidebarParent
+	recentsState          sidebarRecentsState
 }
 
 type sessionSidebarParent struct {
@@ -587,7 +588,7 @@ func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[s
 	c.sessionParents = buildSessionSidebarParents(sessions, meta)
 	c.pruneExpansionOverrides(workspaces, worktrees)
 
-	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, showDismissed, sidebarExpansionResolver{
+	items := buildSidebarItemsWithRecents(workspaces, worktrees, sessions, meta, showDismissed, c.recentsState, sidebarExpansionResolver{
 		workspace: c.workspaceExpanded,
 		worktree:  c.worktreeExpanded,
 		defaultOn: c.expandByDefault,
@@ -617,6 +618,18 @@ func (c *SidebarController) SetProviderBadges(overrides map[string]*types.Provid
 		return
 	}
 	c.delegate.providerBadges = normalizeProviderBadgeOverrides(overrides)
+}
+
+func (c *SidebarController) SetRecentsState(state sidebarRecentsState) bool {
+	if c == nil {
+		return false
+	}
+	if c.recentsState == state {
+		return false
+	}
+	c.recentsState = state
+	c.rebuild(c.SelectedKey())
+	return true
 }
 
 func (c *SidebarController) syncDelegate() {
@@ -741,7 +754,7 @@ func (c *SidebarController) rebuild(selectedKey string) {
 	if c == nil {
 		return
 	}
-	items := buildSidebarItemsWithExpansion(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, sidebarExpansionResolver{
+	items := buildSidebarItemsWithRecents(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, c.recentsState, sidebarExpansionResolver{
 		workspace: c.workspaceExpanded,
 		worktree:  c.worktreeExpanded,
 		defaultOn: c.expandByDefault,
