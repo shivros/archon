@@ -28,14 +28,20 @@ func (a *API) Sessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		includeDismissed := parseBoolQueryValue(r.URL.Query().Get("include_dismissed"))
+		includeWorkflowOwned := parseBoolQueryValue(r.URL.Query().Get("include_workflow_owned"))
 		var (
 			sessions []*types.Session
 			meta     []*types.SessionMeta
 			err      error
 		)
-		if includeDismissed {
+		switch {
+		case includeDismissed && includeWorkflowOwned:
+			sessions, meta, err = service.ListWithMetaIncludingDismissedAndWorkflowOwned(r.Context())
+		case includeDismissed:
 			sessions, meta, err = service.ListWithMetaIncludingDismissed(r.Context())
-		} else {
+		case includeWorkflowOwned:
+			sessions, meta, err = service.ListWithMetaIncludingWorkflowOwned(r.Context())
+		default:
 			sessions, meta, err = service.ListWithMeta(r.Context())
 		}
 		if err != nil {

@@ -39,6 +39,14 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 			seen["start"] = true
 			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
 			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/dismiss":
+			seen["dismiss"] = true
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","dismissed_at":"2026-02-17T00:00:00Z","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/undismiss":
+			seen["undismiss"] = true
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			return
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs/gwf-1":
 			seen["get"] = true
 			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
@@ -112,6 +120,22 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected started run: %#v", started)
 	}
 
+	dismissed, err := c.DismissWorkflowRun(ctx, "gwf-1")
+	if err != nil {
+		t.Fatalf("DismissWorkflowRun error: %v", err)
+	}
+	if dismissed == nil || dismissed.DismissedAt == nil {
+		t.Fatalf("unexpected dismissed run: %#v", dismissed)
+	}
+
+	undismissed, err := c.UndismissWorkflowRun(ctx, "gwf-1")
+	if err != nil {
+		t.Fatalf("UndismissWorkflowRun error: %v", err)
+	}
+	if undismissed == nil || undismissed.DismissedAt != nil {
+		t.Fatalf("unexpected undismissed run: %#v", undismissed)
+	}
+
 	run, err := c.GetWorkflowRun(ctx, "gwf-1")
 	if err != nil {
 		t.Fatalf("GetWorkflowRun error: %v", err)
@@ -155,7 +179,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected metrics reset response: %#v", reset)
 	}
 
-	for _, key := range []string{"list", "create", "start", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
+	for _, key := range []string{"list", "create", "start", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
 		if !seen[key] {
 			t.Fatalf("expected request %q to be executed", key)
 		}

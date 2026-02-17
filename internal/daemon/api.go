@@ -86,9 +86,12 @@ type WorkflowRunDecisionRequest struct {
 type GuidedWorkflowRunService interface {
 	CreateRun(ctx context.Context, req guidedworkflows.CreateRunRequest) (*guidedworkflows.WorkflowRun, error)
 	ListRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
+	ListRunsIncludingDismissed(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	DismissRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	UndismissRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	HandleDecision(ctx context.Context, runID string, req guidedworkflows.DecisionActionRequest) (*guidedworkflows.WorkflowRun, error)
 	GetRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	GetRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)

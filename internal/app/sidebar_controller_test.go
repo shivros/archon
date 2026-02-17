@@ -281,3 +281,27 @@ func TestSidebarControllerSelectBySessionIDAutoExpandsWorkflowParent(t *testing.
 		t.Fatalf("expected workflow gwf-1 to be expanded")
 	}
 }
+
+func TestSidebarControllerSelectByWorkflowIDAutoExpandsParent(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, nil, workflows, map[string]*types.SessionMeta{}, "ws1", "", false)
+	if len(controller.Items()) != 1 {
+		t.Fatalf("expected only workspace row when default collapsed")
+	}
+	if !controller.SelectByWorkflowID("gwf-1") {
+		t.Fatalf("expected SelectByWorkflowID to auto-expand and select workflow")
+	}
+	item := controller.SelectedItem()
+	if item == nil || item.kind != sidebarWorkflow || item.workflowRunID() != "gwf-1" {
+		t.Fatalf("expected workflow gwf-1 selected, got %#v", item)
+	}
+	if !controller.IsWorkspaceExpanded("ws1") {
+		t.Fatalf("expected workspace ws1 expanded")
+	}
+}

@@ -105,6 +105,25 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
 		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunVisibilityMsg:
+		if msg.err != nil {
+			if msg.dismissed {
+				m.setStatusError("guided workflow dismiss error: " + msg.err.Error())
+			} else {
+				m.setStatusError("guided workflow undismiss error: " + msg.err.Error())
+			}
+			return true, nil
+		}
+		if msg.run != nil {
+			m.upsertWorkflowRun(msg.run)
+		}
+		m.applySidebarItemsIfDirty()
+		if msg.dismissed {
+			m.setStatusInfo("guided workflow dismissed")
+		} else {
+			m.setStatusInfo("guided workflow restored")
+		}
+		return true, fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed)
 	case createWorkspaceMsg:
 		if msg.err != nil {
 			m.exitAddWorkspace("add workspace error: " + msg.err.Error())

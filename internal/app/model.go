@@ -473,7 +473,7 @@ func (m *Model) Init() tea.Cmd {
 		fetchWorkspacesCmd(m.workspaceAPI),
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
 		m.fetchSessionsCmd(false),
-		fetchWorkflowRunsCmd(m.guidedWorkflowAPI),
+		fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed),
 		fetchProviderOptionsCmd(m.sessionAPI, "codex"),
 		fetchProviderOptionsCmd(m.sessionAPI, "claude"),
 		m.tickCmd(),
@@ -1372,10 +1372,12 @@ func (m *Model) handleContextMenuAction(action ContextMenuAction) tea.Cmd {
 		return nil
 	}
 	target := contextMenuTarget{
-		id:          m.contextMenu.TargetID(),
-		workspaceID: m.contextMenu.WorkspaceID(),
-		worktreeID:  m.contextMenu.WorktreeID(),
-		sessionID:   m.contextMenu.SessionID(),
+		id:                m.contextMenu.TargetID(),
+		workspaceID:       m.contextMenu.WorkspaceID(),
+		worktreeID:        m.contextMenu.WorktreeID(),
+		sessionID:         m.contextMenu.SessionID(),
+		workflowID:        m.contextMenu.WorkflowID(),
+		workflowDismissed: m.contextMenu.WorkflowDismissed(),
 	}
 	m.contextMenu.Close()
 	if handled, cmd := m.handleWorkspaceContextMenuAction(action, target); handled {
@@ -1385,6 +1387,9 @@ func (m *Model) handleContextMenuAction(action ContextMenuAction) tea.Cmd {
 		return cmd
 	}
 	if handled, cmd := m.handleSessionContextMenuAction(action, target); handled {
+		return cmd
+	}
+	if handled, cmd := m.handleWorkflowContextMenuAction(action, target); handled {
 		return cmd
 	}
 	return nil
@@ -1832,8 +1837,9 @@ func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
 		return nil
 	}
 	opts := fetchSessionsOptions{
-		refresh:          refresh,
-		includeDismissed: m.showDismissed,
+		refresh:              refresh,
+		includeDismissed:     m.showDismissed,
+		includeWorkflowOwned: true,
 	}
 	if refresh {
 		opts.workspaceID = m.refreshWorkspaceID()
@@ -1851,12 +1857,12 @@ func (m *Model) maybeAutoRefreshSessionMeta(now time.Time) tea.Cmd {
 	if now.Sub(m.lastSessionMetaSyncAt) >= sessionMetaSyncDelay {
 		m.sessionMetaSyncPending = true
 		m.lastSessionMetaSyncAt = now
-		return tea.Batch(m.fetchSessionsCmd(true), fetchWorkflowRunsCmd(m.guidedWorkflowAPI))
+		return tea.Batch(m.fetchSessionsCmd(true), fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed))
 	}
 	if now.Sub(m.lastSessionMetaRefreshAt) >= sessionMetaRefreshDelay {
 		m.sessionMetaRefreshPending = true
 		m.lastSessionMetaRefreshAt = now
-		return tea.Batch(m.fetchSessionsCmd(false), fetchWorkflowRunsCmd(m.guidedWorkflowAPI))
+		return tea.Batch(m.fetchSessionsCmd(false), fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed))
 	}
 	return nil
 }
@@ -1904,7 +1910,7 @@ func (m *Model) toggleShowDismissed() tea.Cmd {
 	} else {
 		m.setStatusMessage("hiding dismissed sessions")
 	}
-	return m.fetchSessionsCmd(false)
+	return tea.Batch(m.fetchSessionsCmd(false), fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed))
 }
 
 func (m *Model) workspaceByID(id string) *types.Workspace {

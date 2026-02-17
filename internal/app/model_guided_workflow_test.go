@@ -35,6 +35,10 @@ func (m *guidedWorkflowAPIMock) ListWorkflowRuns(_ context.Context) ([]*guidedwo
 	return out, nil
 }
 
+func (m *guidedWorkflowAPIMock) ListWorkflowRunsWithOptions(_ context.Context, _ bool) ([]*guidedworkflows.WorkflowRun, error) {
+	return m.ListWorkflowRuns(context.Background())
+}
+
 func (m *guidedWorkflowAPIMock) CreateWorkflowRun(_ context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
 	m.createReqs = append(m.createReqs, req)
 	if m.createRun == nil {
@@ -49,6 +53,25 @@ func (m *guidedWorkflowAPIMock) StartWorkflowRun(_ context.Context, runID string
 		return nil, nil
 	}
 	return cloneWorkflowRun(m.startRun), nil
+}
+
+func (m *guidedWorkflowAPIMock) DismissWorkflowRun(_ context.Context, _ string) (*guidedworkflows.WorkflowRun, error) {
+	if m.startRun == nil {
+		return nil, nil
+	}
+	run := cloneWorkflowRun(m.startRun)
+	now := time.Now().UTC()
+	run.DismissedAt = &now
+	return run, nil
+}
+
+func (m *guidedWorkflowAPIMock) UndismissWorkflowRun(_ context.Context, _ string) (*guidedworkflows.WorkflowRun, error) {
+	if m.startRun == nil {
+		return nil, nil
+	}
+	run := cloneWorkflowRun(m.startRun)
+	run.DismissedAt = nil
+	return run, nil
 }
 
 func (m *guidedWorkflowAPIMock) DecideWorkflowRun(_ context.Context, _ string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error) {

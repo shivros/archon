@@ -95,6 +95,7 @@ func (p *guidedWorkflowTemplateProvider) ListWorkflowTemplates(ctx context.Conte
 
 type guidedWorkflowSessionGateway interface {
 	ListWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
+	ListWithMetaIncludingWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 	SendMessage(ctx context.Context, id string, input []map[string]any) (string, error)
 }
 
@@ -181,7 +182,7 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 	req guidedworkflows.StepPromptDispatchRequest,
 ) (string, string, string, error) {
 	explicitSessionID := strings.TrimSpace(req.SessionID)
-	sessions, meta, err := d.sessions.ListWithMeta(ctx)
+	sessions, meta, err := d.sessions.ListWithMetaIncludingWorkflowOwned(ctx)
 	if err != nil {
 		return "", "", "", err
 	}

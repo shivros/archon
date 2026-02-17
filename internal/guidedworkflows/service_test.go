@@ -1234,3 +1234,45 @@ func TestRunLifecycleListRunsSortedByRecentActivity(t *testing.T) {
 		t.Fatalf("expected second run to sort second, got %q", runs[1].ID)
 	}
 }
+
+func TestRunLifecycleDismissAndUndismissRun(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	dismissed, err := service.DismissRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("DismissRun: %v", err)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+
+	defaultRuns, err := service.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(defaultRuns) != 0 {
+		t.Fatalf("expected dismissed run to be hidden from default list, got %d entries", len(defaultRuns))
+	}
+
+	allRuns, err := service.ListRunsIncludingDismissed(context.Background())
+	if err != nil {
+		t.Fatalf("ListRunsIncludingDismissed: %v", err)
+	}
+	if len(allRuns) != 1 || allRuns[0].ID != run.ID {
+		t.Fatalf("expected dismissed run in include_dismissed list, got %#v", allRuns)
+	}
+
+	undismissed, err := service.UndismissRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("UndismissRun: %v", err)
+	}
+	if undismissed.DismissedAt != nil {
+		t.Fatalf("expected dismissed_at to clear after undismiss")
+	}
+}

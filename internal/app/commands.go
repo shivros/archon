@@ -15,9 +15,10 @@ import (
 )
 
 type fetchSessionsOptions struct {
-	refresh          bool
-	workspaceID      string
-	includeDismissed bool
+	refresh              bool
+	workspaceID          string
+	includeDismissed     bool
+	includeWorkflowOwned bool
 }
 
 func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessionsOptions) tea.Cmd {
@@ -38,8 +39,18 @@ func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessio
 			err      error
 		)
 		if opts.refresh {
+			if refresher, ok := api.(SessionListWithMetaRefreshWithOptionsAPI); ok {
+				sessions, meta, err = refresher.ListSessionsWithMetaRefreshWithOptions(ctx, opts.workspaceID, opts.includeDismissed, opts.includeWorkflowOwned)
+				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
+			}
 			if refresher, ok := api.(SessionListWithMetaRefreshAPI); ok {
 				sessions, meta, err = refresher.ListSessionsWithMetaRefresh(ctx, opts.workspaceID, opts.includeDismissed)
+				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
+			}
+		}
+		if opts.includeWorkflowOwned {
+			if includer, ok := api.(SessionListWithMetaIncludeWorkflowOwnedAPI); ok {
+				sessions, meta, err = includer.ListSessionsWithMetaIncludeWorkflowOwned(ctx)
 				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
 			}
 		}
@@ -299,14 +310,14 @@ func createWorkflowRunCmd(api GuidedWorkflowAPI, req client.CreateWorkflowRunReq
 	}
 }
 
-func fetchWorkflowRunsCmd(api GuidedWorkflowAPI) tea.Cmd {
+func fetchWorkflowRunsCmd(api GuidedWorkflowAPI, includeDismissed bool) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {
 			return workflowRunsMsg{err: errors.New("guided workflow api is unavailable")}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		runs, err := api.ListWorkflowRuns(ctx)
+		runs, err := api.ListWorkflowRunsWithOptions(ctx, includeDismissed)
 		return workflowRunsMsg{runs: runs, err: err}
 	}
 }
@@ -348,6 +359,30 @@ func decideWorkflowRunCmd(api GuidedWorkflowAPI, runID string, req client.Workfl
 		defer cancel()
 		run, err := api.DecideWorkflowRun(ctx, runID, req)
 		return workflowRunDecisionMsg{run: run, err: err}
+	}
+}
+
+func dismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunVisibilityMsg{err: errors.New("guided workflow api is unavailable"), dismissed: true}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.DismissWorkflowRun(ctx, runID)
+		return workflowRunVisibilityMsg{run: run, err: err, dismissed: true}
+	}
+}
+
+func undismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunVisibilityMsg{err: errors.New("guided workflow api is unavailable"), dismissed: false}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.UndismissWorkflowRun(ctx, runID)
+		return workflowRunVisibilityMsg{run: run, err: err, dismissed: false}
 	}
 }
 

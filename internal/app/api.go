@@ -90,8 +90,16 @@ type SessionListWithMetaIncludeDismissedAPI interface {
 	ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 }
 
+type SessionListWithMetaIncludeWorkflowOwnedAPI interface {
+	ListSessionsWithMetaIncludeWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
+}
+
 type SessionListWithMetaRefreshAPI interface {
 	ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error)
+}
+
+type SessionListWithMetaRefreshWithOptionsAPI interface {
+	ListSessionsWithMetaRefreshWithOptions(ctx context.Context, workspaceID string, includeDismissed bool, includeWorkflowOwned bool) ([]*types.Session, []*types.SessionMeta, error)
 }
 
 type SessionProviderOptionsAPI interface {
@@ -231,8 +239,11 @@ type StateAPI interface {
 
 type GuidedWorkflowAPI interface {
 	ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
+	ListWorkflowRunsWithOptions(ctx context.Context, includeDismissed bool) ([]*guidedworkflows.WorkflowRun, error)
 	CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error)
 	StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	DismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	UndismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	DecideWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error)
 	GetWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)
@@ -310,8 +321,16 @@ func (a *ClientAPI) ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([
 	return a.client.ListSessionsWithMetaIncludeDismissed(ctx)
 }
 
+func (a *ClientAPI) ListSessionsWithMetaIncludeWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return a.client.ListSessionsWithMetaIncludeWorkflowOwned(ctx)
+}
+
 func (a *ClientAPI) ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
 	return a.client.ListSessionsWithMetaRefresh(ctx, workspaceID, includeDismissed)
+}
+
+func (a *ClientAPI) ListSessionsWithMetaRefreshWithOptions(ctx context.Context, workspaceID string, includeDismissed bool, includeWorkflowOwned bool) ([]*types.Session, []*types.SessionMeta, error) {
+	return a.client.ListSessionsWithMetaRefreshWithOptions(ctx, workspaceID, includeDismissed, includeWorkflowOwned)
 }
 
 func (a *ClientAPI) GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error) {
@@ -417,8 +436,23 @@ func (a *ClientAPI) ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.Wo
 	return a.client.ListWorkflowRuns(ctx)
 }
 
+func (a *ClientAPI) ListWorkflowRunsWithOptions(ctx context.Context, includeDismissed bool) ([]*guidedworkflows.WorkflowRun, error) {
+	if a == nil || a.client == nil {
+		return nil, errors.New("client is unavailable")
+	}
+	return a.client.ListWorkflowRunsWithOptions(ctx, includeDismissed)
+}
+
 func (a *ClientAPI) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
 	return a.client.StartWorkflowRun(ctx, runID)
+}
+
+func (a *ClientAPI) DismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.DismissWorkflowRun(ctx, runID)
+}
+
+func (a *ClientAPI) UndismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.UndismissWorkflowRun(ctx, runID)
 }
 
 func (a *ClientAPI) DecideWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error) {

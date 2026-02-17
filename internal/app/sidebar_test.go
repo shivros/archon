@@ -298,3 +298,39 @@ func TestBuildSidebarItemsNestsWorkflowOwnedSessionsWithoutDuplication(t *testin
 		t.Fatalf("expected regular session outside workflow")
 	}
 }
+
+func TestBuildSidebarItemsWorkflowDismissedToggle(t *testing.T) {
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace One"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-active", TemplateName: "SOLID", WorkspaceID: "ws1", CreatedAt: now, Status: guidedworkflows.WorkflowRunStatusRunning},
+		{
+			ID:           "gwf-dismissed",
+			TemplateName: "SOLID",
+			WorkspaceID:  "ws1",
+			CreatedAt:    now.Add(-time.Minute),
+			Status:       guidedworkflows.WorkflowRunStatusPaused,
+			DismissedAt:  ptrTime(now.Add(-30 * time.Second)),
+		},
+	}
+
+	hidden := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, nil, workflows, nil, false)
+	if len(hidden) != 2 {
+		t.Fatalf("expected workspace + active workflow when dismissed hidden, got %d", len(hidden))
+	}
+	if hidden[1].(*sidebarItem).kind != sidebarWorkflow || hidden[1].(*sidebarItem).workflowRunID() != "gwf-active" {
+		t.Fatalf("expected active workflow when dismissed hidden")
+	}
+
+	visible := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, nil, workflows, nil, true)
+	if len(visible) != 3 {
+		t.Fatalf("expected workspace + both workflows when dismissed shown, got %d", len(visible))
+	}
+}
+
+func ptrTime(value time.Time) *time.Time {
+	ts := value.UTC()
+	return &ts
+}

@@ -315,4 +315,10 @@ type workflowRunDecisionMsg struct {
 	err error
 }
 
+type workflowRunVisibilityMsg struct {
+	run       *guidedworkflows.WorkflowRun
+	err       error
+	dismissed bool
+}
+
 type tickMsg time.Time

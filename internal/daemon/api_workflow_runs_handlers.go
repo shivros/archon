@@ -26,7 +26,16 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		runs, err := service.ListRuns(r.Context())
+		includeDismissed := parseBoolQueryValue(r.URL.Query().Get("include_dismissed"))
+		var (
+			runs []*guidedworkflows.WorkflowRun
+			err  error
+		)
+		if includeDismissed {
+			runs, err = service.ListRunsIncludingDismissed(r.Context())
+		} else {
+			runs, err = service.ListRuns(r.Context())
+		}
 		if err != nil {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
 			return
@@ -184,6 +193,30 @@ func (a *API) WorkflowRunByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.publishGuidedWorkflowDecisionNotification(run)
+		writeJSON(w, http.StatusOK, run)
+		return
+	case "dismiss":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		run, err := service.DismissRun(r.Context(), id)
+		if err != nil {
+			writeServiceError(w, toGuidedWorkflowServiceError(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, run)
+		return
+	case "undismiss":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		run, err := service.UndismissRun(r.Context(), id)
+		if err != nil {
+			writeServiceError(w, toGuidedWorkflowServiceError(err))
+			return
+		}
 		writeJSON(w, http.StatusOK, run)
 		return
 	case "decision":

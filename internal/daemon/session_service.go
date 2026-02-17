@@ -123,14 +123,27 @@ func (s *SessionService) List(ctx context.Context) ([]*types.Session, error) {
 }
 
 func (s *SessionService) ListWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
-	return s.listWithMeta(ctx, false)
+	return s.listWithMeta(ctx, sessionListOptions{})
 }
 
 func (s *SessionService) ListWithMetaIncludingDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
-	return s.listWithMeta(ctx, true)
+	return s.listWithMeta(ctx, sessionListOptions{includeDismissed: true})
 }
 
-func (s *SessionService) listWithMeta(ctx context.Context, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
+func (s *SessionService) ListWithMetaIncludingWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return s.listWithMeta(ctx, sessionListOptions{includeWorkflowOwned: true})
+}
+
+func (s *SessionService) ListWithMetaIncludingDismissedAndWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return s.listWithMeta(ctx, sessionListOptions{includeDismissed: true, includeWorkflowOwned: true})
+}
+
+type sessionListOptions struct {
+	includeDismissed     bool
+	includeWorkflowOwned bool
+}
+
+func (s *SessionService) listWithMeta(ctx context.Context, options sessionListOptions) ([]*types.Session, []*types.SessionMeta, error) {
 	s.migrateOnce.Do(func() {
 		s.migrateCodexDualEntries(ctx)
 		s.migrateLegacyDismissedSessions(ctx)
@@ -188,7 +201,7 @@ func (s *SessionService) listWithMeta(ctx context.Context, includeDismissed bool
 	}
 
 	s.normalizeSessionStatuses(ctx, sessionMap, sourceByID, liveIDs)
-	sessions := dedupeSessionsForList(sessionMap, sourceByID, liveIDs, metaBySessionID, includeDismissed)
+	sessions := dedupeSessionsForList(sessionMap, sourceByID, liveIDs, metaBySessionID, options.includeDismissed, options.includeWorkflowOwned)
 	sortSessionsByCreatedAt(sessions)
 	return sessions, meta, nil
 }
@@ -350,7 +363,14 @@ func (s *SessionService) migrateLegacyDismissedSessions(ctx context.Context) {
 	}
 }
 
-func dedupeSessionsForList(sessionMap map[string]*types.Session, sourceByID map[string]string, liveIDs map[string]struct{}, metaBySessionID map[string]*types.SessionMeta, includeDismissed bool) []*types.Session {
+func dedupeSessionsForList(
+	sessionMap map[string]*types.Session,
+	sourceByID map[string]string,
+	liveIDs map[string]struct{},
+	metaBySessionID map[string]*types.SessionMeta,
+	includeDismissed bool,
+	includeWorkflowOwned bool,
+) []*types.Session {
 	chosenByKey := map[string]*types.Session{}
 	chosenIDByKey := map[string]string{}
 	for id, session := range sessionMap {
@@ -359,6 +379,9 @@ func dedupeSessionsForList(sessionMap map[string]*types.Session, sourceByID map[
 		}
 		meta := metaBySessionID[id]
 		if !includeDismissed && isSessionDismissed(meta, session.Status) {
+			continue
+		}
+		if !includeWorkflowOwned && meta != nil && strings.TrimSpace(meta.WorkflowRunID) != "" {
 			continue
 		}
 		key := listDedupKey(session, meta)

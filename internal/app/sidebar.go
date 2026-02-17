@@ -553,6 +553,9 @@ func buildSidebarItemsWithRecents(
 		if run == nil {
 			continue
 		}
+		if run.DismissedAt != nil && !showDismissed {
+			continue
+		}
 		runID := strings.TrimSpace(run.ID)
 		if runID == "" {
 			continue
@@ -943,6 +946,9 @@ func filterVisibleSessions(sessions []*types.Session, meta map[string]*types.Ses
 func workflowRunStatusText(run *guidedworkflows.WorkflowRun) string {
 	if run == nil {
 		return ""
+	}
+	if run.DismissedAt != nil {
+		return "dismissed"
 	}
 	switch run.Status {
 	case guidedworkflows.WorkflowRunStatusCreated:

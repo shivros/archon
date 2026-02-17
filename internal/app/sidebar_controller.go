@@ -211,6 +211,9 @@ func (c *SidebarController) SelectByKey(key string) bool {
 	if strings.HasPrefix(key, "wt:") {
 		return c.SelectByWorktreeID(strings.TrimSpace(strings.TrimPrefix(key, "wt:")))
 	}
+	if strings.HasPrefix(key, "gwf:") {
+		return c.SelectByWorkflowID(strings.TrimSpace(strings.TrimPrefix(key, "gwf:")))
+	}
 	return false
 }
 
@@ -228,7 +231,38 @@ func (c *SidebarController) CanSelectKey(key string) bool {
 	if strings.HasPrefix(key, "wt:") {
 		return c.canSelectWorktreeID(strings.TrimSpace(strings.TrimPrefix(key, "wt:")))
 	}
+	if strings.HasPrefix(key, "gwf:") {
+		return c.canSelectWorkflowID(strings.TrimSpace(strings.TrimPrefix(key, "gwf:")))
+	}
 	return false
+}
+
+func (c *SidebarController) SelectByWorkflowID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	if c.selectVisibleWorkflowByID(id) {
+		return true
+	}
+	changed := false
+	for _, run := range c.workflowRunsSnapshot {
+		if run == nil || strings.TrimSpace(run.ID) != id {
+			continue
+		}
+		if workspaceID := strings.TrimSpace(run.WorkspaceID); workspaceID != "" {
+			changed = c.setWorkspaceExpanded(workspaceID, true) || changed
+		}
+		if worktreeID := strings.TrimSpace(run.WorktreeID); worktreeID != "" {
+			changed = c.setWorktreeExpanded(worktreeID, true) || changed
+		}
+		break
+	}
+	changed = c.setWorkflowExpanded(id, true) || changed
+	if changed {
+		c.rebuild(c.SelectedKey())
+	}
+	return c.selectVisibleWorkflowByID(id)
 }
 
 func (c *SidebarController) selectVisibleSessionByID(id string) bool {
@@ -294,6 +328,22 @@ func (c *SidebarController) canSelectWorktreeID(id string) bool {
 	return ok
 }
 
+func (c *SidebarController) canSelectWorkflowID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, run := range c.workflowRunsSnapshot {
+		if run == nil {
+			continue
+		}
+		if strings.TrimSpace(run.ID) == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *SidebarController) findWorkspaceIDForWorktree(worktreeID string) (string, bool) {
 	worktreeID = strings.TrimSpace(worktreeID)
 	if worktreeID == "" {
@@ -328,6 +378,20 @@ func (c *SidebarController) findWorkspaceIDForWorktree(worktreeID string) (strin
 		}
 	}
 	return "", false
+}
+
+func (c *SidebarController) selectVisibleWorkflowByID(id string) bool {
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkflow {
+			continue
+		}
+		if strings.TrimSpace(entry.workflowRunID()) == id {
+			c.selectIndex(i)
+			return true
+		}
+	}
+	return false
 }
 
 func (c *SidebarController) SelectByRow(row int) {

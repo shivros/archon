@@ -13,9 +13,12 @@ import (
 type RunService interface {
 	CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error)
 	ListRuns(ctx context.Context) ([]*WorkflowRun, error)
+	ListRunsIncludingDismissed(ctx context.Context) ([]*WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*WorkflowRun, error)
+	DismissRun(ctx context.Context, runID string) (*WorkflowRun, error)
+	UndismissRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	AdvanceRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	HandleDecision(ctx context.Context, runID string, req DecisionActionRequest) (*WorkflowRun, error)
 	GetRun(ctx context.Context, runID string) (*WorkflowRun, error)
@@ -455,6 +458,14 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 }
 
 func (s *InMemoryRunService) ListRuns(_ context.Context) ([]*WorkflowRun, error) {
+	return s.listRuns(false)
+}
+
+func (s *InMemoryRunService) ListRunsIncludingDismissed(_ context.Context) ([]*WorkflowRun, error) {
+	return s.listRuns(true)
+}
+
+func (s *InMemoryRunService) listRuns(includeDismissed bool) ([]*WorkflowRun, error) {
 	if s == nil {
 		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
 	}
@@ -463,6 +474,9 @@ func (s *InMemoryRunService) ListRuns(_ context.Context) ([]*WorkflowRun, error)
 	out := make([]*WorkflowRun, 0, len(s.runs))
 	for _, run := range s.runs {
 		if run == nil {
+			continue
+		}
+		if !includeDismissed && run.DismissedAt != nil {
 			continue
 		}
 		out = append(out, cloneWorkflowRun(run))
@@ -476,6 +490,62 @@ func (s *InMemoryRunService) ListRuns(_ context.Context) ([]*WorkflowRun, error)
 		return left.After(right)
 	})
 	return out, nil
+}
+
+func (s *InMemoryRunService) DismissRun(_ context.Context, runID string) (*WorkflowRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, err := s.mustRunLocked(runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.DismissedAt != nil {
+		return cloneWorkflowRun(run), nil
+	}
+	now := s.engine.now()
+	run.DismissedAt = &now
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_dismissed",
+		Outcome: "dismissed",
+		Detail:  "run dismissed",
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_dismissed",
+		RunID:   run.ID,
+		Message: "workflow run dismissed",
+	})
+	return cloneWorkflowRun(run), nil
+}
+
+func (s *InMemoryRunService) UndismissRun(_ context.Context, runID string) (*WorkflowRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, err := s.mustRunLocked(runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.DismissedAt == nil {
+		return cloneWorkflowRun(run), nil
+	}
+	now := s.engine.now()
+	run.DismissedAt = nil
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_undismissed",
+		Outcome: "visible",
+		Detail:  "run restored",
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_undismissed",
+		RunID:   run.ID,
+		Message: "workflow run restored",
+	})
+	return cloneWorkflowRun(run), nil
 }
 
 func (s *InMemoryRunService) GetRun(_ context.Context, runID string) (*WorkflowRun, error) {
@@ -501,6 +571,9 @@ func runListSortTime(run *WorkflowRun) time.Time {
 	}
 	if run.CompletedAt != nil && run.CompletedAt.After(latest) {
 		latest = *run.CompletedAt
+	}
+	if run.DismissedAt != nil && run.DismissedAt.After(latest) {
+		latest = *run.DismissedAt
 	}
 	if n := len(run.AuditTrail); n > 0 {
 		last := run.AuditTrail[n-1].At

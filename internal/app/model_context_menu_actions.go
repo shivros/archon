@@ -9,10 +9,12 @@ import (
 )
 
 type contextMenuTarget struct {
-	id          string
-	workspaceID string
-	worktreeID  string
-	sessionID   string
+	id                string
+	workspaceID       string
+	worktreeID        string
+	sessionID         string
+	workflowID        string
+	workflowDismissed bool
 }
 
 func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, target contextMenuTarget) (bool, tea.Cmd) {
@@ -237,6 +239,51 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			return true, nil
 		}
 		return true, m.copyWithStatusCmd(target.sessionID, "copied session id")
+	default:
+		return false, nil
+	}
+}
+
+func (m *Model) handleWorkflowContextMenuAction(action ContextMenuAction, target contextMenuTarget) (bool, tea.Cmd) {
+	switch action {
+	case ContextMenuWorkflowOpen:
+		runID := strings.TrimSpace(target.workflowID)
+		if runID == "" {
+			m.setValidationStatus("select a workflow")
+			return true, nil
+		}
+		if m.sidebar != nil {
+			m.sidebar.SelectByWorkflowID(runID)
+		}
+		item := m.selectedItem()
+		if item == nil || item.kind != sidebarWorkflow {
+			m.setValidationStatus("workflow not found in sidebar")
+			return true, nil
+		}
+		return true, m.openGuidedWorkflowFromSidebar(item)
+	case ContextMenuWorkflowDismiss:
+		runID := strings.TrimSpace(target.workflowID)
+		if runID == "" {
+			m.setValidationStatus("select a workflow")
+			return true, nil
+		}
+		m.setStatusMessage("dismissing workflow " + runID)
+		return true, dismissWorkflowRunCmd(m.guidedWorkflowAPI, runID)
+	case ContextMenuWorkflowUndismiss:
+		runID := strings.TrimSpace(target.workflowID)
+		if runID == "" {
+			m.setValidationStatus("select a workflow")
+			return true, nil
+		}
+		m.setStatusMessage("restoring workflow " + runID)
+		return true, undismissWorkflowRunCmd(m.guidedWorkflowAPI, runID)
+	case ContextMenuWorkflowCopyID:
+		runID := strings.TrimSpace(target.workflowID)
+		if runID == "" {
+			m.setCopyStatusWarning("select a workflow")
+			return true, nil
+		}
+		return true, m.copyWithStatusCmd(runID, "copied workflow id")
 	default:
 		return false, nil
 	}

@@ -40,6 +40,10 @@ func (s *stubGuidedWorkflowSessionGateway) ListWithMeta(context.Context) ([]*typ
 	return s.sessions, s.meta, nil
 }
 
+func (s *stubGuidedWorkflowSessionGateway) ListWithMetaIncludingWorkflowOwned(context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return s.sessions, s.meta, nil
+}
+
 func (s *stubGuidedWorkflowSessionGateway) SendMessage(_ context.Context, id string, input []map[string]any) (string, error) {
 	s.sendCalls = append(s.sendCalls, struct {
 		sessionID string

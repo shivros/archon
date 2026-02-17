@@ -193,6 +193,13 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 						m.contextMenu.OpenSession(entry.session.ID, workspaceID, worktreeID, entry.Title(), mouse.X, mouse.Y)
 						return true
 					}
+				case sidebarWorkflow:
+					runID := entry.workflowRunID()
+					if runID != "" {
+						dismissed := entry.workflow != nil && entry.workflow.DismissedAt != nil
+						m.contextMenu.OpenWorkflow(runID, entry.Title(), dismissed, mouse.X, mouse.Y)
+						return true
+					}
 				}
 			}
 		}

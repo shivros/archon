@@ -69,6 +69,39 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsDismissAndUndismiss(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	dismissed := postWorkflowRunAction(t, server, created.ID, "dismiss", http.StatusOK)
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+
+	runs := getWorkflowRuns(t, server, http.StatusOK)
+	if len(runs) != 0 {
+		t.Fatalf("expected default workflow list to exclude dismissed runs, got %#v", runs)
+	}
+
+	included := getWorkflowRunsWithPath(t, server, "/v1/workflow-runs?include_dismissed=1", http.StatusOK)
+	if len(included) != 1 || included[0].ID != created.ID {
+		t.Fatalf("expected dismissed run in include_dismissed list, got %#v", included)
+	}
+
+	undismissed := postWorkflowRunAction(t, server, created.ID, "undismiss", http.StatusOK)
+	if undismissed.DismissedAt != nil {
+		t.Fatalf("expected dismissed_at to clear")
+	}
+}
+
 func TestWorkflowRunEndpointsInvalidTransition(t *testing.T) {
 	api := &API{
 		Version:      "test",
@@ -468,8 +501,12 @@ func getWorkflowRunTimeline(t *testing.T, server *httptest.Server, runID string,
 }
 
 func getWorkflowRuns(t *testing.T, server *httptest.Server, wantStatus int) []*guidedworkflows.WorkflowRun {
+	return getWorkflowRunsWithPath(t, server, "/v1/workflow-runs", wantStatus)
+}
+
+func getWorkflowRunsWithPath(t *testing.T, server *httptest.Server, path string, wantStatus int) []*guidedworkflows.WorkflowRun {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workflow-runs", nil)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+path, nil)
 	req.Header.Set("Authorization", "Bearer token")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

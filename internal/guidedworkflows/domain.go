@@ -69,6 +69,7 @@ type WorkflowRun struct {
 	CheckpointStyle     string                    `json:"checkpoint_style"`
 	Status              WorkflowRunStatus         `json:"status"`
 	CreatedAt           time.Time                 `json:"created_at"`
+	DismissedAt         *time.Time                `json:"dismissed_at,omitempty"`
 	StartedAt           *time.Time                `json:"started_at,omitempty"`
 	PausedAt            *time.Time                `json:"paused_at,omitempty"`
 	CompletedAt         *time.Time                `json:"completed_at,omitempty"`
