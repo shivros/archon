@@ -193,7 +193,7 @@ type Model struct {
 	keybindings                         *Keybindings
 	contextMenu                         *ContextMenuController
 	confirm                             *ConfirmController
-	recents                             *RecentsTracker
+	recents                             recentsDomain
 	recentsSelectedSessionID            string
 	recentsExpandedSessions             map[string]bool
 	recentsReplySessionID               string
@@ -248,6 +248,22 @@ type newSessionTarget struct {
 	worktreeID     string
 	provider       string
 	runtimeOptions *types.SessionRuntimeOptions
+}
+
+type recentsDomain interface {
+	StartRun(sessionID, baselineTurnID string, startedAt time.Time)
+	CancelRun(sessionID string)
+	ObserveMeta(meta map[string]*types.SessionMeta, observedAt time.Time) []recentsReadyItem
+	CompleteRun(sessionID, expectedTurn, completionTurn string, completedAt time.Time) (recentsReadyItem, bool)
+	ObserveSessions(sessions []*types.Session)
+	DismissReady(sessionID string) bool
+	RunningIDs() []string
+	ReadyIDs() []string
+	ReadyItem(sessionID string) (recentsReadyItem, bool)
+	IsReady(sessionID string) bool
+	IsRunning(sessionID string) bool
+	ReadyCount() int
+	RunningCount() int
 }
 
 type composeOptionKind int
