@@ -573,6 +573,15 @@ func TestRunLifecyclePromptDispatchWaitsForTurnThenAdvances(t *testing.T) {
 	if !first.AwaitingTurn || first.Status != StepRunStatusRunning {
 		t.Fatalf("expected first step awaiting turn after dispatch, got %#v", first)
 	}
+	if first.Execution == nil {
+		t.Fatalf("expected execution reference for dispatched step")
+	}
+	if first.Execution.SessionID != "sess-1" || first.Execution.TurnID != "turn-a" {
+		t.Fatalf("unexpected first step execution ref: %#v", first.Execution)
+	}
+	if len(first.ExecutionAttempts) != 1 {
+		t.Fatalf("expected single execution attempt, got %d", len(first.ExecutionAttempts))
+	}
 
 	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
 		SessionID: "sess-1",
@@ -587,6 +596,9 @@ func TestRunLifecyclePromptDispatchWaitsForTurnThenAdvances(t *testing.T) {
 	run = updated[0]
 	if run.Phases[0].Steps[0].Status != StepRunStatusCompleted {
 		t.Fatalf("expected first step completed after turn-a, got %q", run.Phases[0].Steps[0].Status)
+	}
+	if run.Phases[0].Steps[0].Execution == nil || run.Phases[0].Steps[0].Execution.CompletedAt == nil {
+		t.Fatalf("expected first step execution completion metadata after turn-a")
 	}
 	if run.Phases[0].Steps[1].Status != StepRunStatusRunning || !run.Phases[0].Steps[1].AwaitingTurn {
 		t.Fatalf("expected second step awaiting turn after turn-a, got %#v", run.Phases[0].Steps[1])
@@ -608,6 +620,62 @@ func TestRunLifecyclePromptDispatchWaitsForTurnThenAdvances(t *testing.T) {
 	run = updated[0]
 	if run.Status != WorkflowRunStatusCompleted {
 		t.Fatalf("expected completed status after final turn, got %q", run.Status)
+	}
+	last := run.Phases[0].Steps[1]
+	if last.Execution == nil || last.Execution.CompletedAt == nil {
+		t.Fatalf("expected final step execution completion metadata")
+	}
+}
+
+func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_with_model",
+		Name: "Prompted with model",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a", Provider: "codex", Model: "gpt-5"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_with_model",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	step := run.Phases[0].Steps[0]
+	if step.Execution == nil {
+		t.Fatalf("expected execution metadata")
+	}
+	if step.Execution.Provider != "codex" || step.Execution.Model != "gpt-5" {
+		t.Fatalf("expected provider/model from dispatcher, got %#v", step.Execution)
+	}
+	if step.Execution.PromptSnapshot != "prompt 1" {
+		t.Fatalf("expected prompt snapshot, got %q", step.Execution.PromptSnapshot)
+	}
+	if strings.TrimSpace(step.Execution.TraceID) == "" {
+		t.Fatalf("expected trace id to be set")
 	}
 }
 

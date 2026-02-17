@@ -177,6 +177,83 @@ func TestGuidedWorkflowTimelineSnapshotUpdatesArtifacts(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowTimelineShowsStepSessionTraceability(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 45, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-trace", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID:      "s1",
+		Provider:       "codex",
+		Model:          "gpt-5",
+		TurnID:         "turn-42",
+		PromptSnapshot: "implementation prompt",
+		TraceID:        "gwf-trace:phase_delivery:implementation:attempt-1",
+	}
+	run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
+
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	updated, _ := m.Update(workflowRunSnapshotMsg{
+		run: run,
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now, Type: "step_dispatched", RunID: "gwf-trace", Message: "awaiting turn completion"},
+		},
+	})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = asModel(t, updated)
+	if !strings.Contains(m.contentRaw, "[session:s1 turn:turn-42]") {
+		t.Fatalf("expected session chip in timeline, got %q", m.contentRaw)
+	}
+	if !strings.Contains(m.contentRaw, "Execution Details") {
+		t.Fatalf("expected execution details section")
+	}
+	if !strings.Contains(m.contentRaw, "Trace id: gwf-trace:phase_delivery:implementation:attempt-1") {
+		t.Fatalf("expected trace id in execution details")
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 15, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-open", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "s1",
+		TurnID:    "turn-99",
+	}
+	run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
+
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode before open action")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = asModel(t, updated)
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected session open command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected guided workflow to close after opening linked session, got mode=%v", m.mode)
+	}
+	if selected := m.selectedSessionID(); selected != "s1" {
+		t.Fatalf("expected linked session s1 to be selected, got %q", selected)
+	}
+}
+
 func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 	now := time.Date(2026, 2, 17, 13, 0, 0, 0, time.UTC)
 	paused := newWorkflowRunFixture("gwf-3", guidedworkflows.WorkflowRunStatusPaused, now)

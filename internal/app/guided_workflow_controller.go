@@ -43,6 +43,8 @@ type GuidedWorkflowUIController struct {
 	lastError     string
 	refreshQueued bool
 	lastRefreshAt time.Time
+	selectedPhase int
+	selectedStep  int
 }
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
@@ -68,6 +70,8 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.lastError = ""
 	c.refreshQueued = false
 	c.lastRefreshAt = time.Time{}
+	c.selectedPhase = 0
+	c.selectedStep = 0
 }
 
 func (c *GuidedWorkflowUIController) Exit() {
@@ -128,6 +132,8 @@ func (c *GuidedWorkflowUIController) BeginStart() {
 	c.timeline = nil
 	c.refreshQueued = false
 	c.lastRefreshAt = time.Time{}
+	c.selectedPhase = 0
+	c.selectedStep = 0
 }
 
 func (c *GuidedWorkflowUIController) SetCreateError(err error) {
@@ -166,6 +172,7 @@ func (c *GuidedWorkflowUIController) SetRun(run *guidedworkflows.WorkflowRun) {
 	c.run = cloneWorkflowRun(run)
 	c.lastError = ""
 	c.refreshQueued = false
+	c.syncStepSelection()
 	if c.run == nil {
 		return
 	}
@@ -185,6 +192,7 @@ func (c *GuidedWorkflowUIController) SetSnapshot(run *guidedworkflows.WorkflowRu
 	c.timeline = cloneRunTimeline(timeline)
 	c.lastError = ""
 	c.refreshQueued = false
+	c.syncStepSelection()
 	if c.run == nil {
 		return
 	}
@@ -245,6 +253,41 @@ func (c *GuidedWorkflowUIController) NeedsDecision() bool {
 		return false
 	}
 	return c.run.LatestDecision.Metadata.Action == guidedworkflows.CheckpointActionPause
+}
+
+func (c *GuidedWorkflowUIController) MoveStepSelection(delta int) {
+	if c == nil || c.run == nil || delta == 0 {
+		return
+	}
+	steps := c.stepLocations()
+	if len(steps) == 0 {
+		c.selectedPhase = 0
+		c.selectedStep = 0
+		return
+	}
+	current := 0
+	for idx, location := range steps {
+		if location.phase == c.selectedPhase && location.step == c.selectedStep {
+			current = idx
+			break
+		}
+	}
+	next := (current + delta + len(steps)) % len(steps)
+	c.selectedPhase = steps[next].phase
+	c.selectedStep = steps[next].step
+}
+
+func (c *GuidedWorkflowUIController) SelectedStepSessionID() string {
+	_, step, ok := c.selectedStepRef()
+	if !ok {
+		return ""
+	}
+	if step.Execution != nil {
+		if sessionID := strings.TrimSpace(step.Execution.SessionID); sessionID != "" {
+			return sessionID
+		}
+	}
+	return ""
 }
 
 func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowRunRequest {
@@ -366,9 +409,14 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 	}
 	lines = append(lines, "", "Phase Progress")
 	lines = append(lines, c.renderPhaseProgress()...)
+	lines = append(lines, "", "Execution Details")
+	lines = append(lines, c.renderExecutionDetails()...)
 	lines = append(lines, "", "Artifacts / Timeline")
 	lines = append(lines, c.renderTimeline()...)
 	lines = append(lines, "", "Controls")
+	lines = append(lines, "- j/down: next step details")
+	lines = append(lines, "- k/up: previous step details")
+	lines = append(lines, "- o: open selected step session")
 	lines = append(lines, "- r: refresh timeline")
 	lines = append(lines, "- esc: close guided workflow view")
 	if c.NeedsDecision() {
@@ -404,6 +452,8 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 		fmt.Sprintf("Completed steps: %d/%d", completedSteps, totalSteps),
 		fmt.Sprintf("Decisions requested: %d", len(run.CheckpointDecisions)),
 	}
+	linkedSteps, unavailableSteps := c.traceabilityCounts()
+	lines = append(lines, fmt.Sprintf("Traceability: %d/%d linked (%d unavailable)", linkedSteps, totalSteps, unavailableSteps))
 	if run.CompletedAt != nil {
 		lines = append(lines, fmt.Sprintf("Completed at: %s", run.CompletedAt.UTC().Format(time.RFC3339)))
 	}
@@ -425,9 +475,56 @@ func (c *GuidedWorkflowUIController) renderPhaseProgress() []string {
 	for phaseIdx, phase := range c.run.Phases {
 		phasePrefix := phaseStatusPrefix(phase.Status)
 		lines = append(lines, fmt.Sprintf("%s %d. %s", phasePrefix, phaseIdx+1, valueOrFallback(phase.Name, phase.ID)))
-		for _, step := range phase.Steps {
-			lines = append(lines, fmt.Sprintf("  %s %s", stepStatusPrefix(step.Status), valueOrFallback(step.Name, step.ID)))
+		for stepIdx, step := range phase.Steps {
+			selected := " "
+			if phaseIdx == c.selectedPhase && stepIdx == c.selectedStep {
+				selected = ">"
+			}
+			traceChip := c.stepTraceChip(step)
+			lines = append(lines, fmt.Sprintf("  %s %s %s %s", selected, stepStatusPrefix(step.Status), valueOrFallback(step.Name, step.ID), traceChip))
 		}
+	}
+	return lines
+}
+
+func (c *GuidedWorkflowUIController) renderExecutionDetails() []string {
+	phase, step, ok := c.selectedStepRef()
+	if !ok {
+		return []string{"- Select a step to inspect execution details"}
+	}
+	lines := []string{
+		fmt.Sprintf("- Step: %s / %s", valueOrFallback(phase.Name, phase.ID), valueOrFallback(step.Name, step.ID)),
+		fmt.Sprintf("- Status: %s", strings.TrimSpace(string(step.Status))),
+		fmt.Sprintf("- Execution state: %s", c.stepExecutionStateLabel(*step)),
+	}
+	if text := strings.TrimSpace(step.ExecutionMessage); text != "" {
+		lines = append(lines, fmt.Sprintf("- Execution message: %s", text))
+	}
+	sessionID := ""
+	if step.Execution != nil {
+		sessionID = strings.TrimSpace(step.Execution.SessionID)
+	}
+	if sessionID != "" {
+		lines = append(lines, fmt.Sprintf("- Session: %s", sessionID))
+	} else {
+		lines = append(lines, "- Session: (none)")
+	}
+	if step.Execution != nil {
+		lines = append(lines, fmt.Sprintf("- Provider/model: %s / %s",
+			valueOrFallback(step.Execution.Provider, "(unknown)"),
+			valueOrFallback(step.Execution.Model, "(default)"),
+		))
+		lines = append(lines, fmt.Sprintf("- Turn id: %s", valueOrFallback(step.Execution.TurnID, step.TurnID)))
+		lines = append(lines, fmt.Sprintf("- Trace id: %s", valueOrFallback(step.Execution.TraceID, "(none)")))
+		prompt := strings.TrimSpace(step.Execution.PromptSnapshot)
+		if prompt == "" {
+			prompt = strings.TrimSpace(step.Prompt)
+		}
+		if prompt != "" {
+			lines = append(lines, fmt.Sprintf("- Prompt snapshot: %s", truncateRunes(prompt, 160)))
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf("- Turn id: %s", valueOrFallback(step.TurnID, "(none)")))
 	}
 	return lines
 }
@@ -477,6 +574,128 @@ func (c *GuidedWorkflowUIController) renderDecisionInbox() []string {
 		fmt.Sprintf("- Recommended action: %s", decisionActionText(c.RecommendedDecisionAction())),
 		"- Actions: a approve/continue, v request revision, p pause run",
 	}
+}
+
+func (c *GuidedWorkflowUIController) stepTraceChip(step guidedworkflows.StepRun) string {
+	switch c.normalizedStepExecutionState(step) {
+	case guidedworkflows.StepExecutionStateLinked:
+		sessionID := ""
+		turnID := strings.TrimSpace(step.TurnID)
+		if step.Execution != nil {
+			sessionID = strings.TrimSpace(step.Execution.SessionID)
+			if turnID == "" {
+				turnID = strings.TrimSpace(step.Execution.TurnID)
+			}
+		}
+		if sessionID == "" {
+			return "[session:linked]"
+		}
+		if turnID == "" {
+			return fmt.Sprintf("[session:%s]", sessionID)
+		}
+		return fmt.Sprintf("[session:%s turn:%s]", sessionID, turnID)
+	case guidedworkflows.StepExecutionStateUnavailable:
+		return "[session:unavailable]"
+	default:
+		return "[session:none]"
+	}
+}
+
+func (c *GuidedWorkflowUIController) stepExecutionStateLabel(step guidedworkflows.StepRun) string {
+	return string(c.normalizedStepExecutionState(step))
+}
+
+func (c *GuidedWorkflowUIController) normalizedStepExecutionState(step guidedworkflows.StepRun) guidedworkflows.StepExecutionState {
+	switch step.ExecutionState {
+	case guidedworkflows.StepExecutionStateLinked, guidedworkflows.StepExecutionStateUnavailable, guidedworkflows.StepExecutionStateNone:
+		return step.ExecutionState
+	}
+	if step.Execution != nil && strings.TrimSpace(step.Execution.SessionID) != "" {
+		return guidedworkflows.StepExecutionStateLinked
+	}
+	if strings.TrimSpace(step.ExecutionMessage) != "" {
+		return guidedworkflows.StepExecutionStateUnavailable
+	}
+	return guidedworkflows.StepExecutionStateNone
+}
+
+func (c *GuidedWorkflowUIController) traceabilityCounts() (linked int, unavailable int) {
+	if c == nil || c.run == nil {
+		return 0, 0
+	}
+	for _, phase := range c.run.Phases {
+		for _, step := range phase.Steps {
+			switch c.normalizedStepExecutionState(step) {
+			case guidedworkflows.StepExecutionStateLinked:
+				linked++
+			case guidedworkflows.StepExecutionStateUnavailable:
+				unavailable++
+			}
+		}
+	}
+	return linked, unavailable
+}
+
+type stepLocation struct {
+	phase int
+	step  int
+}
+
+func (c *GuidedWorkflowUIController) stepLocations() []stepLocation {
+	if c == nil || c.run == nil {
+		return nil
+	}
+	locations := make([]stepLocation, 0, 16)
+	for phaseIdx, phase := range c.run.Phases {
+		for stepIdx := range phase.Steps {
+			locations = append(locations, stepLocation{phase: phaseIdx, step: stepIdx})
+		}
+	}
+	return locations
+}
+
+func (c *GuidedWorkflowUIController) syncStepSelection() {
+	if c == nil || c.run == nil {
+		c.selectedPhase = 0
+		c.selectedStep = 0
+		return
+	}
+	if c.selectedPhase >= 0 && c.selectedPhase < len(c.run.Phases) {
+		phase := c.run.Phases[c.selectedPhase]
+		if c.selectedStep >= 0 && c.selectedStep < len(phase.Steps) {
+			return
+		}
+	}
+	if c.run.CurrentPhaseIndex >= 0 && c.run.CurrentPhaseIndex < len(c.run.Phases) {
+		phase := c.run.Phases[c.run.CurrentPhaseIndex]
+		if c.run.CurrentStepIndex >= 0 && c.run.CurrentStepIndex < len(phase.Steps) {
+			c.selectedPhase = c.run.CurrentPhaseIndex
+			c.selectedStep = c.run.CurrentStepIndex
+			return
+		}
+	}
+	locations := c.stepLocations()
+	if len(locations) == 0 {
+		c.selectedPhase = 0
+		c.selectedStep = 0
+		return
+	}
+	c.selectedPhase = locations[0].phase
+	c.selectedStep = locations[0].step
+}
+
+func (c *GuidedWorkflowUIController) selectedStepRef() (*guidedworkflows.PhaseRun, *guidedworkflows.StepRun, bool) {
+	if c == nil || c.run == nil {
+		return nil, nil, false
+	}
+	if c.selectedPhase < 0 || c.selectedPhase >= len(c.run.Phases) {
+		return nil, nil, false
+	}
+	phase := &c.run.Phases[c.selectedPhase]
+	if c.selectedStep < 0 || c.selectedStep >= len(phase.Steps) {
+		return nil, nil, false
+	}
+	return phase, &phase.Steps[c.selectedStep], true
 }
 
 func (c *GuidedWorkflowUIController) sensitivityLabel() string {
@@ -607,6 +826,16 @@ func cloneWorkflowRun(run *guidedworkflows.WorkflowRun) *guidedworkflows.Workflo
 		cloned.Phases[i] = phase
 		if phase.Steps != nil {
 			cloned.Phases[i].Steps = append([]guidedworkflows.StepRun(nil), phase.Steps...)
+			for stepIdx := range cloned.Phases[i].Steps {
+				step := &cloned.Phases[i].Steps[stepIdx]
+				if step.Execution != nil {
+					execution := *step.Execution
+					step.Execution = &execution
+				}
+				if step.ExecutionAttempts != nil {
+					step.ExecutionAttempts = append([]guidedworkflows.StepExecutionRef(nil), step.ExecutionAttempts...)
+				}
+			}
 		}
 	}
 	if run.CheckpointDecisions != nil {
@@ -644,4 +873,16 @@ func errorText(err error) string {
 		return ""
 	}
 	return strings.TrimSpace(err.Error())
+}
+
+func truncateRunes(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || text == "" {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return strings.TrimSpace(string(runes[:limit])) + "..."
 }

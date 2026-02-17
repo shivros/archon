@@ -92,18 +92,42 @@ type PhaseRun struct {
 }
 
 type StepRun struct {
-	ID           string        `json:"id"`
-	Name         string        `json:"name"`
-	Prompt       string        `json:"prompt,omitempty"`
-	Status       StepRunStatus `json:"status"`
-	AwaitingTurn bool          `json:"awaiting_turn,omitempty"`
-	TurnID       string        `json:"turn_id,omitempty"`
-	StartedAt    *time.Time    `json:"started_at,omitempty"`
-	CompletedAt  *time.Time    `json:"completed_at,omitempty"`
-	Attempts     int           `json:"attempts,omitempty"`
-	Outcome      string        `json:"outcome,omitempty"`
-	Output       string        `json:"output,omitempty"`
-	Error        string        `json:"error,omitempty"`
+	ID                string             `json:"id"`
+	Name              string             `json:"name"`
+	Prompt            string             `json:"prompt,omitempty"`
+	Status            StepRunStatus      `json:"status"`
+	AwaitingTurn      bool               `json:"awaiting_turn,omitempty"`
+	TurnID            string             `json:"turn_id,omitempty"`
+	StartedAt         *time.Time         `json:"started_at,omitempty"`
+	CompletedAt       *time.Time         `json:"completed_at,omitempty"`
+	Attempts          int                `json:"attempts,omitempty"`
+	Outcome           string             `json:"outcome,omitempty"`
+	Output            string             `json:"output,omitempty"`
+	Error             string             `json:"error,omitempty"`
+	Execution         *StepExecutionRef  `json:"execution,omitempty"`
+	ExecutionAttempts []StepExecutionRef `json:"execution_attempts,omitempty"`
+	ExecutionState    StepExecutionState `json:"execution_state,omitempty"`
+	ExecutionMessage  string             `json:"execution_message,omitempty"`
+}
+
+type StepExecutionState string
+
+const (
+	StepExecutionStateNone        StepExecutionState = "none"
+	StepExecutionStateLinked      StepExecutionState = "linked"
+	StepExecutionStateUnavailable StepExecutionState = "unavailable"
+)
+
+type StepExecutionRef struct {
+	TraceID        string     `json:"trace_id,omitempty"`
+	SessionID      string     `json:"session_id,omitempty"`
+	SessionScope   string     `json:"session_scope,omitempty"`
+	Provider       string     `json:"provider,omitempty"`
+	Model          string     `json:"model,omitempty"`
+	TurnID         string     `json:"turn_id,omitempty"`
+	PromptSnapshot string     `json:"prompt_snapshot,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 
 type CheckpointDecision struct {
@@ -185,6 +209,8 @@ type StepPromptDispatchResult struct {
 	Dispatched bool   `json:"dispatched"`
 	SessionID  string `json:"session_id,omitempty"`
 	TurnID     string `json:"turn_id,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
 }
 
 type StepPromptDispatcher interface {

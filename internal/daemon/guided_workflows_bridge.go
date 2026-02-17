@@ -127,7 +127,7 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	if prompt == "" {
 		return guidedworkflows.StepPromptDispatchResult{}, nil
 	}
-	sessionID, provider, err := d.resolveSession(ctx, req)
+	sessionID, provider, model, err := d.resolveSession(ctx, req)
 	if err != nil {
 		return guidedworkflows.StepPromptDispatchResult{}, err
 	}
@@ -144,6 +144,8 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		Dispatched: true,
 		SessionID:  sessionID,
 		TurnID:     strings.TrimSpace(turnID),
+		Provider:   strings.TrimSpace(provider),
+		Model:      strings.TrimSpace(model),
 	}, nil
 }
 
@@ -159,27 +161,11 @@ func guidedWorkflowProviderSupportsPromptDispatch(provider string) bool {
 func (d *guidedWorkflowPromptDispatcher) resolveSession(
 	ctx context.Context,
 	req guidedworkflows.StepPromptDispatchRequest,
-) (string, string, error) {
+) (string, string, string, error) {
 	explicitSessionID := strings.TrimSpace(req.SessionID)
 	sessions, meta, err := d.sessions.ListWithMeta(ctx)
 	if err != nil {
-		return "", "", err
-	}
-	if explicitSessionID != "" {
-		for _, session := range sessions {
-			if session == nil {
-				continue
-			}
-			if strings.TrimSpace(session.ID) == explicitSessionID {
-				return explicitSessionID, strings.TrimSpace(session.Provider), nil
-			}
-		}
-		return "", "", nil
-	}
-	workspaceID := strings.TrimSpace(req.WorkspaceID)
-	worktreeID := strings.TrimSpace(req.WorktreeID)
-	if workspaceID == "" && worktreeID == "" {
-		return "", "", nil
+		return "", "", "", err
 	}
 	metaBySessionID := make(map[string]*types.SessionMeta, len(meta))
 	for _, item := range meta {
@@ -188,7 +174,24 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 		}
 		metaBySessionID[strings.TrimSpace(item.SessionID)] = item
 	}
+	if explicitSessionID != "" {
+		for _, session := range sessions {
+			if session == nil {
+				continue
+			}
+			if strings.TrimSpace(session.ID) == explicitSessionID {
+				return explicitSessionID, strings.TrimSpace(session.Provider), sessionModel(metaBySessionID[explicitSessionID]), nil
+			}
+		}
+		return "", "", "", nil
+	}
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	worktreeID := strings.TrimSpace(req.WorktreeID)
+	if workspaceID == "" && worktreeID == "" {
+		return "", "", "", nil
+	}
 	var selected *types.Session
+	var selectedMeta *types.SessionMeta
 	var selectedAt time.Time
 	for _, session := range sessions {
 		if session == nil {
@@ -218,13 +221,14 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 		}
 		if selected == nil || candidateAt.After(selectedAt) {
 			selected = session
+			selectedMeta = sessionMeta
 			selectedAt = candidateAt
 		}
 	}
 	if selected == nil {
-		return "", "", nil
+		return "", "", "", nil
 	}
-	return strings.TrimSpace(selected.ID), strings.TrimSpace(selected.Provider), nil
+	return strings.TrimSpace(selected.ID), strings.TrimSpace(selected.Provider), sessionModel(selectedMeta), nil
 }
 
 func isGuidedWorkflowDispatchableSessionStatus(status types.SessionStatus) bool {
@@ -234,6 +238,13 @@ func isGuidedWorkflowDispatchableSessionStatus(status types.SessionStatus) bool 
 	default:
 		return false
 	}
+}
+
+func sessionModel(meta *types.SessionMeta) string {
+	if meta == nil || meta.RuntimeOptions == nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.RuntimeOptions.Model)
 }
 
 func guidedWorkflowsExecutionControlsFromCoreConfig(cfg config.CoreConfig) guidedworkflows.ExecutionControls {

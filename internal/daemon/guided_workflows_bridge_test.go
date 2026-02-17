@@ -215,7 +215,14 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
 		},
 		meta: []*types.SessionMeta{
-			{SessionID: "sess-1", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+				RuntimeOptions: &types.SessionRuntimeOptions{
+					Model: "gpt-5",
+				},
+			},
 		},
 		turnID: "turn-1",
 	}
@@ -233,6 +240,9 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 	if !result.Dispatched || result.SessionID != "sess-1" || result.TurnID != "turn-1" {
 		t.Fatalf("unexpected dispatch result: %#v", result)
 	}
+	if result.Provider != "codex" || result.Model != "gpt-5" {
+		t.Fatalf("expected provider/model in dispatch result, got %#v", result)
+	}
 	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-1" {
 		t.Fatalf("expected prompt to be sent to explicit session, got %#v", gateway.sendCalls)
 	}
@@ -247,8 +257,20 @@ func TestGuidedWorkflowPromptDispatcherResolvesMostRecentContextSession(t *testi
 			{ID: "sess-new", Provider: "codex", Status: types.SessionStatusRunning},
 		},
 		meta: []*types.SessionMeta{
-			{SessionID: "sess-old", WorkspaceID: "ws-1", WorktreeID: "wt-1", LastActiveAt: &older},
-			{SessionID: "sess-new", WorkspaceID: "ws-1", WorktreeID: "wt-1", LastActiveAt: &newer},
+			{
+				SessionID:      "sess-old",
+				WorkspaceID:    "ws-1",
+				WorktreeID:     "wt-1",
+				LastActiveAt:   &older,
+				RuntimeOptions: &types.SessionRuntimeOptions{Model: "gpt-4.1"},
+			},
+			{
+				SessionID:      "sess-new",
+				WorkspaceID:    "ws-1",
+				WorktreeID:     "wt-1",
+				LastActiveAt:   &newer,
+				RuntimeOptions: &types.SessionRuntimeOptions{Model: "gpt-5"},
+			},
 		},
 		turnID: "turn-2",
 	}
@@ -264,6 +286,9 @@ func TestGuidedWorkflowPromptDispatcherResolvesMostRecentContextSession(t *testi
 	}
 	if !result.Dispatched || result.SessionID != "sess-new" {
 		t.Fatalf("expected newest matching session, got %#v", result)
+	}
+	if result.Provider != "codex" || result.Model != "gpt-5" {
+		t.Fatalf("expected newest model to be carried through, got %#v", result)
 	}
 	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-new" {
 		t.Fatalf("expected send to sess-new, got %#v", gateway.sendCalls)

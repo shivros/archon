@@ -103,16 +103,30 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	case "enter":
 		return true, m.handleGuidedWorkflowEnter()
 	case "j", "down":
-		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
-			m.guidedWorkflow.CycleSensitivity(1)
-			m.renderGuidedWorkflowContent()
-			return true, nil
+		if m.guidedWorkflow != nil {
+			switch m.guidedWorkflow.Stage() {
+			case guidedWorkflowStageSetup:
+				m.guidedWorkflow.CycleSensitivity(1)
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+				m.guidedWorkflow.MoveStepSelection(1)
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			}
 		}
 	case "k", "up":
-		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
-			m.guidedWorkflow.CycleSensitivity(-1)
-			m.renderGuidedWorkflowContent()
-			return true, nil
+		if m.guidedWorkflow != nil {
+			switch m.guidedWorkflow.Stage() {
+			case guidedWorkflowStageSetup:
+				m.guidedWorkflow.CycleSensitivity(-1)
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+				m.guidedWorkflow.MoveStepSelection(-1)
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			}
 		}
 	case "r":
 		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
@@ -136,6 +150,10 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	case "G":
 		m.viewport.GotoBottom()
 		return true, nil
+	case "o":
+		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
+			return true, m.openGuidedWorkflowSelectedSession()
+		}
 	}
 	return false, nil
 }
@@ -223,4 +241,24 @@ func (m *Model) decideGuidedWorkflow(action guidedworkflows.DecisionAction) tea.
 		m.setStatusMessage("pausing guided workflow run")
 	}
 	return decideWorkflowRunCmd(m.guidedWorkflowAPI, runID, m.guidedWorkflow.BuildDecisionRequest(action))
+}
+
+func (m *Model) openGuidedWorkflowSelectedSession() tea.Cmd {
+	if m == nil || m.guidedWorkflow == nil || m.sidebar == nil {
+		return nil
+	}
+	sessionID := strings.TrimSpace(m.guidedWorkflow.SelectedStepSessionID())
+	if sessionID == "" {
+		m.setValidationStatus("selected step has no linked session")
+		m.renderGuidedWorkflowContent()
+		return nil
+	}
+	if !m.sidebar.SelectBySessionID(sessionID) {
+		m.setValidationStatus("linked session not found: " + sessionID)
+		m.renderGuidedWorkflowContent()
+		return nil
+	}
+	item := m.selectedItem()
+	m.exitGuidedWorkflow("opened linked session " + sessionID)
+	return m.batchWithNotesPanelSync(m.loadSelectedSession(item))
 }

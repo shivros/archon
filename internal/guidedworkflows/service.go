@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 type RunService interface {
@@ -672,6 +673,7 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 	step.Outcome = "awaiting_turn"
 	step.Output = strings.TrimSpace(result.TurnID)
 	step.TurnID = strings.TrimSpace(result.TurnID)
+	recordStepExecutionDispatch(run, phase, step, result, prompt, now)
 	appendRunAudit(run, RunAuditEntry{
 		At:      now,
 		Scope:   "step",
@@ -717,6 +719,7 @@ func (s *InMemoryRunService) failRunForStepDispatchLocked(run *WorkflowRun, phas
 	step.CompletedAt = &now
 	step.Error = strings.TrimSpace(cause.Error())
 	step.Outcome = "failed"
+	recordStepExecutionFailure(step, "step dispatch failed", now)
 	phase.Status = PhaseRunStatusFailed
 	phase.CompletedAt = &now
 	run.Status = WorkflowRunStatusFailed
@@ -784,6 +787,7 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, si
 			step.Output = step.TurnID
 		}
 	}
+	recordStepExecutionCompletion(run, phase, step, signal, now)
 	appendRunAudit(run, RunAuditEntry{
 		At:      now,
 		Scope:   "step",
@@ -981,6 +985,126 @@ func runMatchesTurnSignal(run *WorkflowRun, signal TurnSignal) bool {
 	return false
 }
 
+func runSessionScope(run *WorkflowRun) string {
+	if run == nil {
+		return ""
+	}
+	if strings.TrimSpace(run.WorktreeID) != "" {
+		return "worktree"
+	}
+	if strings.TrimSpace(run.WorkspaceID) != "" {
+		return "workspace"
+	}
+	if strings.TrimSpace(run.SessionID) != "" {
+		return "session"
+	}
+	return ""
+}
+
+func stepTraceID(run *WorkflowRun, phase *PhaseRun, step *StepRun, attempt int) string {
+	if run == nil {
+		return ""
+	}
+	parts := []string{
+		strings.TrimSpace(run.ID),
+	}
+	if phase != nil {
+		parts = append(parts, strings.TrimSpace(phase.ID))
+	}
+	if step != nil {
+		parts = append(parts, strings.TrimSpace(step.ID))
+	}
+	if attempt > 0 {
+		parts = append(parts, fmt.Sprintf("attempt-%d", attempt))
+	}
+	return strings.Join(parts, ":")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func recordStepExecutionDispatch(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	step *StepRun,
+	result StepPromptDispatchResult,
+	prompt string,
+	now time.Time,
+) {
+	if step == nil {
+		return
+	}
+	step.Attempts++
+	step.ExecutionState = StepExecutionStateLinked
+	step.ExecutionMessage = ""
+	execution := StepExecutionRef{
+		TraceID:        stepTraceID(run, phase, step, step.Attempts),
+		SessionID:      strings.TrimSpace(result.SessionID),
+		SessionScope:   runSessionScope(run),
+		Provider:       strings.TrimSpace(result.Provider),
+		Model:          strings.TrimSpace(result.Model),
+		TurnID:         strings.TrimSpace(result.TurnID),
+		PromptSnapshot: strings.TrimSpace(prompt),
+		StartedAt:      &now,
+	}
+	step.Execution = &execution
+	step.ExecutionAttempts = append(step.ExecutionAttempts, execution)
+}
+
+func recordStepExecutionFailure(step *StepRun, message string, now time.Time) {
+	if step == nil {
+		return
+	}
+	step.ExecutionState = StepExecutionStateUnavailable
+	step.ExecutionMessage = strings.TrimSpace(message)
+	if step.Execution != nil {
+		step.Execution.CompletedAt = &now
+	}
+	if len(step.ExecutionAttempts) > 0 {
+		step.ExecutionAttempts[len(step.ExecutionAttempts)-1].CompletedAt = &now
+	}
+}
+
+func recordStepExecutionCompletion(run *WorkflowRun, phase *PhaseRun, step *StepRun, signal TurnSignal, now time.Time) {
+	if step == nil {
+		return
+	}
+	step.ExecutionState = StepExecutionStateLinked
+	step.ExecutionMessage = ""
+	if step.Execution == nil {
+		execution := StepExecutionRef{
+			TraceID:      stepTraceID(run, phase, step, max(1, step.Attempts)),
+			SessionID:    firstNonEmpty(strings.TrimSpace(signal.SessionID), strings.TrimSpace(run.SessionID)),
+			SessionScope: runSessionScope(run),
+			TurnID:       strings.TrimSpace(step.TurnID),
+			StartedAt:    step.StartedAt,
+			CompletedAt:  &now,
+		}
+		step.Execution = &execution
+		step.ExecutionAttempts = append(step.ExecutionAttempts, execution)
+		return
+	}
+	step.Execution.CompletedAt = &now
+	if signalTurnID := strings.TrimSpace(signal.TurnID); signalTurnID != "" {
+		step.Execution.TurnID = signalTurnID
+	}
+	if strings.TrimSpace(step.Execution.TurnID) == "" {
+		step.Execution.TurnID = strings.TrimSpace(step.TurnID)
+	}
+	if strings.TrimSpace(step.Execution.SessionID) == "" {
+		step.Execution.SessionID = firstNonEmpty(strings.TrimSpace(signal.SessionID), strings.TrimSpace(run.SessionID))
+	}
+	if len(step.ExecutionAttempts) > 0 {
+		step.ExecutionAttempts[len(step.ExecutionAttempts)-1] = *step.Execution
+	}
+}
+
 func (s *InMemoryRunService) mustRunLocked(runID string) (*WorkflowRun, error) {
 	id := strings.TrimSpace(runID)
 	if id == "" {
@@ -1004,10 +1128,11 @@ func instantiatePhases(template WorkflowTemplate) []PhaseRun {
 		steps := make([]StepRun, 0, len(phase.Steps))
 		for _, step := range phase.Steps {
 			steps = append(steps, StepRun{
-				ID:     step.ID,
-				Name:   step.Name,
-				Prompt: strings.TrimSpace(step.Prompt),
-				Status: StepRunStatusPending,
+				ID:             step.ID,
+				Name:           step.Name,
+				Prompt:         strings.TrimSpace(step.Prompt),
+				Status:         StepRunStatusPending,
+				ExecutionState: StepExecutionStateNone,
 			})
 		}
 		phases = append(phases, PhaseRun{
@@ -1039,6 +1164,16 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 	for i, phase := range in.Phases {
 		out.Phases[i] = phase
 		out.Phases[i].Steps = append([]StepRun{}, phase.Steps...)
+		for j := range out.Phases[i].Steps {
+			step := &out.Phases[i].Steps[j]
+			if step.Execution != nil {
+				execution := *step.Execution
+				step.Execution = &execution
+			}
+			if len(step.ExecutionAttempts) > 0 {
+				step.ExecutionAttempts = append([]StepExecutionRef{}, step.ExecutionAttempts...)
+			}
+		}
 	}
 	if in.PolicyOverrides != nil {
 		out.PolicyOverrides = cloneCheckpointPolicyOverride(in.PolicyOverrides)
