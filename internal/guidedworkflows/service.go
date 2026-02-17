@@ -769,7 +769,14 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 		return false, err
 	}
 	if !result.Dispatched {
-		return false, nil
+		cause := fmt.Errorf("%w: dispatcher did not dispatch step prompt", ErrStepDispatch)
+		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
+		return false, cause
+	}
+	if strings.TrimSpace(result.SessionID) == "" {
+		cause := fmt.Errorf("%w: dispatcher returned dispatched step without session id", ErrStepDispatch)
+		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
+		return false, cause
 	}
 	now := s.engine.now()
 	run.CurrentPhaseIndex = phaseIndex

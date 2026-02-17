@@ -840,6 +840,56 @@ func TestRunLifecyclePromptDispatchFailureFailsRun(t *testing.T) {
 	}
 }
 
+func TestRunLifecyclePromptDispatchUnavailableFailsRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted",
+		Name: "Prompted",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: false},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err == nil {
+		t.Fatalf("expected start to fail when prompt dispatch is unavailable")
+	} else if !errors.Is(err, ErrStepDispatch) {
+		t.Fatalf("expected ErrStepDispatch, got %v", err)
+	}
+	run, err = service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run after unavailable dispatch, got %q", run.Status)
+	}
+	if !strings.Contains(strings.ToLower(run.LastError), "dispatcher did not dispatch") {
+		t.Fatalf("expected unavailable dispatch detail in LastError, got %q", run.LastError)
+	}
+}
+
 func TestRunLifecycleOnTurnCompletedCanReachPolicyPause(t *testing.T) {
 	service := NewRunService(Config{Enabled: true})
 	preCommitHardGate := true

@@ -18,6 +18,7 @@ var (
 	ErrRunLimitExceeded  = errors.New("workflow active run limit exceeded")
 	ErrCapabilityDenied  = errors.New("workflow capability denied")
 	ErrCommandFailed     = errors.New("workflow command failed")
+	ErrStepDispatch      = errors.New("workflow step prompt dispatch unavailable")
 )
 
 type StepHandler func(ctx context.Context, run *WorkflowRun, phase *PhaseRun, step *StepRun) error
