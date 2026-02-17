@@ -28,6 +28,13 @@ const (
 	recentsEntryRunning recentsEntryStatus = "running"
 )
 
+const (
+	recentsControlReply   ChatMetaControlID = "recents_reply"
+	recentsControlExpand  ChatMetaControlID = "recents_expand"
+	recentsControlOpen    ChatMetaControlID = "recents_open"
+	recentsControlDismiss ChatMetaControlID = "recents_dismiss"
+)
+
 type recentsEntry struct {
 	SessionID       string
 	Session         *types.Session
@@ -360,12 +367,12 @@ func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlock
 		expandLabel = "[Collapse]"
 	}
 	controls := []ChatMetaControl{
-		{Label: "[Reply]", Tone: ChatMetaControlToneCopy},
-		{Label: expandLabel, Tone: ChatMetaControlToneCopy},
-		{Label: "[Open]", Tone: ChatMetaControlTonePin},
+		{ID: recentsControlReply, Label: "[Reply]", Tone: ChatMetaControlToneCopy},
+		{ID: recentsControlExpand, Label: expandLabel, Tone: ChatMetaControlToneCopy},
+		{ID: recentsControlOpen, Label: "[Open]", Tone: ChatMetaControlTonePin},
 	}
 	if entry.Status == recentsEntryReady {
-		controls = append(controls, ChatMetaControl{Label: "[Dismiss]", Tone: ChatMetaControlToneDelete})
+		controls = append(controls, ChatMetaControl{ID: recentsControlDismiss, Label: "[Dismiss]", Tone: ChatMetaControlToneDelete})
 	}
 	createdAt := time.Time{}
 	if lastActive := sessionLastActive(entry.Session, entry.Meta); lastActive != nil {
@@ -457,6 +464,95 @@ func (m *Model) setRecentsSelection(sessionID string) bool {
 	}
 	m.recentsSelectedSessionID = sessionID
 	return true
+}
+
+type recentsControlClick struct {
+	sessionID string
+	controlID ChatMetaControlID
+}
+
+func recentsControlIDFromLabel(label string) ChatMetaControlID {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "[reply]":
+		return recentsControlReply
+	case "[expand]", "[collapse]":
+		return recentsControlExpand
+	case "[open]":
+		return recentsControlOpen
+	case "[dismiss]":
+		return recentsControlDismiss
+	default:
+		return ""
+	}
+}
+
+func (m *Model) hitTestRecentsControlClick(col, absolute int) (recentsControlClick, bool) {
+	if m == nil {
+		return recentsControlClick{}, false
+	}
+	for _, span := range m.contentBlockSpans {
+		sessionID, ok := recentsSessionIDFromBlockID(span.ID)
+		if !ok {
+			continue
+		}
+		if absolute < span.StartLine || absolute > span.EndLine {
+			continue
+		}
+		hit := recentsControlClick{sessionID: sessionID}
+		for _, control := range span.MetaControls {
+			if control.Line != absolute {
+				continue
+			}
+			if control.Start < 0 || control.End < control.Start {
+				continue
+			}
+			if col < control.Start || col > control.End {
+				continue
+			}
+			controlID := control.ID
+			if strings.TrimSpace(string(controlID)) == "" {
+				controlID = recentsControlIDFromLabel(control.Label)
+			}
+			hit.controlID = controlID
+			break
+		}
+		return hit, true
+	}
+	return recentsControlClick{}, false
+}
+
+func (m *Model) applyRecentsControlClick(hit recentsControlClick) tea.Cmd {
+	if m == nil || strings.TrimSpace(hit.sessionID) == "" {
+		return nil
+	}
+	if m.setRecentsSelection(hit.sessionID) {
+		m.refreshRecentsContent()
+	}
+	if strings.TrimSpace(string(hit.controlID)) == "" {
+		return m.ensureRecentsPreviewForSelection()
+	}
+	switch hit.controlID {
+	case recentsControlReply:
+		if !m.startRecentsReply() {
+			m.setValidationStatus("select a session to reply")
+		}
+		return nil
+	case recentsControlExpand:
+		if m.toggleSelectedRecentsExpand() {
+			return m.ensureRecentsPreviewForSelection()
+		}
+		return nil
+	case recentsControlOpen:
+		return m.openSelectedRecentsThread()
+	case recentsControlDismiss:
+		if !m.dismissSelectedRecentsReady() {
+			m.setValidationStatus("select a ready session to dismiss")
+		}
+		return nil
+	default:
+		// Unknown controls are consumed to avoid accidental fallback actions.
+		return nil
+	}
 }
 
 func (m *Model) moveRecentsSelection(delta int) bool {

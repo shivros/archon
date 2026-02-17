@@ -151,8 +151,8 @@ func TestRenderChatBlocksCustomMetaControlsOverrideDefaults(t *testing.T) {
 				"recents:ready:s1": {
 					Label: "Ready • Session Alpha",
 					Controls: []ChatMetaControl{
-						{Label: "[Reply]", Tone: ChatMetaControlToneCopy},
-						{Label: "[Open]", Tone: ChatMetaControlTonePin},
+						{ID: recentsControlReply, Label: "[Reply]", Tone: ChatMetaControlToneCopy},
+						{ID: recentsControlOpen, Label: "[Open]", Tone: ChatMetaControlTonePin},
 					},
 				},
 			},
@@ -177,8 +177,33 @@ func TestRenderChatBlocksCustomMetaControlsOverrideDefaults(t *testing.T) {
 	if spans[0].MetaControls[0].Label != "[Reply]" || spans[0].MetaControls[0].Line < 0 {
 		t.Fatalf("expected reply hitbox metadata, got %#v", spans[0].MetaControls[0])
 	}
+	if spans[0].MetaControls[0].ID != recentsControlReply {
+		t.Fatalf("expected reply control id, got %#v", spans[0].MetaControls[0])
+	}
 	if spans[0].MetaControls[1].Label != "[Open]" || spans[0].MetaControls[1].Line < 0 {
 		t.Fatalf("expected open hitbox metadata, got %#v", spans[0].MetaControls[1])
+	}
+	if spans[0].MetaControls[1].ID != recentsControlOpen {
+		t.Fatalf("expected open control id, got %#v", spans[0].MetaControls[1])
+	}
+	lines := strings.Split(plain, "\n")
+	metaLine := ""
+	for _, line := range lines {
+		if strings.Contains(line, "Ready • Session Alpha") {
+			metaLine = line
+			break
+		}
+	}
+	if strings.TrimSpace(metaLine) == "" {
+		t.Fatalf("expected meta line in rendered output, got %q", plain)
+	}
+	replyByteIndex := strings.Index(metaLine, "[Reply]")
+	if replyByteIndex < 0 {
+		t.Fatalf("expected [Reply] token in meta line %q", metaLine)
+	}
+	replyVisualStart := xansi.StringWidth(metaLine[:replyByteIndex])
+	if spans[0].MetaControls[0].Start != replyVisualStart {
+		t.Fatalf("expected visual-width hitbox start %d, got %d", replyVisualStart, spans[0].MetaControls[0].Start)
 	}
 }
 

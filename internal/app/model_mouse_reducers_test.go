@@ -1139,7 +1139,7 @@ func findVisualTokenInBody(t *testing.T, m *Model, token string) (int, int) {
 	lines := strings.Split(xansi.Strip(body), "\n")
 	for y, line := range lines {
 		if x := strings.Index(line, token); x >= 0 {
-			return x + 1, y
+			return xansi.StringWidth(line[:x]) + 1, y
 		}
 	}
 	t.Fatalf("could not find token %q in rendered body:\n%s", token, body)

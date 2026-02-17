@@ -43,7 +43,10 @@ const (
 	ChatMetaControlToneNotesFilterOff ChatMetaControlTone = "notes_filter_off"
 )
 
+type ChatMetaControlID string
+
 type ChatMetaControl struct {
+	ID    ChatMetaControlID
 	Label string
 	Tone  ChatMetaControlTone
 }
@@ -105,6 +108,7 @@ type renderedBlockSpan struct {
 }
 
 type renderedMetaControlHit struct {
+	ID    ChatMetaControlID
 	Label string
 	Tone  ChatMetaControlTone
 	Line  int
@@ -290,6 +294,7 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 				continue
 			}
 			metaControls = append(metaControls, renderedMetaControlHit{
+				ID:    control.ID,
 				Label: strings.TrimSpace(control.Label),
 				Tone:  control.Tone,
 				Line:  start + control.Line,
@@ -638,7 +643,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 			if label == "" {
 				continue
 			}
-			customControlDefs = append(customControlDefs, ChatMetaControl{Label: label, Tone: control.Tone})
+			customControlDefs = append(customControlDefs, ChatMetaControl{ID: control.ID, Label: label, Tone: control.Tone})
 			meta += " " + label
 			parts = append(parts, metaStyle.Render(" "), renderCustomMetaControl(label, control.Tone))
 		}
@@ -890,30 +895,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 	placed := lipgloss.PlaceHorizontal(width, align, bubble)
 	metaLineIndex := len(lines)
 	if customMeta && len(customControlDefs) > 0 {
-		searchFrom := 0
-		for _, control := range customControlDefs {
-			label := strings.TrimSpace(control.Label)
-			if label == "" {
-				continue
-			}
-			idx := strings.Index(metaPlain[searchFrom:], label)
-			if idx >= 0 {
-				idx += searchFrom
-				searchFrom = idx + len(label)
-			} else {
-				idx = strings.Index(metaPlain, label)
-			}
-			if idx < 0 {
-				continue
-			}
-			customControlHits = append(customControlHits, renderedMetaControlHit{
-				Label: label,
-				Tone:  control.Tone,
-				Line:  metaLineIndex,
-				Start: idx,
-				End:   idx + len(label) - 1,
-			})
-		}
+		customControlHits = buildCustomMetaControlHits(metaPlain, metaLineIndex, customControlDefs)
 	}
 	lines = append(lines, metaLine)
 	lines = append(lines, strings.Split(placed, "\n")...)
@@ -1020,6 +1002,44 @@ func renderCustomMetaControl(label string, tone ChatMetaControlTone) string {
 	default:
 		return chatMetaStyle.Render(label)
 	}
+}
+
+func buildCustomMetaControlHits(metaPlain string, line int, controls []ChatMetaControl) []renderedMetaControlHit {
+	if line < 0 || len(controls) == 0 || strings.TrimSpace(metaPlain) == "" {
+		return nil
+	}
+	hits := make([]renderedMetaControlHit, 0, len(controls))
+	searchFrom := 0
+	for _, control := range controls {
+		label := strings.TrimSpace(control.Label)
+		if label == "" {
+			continue
+		}
+		idx := strings.Index(metaPlain[searchFrom:], label)
+		if idx >= 0 {
+			idx += searchFrom
+			searchFrom = idx + len(label)
+		} else {
+			idx = strings.Index(metaPlain, label)
+		}
+		if idx < 0 {
+			continue
+		}
+		start := xansi.StringWidth(metaPlain[:idx])
+		end := start + xansi.StringWidth(label) - 1
+		if end < start {
+			continue
+		}
+		hits = append(hits, renderedMetaControlHit{
+			ID:    control.ID,
+			Label: label,
+			Tone:  control.Tone,
+			Line:  line,
+			Start: start,
+			End:   end,
+		})
+	}
+	return hits
 }
 
 func (ctx chatRenderContext) metaForBlock(block ChatBlock) (ChatBlockMetaPresentation, bool) {

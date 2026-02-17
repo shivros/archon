@@ -4073,6 +4073,7 @@ func cloneChatBlockMetaByID(input map[string]ChatBlockMetaPresentation) map[stri
 					continue
 				}
 				copyMeta.Controls = append(copyMeta.Controls, ChatMetaControl{
+					ID:    control.ID,
 					Label: label,
 					Tone:  control.Tone,
 				})

@@ -12,8 +12,7 @@ import (
 
 func TestMouseReducerRecentsReplyControlClickStartsInlineReply(t *testing.T) {
 	m := setupRecentsMouseModel(t, true)
-	blockID := "recents:ready:s1"
-	x, y := findRecentsControlPoint(t, m, blockID, "[Reply]")
+	x, y := findVisualTokenInBody(t, m, "[Reply]")
 
 	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	if !handled {
@@ -26,8 +25,7 @@ func TestMouseReducerRecentsReplyControlClickStartsInlineReply(t *testing.T) {
 
 func TestMouseReducerRecentsExpandControlClickTogglesSession(t *testing.T) {
 	m := setupRecentsMouseModel(t, true)
-	blockID := "recents:ready:s1"
-	x, y := findRecentsControlPoint(t, m, blockID, "[Expand]")
+	x, y := findVisualTokenInBody(t, m, "[Expand]")
 
 	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	if !handled {
@@ -40,8 +38,7 @@ func TestMouseReducerRecentsExpandControlClickTogglesSession(t *testing.T) {
 
 func TestMouseReducerRecentsDismissControlClickRemovesReadyItem(t *testing.T) {
 	m := setupRecentsMouseModel(t, true)
-	blockID := "recents:ready:s1"
-	x, y := findRecentsControlPoint(t, m, blockID, "[Dismiss]")
+	x, y := findVisualTokenInBody(t, m, "[Dismiss]")
 
 	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	if !handled {
@@ -54,8 +51,7 @@ func TestMouseReducerRecentsDismissControlClickRemovesReadyItem(t *testing.T) {
 
 func TestMouseReducerRecentsOpenControlClickQueuesSelectionCommand(t *testing.T) {
 	m := setupRecentsMouseModel(t, false)
-	blockID := "recents:running:s1"
-	x, y := findRecentsControlPoint(t, m, blockID, "[Open]")
+	x, y := findVisualTokenInBody(t, m, "[Open]")
 
 	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	if !handled {
@@ -94,31 +90,4 @@ func setupRecentsMouseModel(t *testing.T, ready bool) *Model {
 	m.recentsSelectedSessionID = "s1"
 	m.refreshRecentsContent()
 	return &m
-}
-
-func findRecentsControlPoint(t *testing.T, m *Model, blockID, label string) (int, int) {
-	t.Helper()
-	if m == nil {
-		t.Fatalf("model is nil")
-	}
-	layout := m.resolveMouseLayout()
-	normalized := strings.ToLower(strings.TrimSpace(label))
-	for _, span := range m.contentBlockSpans {
-		if strings.TrimSpace(span.ID) != strings.TrimSpace(blockID) {
-			continue
-		}
-		for _, control := range span.MetaControls {
-			if strings.ToLower(strings.TrimSpace(control.Label)) != normalized {
-				continue
-			}
-			if control.Line < 0 || control.Start < 0 || control.End < control.Start {
-				t.Fatalf("invalid recents control hitbox: %#v", control)
-			}
-			x := layout.rightStart + control.Start
-			y := control.Line - m.viewport.YOffset() + 1
-			return x, y
-		}
-	}
-	t.Fatalf("control %q not found for block %q", label, blockID)
-	return 0, 0
 }
