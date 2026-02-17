@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
 )
@@ -44,6 +43,11 @@ type recentsViewState struct {
 	Ready   []recentsEntry
 	Running []recentsEntry
 	Entries []recentsEntry
+}
+
+type recentsRenderContent struct {
+	blocks        []ChatBlock
+	metaByBlockID map[string]ChatBlockMetaPresentation
 }
 
 func (m *Model) enterRecentsView(item *sidebarItem) {
@@ -268,8 +272,8 @@ func (m *Model) refreshRecentsContent() {
 	}
 	state := m.recentsState()
 	m.syncRecentsSelection(state.Entries)
-	content := m.renderRecentsContent(state)
-	m.setContentText(content)
+	content := m.buildRecentsRenderContent(state)
+	m.applyBlocksWithMeta(content.blocks, content.metaByBlockID)
 }
 
 func (m *Model) syncRecentsSelection(entries []recentsEntry) {
@@ -289,103 +293,95 @@ func (m *Model) syncRecentsSelection(entries []recentsEntry) {
 	m.recentsSelectedSessionID = entries[0].SessionID
 }
 
-func (m *Model) renderRecentsContent(state recentsViewState) string {
-	var builder strings.Builder
-	builder.WriteString("Recents overview\n")
-	builder.WriteString("Use j/k to choose • r reply • x expand • enter open • d dismiss ready\n")
-	builder.WriteString("Buttons are shown above each preview bubble.\n\n")
+func (m *Model) buildRecentsRenderContent(state recentsViewState) recentsRenderContent {
+	content := recentsRenderContent{
+		blocks: []ChatBlock{
+			{
+				ID:   "recents:help",
+				Role: ChatRoleSystem,
+				Text: "Use j/k to choose • r reply • x expand • enter open • d dismiss ready",
+			},
+		},
+		metaByBlockID: map[string]ChatBlockMetaPresentation{
+			"recents:help": {
+				Label: "Recents overview",
+			},
+		},
+	}
 	switch state.Filter {
 	case sidebarRecentsFilterReady:
-		m.renderRecentsSection(&builder, "Ready", state.Ready)
+		content = m.appendRecentsSectionBlocks(content, "Ready", state.Ready)
 	case sidebarRecentsFilterRunning:
-		m.renderRecentsSection(&builder, "Running", state.Running)
+		content = m.appendRecentsSectionBlocks(content, "Running", state.Running)
 	default:
-		m.renderRecentsSection(&builder, "Ready", state.Ready)
-		builder.WriteString("\n")
-		m.renderRecentsSection(&builder, "Running", state.Running)
+		content = m.appendRecentsSectionBlocks(content, "Ready", state.Ready)
+		content = m.appendRecentsSectionBlocks(content, "Running", state.Running)
 	}
-	return strings.TrimRight(builder.String(), "\n")
+	return content
 }
 
-func (m *Model) renderRecentsSection(builder *strings.Builder, title string, entries []recentsEntry) {
-	heading := fmt.Sprintf("%s (%d)", title, len(entries))
-	builder.WriteString(heading)
-	builder.WriteString("\n")
-	builder.WriteString(strings.Repeat("-", min(72, max(16, len(heading)))))
-	builder.WriteString("\n")
+func (m *Model) appendRecentsSectionBlocks(content recentsRenderContent, title string, entries []recentsEntry) recentsRenderContent {
+	sectionID := "recents:section:" + strings.ToLower(strings.TrimSpace(title))
+	sectionText := fmt.Sprintf("%s (%d)", title, len(entries))
 	if len(entries) == 0 {
-		builder.WriteString("No sessions.\n")
-		return
+		sectionText += "\nNo sessions."
 	}
+	content.blocks = append(content.blocks, ChatBlock{
+		ID:   sectionID,
+		Role: ChatRoleSystem,
+		Text: sectionText,
+	})
+	content.metaByBlockID[sectionID] = ChatBlockMetaPresentation{Label: "Section"}
 	for _, entry := range entries {
-		m.renderRecentsCard(builder, entry)
+		block, meta := m.buildRecentsEntryBlock(entry)
+		content.blocks = append(content.blocks, block)
+		content.metaByBlockID[block.ID] = meta
 	}
+	return content
 }
 
-func (m *Model) renderRecentsCard(builder *strings.Builder, entry recentsEntry) {
-	width := m.recentsContentWidth()
+func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlockMetaPresentation) {
 	sessionTitleText := sessionTitle(entry.Session, entry.Meta)
 	if strings.TrimSpace(sessionTitleText) == "" {
 		sessionTitleText = entry.SessionID
-	}
-	selected := strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID
-	if selected {
-		builder.WriteString("▶ Selected")
-		builder.WriteString("\n")
 	}
 	statusLabel := "Running"
 	if entry.Status == recentsEntryReady {
 		statusLabel = "Ready"
 	}
-	expanded := m.recentsExpandedSessions[entry.SessionID]
-	controlsLine := m.renderRecentsControlsLine(entry, expanded, selected, width)
-	if controlsLine != "" {
-		builder.WriteString(controlsLine)
-		builder.WriteString("\n")
+	metaLabel := fmt.Sprintf("%s • %s • %s", statusLabel, sessionTitleText, entry.WorkspaceName)
+	if strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID {
+		metaLabel = "▶ " + metaLabel
 	}
-	metaSummary := fmt.Sprintf("%s • %s • %s • %s", statusLabel, sessionTitleText, entry.WorkspaceName, formatSince(sessionLastActive(entry.Session, entry.Meta)))
-	if width > 0 {
-		metaSummary = truncateToWidth(metaSummary, width)
-	}
-	builder.WriteString(metaSummary)
-	builder.WriteString("\n")
-	text := recentsPreviewText(entry, expanded)
-	bubble := m.renderRecentsBubble(text, selected, width)
-	builder.WriteString(bubble)
-	builder.WriteString("\n\n")
-}
-
-func (m *Model) recentsContentWidth() int {
-	if m == nil {
-		return 80
-	}
-	width := m.viewport.Width()
-	if width <= 0 {
-		width = m.width - m.sidebarWidth() - 2
-	}
-	if width <= 0 {
-		width = 80
-	}
-	return max(40, width)
-}
-
-func (m *Model) renderRecentsControlsLine(entry recentsEntry, expanded bool, selected bool, width int) string {
 	expandLabel := "[Expand]"
-	if expanded {
+	if m.recentsExpandedSessions[entry.SessionID] {
 		expandLabel = "[Collapse]"
 	}
-	controls := []string{"[Reply]", expandLabel, "[Open]"}
+	controls := []ChatMetaControl{
+		{Label: "[Reply]", Tone: ChatMetaControlToneCopy},
+		{Label: expandLabel, Tone: ChatMetaControlToneCopy},
+		{Label: "[Open]", Tone: ChatMetaControlTonePin},
+	}
 	if entry.Status == recentsEntryReady {
-		controls = append(controls, "[Dismiss]")
+		controls = append(controls, ChatMetaControl{Label: "[Dismiss]", Tone: ChatMetaControlToneDelete})
 	}
-	line := strings.Join(controls, " ")
-	if selected {
-		line = "▶ " + line
+	createdAt := time.Time{}
+	if lastActive := sessionLastActive(entry.Session, entry.Meta); lastActive != nil {
+		createdAt = *lastActive
 	}
-	if width > 0 {
-		line = truncateToWidth(line, width)
+	if entry.Status == recentsEntryReady && !entry.CompletedAt.IsZero() {
+		createdAt = entry.CompletedAt
 	}
-	return line
+	block := ChatBlock{
+		ID:        fmt.Sprintf("recents:%s:%s", entry.Status, entry.SessionID),
+		Role:      ChatRoleAgent,
+		Text:      recentsPreviewText(entry, m.recentsExpandedSessions[entry.SessionID]),
+		CreatedAt: createdAt,
+	}
+	return block, ChatBlockMetaPresentation{
+		Label:    metaLabel,
+		Controls: controls,
+	}
 }
 
 func recentsPreviewText(entry recentsEntry, expanded bool) string {
@@ -407,61 +403,6 @@ func recentsPreviewText(entry recentsEntry, expanded bool) string {
 		return fullText
 	}
 	return previewText
-}
-
-func (m *Model) renderRecentsBubble(text string, selected bool, width int) string {
-	if width <= 0 {
-		width = 80
-	}
-	maxBubbleWidth := width - 2
-	if maxBubbleWidth < 10 {
-		maxBubbleWidth = width
-	}
-	innerWidth := maxBubbleWidth - 4
-	if innerWidth < 1 {
-		innerWidth = 1
-	}
-	rendered := strings.TrimSpace(xansi.Strip(renderChatText(ChatRoleAgent, text, innerWidth)))
-	if rendered == "" {
-		rendered = " "
-	}
-	lines := strings.Split(rendered, "\n")
-	if len(lines) == 0 {
-		lines = []string{" "}
-	}
-	var builder strings.Builder
-	borderRune := "-"
-	if selected {
-		borderRune = "="
-	}
-	hRule := strings.Repeat(borderRune, innerWidth+2)
-	builder.WriteString("+")
-	builder.WriteString(hRule)
-	builder.WriteString("+")
-	builder.WriteString("\n")
-	for i, line := range lines {
-		if innerWidth > 0 {
-			line = truncateToWidth(line, innerWidth)
-		}
-		padding := innerWidth - xansi.StringWidth(line)
-		if padding < 0 {
-			padding = 0
-		}
-		builder.WriteString("| ")
-		builder.WriteString(line)
-		if padding > 0 {
-			builder.WriteString(strings.Repeat(" ", padding))
-		}
-		builder.WriteString(" |")
-		if i < len(lines)-1 {
-			builder.WriteString("\n")
-		}
-	}
-	builder.WriteString("\n")
-	builder.WriteString("+")
-	builder.WriteString(hRule)
-	builder.WriteString("+")
-	return builder.String()
 }
 
 func (m *Model) selectedRecentsEntry() (recentsEntry, bool) {

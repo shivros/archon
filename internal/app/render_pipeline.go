@@ -19,6 +19,7 @@ type RenderRequest struct {
 	RawContent         string
 	EscapeMarkdown     bool
 	Blocks             []ChatBlock
+	BlockMetaByID      map[string]ChatBlockMetaPresentation
 	SelectedBlockIndex int
 	TimestampMode      ChatTimestampMode
 	TimestampNow       time.Time
@@ -75,8 +76,9 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 		ctx := chatRenderContext{
 			TimestampMode: mode,
 			Now:           now,
+			MetaByBlockID: req.BlockMetaByID,
 		}
-		key := hashRenderRequestBlocks(req.Blocks, width, req.MaxLines, req.SelectedBlockIndex, mode, chatTimestampRenderBucket(mode, now))
+		key := hashRenderRequestBlocks(req.Blocks, req.BlockMetaByID, width, req.MaxLines, req.SelectedBlockIndex, mode, chatTimestampRenderBucket(mode, now))
 		if cached, ok := p.resultCache.Get(key); ok {
 			return cached
 		}
@@ -163,7 +165,7 @@ func (c *renderResultCache) Set(key uint64, value RenderResult) {
 	}
 }
 
-func hashRenderRequestBlocks(blocks []ChatBlock, width, maxLines, selected int, mode ChatTimestampMode, relativeBucket int64) uint64 {
+func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBlockMetaPresentation, width, maxLines, selected int, mode ChatTimestampMode, relativeBucket int64) uint64 {
 	hasher := fnv.New64a()
 	writeHashInt(hasher, width)
 	writeHashInt(hasher, maxLines)
@@ -174,6 +176,18 @@ func hashRenderRequestBlocks(blocks []ChatBlock, width, maxLines, selected int, 
 	var buf [8]byte
 	for _, block := range blocks {
 		binary.LittleEndian.PutUint64(buf[:], hashChatBlock(block))
+		_, _ = hasher.Write(buf[:])
+		if len(blockMetaByID) == 0 || strings.TrimSpace(block.ID) == "" {
+			_, _ = hasher.Write([]byte{0})
+			continue
+		}
+		meta, ok := blockMetaByID[strings.TrimSpace(block.ID)]
+		if !ok {
+			_, _ = hasher.Write([]byte{0})
+			continue
+		}
+		_, _ = hasher.Write([]byte{1})
+		binary.LittleEndian.PutUint64(buf[:], hashChatBlockMetaPresentation(meta))
 		_, _ = hasher.Write(buf[:])
 	}
 	return hasher.Sum64()

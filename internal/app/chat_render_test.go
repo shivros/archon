@@ -130,6 +130,49 @@ func TestRenderChatBlocksUserTimestampAppearsOnLeft(t *testing.T) {
 	}
 }
 
+func TestRenderChatBlocksCustomMetaControlsOverrideDefaults(t *testing.T) {
+	blocks := []ChatBlock{
+		{
+			ID:   "recents:ready:s1",
+			Role: ChatRoleAgent,
+			Text: "hello",
+		},
+	}
+	rendered, spans := renderChatBlocksWithRendererAndContext(
+		blocks,
+		80,
+		2000,
+		-1,
+		defaultChatBlockRenderer{},
+		chatRenderContext{
+			TimestampMode: ChatTimestampModeRelative,
+			Now:           time.Now(),
+			MetaByBlockID: map[string]ChatBlockMetaPresentation{
+				"recents:ready:s1": {
+					Label: "Ready • Session Alpha",
+					Controls: []ChatMetaControl{
+						{Label: "[Reply]", Tone: ChatMetaControlToneCopy},
+						{Label: "[Open]", Tone: ChatMetaControlTonePin},
+					},
+				},
+			},
+		},
+	)
+	plain := xansi.Strip(rendered)
+	if !strings.Contains(plain, "Ready • Session Alpha [Reply] [Open]") {
+		t.Fatalf("expected custom controls in meta line, got %q", plain)
+	}
+	if strings.Contains(plain, "[Copy]") || strings.Contains(plain, "[Pin]") {
+		t.Fatalf("expected default controls to be overridden, got %q", plain)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected one span, got %d", len(spans))
+	}
+	if spans[0].CopyStart >= 0 || spans[0].PinStart >= 0 {
+		t.Fatalf("expected no default copy/pin hitboxes for custom controls, got %#v", spans[0])
+	}
+}
+
 func TestRenderChatBlocksReasoningShowsToggleControlAndHitbox(t *testing.T) {
 	blocks := []ChatBlock{
 		{Role: ChatRoleReasoning, Text: "hello", Collapsed: true},

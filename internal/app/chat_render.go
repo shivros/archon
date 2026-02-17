@@ -30,6 +30,29 @@ const (
 	ChatStatusFailed  ChatStatus = "failed"
 )
 
+type ChatMetaControlTone string
+
+const (
+	ChatMetaControlToneDefault        ChatMetaControlTone = ""
+	ChatMetaControlToneCopy           ChatMetaControlTone = "copy"
+	ChatMetaControlTonePin            ChatMetaControlTone = "pin"
+	ChatMetaControlToneMove           ChatMetaControlTone = "move"
+	ChatMetaControlToneDelete         ChatMetaControlTone = "delete"
+	ChatMetaControlToneApprove        ChatMetaControlTone = "approve"
+	ChatMetaControlToneDecline        ChatMetaControlTone = "decline"
+	ChatMetaControlToneNotesFilterOff ChatMetaControlTone = "notes_filter_off"
+)
+
+type ChatMetaControl struct {
+	Label string
+	Tone  ChatMetaControlTone
+}
+
+type ChatBlockMetaPresentation struct {
+	Label    string
+	Controls []ChatMetaControl
+}
+
 type ChatBlock struct {
 	ID        string
 	Role      ChatRole
@@ -117,6 +140,7 @@ type renderedChatBlock struct {
 type chatRenderContext struct {
 	TimestampMode ChatTimestampMode
 	Now           time.Time
+	MetaByBlockID map[string]ChatBlockMetaPresentation
 }
 
 const (
@@ -550,137 +574,167 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 			sessionFilterLabel = "[Session]"
 		}
 	}
-	meta := roleLabel + " " + copyLabel
-	if pinLabel != "" {
-		meta += " " + pinLabel
-	}
-	if moveLabel != "" {
-		meta += " " + moveLabel
-	}
-	if deleteLabel != "" {
-		meta += " " + deleteLabel
-	}
-	if toggleLabel != "" {
-		meta += " " + toggleLabel
-	}
-	if approveLabel != "" {
-		meta += " " + approveLabel
-	}
-	if declineLabel != "" {
-		meta += " " + declineLabel
-	}
-	if workspaceFilterLabel != "" {
-		meta += " " + workspaceFilterLabel
-	}
-	if worktreeFilterLabel != "" {
-		meta += " " + worktreeFilterLabel
-	}
-	if sessionFilterLabel != "" {
-		meta += " " + sessionFilterLabel
-	}
-	if width > 0 {
-		meta = truncateToWidth(meta, width)
-	}
 	metaStyle := chatMetaStyle
 	if selected {
 		metaStyle = chatMetaSelectedStyle
 	}
-	metaDisplay := metaStyle.Render(meta)
-	if strings.HasPrefix(meta, roleLabel+" ") {
-		parts := []string{metaStyle.Render(roleLabel + " ")}
-		remaining := strings.TrimPrefix(meta, roleLabel+" ")
-		if strings.HasPrefix(remaining, copyLabel) {
-			parts = append(parts, copyButtonStyle.Render(copyLabel))
-			remaining = strings.TrimPrefix(remaining, copyLabel)
+	meta := ""
+	metaDisplay := ""
+	override, customMeta := ctx.metaForBlock(block)
+	if customMeta {
+		meta = strings.TrimSpace(override.Label)
+		if meta == "" {
+			meta = roleLabel
 		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if pinLabel != "" && strings.HasPrefix(remaining, pinLabel) {
-			parts = append(parts, pinButtonStyle.Render(pinLabel))
-			remaining = strings.TrimPrefix(remaining, pinLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if moveLabel != "" && strings.HasPrefix(remaining, moveLabel) {
-			parts = append(parts, moveButtonStyle.Render(moveLabel))
-			remaining = strings.TrimPrefix(remaining, moveLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if deleteLabel != "" && strings.HasPrefix(remaining, deleteLabel) {
-			parts = append(parts, deleteButtonStyle.Render(deleteLabel))
-			remaining = strings.TrimPrefix(remaining, deleteLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if toggleLabel != "" && strings.HasPrefix(remaining, toggleLabel) {
-			parts = append(parts, copyButtonStyle.Render(toggleLabel))
-			remaining = strings.TrimPrefix(remaining, toggleLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if approveLabel != "" && strings.HasPrefix(remaining, approveLabel) {
-			parts = append(parts, approveButtonStyle.Render(approveLabel))
-			remaining = strings.TrimPrefix(remaining, approveLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if declineLabel != "" && strings.HasPrefix(remaining, declineLabel) {
-			parts = append(parts, declineButtonStyle.Render(declineLabel))
-			remaining = strings.TrimPrefix(remaining, declineLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if workspaceFilterLabel != "" && strings.HasPrefix(remaining, workspaceFilterLabel) {
-			if workspaceFilterOn {
-				parts = append(parts, copyButtonStyle.Render(workspaceFilterLabel))
-			} else {
-				parts = append(parts, notesFilterButtonOffStyle.Render(workspaceFilterLabel))
+		parts := []string{metaStyle.Render(meta)}
+		for _, control := range override.Controls {
+			label := strings.TrimSpace(control.Label)
+			if label == "" {
+				continue
 			}
-			remaining = strings.TrimPrefix(remaining, workspaceFilterLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if worktreeFilterLabel != "" && strings.HasPrefix(remaining, worktreeFilterLabel) {
-			if worktreeFilterOn {
-				parts = append(parts, copyButtonStyle.Render(worktreeFilterLabel))
-			} else {
-				parts = append(parts, notesFilterButtonOffStyle.Render(worktreeFilterLabel))
-			}
-			remaining = strings.TrimPrefix(remaining, worktreeFilterLabel)
-		}
-		if strings.HasPrefix(remaining, " ") {
-			parts = append(parts, metaStyle.Render(" "))
-			remaining = strings.TrimPrefix(remaining, " ")
-		}
-		if sessionFilterLabel != "" && strings.HasPrefix(remaining, sessionFilterLabel) {
-			if sessionFilterOn {
-				parts = append(parts, copyButtonStyle.Render(sessionFilterLabel))
-			} else {
-				parts = append(parts, notesFilterButtonOffStyle.Render(sessionFilterLabel))
-			}
-			remaining = strings.TrimPrefix(remaining, sessionFilterLabel)
-		}
-		if remaining != "" {
-			parts = append(parts, metaStyle.Render(remaining))
+			meta += " " + label
+			parts = append(parts, metaStyle.Render(" "), renderCustomMetaControl(label, control.Tone))
 		}
 		metaDisplay = strings.Join(parts, "")
+		copyLabel = ""
+		pinLabel = ""
+		moveLabel = ""
+		deleteLabel = ""
+		toggleLabel = ""
+		approveLabel = ""
+		declineLabel = ""
+		workspaceFilterLabel = ""
+		worktreeFilterLabel = ""
+		sessionFilterLabel = ""
+	} else {
+		meta = roleLabel + " " + copyLabel
+		if pinLabel != "" {
+			meta += " " + pinLabel
+		}
+		if moveLabel != "" {
+			meta += " " + moveLabel
+		}
+		if deleteLabel != "" {
+			meta += " " + deleteLabel
+		}
+		if toggleLabel != "" {
+			meta += " " + toggleLabel
+		}
+		if approveLabel != "" {
+			meta += " " + approveLabel
+		}
+		if declineLabel != "" {
+			meta += " " + declineLabel
+		}
+		if workspaceFilterLabel != "" {
+			meta += " " + workspaceFilterLabel
+		}
+		if worktreeFilterLabel != "" {
+			meta += " " + worktreeFilterLabel
+		}
+		if sessionFilterLabel != "" {
+			meta += " " + sessionFilterLabel
+		}
+		if width > 0 {
+			meta = truncateToWidth(meta, width)
+		}
+		metaDisplay = metaStyle.Render(meta)
+		if strings.HasPrefix(meta, roleLabel+" ") {
+			parts := []string{metaStyle.Render(roleLabel + " ")}
+			remaining := strings.TrimPrefix(meta, roleLabel+" ")
+			if strings.HasPrefix(remaining, copyLabel) {
+				parts = append(parts, copyButtonStyle.Render(copyLabel))
+				remaining = strings.TrimPrefix(remaining, copyLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if pinLabel != "" && strings.HasPrefix(remaining, pinLabel) {
+				parts = append(parts, pinButtonStyle.Render(pinLabel))
+				remaining = strings.TrimPrefix(remaining, pinLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if moveLabel != "" && strings.HasPrefix(remaining, moveLabel) {
+				parts = append(parts, moveButtonStyle.Render(moveLabel))
+				remaining = strings.TrimPrefix(remaining, moveLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if deleteLabel != "" && strings.HasPrefix(remaining, deleteLabel) {
+				parts = append(parts, deleteButtonStyle.Render(deleteLabel))
+				remaining = strings.TrimPrefix(remaining, deleteLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if toggleLabel != "" && strings.HasPrefix(remaining, toggleLabel) {
+				parts = append(parts, copyButtonStyle.Render(toggleLabel))
+				remaining = strings.TrimPrefix(remaining, toggleLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if approveLabel != "" && strings.HasPrefix(remaining, approveLabel) {
+				parts = append(parts, approveButtonStyle.Render(approveLabel))
+				remaining = strings.TrimPrefix(remaining, approveLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if declineLabel != "" && strings.HasPrefix(remaining, declineLabel) {
+				parts = append(parts, declineButtonStyle.Render(declineLabel))
+				remaining = strings.TrimPrefix(remaining, declineLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if workspaceFilterLabel != "" && strings.HasPrefix(remaining, workspaceFilterLabel) {
+				if workspaceFilterOn {
+					parts = append(parts, copyButtonStyle.Render(workspaceFilterLabel))
+				} else {
+					parts = append(parts, notesFilterButtonOffStyle.Render(workspaceFilterLabel))
+				}
+				remaining = strings.TrimPrefix(remaining, workspaceFilterLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if worktreeFilterLabel != "" && strings.HasPrefix(remaining, worktreeFilterLabel) {
+				if worktreeFilterOn {
+					parts = append(parts, copyButtonStyle.Render(worktreeFilterLabel))
+				} else {
+					parts = append(parts, notesFilterButtonOffStyle.Render(worktreeFilterLabel))
+				}
+				remaining = strings.TrimPrefix(remaining, worktreeFilterLabel)
+			}
+			if strings.HasPrefix(remaining, " ") {
+				parts = append(parts, metaStyle.Render(" "))
+				remaining = strings.TrimPrefix(remaining, " ")
+			}
+			if sessionFilterLabel != "" && strings.HasPrefix(remaining, sessionFilterLabel) {
+				if sessionFilterOn {
+					parts = append(parts, copyButtonStyle.Render(sessionFilterLabel))
+				} else {
+					parts = append(parts, notesFilterButtonOffStyle.Render(sessionFilterLabel))
+				}
+				remaining = strings.TrimPrefix(remaining, sessionFilterLabel)
+			}
+			if remaining != "" {
+				parts = append(parts, metaStyle.Render(remaining))
+			}
+			metaDisplay = strings.Join(parts, "")
+		}
 	}
 	timestampLabel := ""
 	if shouldShowTimestampForBlock(block) {
@@ -786,9 +840,49 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 	}
 	bubble := bubbleStyle.Render(renderedText)
 	placed := lipgloss.PlaceHorizontal(width, align, bubble)
-	copyLine := len(lines)
+	metaLineIndex := len(lines)
 	lines = append(lines, metaLine)
 	lines = append(lines, strings.Split(placed, "\n")...)
+	copyLine := -1
+	if copyStart >= 0 && copyEnd >= copyStart {
+		copyLine = metaLineIndex
+	}
+	pinLine := -1
+	if pinStart >= 0 && pinEnd >= pinStart {
+		pinLine = metaLineIndex
+	}
+	moveLine := -1
+	if moveStart >= 0 && moveEnd >= moveStart {
+		moveLine = metaLineIndex
+	}
+	deleteLine := -1
+	if deleteStart >= 0 && deleteEnd >= deleteStart {
+		deleteLine = metaLineIndex
+	}
+	toggleLine := -1
+	if toggleStart >= 0 && toggleEnd >= toggleStart {
+		toggleLine = metaLineIndex
+	}
+	approveLine := -1
+	if approveStart >= 0 && approveEnd >= approveStart {
+		approveLine = metaLineIndex
+	}
+	declineLine := -1
+	if declineStart >= 0 && declineEnd >= declineStart {
+		declineLine = metaLineIndex
+	}
+	workspaceFilterLine := -1
+	if workspaceFilterStart >= 0 && workspaceFilterEnd >= workspaceFilterStart {
+		workspaceFilterLine = metaLineIndex
+	}
+	worktreeFilterLine := -1
+	if worktreeFilterStart >= 0 && worktreeFilterEnd >= worktreeFilterStart {
+		worktreeFilterLine = metaLineIndex
+	}
+	sessionFilterLine := -1
+	if sessionFilterStart >= 0 && sessionFilterEnd >= sessionFilterStart {
+		sessionFilterLine = metaLineIndex
+	}
 	if block.Role == ChatRoleUser && block.Status != ChatStatusNone {
 		status := "(sending…)"
 		if block.Status == ChatStatusFailed {
@@ -802,34 +896,70 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 		CopyLine:             copyLine,
 		CopyStart:            copyStart,
 		CopyEnd:              copyEnd,
-		PinLine:              copyLine,
+		PinLine:              pinLine,
 		PinStart:             pinStart,
 		PinEnd:               pinEnd,
-		MoveLine:             copyLine,
+		MoveLine:             moveLine,
 		MoveStart:            moveStart,
 		MoveEnd:              moveEnd,
-		DeleteLine:           copyLine,
+		DeleteLine:           deleteLine,
 		DeleteStart:          deleteStart,
 		DeleteEnd:            deleteEnd,
-		ToggleLine:           copyLine,
+		ToggleLine:           toggleLine,
 		ToggleStart:          toggleStart,
 		ToggleEnd:            toggleEnd,
-		ApproveLine:          copyLine,
+		ApproveLine:          approveLine,
 		ApproveStart:         approveStart,
 		ApproveEnd:           approveEnd,
-		DeclineLine:          copyLine,
+		DeclineLine:          declineLine,
 		DeclineStart:         declineStart,
 		DeclineEnd:           declineEnd,
-		WorkspaceFilterLine:  copyLine,
+		WorkspaceFilterLine:  workspaceFilterLine,
 		WorkspaceFilterStart: workspaceFilterStart,
 		WorkspaceFilterEnd:   workspaceFilterEnd,
-		WorktreeFilterLine:   copyLine,
+		WorktreeFilterLine:   worktreeFilterLine,
 		WorktreeFilterStart:  worktreeFilterStart,
 		WorktreeFilterEnd:    worktreeFilterEnd,
-		SessionFilterLine:    copyLine,
+		SessionFilterLine:    sessionFilterLine,
 		SessionFilterStart:   sessionFilterStart,
 		SessionFilterEnd:     sessionFilterEnd,
 	}
+}
+
+func renderCustomMetaControl(label string, tone ChatMetaControlTone) string {
+	switch tone {
+	case ChatMetaControlToneCopy:
+		return copyButtonStyle.Render(label)
+	case ChatMetaControlTonePin:
+		return pinButtonStyle.Render(label)
+	case ChatMetaControlToneMove:
+		return moveButtonStyle.Render(label)
+	case ChatMetaControlToneDelete:
+		return deleteButtonStyle.Render(label)
+	case ChatMetaControlToneApprove:
+		return approveButtonStyle.Render(label)
+	case ChatMetaControlToneDecline:
+		return declineButtonStyle.Render(label)
+	case ChatMetaControlToneNotesFilterOff:
+		return notesFilterButtonOffStyle.Render(label)
+	default:
+		return chatMetaStyle.Render(label)
+	}
+}
+
+func (ctx chatRenderContext) metaForBlock(block ChatBlock) (ChatBlockMetaPresentation, bool) {
+	if len(ctx.MetaByBlockID) == 0 {
+		return ChatBlockMetaPresentation{}, false
+	}
+	id := strings.TrimSpace(block.ID)
+	if id == "" {
+		return ChatBlockMetaPresentation{}, false
+	}
+	meta, ok := ctx.MetaByBlockID[id]
+	if !ok {
+		return ChatBlockMetaPresentation{}, false
+	}
+	return meta, true
 }
 
 func composeChatMetaLine(

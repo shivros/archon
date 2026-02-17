@@ -19,8 +19,15 @@ func TestApplySelectionStateEntersRecentsMode(t *testing.T) {
 	if m.mode != uiModeRecents {
 		t.Fatalf("expected recents mode, got %v", m.mode)
 	}
-	if !strings.Contains(m.contentRaw, "Recents overview") {
-		t.Fatalf("expected recents content to render, got %q", m.contentRaw)
+	if len(m.contentBlocks) == 0 {
+		t.Fatalf("expected recents blocks to render")
+	}
+	meta, ok := m.contentBlockMetaByID["recents:help"]
+	if !ok {
+		t.Fatalf("expected recents help metadata to be present")
+	}
+	if !strings.Contains(meta.Label, "Recents overview") {
+		t.Fatalf("expected recents overview block meta, got %q", meta.Label)
 	}
 }
 
@@ -73,21 +80,25 @@ func TestRecentsCardRendersControlsAboveBubble(t *testing.T) {
 	m.recentsPreviews = map[string]recentsPreview{
 		"s1": {Revision: "turn-1", Preview: "assistant preview"},
 	}
-	state := m.recentsState()
-	rendered := xansi.Strip(m.renderRecentsContent(state))
-	replyIndex := strings.Index(rendered, "[Reply]")
-	bubbleIndex := strings.Index(rendered, "assistant preview")
+	m.mode = uiModeRecents
+	m.refreshRecentsContent()
+	plain := xansi.Strip(m.renderedText)
+	replyIndex := strings.Index(plain, "[Reply]")
+	bubbleIndex := strings.Index(plain, "assistant preview")
 	if replyIndex < 0 {
-		t.Fatalf("expected reply control in recents card, got %q", rendered)
+		t.Fatalf("expected reply control in recents card, got %q", plain)
 	}
 	if bubbleIndex < 0 {
-		t.Fatalf("expected assistant preview text in recents bubble, got %q", rendered)
+		t.Fatalf("expected assistant preview text in recents bubble, got %q", plain)
 	}
 	if replyIndex > bubbleIndex {
-		t.Fatalf("expected controls above bubble text, got %q", rendered)
+		t.Fatalf("expected controls above bubble text, got %q", plain)
 	}
-	if strings.Contains(m.renderRecentsContent(state), "\x1b[") {
-		t.Fatalf("expected recents content without ANSI escape sequences")
+	if !strings.Contains(m.renderedText, "\x1b[") {
+		t.Fatalf("expected ANSI-styled recents rendering")
+	}
+	if strings.Contains(plain, "[38;5;") || strings.Contains(plain, "[0m") {
+		t.Fatalf("expected no leaked ANSI fragments in plain output, got %q", plain)
 	}
 }
 

@@ -20,6 +20,8 @@ func (defaultChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, sele
 
 type blockRenderKey struct {
 	blockHash      uint64
+	metaHash       uint64
+	hasMeta        bool
 	width          int
 	selected       bool
 	timestampMode  ChatTimestampMode
@@ -90,9 +92,12 @@ func (r *cachedChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, se
 	if r == nil || r.next == nil {
 		return renderedChatBlock{}
 	}
+	meta, hasMeta := ctx.metaForBlock(block)
 	mode := normalizeChatTimestampMode(ctx.TimestampMode)
 	key := blockRenderKey{
 		blockHash:      hashChatBlock(block),
+		metaHash:       hashChatBlockMetaPresentation(meta),
+		hasMeta:        hasMeta,
 		width:          width,
 		selected:       selected,
 		timestampMode:  mode,
@@ -116,6 +121,17 @@ func hashChatBlock(block ChatBlock) uint64 {
 	writeHashBool(hasher, block.Collapsed)
 	writeHashInt(hasher, block.RequestID)
 	writeHashInt64(hasher, block.CreatedAt.UTC().UnixNano())
+	return hasher.Sum64()
+}
+
+func hashChatBlockMetaPresentation(meta ChatBlockMetaPresentation) uint64 {
+	hasher := fnv.New64a()
+	writeHashString(hasher, meta.Label)
+	writeHashInt(hasher, len(meta.Controls))
+	for _, control := range meta.Controls {
+		writeHashString(hasher, control.Label)
+		writeHashString(hasher, string(control.Tone))
+	}
 	return hasher.Sum64()
 }
 

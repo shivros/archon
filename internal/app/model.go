@@ -151,6 +151,7 @@ type Model struct {
 	contentRaw                          string
 	contentEsc                          bool
 	contentBlocks                       []ChatBlock
+	contentBlockMetaByID                map[string]ChatBlockMetaPresentation
 	contentBlockSpans                   []renderedBlockSpan
 	reasoningExpanded                   map[string]bool
 	renderedText                        string
@@ -1865,6 +1866,7 @@ func (m *Model) applyLinesNoRender(lines []string, escape bool) {
 	m.contentRaw = strings.Join(lines, "\n")
 	m.contentEsc = escape
 	m.contentBlocks = nil
+	m.contentBlockMetaByID = nil
 	m.contentBlockSpans = nil
 	m.reasoningSnapshotHash = 0
 	m.reasoningSnapshotHas = false
@@ -1876,13 +1878,23 @@ func (m *Model) applyLinesNoRender(lines []string, escape bool) {
 }
 
 func (m *Model) applyBlocks(blocks []ChatBlock) {
-	m.applyBlocksNoRender(blocks)
+	m.applyBlocksNoRenderWithMeta(blocks, nil)
 	m.renderViewport()
 }
 
 func (m *Model) applyBlocksNoRender(blocks []ChatBlock) {
+	m.applyBlocksNoRenderWithMeta(blocks, nil)
+}
+
+func (m *Model) applyBlocksWithMeta(blocks []ChatBlock, metaByBlockID map[string]ChatBlockMetaPresentation) {
+	m.applyBlocksNoRenderWithMeta(blocks, metaByBlockID)
+	m.renderViewport()
+}
+
+func (m *Model) applyBlocksNoRenderWithMeta(blocks []ChatBlock, metaByBlockID map[string]ChatBlockMetaPresentation) {
 	if len(blocks) == 0 {
 		m.contentBlocks = nil
+		m.contentBlockMetaByID = nil
 		m.contentBlockSpans = nil
 		m.reasoningSnapshotHash = 0
 		m.reasoningSnapshotHas = false
@@ -1919,6 +1931,7 @@ func (m *Model) applyBlocksNoRender(blocks []ChatBlock) {
 			resolved[i].Collapsed = true
 		}
 		m.contentBlocks = resolved
+		m.contentBlockMetaByID = cloneChatBlockMetaByID(metaByBlockID)
 		hash, hasReasoning, hasCollapsed := reasoningSnapshotState(resolved)
 		m.reasoningSnapshotHash = hash
 		m.reasoningSnapshotHas = hasReasoning
@@ -1994,6 +2007,7 @@ func (m *Model) setContentText(text string) {
 	m.contentRaw = text
 	m.contentEsc = false
 	m.contentBlocks = nil
+	m.contentBlockMetaByID = nil
 	m.contentBlockSpans = nil
 	m.reasoningSnapshotHash = 0
 	m.reasoningSnapshotHas = false
@@ -2037,6 +2051,7 @@ func (m *Model) renderViewport() {
 			RawContent:         m.contentRaw,
 			EscapeMarkdown:     m.contentEsc,
 			Blocks:             m.contentBlocks,
+			BlockMetaByID:      m.contentBlockMetaByID,
 			SelectedBlockIndex: selectedRenderIndex,
 			TimestampMode:      mode,
 			TimestampNow:       now,
@@ -4016,6 +4031,40 @@ func mapStringBoolEqual(a, b map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+func cloneChatBlockMetaByID(input map[string]ChatBlockMetaPresentation) map[string]ChatBlockMetaPresentation {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]ChatBlockMetaPresentation, len(input))
+	for key, meta := range input {
+		id := strings.TrimSpace(key)
+		if id == "" {
+			continue
+		}
+		copyMeta := ChatBlockMetaPresentation{
+			Label: strings.TrimSpace(meta.Label),
+		}
+		if len(meta.Controls) > 0 {
+			copyMeta.Controls = make([]ChatMetaControl, 0, len(meta.Controls))
+			for _, control := range meta.Controls {
+				label := strings.TrimSpace(control.Label)
+				if label == "" {
+					continue
+				}
+				copyMeta.Controls = append(copyMeta.Controls, ChatMetaControl{
+					Label: label,
+					Tone:  control.Tone,
+				})
+			}
+		}
+		cloned[id] = copyMeta
+	}
+	if len(cloned) == 0 {
+		return nil
+	}
+	return cloned
 }
 
 func clamp(value, minValue, maxValue int) int {
