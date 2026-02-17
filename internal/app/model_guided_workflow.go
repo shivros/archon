@@ -18,11 +18,36 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 	}
 	m.mode = uiModeGuidedWorkflow
 	m.guidedWorkflow.Enter(context)
+	m.resetGuidedWorkflowPromptInput()
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
 	m.setStatusMessage("guided workflow launcher")
 	m.renderGuidedWorkflowContent()
+}
+
+func (m *Model) openGuidedWorkflowFromSidebar(item *sidebarItem) tea.Cmd {
+	if m == nil || item == nil || item.kind != sidebarWorkflow {
+		return nil
+	}
+	runID := strings.TrimSpace(item.workflowRunID())
+	if runID == "" {
+		m.setValidationStatus("workflow run id is missing")
+		return nil
+	}
+	context := guidedWorkflowLaunchContext{}
+	if item.workflow != nil {
+		context.workspaceID = strings.TrimSpace(item.workflow.WorkspaceID)
+		context.worktreeID = strings.TrimSpace(item.workflow.WorktreeID)
+		context.sessionID = strings.TrimSpace(item.workflow.SessionID)
+	}
+	m.enterGuidedWorkflow(context)
+	if m.guidedWorkflow != nil {
+		m.guidedWorkflow.SetRun(item.workflow)
+	}
+	m.setStatusMessage("opened guided workflow " + runID)
+	m.renderGuidedWorkflowContent()
+	return fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
 }
 
 func (m *Model) exitGuidedWorkflow(status string) {
@@ -31,6 +56,9 @@ func (m *Model) exitGuidedWorkflow(status string) {
 	}
 	if m.guidedWorkflow != nil {
 		m.guidedWorkflow.Exit()
+	}
+	if m.guidedWorkflowPromptInput != nil {
+		m.guidedWorkflowPromptInput.Blur()
 	}
 	m.mode = uiModeNormal
 	if m.input != nil {
@@ -49,7 +77,24 @@ func (m *Model) renderGuidedWorkflowContent() {
 	if m.guidedWorkflow == nil {
 		m.guidedWorkflow = NewGuidedWorkflowUIController()
 	}
-	m.setContentText(m.guidedWorkflow.Render())
+	if m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+		m.syncGuidedWorkflowPromptInput()
+	}
+	content := m.guidedWorkflow.Render()
+	if m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.guidedWorkflowPromptInput != nil {
+		panel, _ := (InputPanel{
+			Input: m.guidedWorkflowPromptInput,
+			Footer: InputFooterFunc(func() string {
+				return strings.Join([]string{
+					"Prompt Editor",
+					"- Placeholder disappears as soon as you type",
+					"- Paste is supported (for example: Ctrl+Shift+V)",
+				}, "\n")
+			}),
+		}).View()
+		content = strings.TrimRight(content, "\n") + "\n\n" + panel
+	}
+	m.setContentText(content)
 }
 
 func (m *Model) maybeAutoRefreshGuidedWorkflow(now time.Time) tea.Cmd {
@@ -72,88 +117,106 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		return false, nil
 	}
 	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return false, nil
-	}
-	switch m.keyString(keyMsg) {
-	case "q":
-		return true, tea.Quit
-	case "ctrl+b":
-		m.toggleSidebar()
-		return true, m.requestAppStateSaveCmd()
-	case "ctrl+o":
-		return true, m.toggleNotesPanel()
-	case "ctrl+m":
-		if m.menu != nil {
-			if m.contextMenu != nil {
-				m.contextMenu.Close()
+	if ok {
+		key := m.keyString(keyMsg)
+		switch key {
+		case "q":
+			return true, tea.Quit
+		case "ctrl+b":
+			m.toggleSidebar()
+			return true, m.requestAppStateSaveCmd()
+		case "ctrl+o":
+			return true, m.toggleNotesPanel()
+		case "ctrl+m":
+			if m.menu != nil {
+				if m.contextMenu != nil {
+					m.contextMenu.Close()
+				}
+				m.menu.Toggle()
 			}
-			m.menu.Toggle()
-		}
-		return true, nil
-	case "esc":
-		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
-			m.guidedWorkflow.OpenLauncher()
-			m.setStatusMessage("guided workflow launcher")
-			m.renderGuidedWorkflowContent()
 			return true, nil
-		}
-		m.exitGuidedWorkflow("guided workflow closed")
-		return true, nil
-	case "enter":
-		return true, m.handleGuidedWorkflowEnter()
-	case "j", "down":
-		if m.guidedWorkflow != nil {
-			switch m.guidedWorkflow.Stage() {
-			case guidedWorkflowStageSetup:
-				m.guidedWorkflow.CycleSensitivity(1)
+		case "esc":
+			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+				m.guidedWorkflow.OpenLauncher()
+				if m.guidedWorkflowPromptInput != nil {
+					m.guidedWorkflowPromptInput.Blur()
+				}
+				m.setStatusMessage("guided workflow launcher")
 				m.renderGuidedWorkflowContent()
 				return true, nil
-			case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+			}
+			m.exitGuidedWorkflow("guided workflow closed")
+			return true, nil
+		case "enter":
+			return true, m.handleGuidedWorkflowEnter()
+		case "down":
+			if m.guidedWorkflow != nil {
+				switch m.guidedWorkflow.Stage() {
+				case guidedWorkflowStageSetup:
+					m.guidedWorkflow.CycleSensitivity(1)
+					m.renderGuidedWorkflowContent()
+					return true, nil
+				case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+					m.guidedWorkflow.MoveStepSelection(1)
+					m.renderGuidedWorkflowContent()
+					return true, nil
+				}
+			}
+		case "up":
+			if m.guidedWorkflow != nil {
+				switch m.guidedWorkflow.Stage() {
+				case guidedWorkflowStageSetup:
+					m.guidedWorkflow.CycleSensitivity(-1)
+					m.renderGuidedWorkflowContent()
+					return true, nil
+				case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+					m.guidedWorkflow.MoveStepSelection(-1)
+					m.renderGuidedWorkflowContent()
+					return true, nil
+				}
+			}
+		case "j":
+			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
 				m.guidedWorkflow.MoveStepSelection(1)
 				m.renderGuidedWorkflowContent()
 				return true, nil
 			}
-		}
-	case "k", "up":
-		if m.guidedWorkflow != nil {
-			switch m.guidedWorkflow.Stage() {
-			case guidedWorkflowStageSetup:
-				m.guidedWorkflow.CycleSensitivity(-1)
-				m.renderGuidedWorkflowContent()
-				return true, nil
-			case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+		case "k":
+			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
 				m.guidedWorkflow.MoveStepSelection(-1)
 				m.renderGuidedWorkflowContent()
 				return true, nil
 			}
+		case "r":
+			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
+				return true, m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
+			}
+		case "a":
+			if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
+				return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionApproveContinue)
+			}
+		case "v":
+			if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
+				return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionRequestRevision)
+			}
+		case "p":
+			if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
+				return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionPauseRun)
+			}
+		case "g":
+			m.viewport.GotoTop()
+			return true, nil
+		case "G":
+			m.viewport.GotoBottom()
+			return true, nil
+		case "o":
+			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
+				return true, m.openGuidedWorkflowSelectedSession()
+			}
 		}
-	case "r":
-		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
-			return true, m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
-		}
-	case "a":
-		if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
-			return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionApproveContinue)
-		}
-	case "v":
-		if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
-			return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionRequestRevision)
-		}
-	case "p":
-		if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
-			return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionPauseRun)
-		}
-	case "g":
-		m.viewport.GotoTop()
-		return true, nil
-	case "G":
-		m.viewport.GotoBottom()
-		return true, nil
-	case "o":
-		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
-			return true, m.openGuidedWorkflowSelectedSession()
-		}
+	}
+	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
+		return true, cmd
 	}
 	return false, nil
 }
@@ -165,6 +228,9 @@ func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {
 	switch m.guidedWorkflow.Stage() {
 	case guidedWorkflowStageLauncher:
 		m.guidedWorkflow.OpenSetup()
+		if m.guidedWorkflowPromptInput != nil {
+			m.guidedWorkflowPromptInput.Focus()
+		}
 		m.setStatusMessage("guided workflow setup")
 		m.renderGuidedWorkflowContent()
 		return nil
@@ -187,12 +253,21 @@ func (m *Model) startGuidedWorkflowRun() tea.Cmd {
 	if m == nil || m.guidedWorkflow == nil {
 		return nil
 	}
+	m.syncGuidedWorkflowPromptInput()
 	req := m.guidedWorkflow.BuildCreateRequest()
 	if strings.TrimSpace(req.WorkspaceID) == "" && strings.TrimSpace(req.WorktreeID) == "" {
 		m.setValidationStatus("guided workflow requires workspace or worktree context")
 		return nil
 	}
+	if strings.TrimSpace(req.UserPrompt) == "" {
+		m.setValidationStatus("enter a workflow prompt before starting")
+		m.renderGuidedWorkflowContent()
+		return nil
+	}
 	m.guidedWorkflow.BeginStart()
+	if m.guidedWorkflowPromptInput != nil {
+		m.guidedWorkflowPromptInput.Blur()
+	}
 	m.renderGuidedWorkflowContent()
 	m.setStatusMessage("creating guided workflow run")
 	return createWorkflowRunCmd(m.guidedWorkflowAPI, req)
@@ -261,4 +336,40 @@ func (m *Model) openGuidedWorkflowSelectedSession() tea.Cmd {
 	item := m.selectedItem()
 	m.exitGuidedWorkflow("opened linked session " + sessionID)
 	return m.batchWithNotesPanelSync(m.loadSelectedSession(item))
+}
+
+func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowPromptInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return false, nil
+	}
+	if !isTextInputMsg(msg) {
+		return false, nil
+	}
+	cmd := m.guidedWorkflowPromptInput.Update(msg)
+	m.syncGuidedWorkflowPromptInput()
+	m.renderGuidedWorkflowContent()
+	return true, cmd
+}
+
+func (m *Model) resetGuidedWorkflowPromptInput() {
+	if m == nil {
+		return
+	}
+	if m.guidedWorkflowPromptInput == nil {
+		m.guidedWorkflowPromptInput = NewTextInput(minViewportWidth, TextInputConfig{Height: 5, MinHeight: 4, MaxHeight: 10, AutoGrow: true})
+	}
+	m.guidedWorkflowPromptInput.SetPlaceholder("Describe the feature request or bug fix this workflow should execute.")
+	m.guidedWorkflowPromptInput.Clear()
+	m.guidedWorkflowPromptInput.Focus()
+}
+
+func (m *Model) syncGuidedWorkflowPromptInput() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	if m.guidedWorkflowPromptInput == nil {
+		m.guidedWorkflow.SetUserPrompt("")
+		return
+	}
+	m.guidedWorkflow.SetUserPrompt(m.guidedWorkflowPromptInput.Value())
 }

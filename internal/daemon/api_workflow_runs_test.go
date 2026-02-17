@@ -59,6 +59,14 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	if timeline[0].Type != "run_created" {
 		t.Fatalf("expected first timeline event run_created, got %q", timeline[0].Type)
 	}
+
+	runs := getWorkflowRuns(t, server, http.StatusOK)
+	if len(runs) == 0 {
+		t.Fatalf("expected workflow list to include created run")
+	}
+	if runs[0].ID != created.ID {
+		t.Fatalf("expected most-recent run first in list, got %q", runs[0].ID)
+	}
 }
 
 func TestWorkflowRunEndpointsInvalidTransition(t *testing.T) {
@@ -457,6 +465,28 @@ func getWorkflowRunTimeline(t *testing.T, server *httptest.Server, runID string,
 		t.Fatalf("decode timeline payload: %v", err)
 	}
 	return payload.Timeline
+}
+
+func getWorkflowRuns(t *testing.T, server *httptest.Server, wantStatus int) []*guidedworkflows.WorkflowRun {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workflow-runs", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get workflow runs request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != wantStatus {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected list status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
+	}
+	var payload struct {
+		Runs []*guidedworkflows.WorkflowRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode workflow runs: %v", err)
+	}
+	return payload.Runs
 }
 
 func getWorkflowRunMetrics(t *testing.T, server *httptest.Server, wantStatus int) guidedworkflows.RunMetricsSnapshot {

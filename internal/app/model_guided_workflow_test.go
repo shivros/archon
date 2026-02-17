@@ -10,9 +10,11 @@ import (
 
 	"control/internal/client"
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 type guidedWorkflowAPIMock struct {
+	listRuns          []*guidedworkflows.WorkflowRun
 	createReqs        []client.CreateWorkflowRunRequest
 	startRunIDs       []string
 	decisionReqs      []client.WorkflowRunDecisionRequest
@@ -23,6 +25,14 @@ type guidedWorkflowAPIMock struct {
 	snapshotTimelines [][]guidedworkflows.RunTimelineEvent
 	snapshotRunCalls  int
 	snapshotTimeCalls int
+}
+
+func (m *guidedWorkflowAPIMock) ListWorkflowRuns(_ context.Context) ([]*guidedworkflows.WorkflowRun, error) {
+	out := make([]*guidedworkflows.WorkflowRun, 0, len(m.listRuns))
+	for _, run := range m.listRuns {
+		out = append(out, cloneWorkflowRun(run))
+	}
+	return out, nil
 }
 
 func (m *guidedWorkflowAPIMock) CreateWorkflowRun(_ context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
@@ -100,6 +110,11 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
 		t.Fatalf("expected setup stage")
 	}
+	if m.guidedWorkflowPromptInput == nil {
+		t.Fatalf("expected guided workflow prompt input")
+	}
+	m.guidedWorkflowPromptInput.SetValue("Fix bug in request routing")
+	m.syncGuidedWorkflowPromptInput()
 
 	nextModel, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = asModel(t, nextModel)
@@ -145,8 +160,89 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 	if api.createReqs[0].WorkspaceID != "ws1" || api.createReqs[0].WorktreeID != "wt1" || api.createReqs[0].SessionID != "s1" {
 		t.Fatalf("unexpected create request context: %+v", api.createReqs[0])
 	}
+	if api.createReqs[0].UserPrompt != "Fix bug in request routing" {
+		t.Fatalf("expected user prompt in create request, got %q", api.createReqs[0].UserPrompt)
+	}
 	if !strings.Contains(m.contentRaw, "Live Timeline") {
 		t.Fatalf("expected live timeline content, got %q", m.contentRaw)
+	}
+}
+
+func TestGuidedWorkflowSetupRequiresUserPrompt(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected start to be blocked when user prompt is empty")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "workflow prompt") {
+		t.Fatalf("expected prompt validation status, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowSetupCapturesPromptFromKeys(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	m = asModel(t, updated)
+
+	if got := m.guidedWorkflow.UserPrompt(); got != "hi" {
+		t.Fatalf("expected prompt input to capture typed text with backspace, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	updated, _ = m.Update(tea.PasteMsg{Content: "Fix flaky retry logic\nand add coverage"})
+	m = asModel(t, updated)
+	if got := m.guidedWorkflow.UserPrompt(); got != "Fix flaky retry logic\nand add coverage" {
+		t.Fatalf("expected prompt input to capture pasted text, got %q", got)
+	}
+	if !strings.Contains(m.contentRaw, "Prompt Editor") {
+		t.Fatalf("expected setup content to show prompt editor guidance, got %q", m.contentRaw)
 	}
 }
 
@@ -335,6 +431,85 @@ func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 	}
 	if m.guidedWorkflow == nil || m.guidedWorkflow.NeedsDecision() {
 		t.Fatalf("expected decision inbox to clear after approval")
+	}
+}
+
+func TestSelectingWorkflowSidebarNodeOpensGuidedWorkflowView(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 30, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-sidebar", guidedworkflows.WorkflowRunStatusRunning, now)
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{run},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_started", RunID: run.ID},
+			},
+		},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+
+	workflowRow := -1
+	for idx, item := range m.sidebar.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkflow {
+			continue
+		}
+		if entry.workflowRunID() == run.ID {
+			workflowRow = idx
+			break
+		}
+	}
+	if workflowRow < 0 {
+		t.Fatalf("expected workflow row in sidebar")
+	}
+
+	m.sidebar.Select(workflowRow)
+	cmd := m.onSelectionChangedImmediate()
+	if cmd == nil {
+		t.Fatalf("expected snapshot command after selecting workflow row")
+	}
+	msg, ok := cmd().(workflowRunSnapshotMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
+	}
+	updated, _ := m.Update(msg)
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != run.ID {
+		t.Fatalf("expected guided workflow run %q, got %#v", run.ID, m.guidedWorkflow)
+	}
+}
+
+func TestSelectingWorkflowChildSessionLoadsChat(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 35, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-child", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected workflow child session row to be selectable")
+	}
+	cmd := m.onSelectionChangedImmediate()
+	if cmd == nil {
+		t.Fatalf("expected session load command for child session")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected normal mode to remain active when selecting child session")
 	}
 }
 

@@ -679,6 +679,72 @@ func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleFirstDispatchPrependsUserPromptOnlyOnce(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_with_brief",
+		Name: "Prompted with brief",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "overall plan prompt"},
+					{ID: "step_2", Name: "step 2", Prompt: "phase plan prompt"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-b"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_with_brief",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+		UserPrompt:  "Fix bug in workflow setup",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if run.UserPrompt != "Fix bug in workflow setup" {
+		t.Fatalf("expected run user prompt to persist, got %q", run.UserPrompt)
+	}
+
+	_, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected first dispatch call, got %d", len(dispatcher.calls))
+	}
+	if got := dispatcher.calls[0].Prompt; got != "Fix bug in workflow setup\n\noverall plan prompt" {
+		t.Fatalf("expected first dispatch to prepend user prompt, got %q", got)
+	}
+
+	_, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted turn-a: %v", err)
+	}
+	if len(dispatcher.calls) != 2 {
+		t.Fatalf("expected second dispatch call, got %d", len(dispatcher.calls))
+	}
+	if got := dispatcher.calls[1].Prompt; got != "phase plan prompt" {
+		t.Fatalf("expected only template prompt after first dispatch, got %q", got)
+	}
+}
+
 func TestRunLifecycleAdvanceRunDoesNotBypassAwaitingTurn(t *testing.T) {
 	template := WorkflowTemplate{
 		ID:   "prompted",
@@ -1132,5 +1198,39 @@ func TestRunLifecycleResetMetricsPersistsWhenTelemetryDisabled(t *testing.T) {
 	}
 	if store.saved[0].RunsStarted != 0 || store.saved[0].RunsCompleted != 0 {
 		t.Fatalf("expected forced reset persistence to zero counters, got %#v", store.saved[0])
+	}
+}
+
+func TestRunLifecycleListRunsSortedByRecentActivity(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	first, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun first: %v", err)
+	}
+	second, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-2",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun second: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), first.ID); err != nil {
+		t.Fatalf("StartRun first: %v", err)
+	}
+	runs, err := service.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected two runs, got %d", len(runs))
+	}
+	if runs[0].ID != first.ID {
+		t.Fatalf("expected first run to sort first after recent activity, got %q", runs[0].ID)
+	}
+	if runs[1].ID != second.ID {
+		t.Fatalf("expected second run to sort second, got %q", runs[1].ID)
 	}
 }

@@ -299,6 +299,18 @@ func createWorkflowRunCmd(api GuidedWorkflowAPI, req client.CreateWorkflowRunReq
 	}
 }
 
+func fetchWorkflowRunsCmd(api GuidedWorkflowAPI) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunsMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		runs, err := api.ListWorkflowRuns(ctx)
+		return workflowRunsMsg{runs: runs, err: err}
+	}
+}
+
 func startWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {

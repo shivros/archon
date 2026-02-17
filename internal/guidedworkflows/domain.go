@@ -64,6 +64,7 @@ type WorkflowRun struct {
 	WorktreeID          string                    `json:"worktree_id,omitempty"`
 	SessionID           string                    `json:"session_id,omitempty"`
 	TaskID              string                    `json:"task_id,omitempty"`
+	UserPrompt          string                    `json:"user_prompt,omitempty"`
 	Mode                string                    `json:"mode"`
 	CheckpointStyle     string                    `json:"checkpoint_style"`
 	Status              WorkflowRunStatus         `json:"status"`
@@ -170,6 +171,7 @@ type CreateRunRequest struct {
 	WorktreeID      string                    `json:"worktree_id,omitempty"`
 	SessionID       string                    `json:"session_id,omitempty"`
 	TaskID          string                    `json:"task_id,omitempty"`
+	UserPrompt      string                    `json:"user_prompt,omitempty"`
 	PolicyOverrides *CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
 }
 

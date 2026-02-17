@@ -31,6 +31,7 @@ type StartRunRequest struct {
 	WorktreeID  string
 	SessionID   string
 	TaskID      string
+	UserPrompt  string
 }
 
 type Run = WorkflowRun
@@ -150,6 +151,7 @@ func (o *guardedAutopilotOrchestrator) StartRun(ctx context.Context, req StartRu
 		WorktreeID:  strings.TrimSpace(req.WorktreeID),
 		SessionID:   strings.TrimSpace(req.SessionID),
 		TaskID:      strings.TrimSpace(req.TaskID),
+		UserPrompt:  strings.TrimSpace(req.UserPrompt),
 	})
 	if err != nil {
 		return nil, err

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -25,7 +26,7 @@ func TestBuildSidebarItemsGroupsSessions(t *testing.T) {
 		"s4": {SessionID: "s4", WorkspaceID: "missing"},
 	}
 
-	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
+	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, false)
 	if len(items) != 7 {
 		t.Fatalf("expected 7 items, got %d", len(items))
 	}
@@ -97,7 +98,7 @@ func TestSelectSidebarIndexPrefersSelectionAndActiveWorkspace(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
 		"s2": {SessionID: "s2", WorkspaceID: "ws2"},
 	}
-	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
+	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, false)
 
 	selected := "sess:s1"
 	if idx := selectSidebarIndex(items, selected, "ws2", ""); idx != 1 {
@@ -124,12 +125,12 @@ func TestBuildSidebarItemsShowDismissedToggle(t *testing.T) {
 		"dismissed": {SessionID: "dismissed", WorkspaceID: "ws1", DismissedAt: &dismissedAt},
 	}
 
-	hidden := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, false)
+	hidden := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, false)
 	if len(hidden) != 2 {
 		t.Fatalf("expected workspace + active session when dismissed hidden, got %d", len(hidden))
 	}
 
-	visible := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, meta, true)
+	visible := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, true)
 	if len(visible) != 3 {
 		t.Fatalf("expected workspace + both sessions when dismissed shown, got %d", len(visible))
 	}
@@ -205,7 +206,7 @@ func TestBuildSidebarItemsCollapsedWorkspaceHidesNestedItems(t *testing.T) {
 		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1"},
 	}
 
-	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, false, sidebarExpansionResolver{
+	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, nil, meta, false, sidebarExpansionResolver{
 		workspace: map[string]bool{"ws1": false},
 		defaultOn: true,
 	})
@@ -239,7 +240,7 @@ func TestBuildSidebarItemsCollapsedWorktreeHidesWorktreeSessions(t *testing.T) {
 		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1"},
 	}
 
-	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, false, sidebarExpansionResolver{
+	items := buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, nil, meta, false, sidebarExpansionResolver{
 		workspace: map[string]bool{"ws1": true},
 		worktree:  map[string]bool{"wt1": false},
 		defaultOn: true,
@@ -260,5 +261,40 @@ func TestBuildSidebarItemsCollapsedWorktreeHidesWorktreeSessions(t *testing.T) {
 	}
 	if !wt.collapsible || wt.expanded {
 		t.Fatalf("expected worktree wt1 collapsible and collapsed")
+	}
+}
+
+func TestBuildSidebarItemsNestsWorkflowOwnedSessionsWithoutDuplication(t *testing.T) {
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace One"},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", TemplateName: "SOLID Phase Delivery", WorkspaceID: "ws1", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+
+	items := buildSidebarItems(workspaces, map[string][]*types.Worktree{}, sessions, workflows, meta, false)
+	if len(items) != 4 {
+		t.Fatalf("expected workspace + workflow + workflow child session + normal session, got %d", len(items))
+	}
+	if items[0].(*sidebarItem).kind != sidebarWorkspace {
+		t.Fatalf("expected workspace row first")
+	}
+	if items[1].(*sidebarItem).kind != sidebarWorkflow {
+		t.Fatalf("expected workflow row second")
+	}
+	if items[2].(*sidebarItem).kind != sidebarSession || items[2].(*sidebarItem).session.ID != "s1" {
+		t.Fatalf("expected workflow-owned session nested under workflow")
+	}
+	if items[3].(*sidebarItem).kind != sidebarSession || items[3].(*sidebarItem).session.ID != "s2" {
+		t.Fatalf("expected regular session outside workflow")
 	}
 }

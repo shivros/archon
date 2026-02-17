@@ -99,7 +99,8 @@ type guidedWorkflowSessionGateway interface {
 }
 
 type guidedWorkflowPromptDispatcher struct {
-	sessions guidedWorkflowSessionGateway
+	sessions    guidedWorkflowSessionGateway
+	sessionMeta SessionMetaStore
 }
 
 func newGuidedWorkflowPromptDispatcher(
@@ -112,7 +113,8 @@ func newGuidedWorkflowPromptDispatcher(
 		return nil
 	}
 	return &guidedWorkflowPromptDispatcher{
-		sessions: NewSessionService(manager, stores, live, logger),
+		sessions:    NewSessionService(manager, stores, live, logger),
+		sessionMeta: stores.SessionMeta,
 	}
 }
 
@@ -140,6 +142,7 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	if err != nil {
 		return guidedworkflows.StepPromptDispatchResult{}, err
 	}
+	d.linkSessionToWorkflow(ctx, sessionID, req.RunID)
 	return guidedworkflows.StepPromptDispatchResult{
 		Dispatched: true,
 		SessionID:  sessionID,
@@ -147,6 +150,21 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		Provider:   strings.TrimSpace(provider),
 		Model:      strings.TrimSpace(model),
 	}, nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Context, sessionID, runID string) {
+	if d == nil || d.sessionMeta == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	runID = strings.TrimSpace(runID)
+	if sessionID == "" || runID == "" {
+		return
+	}
+	_, _ = d.sessionMeta.Upsert(ctx, &types.SessionMeta{
+		SessionID:     sessionID,
+		WorkflowRunID: runID,
+	})
 }
 
 func guidedWorkflowProviderSupportsPromptDispatch(provider string) bool {

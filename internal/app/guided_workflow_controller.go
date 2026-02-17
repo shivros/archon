@@ -38,6 +38,7 @@ type GuidedWorkflowUIController struct {
 	templateID    string
 	templateName  string
 	sensitivity   guidedPolicySensitivity
+	userPrompt    string
 	run           *guidedworkflows.WorkflowRun
 	timeline      []guidedworkflows.RunTimelineEvent
 	lastError     string
@@ -65,6 +66,7 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.templateID = guidedworkflows.TemplateIDSolidPhaseDelivery
 	c.templateName = "SOLID Phase Delivery"
 	c.sensitivity = guidedPolicySensitivityBalanced
+	c.userPrompt = ""
 	c.run = nil
 	c.timeline = nil
 	c.lastError = ""
@@ -134,6 +136,20 @@ func (c *GuidedWorkflowUIController) BeginStart() {
 	c.lastRefreshAt = time.Time{}
 	c.selectedPhase = 0
 	c.selectedStep = 0
+}
+
+func (c *GuidedWorkflowUIController) SetUserPrompt(text string) {
+	if c == nil {
+		return
+	}
+	c.userPrompt = text
+}
+
+func (c *GuidedWorkflowUIController) UserPrompt() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.userPrompt)
 }
 
 func (c *GuidedWorkflowUIController) SetCreateError(err error) {
@@ -296,6 +312,7 @@ func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowR
 		WorkspaceID: strings.TrimSpace(c.context.workspaceID),
 		WorktreeID:  strings.TrimSpace(c.context.worktreeID),
 		SessionID:   strings.TrimSpace(c.context.sessionID),
+		UserPrompt:  strings.TrimSpace(c.userPrompt),
 	}
 	if override := policyOverrideForSensitivity(c.sensitivity); override != nil {
 		req.PolicyOverrides = override
@@ -367,11 +384,19 @@ func (c *GuidedWorkflowUIController) renderLauncher() string {
 
 func (c *GuidedWorkflowUIController) renderSetup() string {
 	sensitivity := c.sensitivityLabel()
+	chars, linesCount := promptStats(c.userPrompt)
 	lines := []string{
 		"Run Setup",
 		"",
 		fmt.Sprintf("Template: %s (%s)", valueOrFallback(c.templateName, "SOLID Phase Delivery"), valueOrFallback(c.templateID, guidedworkflows.TemplateIDSolidPhaseDelivery)),
 		fmt.Sprintf("Policy sensitivity: %s", sensitivity),
+		"",
+		"Workflow prompt (required)",
+		"- Input focus: active in editor panel below",
+		fmt.Sprintf("- Prompt stats: %d chars across %d lines", chars, linesCount),
+		"- Paste support: terminal paste works in the same editor used elsewhere",
+	}
+	lines = append(lines,
 		"",
 		"Sensitivity presets",
 		"- low: fewer pauses, higher continue tolerance",
@@ -379,11 +404,11 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 		"- high: stricter checkpointing and earlier pauses",
 		"",
 		"Controls",
-		"- j/down: next sensitivity",
-		"- k/up: previous sensitivity",
+		"- type/paste: edit workflow prompt",
+		"- up/down: change sensitivity",
 		"- enter: create and start run",
 		"- esc: back to launcher",
-	}
+	)
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
@@ -813,6 +838,16 @@ func policyOverrideForSensitivity(sensitivity guidedPolicySensitivity) *guidedwo
 	default:
 		return nil
 	}
+}
+
+func promptStats(text string) (chars int, lines int) {
+	chars = len([]rune(text))
+	lines = 1
+	if text == "" {
+		return chars, lines
+	}
+	lines = len(strings.Split(text, "\n"))
+	return chars, lines
 }
 
 func cloneWorkflowRun(run *guidedworkflows.WorkflowRun) *guidedworkflows.WorkflowRun {

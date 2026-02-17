@@ -183,7 +183,7 @@ Use `POST /v1/workflow-runs/metrics/reset` to reset aggregate counters for a fre
 Manual start flow:
 
 - from workspace/worktree/session context in the TUI, choose `Start Guided Workflow`
-- configure run setup (template + policy sensitivity)
+- configure run setup (workflow prompt + template + policy sensitivity)
 - launch run and monitor the timeline/decision inbox surfaces
 
 Checkpoint behavior:
@@ -209,6 +209,7 @@ When turn-completed events progress a run and policy decides `pause`, Archon emi
 Troubleshooting:
 
 - `guided workflows are disabled`: verify `[guided_workflows].enabled = true` and restart daemon
+- `enter a workflow prompt before starting`: provide a feature/bug prompt in Run Setup before pressing `enter`
 - `workflow active run limit exceeded`: raise `[guided_workflows.rollout].max_active_runs` or wait for active runs to finish
 - repeated pause decisions: inspect `risk_summary` and `trigger_reasons` in decision notifications, then adjust policy thresholds/gates
 - metrics not changing: confirm `[guided_workflows.rollout].telemetry_enabled = true` and query `GET /v1/workflow-runs/metrics`

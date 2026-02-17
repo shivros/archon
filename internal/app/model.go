@@ -17,6 +17,7 @@ import (
 
 	"control/internal/client"
 	"control/internal/config"
+	"control/internal/guidedworkflows"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -97,6 +98,7 @@ type Model struct {
 	compose                             *ComposeController
 	chatAddonController                 *ChatInputAddonController
 	chatInput                           *TextInput
+	guidedWorkflowPromptInput           *TextInput
 	searchInput                         *TextInput
 	renameInput                         *TextInput
 	groupInput                          *TextInput
@@ -129,6 +131,7 @@ type Model struct {
 	worktrees                           map[string][]*types.Worktree
 	sessions                            []*types.Session
 	sessionMeta                         map[string]*types.SessionMeta
+	workflowRuns                        []*guidedworkflows.WorkflowRun
 	providerOptions                     map[string]*types.ProviderOptionCatalog
 	appState                            types.AppState
 	hasAppState                         bool
@@ -366,6 +369,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		compose:                             NewComposeController(minViewportWidth),
 		chatAddonController:                 NewChatInputAddonController(chatAddon),
 		chatInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		guidedWorkflowPromptInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 5, MinHeight: 4, MaxHeight: 10, AutoGrow: true}),
 		searchInput:                         NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
 		renameInput:                         NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
 		groupInput:                          NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
@@ -469,6 +473,7 @@ func (m *Model) Init() tea.Cmd {
 		fetchWorkspacesCmd(m.workspaceAPI),
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
 		m.fetchSessionsCmd(false),
+		fetchWorkflowRunsCmd(m.guidedWorkflowAPI),
 		fetchProviderOptionsCmd(m.sessionAPI, "codex"),
 		fetchProviderOptionsCmd(m.sessionAPI, "claude"),
 		m.tickCmd(),
@@ -815,6 +820,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	if m.searchInput != nil {
 		m.searchInput.Resize(mainViewportWidth)
 	}
+	if m.guidedWorkflowPromptInput != nil {
+		m.guidedWorkflowPromptInput.Resize(mainViewportWidth)
+	}
 	if m.noteInput != nil {
 		m.noteInput.Resize(mainViewportWidth)
 	}
@@ -911,6 +919,26 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 			stateChanged = true
 		}
 		m.setStatusMessage("worktree selected")
+		return true, stateChanged, false
+	case sidebarWorkflow:
+		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		wsID := item.workspaceID()
+		if wsID != "" && wsID != unassignedWorkspaceID && wsID != m.appState.ActiveWorkspaceID {
+			m.appState.ActiveWorkspaceID = wsID
+			m.hasAppState = true
+			m.updateDelegate()
+			stateChanged = true
+		}
+		wtID := ""
+		if item.workflow != nil {
+			wtID = strings.TrimSpace(item.workflow.WorktreeID)
+		}
+		if wtID != m.appState.ActiveWorktreeID {
+			m.appState.ActiveWorktreeID = wtID
+			m.hasAppState = true
+			m.updateDelegate()
+			stateChanged = true
+		}
 		return true, stateChanged, false
 	default:
 		if !item.isSession() {
@@ -1104,6 +1132,42 @@ func (m *Model) setSessionsAndMeta(sessions []*types.Session, meta map[string]*t
 	m.invalidateSidebarProjection(sidebarProjectionChangeSessions)
 }
 
+func (m *Model) setWorkflowRunsData(runs []*guidedworkflows.WorkflowRun) {
+	if m == nil {
+		return
+	}
+	m.workflowRuns = runs
+	m.invalidateSidebarProjection(sidebarProjectionChangeWorkflow)
+}
+
+func (m *Model) upsertWorkflowRun(run *guidedworkflows.WorkflowRun) {
+	if m == nil || run == nil {
+		return
+	}
+	runID := strings.TrimSpace(run.ID)
+	if runID == "" {
+		return
+	}
+	out := make([]*guidedworkflows.WorkflowRun, 0, max(1, len(m.workflowRuns)))
+	replaced := false
+	for _, existing := range m.workflowRuns {
+		if existing == nil {
+			continue
+		}
+		if strings.TrimSpace(existing.ID) == runID {
+			out = append(out, run)
+			replaced = true
+			continue
+		}
+		out = append(out, existing)
+	}
+	if !replaced {
+		out = append(out, run)
+	}
+	m.workflowRuns = out
+	m.invalidateSidebarProjection(sidebarProjectionChangeWorkflow)
+}
+
 func (m *Model) setWorktreesData(workspaceID string, worktrees []*types.Worktree) {
 	if m == nil || strings.TrimSpace(workspaceID) == "" {
 		return
@@ -1145,9 +1209,21 @@ func (m *Model) applySidebarItems() {
 		m.setContentText("No sessions.")
 		return
 	}
-	projection := m.buildSidebarProjection()
+	builder := m.sidebarProjectionBuilder
+	if builder == nil {
+		builder = NewDefaultSidebarProjectionBuilder()
+		m.sidebarProjectionBuilder = builder
+	}
+	projection := builder.Build(SidebarProjectionInput{
+		Workspaces:         m.workspaces,
+		Worktrees:          m.worktrees,
+		Sessions:           m.sessions,
+		SessionMeta:        m.sessionMeta,
+		WorkflowRuns:       m.workflowRuns,
+		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
+	})
 	m.sidebar.recentsState = m.sidebarRecentsState(projection.Sessions)
-	item := m.sidebar.Apply(projection.Workspaces, m.worktrees, projection.Sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
+	item := m.sidebar.Apply(projection.Workspaces, m.worktrees, projection.Sessions, projection.WorkflowRuns, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
 	m.sidebarProjectionApplied = m.sidebarProjectionRevision
 	if item == nil {
 		m.resetStream()
@@ -1775,12 +1851,12 @@ func (m *Model) maybeAutoRefreshSessionMeta(now time.Time) tea.Cmd {
 	if now.Sub(m.lastSessionMetaSyncAt) >= sessionMetaSyncDelay {
 		m.sessionMetaSyncPending = true
 		m.lastSessionMetaSyncAt = now
-		return m.fetchSessionsCmd(true)
+		return tea.Batch(m.fetchSessionsCmd(true), fetchWorkflowRunsCmd(m.guidedWorkflowAPI))
 	}
 	if now.Sub(m.lastSessionMetaRefreshAt) >= sessionMetaRefreshDelay {
 		m.sessionMetaRefreshPending = true
 		m.lastSessionMetaRefreshAt = now
-		return m.fetchSessionsCmd(false)
+		return tea.Batch(m.fetchSessionsCmd(false), fetchWorkflowRunsCmd(m.guidedWorkflowAPI))
 	}
 	return nil
 }
@@ -2773,20 +2849,22 @@ func (m *Model) syncSidebarExpansionFromAppState() {
 	if m == nil || m.sidebar == nil {
 		return
 	}
-	m.sidebar.SetExpansionOverrides(m.appState.SidebarWorkspaceExpanded, m.appState.SidebarWorktreeExpanded)
+	m.sidebar.SetExpansionOverrides(m.appState.SidebarWorkspaceExpanded, m.appState.SidebarWorktreeExpanded, m.appState.SidebarWorkflowExpanded)
 }
 
 func (m *Model) syncAppStateSidebarExpansion() bool {
 	if m == nil || m.sidebar == nil {
 		return false
 	}
-	workspaceExpanded, worktreeExpanded := m.sidebar.ExpansionOverrides()
+	workspaceExpanded, worktreeExpanded, workflowExpanded := m.sidebar.ExpansionOverrides()
 	if mapStringBoolEqual(m.appState.SidebarWorkspaceExpanded, workspaceExpanded) &&
-		mapStringBoolEqual(m.appState.SidebarWorktreeExpanded, worktreeExpanded) {
+		mapStringBoolEqual(m.appState.SidebarWorktreeExpanded, worktreeExpanded) &&
+		mapStringBoolEqual(m.appState.SidebarWorkflowExpanded, workflowExpanded) {
 		return false
 	}
 	m.appState.SidebarWorkspaceExpanded = workspaceExpanded
 	m.appState.SidebarWorktreeExpanded = worktreeExpanded
+	m.appState.SidebarWorkflowExpanded = workflowExpanded
 	m.hasAppState = true
 	return true
 }

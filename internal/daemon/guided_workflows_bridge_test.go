@@ -26,6 +26,10 @@ type stubGuidedWorkflowSessionGateway struct {
 	}
 }
 
+type stubGuidedWorkflowSessionMetaStore struct {
+	entries map[string]*types.SessionMeta
+}
+
 func (s *stubWorkflowTemplateStore) ListWorkflowTemplates(context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
 	out := make([]guidedworkflows.WorkflowTemplate, len(s.templates))
 	copy(out, s.templates)
@@ -48,6 +52,41 @@ func (s *stubGuidedWorkflowSessionGateway) SendMessage(_ context.Context, id str
 		return "", s.sendErr
 	}
 	return s.turnID, nil
+}
+
+func (s *stubGuidedWorkflowSessionMetaStore) List(context.Context) ([]*types.SessionMeta, error) {
+	out := make([]*types.SessionMeta, 0, len(s.entries))
+	for _, entry := range s.entries {
+		copy := *entry
+		out = append(out, &copy)
+	}
+	return out, nil
+}
+
+func (s *stubGuidedWorkflowSessionMetaStore) Get(_ context.Context, sessionID string) (*types.SessionMeta, bool, error) {
+	if s == nil || s.entries == nil {
+		return nil, false, nil
+	}
+	entry, ok := s.entries[sessionID]
+	if !ok || entry == nil {
+		return nil, false, nil
+	}
+	copy := *entry
+	return &copy, true, nil
+}
+
+func (s *stubGuidedWorkflowSessionMetaStore) Upsert(_ context.Context, meta *types.SessionMeta) (*types.SessionMeta, error) {
+	if s.entries == nil {
+		s.entries = map[string]*types.SessionMeta{}
+	}
+	copy := *meta
+	s.entries[meta.SessionID] = &copy
+	return &copy, nil
+}
+
+func (s *stubGuidedWorkflowSessionMetaStore) Delete(_ context.Context, sessionID string) error {
+	delete(s.entries, sessionID)
+	return nil
 }
 
 func TestGuidedWorkflowsConfigFromCoreConfigDefaults(t *testing.T) {
@@ -226,7 +265,8 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 		},
 		turnID: "turn-1",
 	}
-	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway, sessionMeta: metaStore}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
 		RunID:       "gwf-1",
 		SessionID:   "sess-1",
@@ -245,6 +285,13 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 	}
 	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-1" {
 		t.Fatalf("expected prompt to be sent to explicit session, got %#v", gateway.sendCalls)
+	}
+	linked, ok, err := metaStore.Get(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
+	}
+	if !ok || linked.WorkflowRunID != "gwf-1" {
+		t.Fatalf("expected workflow ownership link for sess-1, got %#v", linked)
 	}
 }
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"control/internal/client"
 	"control/internal/guidedworkflows"
@@ -229,6 +230,7 @@ type StateAPI interface {
 }
 
 type GuidedWorkflowAPI interface {
+	ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
 	CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error)
 	StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	DecideWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error)
@@ -406,6 +408,13 @@ func (a *ClientAPI) UpdateAppState(ctx context.Context, state *types.AppState) (
 
 func (a *ClientAPI) CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
 	return a.client.CreateWorkflowRun(ctx, req)
+}
+
+func (a *ClientAPI) ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error) {
+	if a == nil || a.client == nil {
+		return nil, errors.New("client is unavailable")
+	}
+	return a.client.ListWorkflowRuns(ctx)
 }
 
 func (a *ClientAPI) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {

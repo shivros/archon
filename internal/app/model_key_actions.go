@@ -204,6 +204,9 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 			}
 			return true, nil
 		}
+		if item != nil && item.kind == sidebarWorkflow {
+			return true, m.onSelectionChangedImmediate()
+		}
 		id := m.selectedSessionID()
 		if id == "" {
 			m.setValidationStatus("select a session to chat")

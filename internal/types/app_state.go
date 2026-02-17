@@ -9,6 +9,7 @@ type AppState struct {
 	SidebarCollapsed          bool                              `json:"sidebar_collapsed"`
 	SidebarWorkspaceExpanded  map[string]bool                   `json:"sidebar_workspace_expanded,omitempty"`
 	SidebarWorktreeExpanded   map[string]bool                   `json:"sidebar_worktree_expanded,omitempty"`
+	SidebarWorkflowExpanded   map[string]bool                   `json:"sidebar_workflow_expanded,omitempty"`
 	ComposeHistory            map[string][]string               `json:"compose_history,omitempty"`
 	ComposeDrafts             map[string]string                 `json:"compose_drafts,omitempty"`
 	NoteDrafts                map[string]string                 `json:"note_drafts,omitempty"`

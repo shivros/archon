@@ -17,12 +17,19 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs":
+			seen["list"] = true
+			_, _ = w.Write([]byte(`{"runs":[{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}]}`))
+			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs":
 			var req CreateWorkflowRunRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode create req: %v", err)
 			}
 			if req.WorkspaceID != "ws1" || req.WorktreeID != "wt1" || req.SessionID != "s1" {
+				t.Fatalf("unexpected create request payload: %+v", req)
+			}
+			if req.UserPrompt != "Fix workflow startup path" {
 				t.Fatalf("unexpected create request payload: %+v", req)
 			}
 			seen["create"] = true
@@ -80,12 +87,21 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		WorkspaceID: "ws1",
 		WorktreeID:  "wt1",
 		SessionID:   "s1",
+		UserPrompt:  "Fix workflow startup path",
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkflowRun error: %v", err)
 	}
 	if created == nil || created.ID != "gwf-1" {
 		t.Fatalf("unexpected created run: %#v", created)
+	}
+
+	runs, err := c.ListWorkflowRuns(ctx)
+	if err != nil {
+		t.Fatalf("ListWorkflowRuns error: %v", err)
+	}
+	if len(runs) != 1 || runs[0] == nil || runs[0].ID != "gwf-1" {
+		t.Fatalf("unexpected runs list: %#v", runs)
 	}
 
 	started, err := c.StartWorkflowRun(ctx, "gwf-1")
@@ -139,7 +155,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected metrics reset response: %#v", reset)
 	}
 
-	for _, key := range []string{"create", "start", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
+	for _, key := range []string{"list", "create", "start", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
 		if !seen[key] {
 			t.Fatalf("expected request %q to be executed", key)
 		}

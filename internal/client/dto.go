@@ -122,6 +122,7 @@ type CreateWorkflowRunRequest struct {
 	WorktreeID      string                                    `json:"worktree_id,omitempty"`
 	SessionID       string                                    `json:"session_id,omitempty"`
 	TaskID          string                                    `json:"task_id,omitempty"`
+	UserPrompt      string                                    `json:"user_prompt,omitempty"`
 	PolicyOverrides *guidedworkflows.CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
 }
 
@@ -133,4 +134,8 @@ type WorkflowRunDecisionRequest struct {
 
 type WorkflowRunTimelineResponse struct {
 	Timeline []guidedworkflows.RunTimelineEvent `json:"timeline"`
+}
+
+type WorkflowRunsResponse struct {
+	Runs []*guidedworkflows.WorkflowRun `json:"runs"`
 }

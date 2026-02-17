@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -27,6 +28,10 @@ func TestSidebarProjectionBuilderFiltersBySelectedGroups(t *testing.T) {
 		{ID: "s-a", CreatedAt: now},
 		{ID: "s-b", CreatedAt: now.Add(time.Second)},
 	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-a", WorkspaceID: "ws-a"},
+		{ID: "gwf-b", WorkspaceID: "ws-b"},
+	}
 	meta := map[string]*types.SessionMeta{
 		"s-a": {SessionID: "s-a", WorkspaceID: "ws-a"},
 		"s-b": {SessionID: "s-b", WorkspaceID: "ws-b"},
@@ -37,6 +42,7 @@ func TestSidebarProjectionBuilderFiltersBySelectedGroups(t *testing.T) {
 		Worktrees:          map[string][]*types.Worktree{},
 		Sessions:           sessions,
 		SessionMeta:        meta,
+		WorkflowRuns:       workflows,
 		ActiveWorkspaceIDs: []string{"g1"},
 	})
 	if len(projection.Workspaces) != 1 || projection.Workspaces[0].ID != "ws-a" {
@@ -44,6 +50,9 @@ func TestSidebarProjectionBuilderFiltersBySelectedGroups(t *testing.T) {
 	}
 	if len(projection.Sessions) != 1 || projection.Sessions[0].ID != "s-a" {
 		t.Fatalf("expected only s-a to be visible, got %#v", projection.Sessions)
+	}
+	if len(projection.WorkflowRuns) != 1 || projection.WorkflowRuns[0].ID != "gwf-a" {
+		t.Fatalf("expected only gwf-a to be visible, got %#v", projection.WorkflowRuns)
 	}
 }
 

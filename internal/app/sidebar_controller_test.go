@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -13,7 +14,7 @@ func TestSidebarControllerScrollingEnabledViewOnly(t *testing.T) {
 	controller.SetSize(32, 6)
 	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
 	sessions, meta := makeSidebarSessionFixtures("ws1", 20)
-	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, meta, "ws1", "", false)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
 	if !controller.SelectBySessionID("s20") {
 		t.Fatalf("expected to select session s20")
 	}
@@ -47,7 +48,7 @@ func TestSidebarControllerScrollbarSelectMovesViewportOnly(t *testing.T) {
 	controller.SetSize(32, 6)
 	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
 	sessions, meta := makeSidebarSessionFixtures("ws1", 24)
-	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, meta, "ws1", "", false)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
 	if !controller.SelectBySessionID("s24") {
 		t.Fatalf("expected to select session s24")
 	}
@@ -86,7 +87,7 @@ func TestSidebarControllerUnreadSessions(t *testing.T) {
 		"s2": {SessionID: "s2", WorkspaceID: "ws1", LastTurnID: "turn-2"},
 	}
 
-	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, meta, "ws1", "", false)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
 	if controller.delegate.isUnread("s1") || controller.delegate.isUnread("s2") {
 		t.Fatalf("did not expect unread sessions on initial load")
 	}
@@ -98,7 +99,7 @@ func TestSidebarControllerUnreadSessions(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
 		"s2": {SessionID: "s2", WorkspaceID: "ws1", LastTurnID: "turn-3"},
 	}
-	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, updatedMeta, "ws1", "", false)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, updatedMeta, "ws1", "", false)
 	if !controller.delegate.isUnread("s2") {
 		t.Fatalf("expected session s2 to be unread after new activity")
 	}
@@ -122,7 +123,7 @@ func TestSidebarControllerToggleSelectedContainer(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
 	}
 
-	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, meta, "ws1", "", false)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
 	if item := controller.SelectedItem(); item == nil || item.kind != sidebarSession {
 		t.Fatalf("expected session to be selected by default")
 	}
@@ -159,7 +160,7 @@ func TestSidebarControllerSelectBySessionIDAutoExpandsParents(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
 	}
 
-	controller.Apply(workspaces, worktrees, sessions, meta, "ws1", "wt1", false)
+	controller.Apply(workspaces, worktrees, sessions, nil, meta, "ws1", "wt1", false)
 	if len(controller.Items()) != 1 {
 		t.Fatalf("expected only workspace row when default collapsed")
 	}
@@ -176,7 +177,6 @@ func TestSidebarControllerSelectBySessionIDAutoExpandsParents(t *testing.T) {
 		t.Fatalf("expected worktree wt1 to be expanded")
 	}
 }
-
 func TestSidebarControllerSelectByKeySessionAutoExpandsParents(t *testing.T) {
 	controller := NewSidebarController()
 	controller.SetExpandByDefault(false)
@@ -194,7 +194,7 @@ func TestSidebarControllerSelectByKeySessionAutoExpandsParents(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
 	}
 
-	controller.Apply(workspaces, worktrees, sessions, meta, "ws1", "wt1", false)
+	controller.Apply(workspaces, worktrees, sessions, nil, meta, "ws1", "wt1", false)
 	if !controller.SelectByKey("sess:s1") {
 		t.Fatalf("expected SelectByKey(sess:s1) to select hidden session")
 	}
@@ -220,7 +220,7 @@ func TestSidebarControllerSelectByKeyWorktreeAutoExpandsWorkspace(t *testing.T) 
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
 	}
 
-	controller.Apply(workspaces, worktrees, sessions, meta, "ws1", "wt1", false)
+	controller.Apply(workspaces, worktrees, sessions, nil, meta, "ws1", "wt1", false)
 	if !controller.CanSelectKey("wt:wt1") {
 		t.Fatalf("expected CanSelectKey(wt:wt1) to be true")
 	}
@@ -232,7 +232,6 @@ func TestSidebarControllerSelectByKeyWorktreeAutoExpandsWorkspace(t *testing.T) 
 		t.Fatalf("expected selected worktree wt1, got %#v", item)
 	}
 }
-
 func makeSidebarSessionFixtures(workspaceID string, count int) ([]*types.Session, map[string]*types.SessionMeta) {
 	now := time.Now().UTC()
 	sessions := make([]*types.Session, 0, count)
@@ -251,4 +250,34 @@ func makeSidebarSessionFixtures(workspaceID string, count int) ([]*types.Session
 		}
 	}
 	return sessions, meta
+}
+
+func TestSidebarControllerSelectBySessionIDAutoExpandsWorkflowParent(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, workflows, meta, "ws1", "", false)
+	if len(controller.Items()) != 1 {
+		t.Fatalf("expected only workspace row when default collapsed")
+	}
+	if !controller.SelectBySessionID("s1") {
+		t.Fatalf("expected SelectBySessionID to auto-expand and select s1")
+	}
+	if got := controller.SelectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1, got %q", got)
+	}
+	if !controller.IsWorkflowExpanded("gwf-1") {
+		t.Fatalf("expected workflow gwf-1 to be expanded")
+	}
 }

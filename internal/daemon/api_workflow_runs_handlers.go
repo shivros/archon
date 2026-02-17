@@ -24,29 +24,40 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, unavailableError("guided workflow run service not available", nil))
 		return
 	}
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		runs, err := service.ListRuns(r.Context())
+		if err != nil {
+			writeServiceError(w, toGuidedWorkflowServiceError(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+		return
+	case http.MethodPost:
+		var req CreateWorkflowRunRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
+			return
+		}
+		run, err := service.CreateRun(r.Context(), guidedworkflows.CreateRunRequest{
+			TemplateID:      strings.TrimSpace(req.TemplateID),
+			WorkspaceID:     strings.TrimSpace(req.WorkspaceID),
+			WorktreeID:      strings.TrimSpace(req.WorktreeID),
+			SessionID:       strings.TrimSpace(req.SessionID),
+			TaskID:          strings.TrimSpace(req.TaskID),
+			UserPrompt:      strings.TrimSpace(req.UserPrompt),
+			PolicyOverrides: req.PolicyOverrides,
+		})
+		if err != nil {
+			writeServiceError(w, toGuidedWorkflowServiceError(err))
+			return
+		}
+		writeJSON(w, http.StatusCreated, run)
+		return
+	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-
-	var req CreateWorkflowRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
-		return
-	}
-	run, err := service.CreateRun(r.Context(), guidedworkflows.CreateRunRequest{
-		TemplateID:      strings.TrimSpace(req.TemplateID),
-		WorkspaceID:     strings.TrimSpace(req.WorkspaceID),
-		WorktreeID:      strings.TrimSpace(req.WorktreeID),
-		SessionID:       strings.TrimSpace(req.SessionID),
-		TaskID:          strings.TrimSpace(req.TaskID),
-		PolicyOverrides: req.PolicyOverrides,
-	})
-	if err != nil {
-		writeServiceError(w, toGuidedWorkflowServiceError(err))
-		return
-	}
-	writeJSON(w, http.StatusCreated, run)
 }
 
 func (a *API) WorkflowRunMetricsEndpoint(w http.ResponseWriter, r *http.Request) {

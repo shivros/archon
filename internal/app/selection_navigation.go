@@ -76,7 +76,9 @@ func (defaultSelectionTransitionService) SelectionChanged(m *Model, delay time.D
 	item := m.selectedItem()
 	handled, stateChanged, draftChanged := m.applySelectionState(item)
 	var cmd tea.Cmd
-	if !handled {
+	if handled && item != nil && item.kind == sidebarWorkflow {
+		cmd = m.openGuidedWorkflowFromSidebar(item)
+	} else if !handled {
 		cmd = m.scheduleSessionLoad(item, delay)
 	} else if m.mode == uiModeRecents {
 		cmd = m.ensureRecentsPreviewForSelection()

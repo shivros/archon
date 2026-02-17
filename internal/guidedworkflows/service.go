@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 type RunService interface {
 	CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error)
+	ListRuns(ctx context.Context) ([]*WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*WorkflowRun, error)
@@ -231,6 +233,7 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		WorktreeID:        strings.TrimSpace(req.WorktreeID),
 		SessionID:         strings.TrimSpace(req.SessionID),
 		TaskID:            strings.TrimSpace(req.TaskID),
+		UserPrompt:        strings.TrimSpace(req.UserPrompt),
 		Mode:              s.cfg.Mode,
 		CheckpointStyle:   s.cfg.CheckpointStyle,
 		Policy:            MergeCheckpointPolicy(s.cfg.Policy, req.PolicyOverrides),
@@ -451,6 +454,30 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 	return updated, nil
 }
 
+func (s *InMemoryRunService) ListRuns(_ context.Context) ([]*WorkflowRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*WorkflowRun, 0, len(s.runs))
+	for _, run := range s.runs {
+		if run == nil {
+			continue
+		}
+		out = append(out, cloneWorkflowRun(run))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left := runListSortTime(out[i])
+		right := runListSortTime(out[j])
+		if left.Equal(right) {
+			return strings.TrimSpace(out[i].ID) < strings.TrimSpace(out[j].ID)
+		}
+		return left.After(right)
+	})
+	return out, nil
+}
+
 func (s *InMemoryRunService) GetRun(_ context.Context, runID string) (*WorkflowRun, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -459,6 +486,29 @@ func (s *InMemoryRunService) GetRun(_ context.Context, runID string) (*WorkflowR
 		return nil, err
 	}
 	return cloneWorkflowRun(run), nil
+}
+
+func runListSortTime(run *WorkflowRun) time.Time {
+	if run == nil {
+		return time.Time{}
+	}
+	latest := run.CreatedAt
+	if run.StartedAt != nil && run.StartedAt.After(latest) {
+		latest = *run.StartedAt
+	}
+	if run.PausedAt != nil && run.PausedAt.After(latest) {
+		latest = *run.PausedAt
+	}
+	if run.CompletedAt != nil && run.CompletedAt.After(latest) {
+		latest = *run.CompletedAt
+	}
+	if n := len(run.AuditTrail); n > 0 {
+		last := run.AuditTrail[n-1].At
+		if last.After(latest) {
+			latest = last
+		}
+	}
+	return latest
 }
 
 func (s *InMemoryRunService) GetRunTimeline(_ context.Context, runID string) ([]RunTimelineEvent, error) {
@@ -623,9 +673,13 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 		return false, nil
 	}
 	step := &phase.Steps[stepIndex]
-	prompt := strings.TrimSpace(step.Prompt)
-	if prompt == "" {
+	templatePrompt := strings.TrimSpace(step.Prompt)
+	if templatePrompt == "" {
 		return false, nil
+	}
+	dispatchPrompt := templatePrompt
+	if shouldPrefixUserPrompt(run) {
+		dispatchPrompt = composeInitialDispatchPrompt(run.UserPrompt, templatePrompt)
 	}
 	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
 		RunID:       strings.TrimSpace(run.ID),
@@ -635,7 +689,7 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 		SessionID:   strings.TrimSpace(run.SessionID),
 		PhaseID:     strings.TrimSpace(phase.ID),
 		StepID:      strings.TrimSpace(step.ID),
-		Prompt:      prompt,
+		Prompt:      dispatchPrompt,
 	})
 	if err != nil {
 		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
@@ -673,7 +727,7 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 	step.Outcome = "awaiting_turn"
 	step.Output = strings.TrimSpace(result.TurnID)
 	step.TurnID = strings.TrimSpace(result.TurnID)
-	recordStepExecutionDispatch(run, phase, step, result, prompt, now)
+	recordStepExecutionDispatch(run, phase, step, result, dispatchPrompt, now)
 	appendRunAudit(run, RunAuditEntry{
 		At:      now,
 		Scope:   "step",
@@ -1103,6 +1157,32 @@ func recordStepExecutionCompletion(run *WorkflowRun, phase *PhaseRun, step *Step
 	if len(step.ExecutionAttempts) > 0 {
 		step.ExecutionAttempts[len(step.ExecutionAttempts)-1] = *step.Execution
 	}
+}
+
+func shouldPrefixUserPrompt(run *WorkflowRun) bool {
+	if run == nil || strings.TrimSpace(run.UserPrompt) == "" {
+		return false
+	}
+	for _, phase := range run.Phases {
+		for _, step := range phase.Steps {
+			if step.Attempts > 0 || len(step.ExecutionAttempts) > 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func composeInitialDispatchPrompt(userPrompt, templatePrompt string) string {
+	userPrompt = strings.TrimSpace(userPrompt)
+	templatePrompt = strings.TrimSpace(templatePrompt)
+	if userPrompt == "" {
+		return templatePrompt
+	}
+	if templatePrompt == "" {
+		return userPrompt
+	}
+	return userPrompt + "\n\n" + templatePrompt
 }
 
 func (s *InMemoryRunService) mustRunLocked(runID string) (*WorkflowRun, error) {

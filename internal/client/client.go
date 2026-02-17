@@ -379,6 +379,14 @@ func (c *Client) CreateWorkflowRun(ctx context.Context, req CreateWorkflowRunReq
 	return &run, nil
 }
 
+func (c *Client) ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error) {
+	var resp WorkflowRunsResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/workflow-runs", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Runs, nil
+}
+
 func (c *Client) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {

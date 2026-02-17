@@ -294,6 +294,11 @@ type workflowRunCreatedMsg struct {
 	err error
 }
 
+type workflowRunsMsg struct {
+	runs []*guidedworkflows.WorkflowRun
+	err  error
+}
+
 type workflowRunStartedMsg struct {
 	run *guidedworkflows.WorkflowRun
 	err error

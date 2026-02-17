@@ -190,6 +190,9 @@ func normalizeSessionMeta(meta *types.SessionMeta, existing *types.SessionMeta) 
 		if normalized.WorktreeID == "" {
 			normalized.WorktreeID = existing.WorktreeID
 		}
+		if normalized.WorkflowRunID == "" {
+			normalized.WorkflowRunID = existing.WorkflowRunID
+		}
 		if normalized.ThreadID == "" {
 			normalized.ThreadID = existing.ThreadID
 		}

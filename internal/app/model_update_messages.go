@@ -25,6 +25,8 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		runID := ""
 		if msg.run != nil {
+			m.upsertWorkflowRun(msg.run)
+			m.applySidebarItemsIfDirty()
 			m.guidedWorkflow.SetRun(msg.run)
 			runID = strings.TrimSpace(msg.run.ID)
 		}
@@ -47,6 +49,8 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.renderGuidedWorkflowContent()
 			return true, nil
 		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
 		m.guidedWorkflow.SetRun(msg.run)
 		m.setStatusInfo("guided workflow running")
 		m.renderGuidedWorkflowContent()
@@ -66,6 +70,8 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.renderGuidedWorkflowContent()
 			return true, nil
 		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
 		m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
 		if msg.run != nil {
 			switch msg.run.Status {
@@ -89,6 +95,8 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.renderGuidedWorkflowContent()
 			return true, nil
 		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
 		m.guidedWorkflow.SetRun(msg.run)
 		m.renderGuidedWorkflowContent()
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
@@ -246,6 +254,14 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 
 func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case workflowRunsMsg:
+		if msg.err != nil {
+			m.setBackgroundError("guided workflow runs error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setWorkflowRunsData(msg.runs)
+		m.applySidebarItemsIfDirty()
+		return true, nil
 	case sessionsWithMetaMsg:
 		m.sessionMetaRefreshPending = false
 		m.sessionMetaSyncPending = false
