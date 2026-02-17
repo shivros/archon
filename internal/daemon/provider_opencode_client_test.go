@@ -230,7 +230,7 @@ func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 	if permissions[0].Reason != "Validate before merge" {
 		t.Fatalf("expected reason from metadata, got %#v", permissions[0])
 	}
-	if err := client.ReplyPermission(context.Background(), "", "perm-1", "approve", directory); err != nil {
+	if err := client.ReplyPermission(context.Background(), "", "perm-1", "approve", nil, directory); err != nil {
 		t.Fatalf("ReplyPermission: %v", err)
 	}
 	if replyPath != "/permission/perm-1/reply" {
@@ -968,7 +968,7 @@ func TestOpenCodeClientReplyPermissionUsesSessionEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	if err := client.ReplyPermission(context.Background(), "session-1", "perm-1", "accept", directory); err != nil {
+	if err := client.ReplyPermission(context.Background(), "session-1", "perm-1", "accept", []string{"continue"}, directory); err != nil {
 		t.Fatalf("ReplyPermission: %v", err)
 	}
 	if replyPath != "/session/session-1/permissions/perm-1" {
@@ -979,6 +979,51 @@ func TestOpenCodeClientReplyPermissionUsesSessionEndpoint(t *testing.T) {
 	}
 	if got := strings.TrimSpace(asString(replyBody["response"])); got != "once" {
 		t.Fatalf("unexpected response payload: %#v", replyBody)
+	}
+	responses, _ := replyBody["responses"].([]any)
+	if len(responses) != 1 || strings.TrimSpace(asString(responses[0])) != "continue" {
+		t.Fatalf("unexpected responses payload: %#v", replyBody)
+	}
+}
+
+func TestOpenCodeClientReplyPermissionFallsBackWhenSessionEndpointReturnsHTML(t *testing.T) {
+	var (
+		paths []string
+		body  map[string]any
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/session/session-1/permissions/perm-1":
+			w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+			_, _ = io.WriteString(w, "<!doctype html><html><body>spa</body></html>")
+			return
+		case "/permission/perm-1/reply":
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if err := client.ReplyPermission(context.Background(), "session-1", "perm-1", "accept", []string{"ignored-by-legacy"}, ""); err != nil {
+		t.Fatalf("ReplyPermission fallback: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected session path then legacy fallback, got %v", paths)
+	}
+	if paths[0] != "/session/session-1/permissions/perm-1" || paths[1] != "/permission/perm-1/reply" {
+		t.Fatalf("unexpected request order: %v", paths)
+	}
+	if got := strings.TrimSpace(asString(body["decision"])); got != "accept" {
+		t.Fatalf("unexpected legacy fallback payload: %#v", body)
 	}
 }
 

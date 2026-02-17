@@ -447,7 +447,7 @@ func (s *openCodePermissionService) ListPermissions(ctx context.Context, session
 	return out, nil
 }
 
-func (s *openCodePermissionService) ReplyPermission(ctx context.Context, sessionID, permissionID, decision, directory string) error {
+func (s *openCodePermissionService) ReplyPermission(ctx context.Context, sessionID, permissionID, decision string, responses []string, directory string) error {
 	if s == nil || s.requester == nil {
 		return errors.New("requester is required")
 	}
@@ -475,13 +475,33 @@ func (s *openCodePermissionService) ReplyPermission(ctx context.Context, session
 	sessionBody := map[string]any{
 		"response": normalizeOpenCodePermissionResponse(decision),
 	}
-	if err := s.requester.doJSON(ctx, http.MethodPost, sessionPath, sessionBody, nil); err != nil {
-		if !openCodeShouldFallbackLegacy(err) {
+	if len(responses) > 0 {
+		sessionBody["responses"] = append([]string(nil), responses...)
+	}
+	var sessionReply any
+	if err := s.requester.doJSON(ctx, http.MethodPost, sessionPath, sessionBody, &sessionReply); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if !openCodeShouldFallbackLegacy(err) && !openCodeShouldFallbackLegacySessionPermissionReply(err) {
 			return err
 		}
 		return s.requester.doJSON(ctx, http.MethodPost, legacyPath, legacyBody, nil)
 	}
 	return nil
+}
+
+func openCodeShouldFallbackLegacySessionPermissionReply(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Some OpenCode/Kilo builds serve SPA HTML for unknown API routes with HTTP 200.
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "invalid character '<'")
 }
 
 func (s *openCodeEventService) SubscribeSessionEvents(ctx context.Context, sessionID, directory string) (<-chan types.CodexEvent, func(), error) {

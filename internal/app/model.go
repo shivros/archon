@@ -57,6 +57,7 @@ const (
 	uiModeAddWorktree
 	uiModePickProvider
 	uiModeCompose
+	uiModeApprovalResponse
 	uiModeSearch
 	uiModeRenameWorkspace
 	uiModeRenameWorktree
@@ -75,154 +76,160 @@ const (
 )
 
 type Model struct {
-	workspaceAPI               WorkspaceAPI
-	sessionAPI                 SessionAPI
-	sessionSelectionAPI        SessionSelectionAPI
-	sessionHistoryAPI          SessionHistoryAPI
-	notesAPI                   NotesAPI
-	stateAPI                   StateAPI
-	clipboard                  ClipboardService
-	pickerPasteNormalizer      PickerPasteNormalizer
-	sidebar                    *SidebarController
-	viewport                   viewport.Model
-	mode                       uiMode
-	addWorkspace               *AddWorkspaceController
-	addWorktree                *AddWorktreeController
-	providerPicker             *ProviderPicker
-	compose                    *ComposeController
-	chatAddonController        *ChatInputAddonController
-	chatInput                  *TextInput
-	searchInput                *TextInput
-	renameInput                *TextInput
-	groupInput                 *TextInput
-	groupPicker                *GroupPicker
-	workspacePicker            *SelectPicker
-	groupSelectPicker          *SelectPicker
-	workspaceMulti             *MultiSelectPicker
-	noteInput                  *TextInput
-	renameWorkspaceID          string
-	renameWorktreeWorkspaceID  string
-	renameWorktreeID           string
-	renameSessionID            string
-	editWorkspaceID            string
-	renameGroupID              string
-	assignGroupID              string
-	status                     string
-	toastText                  string
-	toastLevel                 toastLevel
-	toastUntil                 time.Time
-	startupToasts              []queuedToast
-	width                      int
-	height                     int
-	follow                     bool
-	showDismissed              bool
-	workspaces                 []*types.Workspace
-	groups                     []*types.WorkspaceGroup
-	worktrees                  map[string][]*types.Worktree
-	sessions                   []*types.Session
-	sessionMeta                map[string]*types.SessionMeta
-	providerOptions            map[string]*types.ProviderOptionCatalog
-	appState                   types.AppState
-	hasAppState                bool
-	initialStateLoaded         bool
-	appStateSaveSeq            int
-	appStateSaveDirty          bool
-	appStateSaveScheduled      bool
-	appStateSaveScheduledSeq   int
-	appStateSaveInFlight       bool
-	stream                     *StreamController
-	codexStream                *CodexStreamController
-	itemStream                 *ItemStreamController
-	input                      *InputController
-	chat                       *SessionChatController
-	pendingApproval            *ApprovalRequest
-	sessionApprovals           map[string][]*ApprovalRequest
-	sessionApprovalResolutions map[string][]*ApprovalResolution
-	contentRaw                 string
-	contentEsc                 bool
-	contentBlocks              []ChatBlock
-	contentBlockSpans          []renderedBlockSpan
-	reasoningExpanded          map[string]bool
-	renderedText               string
-	renderedLines              []string
-	renderedPlain              []string
-	contentVersion             int
-	renderVersion              int
-	renderedForWidth           int
-	renderedForContent         int
-	renderedForSelection       int
-	renderedForTimestampMode   ChatTimestampMode
-	renderedForRelativeBucket  int64
-	searchQuery                string
-	searchMatches              []int
-	searchIndex                int
-	searchVersion              int
-	messageSelectActive        bool
-	messageSelectIndex         int
-	sectionOffsets             []int
-	sectionVersion             int
-	transcriptCache            map[string][]ChatBlock
-	pendingSessionKey          string
-	loading                    bool
-	loadingKey                 string
-	loader                     spinner.Model
-	pendingMouseCmd            tea.Cmd
-	lastSidebarWheelAt         time.Time
-	pendingSidebarWheel        bool
-	sidebarDragging            bool
-	lastSessionMetaRefreshAt   time.Time
-	lastSessionMetaSyncAt      time.Time
-	sessionMetaRefreshPending  bool
-	sessionMetaSyncPending     bool
-	streamRenderScheduler      RenderScheduler
-	pendingComposeOptionTarget composeOptionKind
-	pendingComposeOptionFor    string
-	menu                       *MenuController
-	hotkeys                    *HotkeyRenderer
-	keybindings                *Keybindings
-	contextMenu                *ContextMenuController
-	confirm                    *ConfirmController
-	newSession                 *newSessionTarget
-	pendingSelectID            string
-	selectSeq                  int
-	sendSeq                    int
-	pendingSends               map[int]pendingSend
-	composeHistory             map[string]*composeHistoryState
-	composeDrafts              map[string]string
-	noteDrafts                 map[string]string
-	requestActivity            requestActivity
-	tickFn                     func() tea.Cmd
-	pendingConfirm             confirmAction
-	scrollOnLoad               bool
-	notes                      []*types.Note
-	notesByScope               map[types.NoteScope][]*types.Note
-	notesFilters               notesFilterState
-	notesScope                 noteScopeTarget
-	notesReturnMode            uiMode
-	notesPanelOpen             bool
-	notesPanelVisible          bool
-	notesPanelWidth            int
-	notesPanelMainWidth        int
-	notesPanelPendingScopes    map[types.NoteScope]struct{}
-	notesPanelLoadErrors       int
-	notesPanelBlocks           []ChatBlock
-	notesPanelSpans            []renderedBlockSpan
-	notesPanelViewport         viewport.Model
-	noteMoveNoteID             string
-	noteMoveReturnMode         uiMode
-	uiLatency                  *uiLatencyTracker
-	selectionLoadPolicy        SessionSelectionLoadPolicy
-	historyLoadPolicy          SessionHistoryLoadPolicy
-	sidebarProjectionBuilder   SidebarProjectionBuilder
-	sidebarProjectionRevision  uint64
-	sidebarProjectionApplied   uint64
-	renderPipeline             RenderPipeline
-	layerComposer              LayerComposer
-	timestampMode              ChatTimestampMode
-	clockNow                   time.Time
-	reasoningSnapshotHash      uint64
-	reasoningSnapshotHas       bool
-	reasoningSnapshotCollapsed bool
+	workspaceAPI                WorkspaceAPI
+	sessionAPI                  SessionAPI
+	sessionSelectionAPI         SessionSelectionAPI
+	sessionHistoryAPI           SessionHistoryAPI
+	notesAPI                    NotesAPI
+	stateAPI                    StateAPI
+	clipboard                   ClipboardService
+	pickerPasteNormalizer       PickerPasteNormalizer
+	sidebar                     *SidebarController
+	viewport                    viewport.Model
+	mode                        uiMode
+	addWorkspace                *AddWorkspaceController
+	addWorktree                 *AddWorktreeController
+	providerPicker              *ProviderPicker
+	compose                     *ComposeController
+	chatAddonController         *ChatInputAddonController
+	chatInput                   *TextInput
+	searchInput                 *TextInput
+	renameInput                 *TextInput
+	groupInput                  *TextInput
+	groupPicker                 *GroupPicker
+	workspacePicker             *SelectPicker
+	groupSelectPicker           *SelectPicker
+	workspaceMulti              *MultiSelectPicker
+	noteInput                   *TextInput
+	approvalInput               *TextInput
+	renameWorkspaceID           string
+	renameWorktreeWorkspaceID   string
+	renameWorktreeID            string
+	renameSessionID             string
+	editWorkspaceID             string
+	renameGroupID               string
+	assignGroupID               string
+	status                      string
+	toastText                   string
+	toastLevel                  toastLevel
+	toastUntil                  time.Time
+	startupToasts               []queuedToast
+	width                       int
+	height                      int
+	follow                      bool
+	showDismissed               bool
+	workspaces                  []*types.Workspace
+	groups                      []*types.WorkspaceGroup
+	worktrees                   map[string][]*types.Worktree
+	sessions                    []*types.Session
+	sessionMeta                 map[string]*types.SessionMeta
+	providerOptions             map[string]*types.ProviderOptionCatalog
+	appState                    types.AppState
+	hasAppState                 bool
+	initialStateLoaded          bool
+	appStateSaveSeq             int
+	appStateSaveDirty           bool
+	appStateSaveScheduled       bool
+	appStateSaveScheduledSeq    int
+	appStateSaveInFlight        bool
+	stream                      *StreamController
+	codexStream                 *CodexStreamController
+	itemStream                  *ItemStreamController
+	input                       *InputController
+	chat                        *SessionChatController
+	pendingApproval             *ApprovalRequest
+	approvalResponseRequest     *ApprovalRequest
+	approvalResponseSessionID   string
+	approvalResponseRequestID   int
+	approvalResponseReturnMode  uiMode
+	approvalResponseReturnFocus inputFocus
+	sessionApprovals            map[string][]*ApprovalRequest
+	sessionApprovalResolutions  map[string][]*ApprovalResolution
+	contentRaw                  string
+	contentEsc                  bool
+	contentBlocks               []ChatBlock
+	contentBlockSpans           []renderedBlockSpan
+	reasoningExpanded           map[string]bool
+	renderedText                string
+	renderedLines               []string
+	renderedPlain               []string
+	contentVersion              int
+	renderVersion               int
+	renderedForWidth            int
+	renderedForContent          int
+	renderedForSelection        int
+	renderedForTimestampMode    ChatTimestampMode
+	renderedForRelativeBucket   int64
+	searchQuery                 string
+	searchMatches               []int
+	searchIndex                 int
+	searchVersion               int
+	messageSelectActive         bool
+	messageSelectIndex          int
+	sectionOffsets              []int
+	sectionVersion              int
+	transcriptCache             map[string][]ChatBlock
+	pendingSessionKey           string
+	loading                     bool
+	loadingKey                  string
+	loader                      spinner.Model
+	pendingMouseCmd             tea.Cmd
+	lastSidebarWheelAt          time.Time
+	pendingSidebarWheel         bool
+	sidebarDragging             bool
+	lastSessionMetaRefreshAt    time.Time
+	lastSessionMetaSyncAt       time.Time
+	sessionMetaRefreshPending   bool
+	sessionMetaSyncPending      bool
+	streamRenderScheduler       RenderScheduler
+	pendingComposeOptionTarget  composeOptionKind
+	pendingComposeOptionFor     string
+	menu                        *MenuController
+	hotkeys                     *HotkeyRenderer
+	keybindings                 *Keybindings
+	contextMenu                 *ContextMenuController
+	confirm                     *ConfirmController
+	newSession                  *newSessionTarget
+	pendingSelectID             string
+	selectSeq                   int
+	sendSeq                     int
+	pendingSends                map[int]pendingSend
+	composeHistory              map[string]*composeHistoryState
+	composeDrafts               map[string]string
+	noteDrafts                  map[string]string
+	requestActivity             requestActivity
+	tickFn                      func() tea.Cmd
+	pendingConfirm              confirmAction
+	scrollOnLoad                bool
+	notes                       []*types.Note
+	notesByScope                map[types.NoteScope][]*types.Note
+	notesFilters                notesFilterState
+	notesScope                  noteScopeTarget
+	notesReturnMode             uiMode
+	notesPanelOpen              bool
+	notesPanelVisible           bool
+	notesPanelWidth             int
+	notesPanelMainWidth         int
+	notesPanelPendingScopes     map[types.NoteScope]struct{}
+	notesPanelLoadErrors        int
+	notesPanelBlocks            []ChatBlock
+	notesPanelSpans             []renderedBlockSpan
+	notesPanelViewport          viewport.Model
+	noteMoveNoteID              string
+	noteMoveReturnMode          uiMode
+	uiLatency                   *uiLatencyTracker
+	selectionLoadPolicy         SessionSelectionLoadPolicy
+	historyLoadPolicy           SessionHistoryLoadPolicy
+	sidebarProjectionBuilder    SidebarProjectionBuilder
+	sidebarProjectionRevision   uint64
+	sidebarProjectionApplied    uint64
+	renderPipeline              RenderPipeline
+	layerComposer               LayerComposer
+	timestampMode               ChatTimestampMode
+	clockNow                    time.Time
+	reasoningSnapshotHash       uint64
+	reasoningSnapshotHas        bool
+	reasoningSnapshotCollapsed  bool
 }
 
 type newSessionTarget struct {
@@ -342,6 +349,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
 		workspaceMulti:             NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
 		noteInput:                  NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		approvalInput:              NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		status:                     "",
 		toastLevel:                 toastLevelInfo,
 		follow:                     true,
@@ -353,6 +361,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		contentEsc:                 false,
 		searchIndex:                -1,
 		searchVersion:              -1,
+		approvalResponseRequestID:  -1,
 		messageSelectIndex:         -1,
 		renderedForSelection:       -2,
 		renderedForRelativeBucket:  -1,
@@ -515,6 +524,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.reduceAddWorktreeMode(msg); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.reduceApprovalResponseMode(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.reduceWorkspaceEditModes(msg); handled {
 		return m, cmd
 	}
@@ -635,7 +647,10 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	if m.noteInput != nil {
 		m.noteInput.SetConfig(cfg)
 	}
-	inputHeightChanged := m.consumeInputHeightChanges(m.chatInput, m.noteInput)
+	if m.approvalInput != nil {
+		m.approvalInput.SetConfig(cfg)
+	}
+	inputHeightChanged := m.consumeInputHeightChanges(m.chatInput, m.noteInput, m.approvalInput)
 	if inputHeightChanged && m.width > 0 && m.height > 0 {
 		m.resize(m.width, m.height)
 		return
@@ -684,6 +699,12 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	if m.mode == uiModeCompose {
 		if m.chatInput != nil {
 			extraLines = m.chatInput.Height() + 2
+		} else {
+			extraLines = 3
+		}
+	} else if m.mode == uiModeApprovalResponse {
+		if m.approvalInput != nil {
+			extraLines = m.approvalInput.Height() + 2
 		} else {
 			extraLines = 3
 		}
@@ -3298,8 +3319,20 @@ func (m *Model) approveRequestForSession(sessionID string, decision string, requ
 		m.setValidationStatus("invalid approval request")
 		return nil
 	}
+	request := m.approvalRequestForSession(sessionID, requestID)
+	if request == nil && m.pendingApproval != nil {
+		pending := m.pendingApproval
+		pendingSessionID := strings.TrimSpace(pending.SessionID)
+		if pending.RequestID == requestID && (pendingSessionID == "" || strings.EqualFold(pendingSessionID, sessionID)) {
+			request = cloneApprovalRequest(pending)
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(decision), "accept") && approvalRequestNeedsResponse(request) {
+		m.enterApprovalResponse(sessionID, request)
+		return nil
+	}
 	m.setStatusMessage("sending approval")
-	return approveSessionCmd(m.sessionAPI, sessionID, requestID, decision)
+	return approveSessionCmd(m.sessionAPI, sessionID, requestID, decision, nil)
 }
 
 func selectApprovalRequest(records []*types.Approval) *ApprovalRequest {

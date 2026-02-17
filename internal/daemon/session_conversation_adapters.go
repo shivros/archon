@@ -640,7 +640,7 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 	return out, cancel, nil
 }
 
-func (openCodeConversationAdapter) Approve(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, requestID int, decision string, _ []string, _ map[string]any) error {
+func (openCodeConversationAdapter) Approve(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, requestID int, decision string, responses []string, _ map[string]any) error {
 	if session == nil {
 		return invalidError("session is required", nil)
 	}
@@ -676,7 +676,7 @@ func (openCodeConversationAdapter) Approve(ctx context.Context, service *Session
 	if err != nil {
 		return invalidError(err.Error(), err)
 	}
-	if err := client.ReplyPermission(ctx, providerSessionID, permissionID, decision, session.Cwd); err != nil {
+	if err := client.ReplyPermission(ctx, providerSessionID, permissionID, decision, responses, session.Cwd); err != nil {
 		return invalidError(err.Error(), err)
 	}
 	if err := service.stores.Approvals.Delete(ctx, session.ID, requestID); err != nil {

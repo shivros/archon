@@ -70,6 +70,9 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		}
 	case uiModeCompose:
 		headerText = "Chat"
+	case uiModeApprovalResponse:
+		headerText = "Approval Response"
+		bodyText = m.approvalResponseBody()
 	case uiModeSearch:
 		headerText = "Search"
 	case uiModeRenameWorkspace:
@@ -97,6 +100,11 @@ func (m *Model) modeInputView() (line string, scrollable bool) {
 		return InputPanel{
 			Input:  m.chatInput,
 			Footer: InputFooterFunc(m.composeControlsLine),
+		}.View()
+	case uiModeApprovalResponse:
+		return InputPanel{
+			Input:  m.approvalInput,
+			Footer: InputFooterFunc(m.approvalResponseFooter),
 		}.View()
 	case uiModeAddNote:
 		return InputPanel{Input: m.noteInput}.View()

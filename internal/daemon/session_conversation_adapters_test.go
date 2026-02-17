@@ -174,6 +174,97 @@ func TestOpenCodeConversationAdapterApproveRepliesPermission(t *testing.T) {
 	}
 }
 
+func TestOpenCodeConversationAdapterApproveForwardsResponsesToSessionEndpoint(t *testing.T) {
+	var (
+		receivedPath string
+		receivedBody map[string]any
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		auth := r.Header.Get("Authorization")
+		want := "Basic " + base64.StdEncoding.EncodeToString([]byte("opencode:token-123"))
+		if auth != want {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+	defer server.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	t.Setenv("OPENCODE_TOKEN", "token-123")
+	ctx := context.Background()
+	base := t.TempDir()
+	approvalStore := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
+	sessionMetaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	session := &types.Session{
+		ID:        "s-open-session-endpoint",
+		Provider:  "opencode",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: session,
+		Source:  sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session record: %v", err)
+	}
+	_, err = sessionMetaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:         session.ID,
+		ProviderSessionID: "remote-s-1",
+	})
+	if err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+	params, _ := json.Marshal(map[string]any{"permission_id": "perm-123"})
+	_, err = approvalStore.Upsert(ctx, &types.Approval{
+		SessionID: session.ID,
+		RequestID: 77,
+		Method:    "tool/requestUserInput",
+		Params:    params,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed approval: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: sessionMetaStore,
+		Approvals:   approvalStore,
+	}, nil, nil)
+
+	if err := service.Approve(ctx, session.ID, 77, "accept", []string{"first answer", "second answer"}, nil); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if receivedPath != "/session/remote-s-1/permissions/perm-123" {
+		t.Fatalf("unexpected permission reply path: %q", receivedPath)
+	}
+	if response := strings.TrimSpace(asString(receivedBody["response"])); response != "once" {
+		t.Fatalf("unexpected approval response payload: %#v", receivedBody)
+	}
+	rawResponses, _ := receivedBody["responses"].([]any)
+	if len(rawResponses) != 2 || asString(rawResponses[0]) != "first answer" || asString(rawResponses[1]) != "second answer" {
+		t.Fatalf("unexpected approval responses payload: %#v", receivedBody)
+	}
+	_, ok, err := approvalStore.Get(ctx, session.ID, 77)
+	if err != nil {
+		t.Fatalf("get approval after delete: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected approval to be deleted after successful reply")
+	}
+}
+
 func TestOpenCodeConversationAdapterSubscribeEventsSyncsApprovals(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

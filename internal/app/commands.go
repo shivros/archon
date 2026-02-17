@@ -564,13 +564,14 @@ func historyPollCmd(id, key string, attempt int, delay time.Duration, minAgents 
 	})
 }
 
-func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision string) tea.Cmd {
+func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision string, responses []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		req := client.ApproveSessionRequest{
 			RequestID: requestID,
 			Decision:  decision,
+			Responses: responses,
 		}
 		err := api.ApproveSession(ctx, id, req)
 		return approvalMsg{id: id, requestID: requestID, decision: decision, err: err}

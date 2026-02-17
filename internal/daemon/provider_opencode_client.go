@@ -318,11 +318,11 @@ func (c *openCodeClient) ListPermissions(ctx context.Context, sessionID, directo
 	return c.permissionSvc.ListPermissions(ctx, sessionID, directory)
 }
 
-func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permissionID, decision, directory string) error {
+func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permissionID, decision string, responses []string, directory string) error {
 	if c == nil || c.permissionSvc == nil {
 		return errors.New("permission service is required")
 	}
-	return c.permissionSvc.ReplyPermission(ctx, sessionID, permissionID, decision, directory)
+	return c.permissionSvc.ReplyPermission(ctx, sessionID, permissionID, decision, responses, directory)
 }
 
 func (c *openCodeClient) SubscribeSessionEvents(ctx context.Context, sessionID, directory string) (<-chan types.CodexEvent, func(), error) {

@@ -25,6 +25,89 @@ func TestSearchReducerEscExitsSearchMode(t *testing.T) {
 	}
 }
 
+func TestApprovePendingRequestUserInputEntersResponseMode(t *testing.T) {
+	m := NewModel(nil)
+	req := &ApprovalRequest{
+		RequestID: 7,
+		SessionID: "s1",
+		Method:    approvalMethodRequestUserInput,
+		Summary:   "user input",
+		Detail:    "Provide a reason",
+	}
+	m.pendingApproval = cloneApprovalRequest(req)
+	m.sessionApprovals["s1"] = []*ApprovalRequest{cloneApprovalRequest(req)}
+
+	cmd := m.approvePending("accept")
+	if cmd != nil {
+		t.Fatalf("expected no command until approval response is submitted")
+	}
+	if m.mode != uiModeApprovalResponse {
+		t.Fatalf("expected approval response mode, got %v", m.mode)
+	}
+	if got := m.approvalResponseSessionID; got != "s1" {
+		t.Fatalf("expected response session s1, got %q", got)
+	}
+	if got := m.approvalResponseRequestID; got != 7 {
+		t.Fatalf("expected response request id 7, got %d", got)
+	}
+}
+
+func TestApprovalResponseReducerEnterSubmits(t *testing.T) {
+	m := NewModel(nil)
+	req := &ApprovalRequest{
+		RequestID: 7,
+		SessionID: "s1",
+		Method:    approvalMethodRequestUserInput,
+		Summary:   "user input",
+		Detail:    "Provide a reason",
+	}
+	m.enterApprovalResponse("s1", req)
+	if m.approvalInput == nil {
+		t.Fatalf("expected approval input")
+	}
+	m.approvalInput.SetValue("because tests")
+
+	handled, cmd := m.reduceApprovalResponseMode(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected approval response reducer to handle enter")
+	}
+	if cmd == nil {
+		t.Fatalf("expected approval submit command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "sending approval" {
+		t.Fatalf("expected sending status, got %q", m.status)
+	}
+}
+
+func TestApprovalResponseReducerEscCancels(t *testing.T) {
+	m := NewModel(nil)
+	req := &ApprovalRequest{
+		RequestID: 7,
+		SessionID: "s1",
+		Method:    approvalMethodRequestUserInput,
+		Summary:   "user input",
+		Detail:    "Provide a reason",
+	}
+	m.enterApprovalResponse("s1", req)
+
+	handled, cmd := m.reduceApprovalResponseMode(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected approval response reducer to handle esc")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for cancel")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "approval input canceled" {
+		t.Fatalf("expected cancel status, got %q", m.status)
+	}
+}
+
 func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
 	m := NewModel(nil)
 	m.applyKeybindings(NewKeybindings(map[string]string{

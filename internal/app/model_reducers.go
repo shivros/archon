@@ -390,6 +390,27 @@ func (m *Model) reduceSearchModeKey(msg tea.Msg) (bool, tea.Cmd) {
 	return handled, cmd
 }
 
+func (m *Model) reduceApprovalResponseMode(msg tea.Msg) (bool, tea.Cmd) {
+	if m.mode != uiModeApprovalResponse {
+		return false, nil
+	}
+	if !isTextInputMsg(msg) {
+		return true, nil
+	}
+	controller := textInputModeController{
+		input:             m.approvalInput,
+		keyString:         m.keyString,
+		keyMatchesCommand: m.keyMatchesCommand,
+		onCancel:          m.cancelApprovalResponseInput,
+		onSubmit:          m.submitApprovalResponseInput,
+	}
+	handled, cmd := controller.Update(msg)
+	if handled && m.consumeInputHeightChanges(m.approvalInput) {
+		m.resize(m.width, m.height)
+	}
+	return handled, cmd
+}
+
 func (m *Model) newSingleLineInputController(input *TextInput, onCancel func() tea.Cmd, onSubmit func(text string) tea.Cmd) textInputModeController {
 	return textInputModeController{
 		input:             input,

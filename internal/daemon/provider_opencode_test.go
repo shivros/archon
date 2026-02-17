@@ -167,8 +167,8 @@ username = "archon"
 	if promptCalls.Load() != 2 {
 		t.Fatalf("expected second prompt call after send, got %d", promptCalls.Load())
 	}
-	if len(itemSink.items) < 4 {
-		t.Fatalf("expected user/assistant items to be appended, got %d", len(itemSink.items))
+	if itemSink.Len() < 4 {
+		t.Fatalf("expected user/assistant items to be appended, got %d", itemSink.Len())
 	}
 
 	if proc.Interrupt == nil {

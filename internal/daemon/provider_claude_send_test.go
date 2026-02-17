@@ -4,16 +4,40 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type testItemSink struct {
+	mu    sync.Mutex
 	items []map[string]any
 }
 
 func (s *testItemSink) Append(item map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.items = append(s.items, item)
+}
+
+func (s *testItemSink) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.items)
+}
+
+func (s *testItemSink) Snapshot() []map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]map[string]any, len(s.items))
+	for i, item := range s.items {
+		cloned := make(map[string]any, len(item))
+		for k, v := range item {
+			cloned[k] = v
+		}
+		items[i] = cloned
+	}
+	return items
 }
 
 func TestClaudeRunnerSendValidation(t *testing.T) {
@@ -73,12 +97,13 @@ func TestReadClaudeStreamParseErrorAndSessionID(t *testing.T) {
 	if sessionID != "abc123" {
 		t.Fatalf("expected session id callback, got %q", sessionID)
 	}
-	if len(itemSink.items) < 2 {
-		t.Fatalf("expected parse error log + system item, got %d items", len(itemSink.items))
+	items := itemSink.Snapshot()
+	if len(items) < 2 {
+		t.Fatalf("expected parse error log + system item, got %d items", len(items))
 	}
-	firstType, _ := itemSink.items[0]["type"].(string)
+	firstType, _ := items[0]["type"].(string)
 	if firstType != "log" {
-		t.Fatalf("expected first item to be parse log, got %#v", itemSink.items[0])
+		t.Fatalf("expected first item to be parse log, got %#v", items[0])
 	}
 	if !strings.Contains(logSink.stderr.String(), "claude parse error") {
 		t.Fatalf("expected parse error in stderr sink, got %q", logSink.stderr.String())
@@ -100,11 +125,12 @@ func TestClaudeRunnerAppendUserItem(t *testing.T) {
 	items := &testItemSink{}
 	runner := &claudeRunner{items: items}
 	runner.appendUserItem("hello")
-	if len(items.items) != 1 {
-		t.Fatalf("expected one item, got %d", len(items.items))
+	if items.Len() != 1 {
+		t.Fatalf("expected one item, got %d", items.Len())
 	}
-	if items.items[0]["type"] != "userMessage" {
-		t.Fatalf("unexpected item type: %#v", items.items[0]["type"])
+	snapshot := items.Snapshot()
+	if snapshot[0]["type"] != "userMessage" {
+		t.Fatalf("unexpected item type: %#v", snapshot[0]["type"])
 	}
 }
 

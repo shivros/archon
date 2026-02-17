@@ -116,7 +116,9 @@ func TestDefaultClipboardServiceCopyHonorsContextCancellation(t *testing.T) {
 		clipboardWriteOSC52 = origWriteOSC52
 	})
 
+	copyDone := make(chan struct{})
 	clipboardWriteAll = func(string) error {
+		defer close(copyDone)
 		time.Sleep(40 * time.Millisecond)
 		return nil
 	}
@@ -126,6 +128,11 @@ func TestDefaultClipboardServiceCopyHonorsContextCancellation(t *testing.T) {
 	defer cancel()
 
 	_, err := defaultClipboardService{}.Copy(ctx, "hello")
+	select {
+	case <-copyDone:
+	case <-time.After(time.Second):
+		t.Fatalf("clipboard copy goroutine did not finish")
+	}
 	if err == nil {
 		t.Fatalf("expected context cancellation error")
 	}
