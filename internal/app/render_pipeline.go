@@ -171,10 +171,10 @@ func hashRenderRequestBlocks(blocks []ChatBlock, width, maxLines, selected int, 
 	writeHashString(hasher, string(mode))
 	writeHashInt64(hasher, relativeBucket)
 	writeHashInt(hasher, len(blocks))
+	var buf [8]byte
 	for _, block := range blocks {
-		buf := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buf, hashChatBlock(block))
-		_, _ = hasher.Write(buf)
+		binary.LittleEndian.PutUint64(buf[:], hashChatBlock(block))
+		_, _ = hasher.Write(buf[:])
 	}
 	return hasher.Sum64()
 }

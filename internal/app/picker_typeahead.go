@@ -31,6 +31,17 @@ func (m *Model) applyPickerTypeAhead(msg tea.KeyMsg, picker queryPicker) bool {
 	return picker.AppendQuery(text)
 }
 
+func (m *Model) applyPickerPaste(msg tea.PasteMsg, picker queryPicker) bool {
+	if picker == nil {
+		return false
+	}
+	text := strings.TrimSpace(msg.Content)
+	if text == "" {
+		return false
+	}
+	return picker.AppendQuery(text)
+}
+
 func pickerTypeAheadText(msg tea.KeyMsg) string {
 	key := msg.Key()
 	if key.Text != "" {

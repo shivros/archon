@@ -512,12 +512,16 @@ func (m *Model) reduceNotesPanelLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 	if m.deleteNotesPanelByViewportPosition(col, line) {
 		return true
 	}
-	return m.copyNotesPanelByViewportPosition(col, line)
+	handled, cmd := m.copyNotesPanelByViewportPosition(col, line)
+	if cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
+	return handled
 }
 
-func (m *Model) copyNotesPanelByViewportPosition(col, line int) bool {
+func (m *Model) copyNotesPanelByViewportPosition(col, line int) (bool, tea.Cmd) {
 	if col < 0 || line < 0 || len(m.notesPanelBlocks) == 0 || len(m.notesPanelSpans) == 0 {
-		return false
+		return false, nil
 	}
 	absolute := m.notesPanelViewport.YOffset() + line
 	for _, span := range m.notesPanelSpans {
@@ -532,20 +536,19 @@ func (m *Model) copyNotesPanelByViewportPosition(col, line int) bool {
 		}
 		return m.copyNotesPanelBlockByIndex(span.BlockIndex)
 	}
-	return false
+	return false, nil
 }
 
-func (m *Model) copyNotesPanelBlockByIndex(index int) bool {
+func (m *Model) copyNotesPanelBlockByIndex(index int) (bool, tea.Cmd) {
 	if index < 0 || index >= len(m.notesPanelBlocks) {
-		return false
+		return false, nil
 	}
 	text := strings.TrimSpace(m.notesPanelBlocks[index].Text)
 	if text == "" {
 		m.setCopyStatusWarning("nothing to copy")
-		return true
+		return true, nil
 	}
-	m.copyWithStatus(text, "note copied")
-	return true
+	return true, m.copyWithStatusCmd(text, "note copied")
 }
 
 func (m *Model) deleteNotesPanelByViewportPosition(col, line int) bool {

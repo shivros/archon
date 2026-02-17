@@ -40,8 +40,7 @@ func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.setMessageSelectionIndex(len(m.contentBlocks) - 1)
 		return true, nil
 	case "y":
-		m.copySelectedMessage()
-		return true, nil
+		return true, m.copySelectedMessageCmd()
 	case "p":
 		return true, m.pinSelectedMessage()
 	case "enter":
@@ -303,10 +302,14 @@ func (m *Model) setMessageSelectionStatus() {
 	m.setStatusMessage(fmt.Sprintf("message %d/%d selected (%s) - y copy, esc exit", m.messageSelectIndex+1, len(m.contentBlocks), role))
 }
 
-func (m *Model) copySelectedMessage() {
+func (m *Model) copySelectedMessageCmd() tea.Cmd {
 	if m.messageSelectIndex < 0 || m.messageSelectIndex >= len(m.contentBlocks) {
 		m.setCopyStatusWarning("no message selected")
-		return
+		return nil
 	}
-	_ = m.copyBlockByIndex(m.messageSelectIndex)
+	handled, cmd := m.copyBlockByIndex(m.messageSelectIndex)
+	if !handled {
+		return nil
+	}
+	return cmd
 }

@@ -29,36 +29,40 @@ func (m *Model) reduceNoteMovePickerMode(msg tea.Msg) (bool, tea.Cmd) {
 	if !m.noteMovePickerModeActive() {
 		return false, nil
 	}
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return true, nil
-	}
-	switch keyMsg.String() {
-	case "esc":
-		if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
-			m.setStatusMessage("filter cleared")
+	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		if m.groupSelectPicker != nil && m.applyPickerPaste(msg, m.groupSelectPicker) {
 			return true, nil
 		}
-		m.exitNoteMovePicker("move canceled")
-		return true, nil
-	case "enter":
-		return true, m.handleNoteMovePickerSelection()
-	case "j", "down":
-		if m.groupSelectPicker != nil {
-			m.groupSelectPicker.Move(1)
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
+				m.setStatusMessage("filter cleared")
+				return true, nil
+			}
+			m.exitNoteMovePicker("move canceled")
+			return true, nil
+		case "enter":
+			return true, m.handleNoteMovePickerSelection()
+		case "j", "down":
+			if m.groupSelectPicker != nil {
+				m.groupSelectPicker.Move(1)
+			}
+			return true, nil
+		case "k", "up":
+			if m.groupSelectPicker != nil {
+				m.groupSelectPicker.Move(-1)
+			}
+			return true, nil
+		default:
+			if m.groupSelectPicker != nil {
+				m.applyPickerTypeAhead(msg, m.groupSelectPicker)
+			}
+			return true, nil
 		}
-		return true, nil
-	case "k", "up":
-		if m.groupSelectPicker != nil {
-			m.groupSelectPicker.Move(-1)
-		}
-		return true, nil
-	default:
-		if m.groupSelectPicker != nil {
-			m.applyPickerTypeAhead(keyMsg, m.groupSelectPicker)
-		}
-		return true, nil
 	}
+	return true, nil
 }
 
 func (m *Model) moveNoteByViewportPosition(col, line int) (bool, tea.Cmd) {

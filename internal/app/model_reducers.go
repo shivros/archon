@@ -61,134 +61,143 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		)
 		return controller.Update(msg)
 	case uiModePickWorkspaceRename, uiModePickWorkspaceGroupEdit:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
-			return true, nil
-		}
-		switch keyMsg.String() {
-		case "esc":
-			if m.workspacePicker != nil && m.workspacePicker.ClearQuery() {
-				m.setStatusMessage("filter cleared")
+		switch msg := msg.(type) {
+		case tea.PasteMsg:
+			if m.workspacePicker != nil && m.applyPickerPaste(msg, m.workspacePicker) {
 				return true, nil
 			}
-			m.exitWorkspacePicker("selection canceled")
-			return true, nil
-		case "enter":
-			id := ""
-			if m.workspacePicker != nil {
-				id = m.workspacePicker.SelectedID()
-			}
-			if id == "" {
-				m.setValidationStatus("no workspace selected")
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				if m.workspacePicker != nil && m.workspacePicker.ClearQuery() {
+					m.setStatusMessage("filter cleared")
+					return true, nil
+				}
+				m.exitWorkspacePicker("selection canceled")
+				return true, nil
+			case "enter":
+				id := ""
+				if m.workspacePicker != nil {
+					id = m.workspacePicker.SelectedID()
+				}
+				if id == "" {
+					m.setValidationStatus("no workspace selected")
+					return true, nil
+				}
+				if m.mode == uiModePickWorkspaceRename {
+					m.enterRenameWorkspace(id)
+				} else {
+					m.enterEditWorkspaceGroups(id)
+				}
+				return true, nil
+			case "j", "down":
+				if m.workspacePicker != nil {
+					m.workspacePicker.Move(1)
+				}
+				return true, nil
+			case "k", "up":
+				if m.workspacePicker != nil {
+					m.workspacePicker.Move(-1)
+				}
 				return true, nil
 			}
-			if m.mode == uiModePickWorkspaceRename {
-				m.enterRenameWorkspace(id)
-			} else {
-				m.enterEditWorkspaceGroups(id)
-			}
-			return true, nil
-		case "j", "down":
 			if m.workspacePicker != nil {
-				m.workspacePicker.Move(1)
+				m.applyPickerTypeAhead(msg, m.workspacePicker)
 			}
-			return true, nil
-		case "k", "up":
-			if m.workspacePicker != nil {
-				m.workspacePicker.Move(-1)
-			}
-			return true, nil
-		}
-		if m.workspacePicker != nil {
-			m.applyPickerTypeAhead(keyMsg, m.workspacePicker)
 		}
 		return true, nil
 	case uiModePickWorkspaceGroupRename, uiModePickWorkspaceGroupDelete, uiModePickWorkspaceGroupAssign:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
-			return true, nil
-		}
-		switch keyMsg.String() {
-		case "esc":
-			if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
-				m.setStatusMessage("filter cleared")
+		switch msg := msg.(type) {
+		case tea.PasteMsg:
+			if m.groupSelectPicker != nil && m.applyPickerPaste(msg, m.groupSelectPicker) {
 				return true, nil
 			}
-			m.exitWorkspacePicker("selection canceled")
-			return true, nil
-		case "enter":
-			id := ""
-			if m.groupSelectPicker != nil {
-				id = m.groupSelectPicker.SelectedID()
-			}
-			if id == "" {
-				m.setValidationStatus("no group selected")
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
+					m.setStatusMessage("filter cleared")
+					return true, nil
+				}
+				m.exitWorkspacePicker("selection canceled")
+				return true, nil
+			case "enter":
+				id := ""
+				if m.groupSelectPicker != nil {
+					id = m.groupSelectPicker.SelectedID()
+				}
+				if id == "" {
+					m.setValidationStatus("no group selected")
+					return true, nil
+				}
+				switch m.mode {
+				case uiModePickWorkspaceGroupRename:
+					m.enterRenameWorkspaceGroup(id)
+				case uiModePickWorkspaceGroupDelete:
+					m.confirmDeleteWorkspaceGroup(id)
+				case uiModePickWorkspaceGroupAssign:
+					m.enterAssignGroupWorkspaces(id)
+				}
+				return true, nil
+			case "j", "down":
+				if m.groupSelectPicker != nil {
+					m.groupSelectPicker.Move(1)
+				}
+				return true, nil
+			case "k", "up":
+				if m.groupSelectPicker != nil {
+					m.groupSelectPicker.Move(-1)
+				}
 				return true, nil
 			}
-			switch m.mode {
-			case uiModePickWorkspaceGroupRename:
-				m.enterRenameWorkspaceGroup(id)
-			case uiModePickWorkspaceGroupDelete:
-				m.confirmDeleteWorkspaceGroup(id)
-			case uiModePickWorkspaceGroupAssign:
-				m.enterAssignGroupWorkspaces(id)
-			}
-			return true, nil
-		case "j", "down":
 			if m.groupSelectPicker != nil {
-				m.groupSelectPicker.Move(1)
+				m.applyPickerTypeAhead(msg, m.groupSelectPicker)
 			}
-			return true, nil
-		case "k", "up":
-			if m.groupSelectPicker != nil {
-				m.groupSelectPicker.Move(-1)
-			}
-			return true, nil
-		}
-		if m.groupSelectPicker != nil {
-			m.applyPickerTypeAhead(keyMsg, m.groupSelectPicker)
 		}
 		return true, nil
 	case uiModeEditWorkspaceGroups:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
-			return true, nil
-		}
-		switch keyMsg.String() {
-		case "esc":
-			if m.groupPicker != nil && m.groupPicker.ClearQuery() {
-				m.setStatusMessage("filter cleared")
+		switch msg := msg.(type) {
+		case tea.PasteMsg:
+			if m.groupPicker != nil && m.applyPickerPaste(msg, m.groupPicker) {
 				return true, nil
 			}
-			m.exitEditWorkspaceGroups("edit canceled")
-			return true, nil
-		case "enter":
-			if m.groupPicker == nil {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				if m.groupPicker != nil && m.groupPicker.ClearQuery() {
+					m.setStatusMessage("filter cleared")
+					return true, nil
+				}
+				m.exitEditWorkspaceGroups("edit canceled")
 				return true, nil
+			case "enter":
+				if m.groupPicker == nil {
+					return true, nil
+				}
+				ids := m.groupPicker.SelectedIDs()
+				id := m.editWorkspaceID
+				if id == "" {
+					m.setValidationStatus("no workspace selected")
+					return true, nil
+				}
+				m.exitEditWorkspaceGroups("saving groups")
+				return true, updateWorkspaceGroupsCmd(m.workspaceAPI, id, ids)
+			case " ", "space":
+				if m.groupPicker != nil && m.groupPicker.Toggle() {
+					return true, nil
+				}
+			case "j", "down":
+				if m.groupPicker != nil && m.groupPicker.Move(1) {
+					return true, nil
+				}
+			case "k", "up":
+				if m.groupPicker != nil && m.groupPicker.Move(-1) {
+					return true, nil
+				}
 			}
-			ids := m.groupPicker.SelectedIDs()
-			id := m.editWorkspaceID
-			if id == "" {
-				m.setValidationStatus("no workspace selected")
-				return true, nil
+			if m.groupPicker != nil {
+				m.applyPickerTypeAhead(msg, m.groupPicker)
 			}
-			m.exitEditWorkspaceGroups("saving groups")
-			return true, updateWorkspaceGroupsCmd(m.workspaceAPI, id, ids)
-		case " ", "space":
-			if m.groupPicker != nil && m.groupPicker.Toggle() {
-				return true, nil
-			}
-		case "j", "down":
-			if m.groupPicker != nil && m.groupPicker.Move(1) {
-				return true, nil
-			}
-		case "k", "up":
-			if m.groupPicker != nil && m.groupPicker.Move(-1) {
-				return true, nil
-			}
-		}
-		if m.groupPicker != nil {
-			m.applyPickerTypeAhead(keyMsg, m.groupPicker)
 		}
 		return true, nil
 	case uiModeRenameWorkspaceGroup:
@@ -205,45 +214,48 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		)
 		return controller.Update(msg)
 	case uiModeAssignGroupWorkspaces:
-		keyMsg, ok := msg.(tea.KeyMsg)
-		if !ok {
-			return true, nil
-		}
-		switch keyMsg.String() {
-		case "esc":
-			if m.workspaceMulti != nil && m.workspaceMulti.ClearQuery() {
-				m.setStatusMessage("filter cleared")
+		switch msg := msg.(type) {
+		case tea.PasteMsg:
+			if m.workspaceMulti != nil && m.applyPickerPaste(msg, m.workspaceMulti) {
 				return true, nil
 			}
-			m.exitAssignGroupWorkspaces("assignment canceled")
-			return true, nil
-		case "enter":
-			if m.workspaceMulti == nil {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "esc":
+				if m.workspaceMulti != nil && m.workspaceMulti.ClearQuery() {
+					m.setStatusMessage("filter cleared")
+					return true, nil
+				}
+				m.exitAssignGroupWorkspaces("assignment canceled")
 				return true, nil
+			case "enter":
+				if m.workspaceMulti == nil {
+					return true, nil
+				}
+				ids := m.workspaceMulti.SelectedIDs()
+				groupID := m.assignGroupID
+				if groupID == "" {
+					m.setValidationStatus("no group selected")
+					return true, nil
+				}
+				m.exitAssignGroupWorkspaces("saving assignments")
+				return true, assignGroupWorkspacesCmd(m.workspaceAPI, groupID, ids, m.workspaces)
+			case " ", "space":
+				if m.workspaceMulti != nil && m.workspaceMulti.Toggle() {
+					return true, nil
+				}
+			case "j", "down":
+				if m.workspaceMulti != nil && m.workspaceMulti.Move(1) {
+					return true, nil
+				}
+			case "k", "up":
+				if m.workspaceMulti != nil && m.workspaceMulti.Move(-1) {
+					return true, nil
+				}
 			}
-			ids := m.workspaceMulti.SelectedIDs()
-			groupID := m.assignGroupID
-			if groupID == "" {
-				m.setValidationStatus("no group selected")
-				return true, nil
+			if m.workspaceMulti != nil {
+				m.applyPickerTypeAhead(msg, m.workspaceMulti)
 			}
-			m.exitAssignGroupWorkspaces("saving assignments")
-			return true, assignGroupWorkspacesCmd(m.workspaceAPI, groupID, ids, m.workspaces)
-		case " ", "space":
-			if m.workspaceMulti != nil && m.workspaceMulti.Toggle() {
-				return true, nil
-			}
-		case "j", "down":
-			if m.workspaceMulti != nil && m.workspaceMulti.Move(1) {
-				return true, nil
-			}
-		case "k", "up":
-			if m.workspaceMulti != nil && m.workspaceMulti.Move(-1) {
-				return true, nil
-			}
-		}
-		if m.workspaceMulti != nil {
-			m.applyPickerTypeAhead(keyMsg, m.workspaceMulti)
 		}
 		return true, nil
 	default:
@@ -289,6 +301,10 @@ func (m *Model) reducePickProviderMode(msg tea.Msg) (bool, tea.Cmd) {
 	case streamMsg:
 		m.applyStreamMsg(msg)
 		return true, nil
+	case tea.PasteMsg:
+		if m.providerPicker != nil && m.applyPickerPaste(msg, m.providerPicker) {
+			return true, nil
+		}
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
@@ -544,8 +560,7 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 					m.setCopyStatusWarning("no session selected")
 					return true, nil
 				}
-				m.copyWithStatus(id, "copied session id")
-				return true, nil
+				return true, m.copyWithStatusCmd(id, "copied session id")
 			}
 			if m.keyMatchesOverriddenCommand(msg, KeyCommandNotesNew, "n") {
 				return true, m.enterAddNoteForSelection()

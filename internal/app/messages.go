@@ -269,4 +269,9 @@ type selectDebounceMsg struct {
 	seq int
 }
 
+type clipboardResultMsg struct {
+	success string
+	err     error
+}
+
 type tickMsg time.Time

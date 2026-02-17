@@ -130,8 +130,7 @@ func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.setCopyStatusWarning("no session selected")
 			return true, nil
 		}
-		m.copyWithStatus(id, "copied session id")
-		return true, nil
+		return true, m.copyWithStatusCmd(id, "copied session id")
 	}
 	switch m.keyString(msg) {
 	case "/":

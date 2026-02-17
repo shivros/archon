@@ -6,9 +6,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func (m *Model) copyBlockByViewportPosition(col, line int) bool {
+func (m *Model) copyBlockByViewportPosition(col, line int) (bool, tea.Cmd) {
 	if col < 0 || line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
-		return false
+		return false, nil
 	}
 	absolute := m.viewport.YOffset() + line
 	for _, span := range m.contentBlockSpans {
@@ -23,20 +23,19 @@ func (m *Model) copyBlockByViewportPosition(col, line int) bool {
 		}
 		return m.copyBlockByIndex(span.BlockIndex)
 	}
-	return false
+	return false, nil
 }
 
-func (m *Model) copyBlockByIndex(index int) bool {
+func (m *Model) copyBlockByIndex(index int) (bool, tea.Cmd) {
 	if index < 0 || index >= len(m.contentBlocks) {
-		return false
+		return false, nil
 	}
 	text := strings.TrimSpace(m.contentBlocks[index].Text)
 	if text == "" {
 		m.setCopyStatusWarning("nothing to copy")
-		return true
+		return true, nil
 	}
-	m.copyWithStatus(text, "message copied")
-	return true
+	return true, m.copyWithStatusCmd(text, "message copied")
 }
 
 func (m *Model) pinBlockByViewportPosition(col, line int) (bool, tea.Cmd) {

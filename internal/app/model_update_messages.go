@@ -172,9 +172,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		previousSelection := m.selectedSessionSnapshot()
-		m.sessions = msg.sessions
-		m.sessionMeta = normalizeSessionMeta(msg.meta)
-		m.applySidebarItems()
+		m.setSessionsAndMeta(msg.sessions, normalizeSessionMeta(msg.meta))
+		m.applySidebarItemsIfDirty()
 		saveSidebarExpansionCmd := tea.Cmd(nil)
 		if m.pendingSelectID != "" && m.sidebar != nil {
 			if m.sidebar.SelectBySessionID(m.pendingSelectID) {
@@ -205,18 +204,16 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setBackgroundError("workspaces error: " + msg.err.Error())
 			return true, nil
 		}
-		m.workspaces = msg.workspaces
-		m.applySidebarItems()
+		m.setWorkspacesData(msg.workspaces)
+		m.applySidebarItemsIfDirty()
 		return true, m.fetchWorktreesForWorkspaces()
 	case worktreesMsg:
 		if msg.err != nil {
 			m.setBackgroundError("worktrees error: " + msg.err.Error())
 			return true, nil
 		}
-		if msg.workspaceID != "" {
-			m.worktrees[msg.workspaceID] = msg.worktrees
-		}
-		m.applySidebarItems()
+		m.setWorktreesData(msg.workspaceID, msg.worktrees)
+		m.applySidebarItemsIfDirty()
 		return true, nil
 	case notesMsg:
 		m.settleNotesPanelLoadScope(msg.scope, msg.err != nil)
@@ -315,6 +312,13 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.appStateSaveDirty {
 			return true, m.requestAppStateSaveCmd()
 		}
+		return true, nil
+	case clipboardResultMsg:
+		if msg.err != nil {
+			m.setCopyStatusError("copy failed: " + msg.err.Error())
+			return true, nil
+		}
+		m.setCopyStatusInfo(msg.success)
 		return true, nil
 	case providerOptionsMsg:
 		provider := strings.ToLower(strings.TrimSpace(msg.provider))
@@ -462,7 +466,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		now := time.Now().UTC()
 		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
-		m.applySidebarItems()
+		if m.sidebar != nil {
+			m.sidebar.updateUnreadSessions(m.sessions, m.sessionMeta)
+		}
 		m.startRequestActivity(msg.id, m.providerForSessionID(msg.id))
 		m.setStatusInfo("message sent")
 		m.clearPendingSend(msg.token)

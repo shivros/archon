@@ -81,6 +81,7 @@ type Model struct {
 	sessionHistoryAPI          SessionHistoryAPI
 	notesAPI                   NotesAPI
 	stateAPI                   StateAPI
+	clipboard                  ClipboardService
 	sidebar                    *SidebarController
 	viewport                   viewport.Model
 	mode                       uiMode
@@ -172,6 +173,7 @@ type Model struct {
 	lastSessionMetaSyncAt      time.Time
 	sessionMetaRefreshPending  bool
 	sessionMetaSyncPending     bool
+	streamRenderScheduler      RenderScheduler
 	pendingComposeOptionTarget composeOptionKind
 	pendingComposeOptionFor    string
 	menu                       *MenuController
@@ -210,10 +212,16 @@ type Model struct {
 	uiLatency                  *uiLatencyTracker
 	selectionLoadPolicy        SessionSelectionLoadPolicy
 	historyLoadPolicy          SessionHistoryLoadPolicy
+	sidebarProjectionBuilder   SidebarProjectionBuilder
+	sidebarProjectionRevision  uint64
+	sidebarProjectionApplied   uint64
 	renderPipeline             RenderPipeline
 	layerComposer              LayerComposer
 	timestampMode              ChatTimestampMode
 	clockNow                   time.Time
+	reasoningSnapshotHash      uint64
+	reasoningSnapshotHas       bool
+	reasoningSnapshotCollapsed bool
 }
 
 type newSessionTarget struct {
@@ -271,6 +279,18 @@ type confirmAction struct {
 	sessionIDs  []string
 }
 
+type sidebarProjectionChangeReason string
+
+const (
+	sidebarProjectionChangeSessions  sidebarProjectionChangeReason = "sessions"
+	sidebarProjectionChangeMeta      sidebarProjectionChangeReason = "meta"
+	sidebarProjectionChangeWorkspace sidebarProjectionChangeReason = "workspace"
+	sidebarProjectionChangeWorktree  sidebarProjectionChangeReason = "worktree"
+	sidebarProjectionChangeGroup     sidebarProjectionChangeReason = "group"
+	sidebarProjectionChangeDismissed sidebarProjectionChangeReason = "dismissed"
+	sidebarProjectionChangeAppState  sidebarProjectionChangeReason = "app_state"
+)
+
 func NewModel(client *client.Client, opts ...ModelOption) Model {
 	vp := viewport.New(viewport.WithWidth(minViewportWidth), viewport.WithHeight(minContentHeight-1))
 	vp.SetContent("No sessions.")
@@ -296,6 +316,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sessionHistoryAPI:          api,
 		notesAPI:                   api,
 		stateAPI:                   api,
+		clipboard:                  defaultClipboardService{},
 		sidebar:                    NewSidebarController(),
 		viewport:                   vp,
 		notesPanelViewport:         notesPanelVP,
@@ -355,7 +376,10 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		uiLatency:                  newUILatencyTracker(nil),
 		selectionLoadPolicy:        defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:          defaultSessionHistoryLoadPolicy{},
+		sidebarProjectionBuilder:   NewDefaultSidebarProjectionBuilder(),
+		sidebarProjectionRevision:  1,
 		renderPipeline:             NewDefaultRenderPipeline(),
+		streamRenderScheduler:      NewDefaultRenderScheduler(),
 		layerComposer:              NewTextLayerComposer(),
 		timestampMode:              ChatTimestampModeRelative,
 		clockNow:                   now,
@@ -930,89 +954,64 @@ func sessionIDFromSidebarKey(key string) string {
 	return strings.TrimSpace(strings.TrimPrefix(key, "sess:"))
 }
 
-func (m *Model) filteredWorkspaces() []*types.Workspace {
-	selected := map[string]bool{}
-	for _, id := range m.appState.ActiveWorkspaceGroupIDs {
-		selected[id] = true
+func (m *Model) invalidateSidebarProjection(_ sidebarProjectionChangeReason) {
+	if m == nil {
+		return
 	}
-	if len(selected) == 0 {
-		return []*types.Workspace{}
-	}
-	out := make([]*types.Workspace, 0, len(m.workspaces))
-	for _, ws := range m.workspaces {
-		if ws == nil {
-			continue
-		}
-		groupIDs := ws.GroupIDs
-		if len(groupIDs) == 0 {
-			if selected["ungrouped"] {
-				out = append(out, ws)
-			}
-			continue
-		}
-		for _, id := range groupIDs {
-			if selected[id] {
-				out = append(out, ws)
-				break
-			}
-		}
-	}
-	return out
+	m.sidebarProjectionRevision++
 }
 
-func (m *Model) filteredSessions(workspaces []*types.Workspace) []*types.Session {
-	selected := map[string]bool{}
-	for _, id := range m.appState.ActiveWorkspaceGroupIDs {
-		selected[id] = true
+func (m *Model) setActiveWorkspaceGroupIDs(ids []string) bool {
+	if m == nil {
+		return false
 	}
-	if len(selected) == 0 {
-		return []*types.Session{}
+	normalized := append([]string(nil), ids...)
+	if slicesEqual(m.appState.ActiveWorkspaceGroupIDs, normalized) {
+		return false
 	}
-	visibleWorkspaces := map[string]struct{}{}
-	for _, ws := range workspaces {
-		if ws == nil {
-			continue
-		}
-		visibleWorkspaces[ws.ID] = struct{}{}
+	m.appState.ActiveWorkspaceGroupIDs = normalized
+	m.hasAppState = true
+	m.invalidateSidebarProjection(sidebarProjectionChangeGroup)
+	return true
+}
+
+func (m *Model) setWorkspacesData(workspaces []*types.Workspace) {
+	if m == nil {
+		return
 	}
-	visibleWorktrees := map[string]struct{}{}
-	for wsID := range visibleWorkspaces {
-		for _, wt := range m.worktrees[wsID] {
-			if wt == nil {
-				continue
-			}
-			visibleWorktrees[wt.ID] = struct{}{}
-		}
+	m.workspaces = workspaces
+	m.invalidateSidebarProjection(sidebarProjectionChangeWorkspace)
+}
+
+func (m *Model) setSessionsAndMeta(sessions []*types.Session, meta map[string]*types.SessionMeta) {
+	if m == nil {
+		return
 	}
-	out := make([]*types.Session, 0, len(m.sessions))
-	for _, session := range m.sessions {
-		if session == nil {
-			continue
-		}
-		meta := m.sessionMeta[session.ID]
-		workspaceID := ""
-		worktreeID := ""
-		if meta != nil {
-			workspaceID = meta.WorkspaceID
-			worktreeID = meta.WorktreeID
-		}
-		if worktreeID != "" {
-			if _, ok := visibleWorktrees[worktreeID]; ok {
-				out = append(out, session)
-			}
-			continue
-		}
-		if workspaceID != "" {
-			if _, ok := visibleWorkspaces[workspaceID]; ok {
-				out = append(out, session)
-			}
-			continue
-		}
-		if selected["ungrouped"] {
-			out = append(out, session)
-		}
+	m.sessions = sessions
+	m.sessionMeta = meta
+	m.invalidateSidebarProjection(sidebarProjectionChangeSessions)
+}
+
+func (m *Model) setWorktreesData(workspaceID string, worktrees []*types.Worktree) {
+	if m == nil || strings.TrimSpace(workspaceID) == "" {
+		return
 	}
-	return out
+	if m.worktrees == nil {
+		m.worktrees = map[string][]*types.Worktree{}
+	}
+	m.worktrees[workspaceID] = worktrees
+	m.invalidateSidebarProjection(sidebarProjectionChangeWorktree)
+}
+
+func (m *Model) setShowDismissed(show bool) {
+	if m == nil {
+		return
+	}
+	if m.showDismissed == show {
+		return
+	}
+	m.showDismissed = show
+	m.invalidateSidebarProjection(sidebarProjectionChangeDismissed)
 }
 
 func (m *Model) handleMenuGroupChange(previous []string) bool {
@@ -1023,9 +1022,8 @@ func (m *Model) handleMenuGroupChange(previous []string) bool {
 	if slicesEqual(previous, next) {
 		return false
 	}
-	m.appState.ActiveWorkspaceGroupIDs = next
-	m.hasAppState = true
-	m.applySidebarItems()
+	m.setActiveWorkspaceGroupIDs(next)
+	m.applySidebarItemsIfDirty()
 	return true
 }
 
@@ -1035,9 +1033,20 @@ func (m *Model) applySidebarItems() {
 		m.setContentText("No sessions.")
 		return
 	}
-	workspaces := m.filteredWorkspaces()
-	sessions := m.filteredSessions(workspaces)
-	item := m.sidebar.Apply(workspaces, m.worktrees, sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
+	builder := m.sidebarProjectionBuilder
+	if builder == nil {
+		builder = NewDefaultSidebarProjectionBuilder()
+		m.sidebarProjectionBuilder = builder
+	}
+	projection := builder.Build(SidebarProjectionInput{
+		Workspaces:         m.workspaces,
+		Worktrees:          m.worktrees,
+		Sessions:           m.sessions,
+		SessionMeta:        m.sessionMeta,
+		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
+	})
+	item := m.sidebar.Apply(projection.Workspaces, m.worktrees, projection.Sessions, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
+	m.sidebarProjectionApplied = m.sidebarProjectionRevision
 	if item == nil {
 		m.resetStream()
 		m.setContentText("No sessions.")
@@ -1047,6 +1056,16 @@ func (m *Model) applySidebarItems() {
 		m.resetStream()
 		m.setContentText("Select a session.")
 	}
+}
+
+func (m *Model) applySidebarItemsIfDirty() {
+	if m == nil {
+		return
+	}
+	if m.sidebarProjectionApplied == m.sidebarProjectionRevision {
+		return
+	}
+	m.applySidebarItems()
 }
 
 func (m *Model) sidebarWidth() int {
@@ -1386,9 +1405,13 @@ func (m *Model) tickCmd() tea.Cmd {
 func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	now := time.Time(msg)
 	m.clockNow = now
-	m.consumeStreamTick()
-	m.consumeCodexTick()
-	m.consumeItemTick()
+	m.consumeStreamTick(now)
+	m.consumeCodexTick(now)
+	m.consumeItemTick(now)
+	if m.streamRenderScheduler != nil && m.streamRenderScheduler.ShouldRender(now) {
+		m.renderViewport()
+		m.streamRenderScheduler.MarkRendered(now)
+	}
 	if m.loading {
 		m.loader, _ = m.loader.Update(spinner.TickMsg{Time: now, ID: m.loader.ID()})
 		m.setLoadingContent()
@@ -1450,7 +1473,7 @@ func (m *Model) resetStream() {
 	m.stopRequestActivity()
 }
 
-func (m *Model) consumeStreamTick() {
+func (m *Model) consumeStreamTick(now time.Time) {
 	if m.stream == nil {
 		return
 	}
@@ -1460,12 +1483,13 @@ func (m *Model) consumeStreamTick() {
 	}
 	if changed {
 		if m.transcriptViewportVisible() {
-			m.applyLines(lines, true)
+			m.applyLinesNoRender(lines, true)
+			m.requestStreamRender(now)
 		}
 	}
 }
 
-func (m *Model) consumeCodexTick() {
+func (m *Model) consumeCodexTick(now time.Time) {
 	if m.codexStream == nil {
 		return
 	}
@@ -1488,7 +1512,8 @@ func (m *Model) consumeCodexTick() {
 			blocks = m.codexStream.Blocks()
 		}
 		if m.transcriptViewportVisible() {
-			m.applyBlocks(blocks)
+			m.applyBlocksNoRender(blocks)
+			m.requestStreamRender(now)
 		}
 		if sessionID != "" {
 			if m.transcriptViewportVisible() {
@@ -1512,7 +1537,8 @@ func (m *Model) consumeCodexTick() {
 				m.codexStream.SetSnapshotBlocks(blocks)
 				blocks = m.codexStream.Blocks()
 				if m.transcriptViewportVisible() {
-					m.applyBlocks(blocks)
+					m.applyBlocksNoRender(blocks)
+					m.requestStreamRender(now)
 				}
 				if key := m.selectedKey(); key != "" {
 					m.cacheTranscriptBlocks(key, blocks)
@@ -1536,7 +1562,7 @@ func (m *Model) consumeCodexTick() {
 	}
 }
 
-func (m *Model) consumeItemTick() {
+func (m *Model) consumeItemTick(now time.Time) {
 	if m.itemStream == nil {
 		return
 	}
@@ -1551,7 +1577,8 @@ func (m *Model) consumeItemTick() {
 	if changed {
 		blocks := m.itemStream.Blocks()
 		if m.transcriptViewportVisible() {
-			m.applyBlocks(blocks)
+			m.applyBlocksNoRender(blocks)
+			m.requestStreamRender(now)
 		}
 		if sessionID != "" {
 			m.noteRequestEvent(sessionID, 1)
@@ -1636,7 +1663,7 @@ func (m *Model) refreshWorkspaceID() string {
 }
 
 func (m *Model) toggleShowDismissed() tea.Cmd {
-	m.showDismissed = !m.showDismissed
+	m.setShowDismissed(!m.showDismissed)
 	if m.showDismissed {
 		m.setStatusMessage("showing dismissed sessions")
 	} else {
@@ -1704,21 +1731,36 @@ func (m *Model) setSnapshotBlocks(blocks []ChatBlock) {
 }
 
 func (m *Model) applyLines(lines []string, escape bool) {
+	m.applyLinesNoRender(lines, escape)
+	m.renderViewport()
+}
+
+func (m *Model) applyLinesNoRender(lines []string, escape bool) {
 	m.contentRaw = strings.Join(lines, "\n")
 	m.contentEsc = escape
 	m.contentBlocks = nil
 	m.contentBlockSpans = nil
+	m.reasoningSnapshotHash = 0
+	m.reasoningSnapshotHas = false
+	m.reasoningSnapshotCollapsed = false
 	m.clearMessageSelection()
 	m.contentVersion++
 	m.searchVersion = -1
 	m.sectionVersion = -1
-	m.renderViewport()
 }
 
 func (m *Model) applyBlocks(blocks []ChatBlock) {
+	m.applyBlocksNoRender(blocks)
+	m.renderViewport()
+}
+
+func (m *Model) applyBlocksNoRender(blocks []ChatBlock) {
 	if len(blocks) == 0 {
 		m.contentBlocks = nil
 		m.contentBlockSpans = nil
+		m.reasoningSnapshotHash = 0
+		m.reasoningSnapshotHas = false
+		m.reasoningSnapshotCollapsed = false
 	} else {
 		resolved := append([]ChatBlock(nil), blocks...)
 		autoExpandNewest := m.shouldAutoExpandNewestReasoning()
@@ -1751,6 +1793,10 @@ func (m *Model) applyBlocks(blocks []ChatBlock) {
 			resolved[i].Collapsed = true
 		}
 		m.contentBlocks = resolved
+		hash, hasReasoning, hasCollapsed := reasoningSnapshotState(resolved)
+		m.reasoningSnapshotHash = hash
+		m.reasoningSnapshotHas = hasReasoning
+		m.reasoningSnapshotCollapsed = hasCollapsed
 	}
 	m.clampMessageSelection()
 	m.contentRaw = ""
@@ -1758,7 +1804,6 @@ func (m *Model) applyBlocks(blocks []ChatBlock) {
 	m.contentVersion++
 	m.searchVersion = -1
 	m.sectionVersion = -1
-	m.renderViewport()
 }
 
 func (m *Model) shouldAutoExpandNewestReasoning() bool {
@@ -1824,6 +1869,9 @@ func (m *Model) setContentText(text string) {
 	m.contentEsc = false
 	m.contentBlocks = nil
 	m.contentBlockSpans = nil
+	m.reasoningSnapshotHash = 0
+	m.reasoningSnapshotHas = false
+	m.reasoningSnapshotCollapsed = false
 	m.clearMessageSelection()
 	m.contentVersion++
 	m.searchVersion = -1
@@ -1885,6 +1933,20 @@ func (m *Model) renderViewport() {
 	}
 	if m.follow {
 		m.viewport.GotoBottom()
+	}
+}
+
+func (m *Model) requestStreamRender(now time.Time) {
+	if m == nil {
+		return
+	}
+	if m.streamRenderScheduler == nil {
+		m.renderViewport()
+		return
+	}
+	if m.streamRenderScheduler.Request(now) {
+		m.renderViewport()
+		m.streamRenderScheduler.MarkRendered(now)
 	}
 }
 
@@ -2515,6 +2577,7 @@ func (m *Model) applyAppState(state *types.AppState) {
 			m.menu.SetSelectedGroupIDs(state.ActiveWorkspaceGroupIDs)
 		}
 	}
+	m.invalidateSidebarProjection(sidebarProjectionChangeAppState)
 	m.syncSidebarExpansionFromAppState()
 	m.updateDelegate()
 }

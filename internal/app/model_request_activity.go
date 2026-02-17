@@ -37,7 +37,7 @@ func (m *Model) startRequestActivity(sessionID, provider string) {
 		lastVisibleAt:        now,
 		baselineAgentReplies: countAgentRepliesBlocks(m.currentBlocks()),
 	}
-	hash, hasReasoning, _ := reasoningSnapshotState(m.currentBlocks())
+	hash, hasReasoning, _ := m.currentReasoningSnapshot()
 	if hasReasoning {
 		m.requestActivity.lastReasoningHash = hash
 	}
@@ -80,7 +80,7 @@ func (m *Model) noteRequestVisibleUpdate(sessionID string) {
 	m.requestActivity.lastVisibleAt = now
 	m.requestActivity.visibleCount++
 
-	hash, hasReasoning, hasCollapsed := reasoningSnapshotState(m.currentBlocks())
+	hash, hasReasoning, hasCollapsed := m.currentReasoningSnapshot()
 	if hasReasoning && hash != m.requestActivity.lastReasoningHash {
 		m.requestActivity.lastReasoningHash = hash
 		m.requestActivity.reasoningUpdates++
@@ -93,6 +93,16 @@ func (m *Model) noteRequestVisibleUpdate(sessionID string) {
 		}
 	}
 	m.maybeCompleteRequestActivity(sessionID)
+}
+
+func (m *Model) currentReasoningSnapshot() (hash uint64, hasReasoning bool, hasCollapsed bool) {
+	if m == nil {
+		return 0, false, false
+	}
+	if m.contentBlocks != nil {
+		return m.reasoningSnapshotHash, m.reasoningSnapshotHas, m.reasoningSnapshotCollapsed
+	}
+	return reasoningSnapshotState(m.currentBlocks())
 }
 
 func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {

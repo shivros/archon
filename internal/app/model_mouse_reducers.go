@@ -475,7 +475,9 @@ func (m *Model) reduceGlobalStatusCopyLeftPressMouse(msg tea.MouseMsg) bool {
 		m.setCopyStatusWarning("nothing to copy")
 		return true
 	}
-	m.copyWithStatus(text, "status copied")
+	if cmd := m.copyWithStatusCmd(text, "status copied"); cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
 	return true
 }
 
@@ -515,7 +517,11 @@ func (m *Model) reduceTranscriptCopyLeftPressMouse(msg tea.MouseMsg, layout mous
 	if mouse.Y < 1 || mouse.Y > m.viewport.Height() {
 		return false
 	}
-	return m.copyBlockByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
+	handled, cmd := m.copyBlockByViewportPosition(mouse.X-layout.rightStart, mouse.Y-1)
+	if cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
+	return handled
 }
 
 func (m *Model) reduceTranscriptPinLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {

@@ -1,11 +1,13 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCopyTextToClipboardUsesSystemBackend(t *testing.T) {
@@ -103,5 +105,31 @@ func TestWriteOSC52ClipboardReportsTTYError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "open /dev/tty") {
 		t.Fatalf("expected /dev/tty error, got %q", err.Error())
+	}
+}
+
+func TestDefaultClipboardServiceCopyHonorsContextCancellation(t *testing.T) {
+	origWriteAll := clipboardWriteAll
+	origWriteOSC52 := clipboardWriteOSC52
+	t.Cleanup(func() {
+		clipboardWriteAll = origWriteAll
+		clipboardWriteOSC52 = origWriteOSC52
+	})
+
+	clipboardWriteAll = func(string) error {
+		time.Sleep(40 * time.Millisecond)
+		return nil
+	}
+	clipboardWriteOSC52 = func(string) error { return nil }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	_, err := defaultClipboardService{}.Copy(ctx, "hello")
+	if err == nil {
+		t.Fatalf("expected context cancellation error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
 }

@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/atotto/clipboard"
 	osc52 "github.com/aymanbagabas/go-osc52/v2"
 )
@@ -15,7 +18,51 @@ type clipboardMethod uint8
 const (
 	clipboardMethodSystem clipboardMethod = iota
 	clipboardMethodOSC52
+	clipboardCopyTimeout = 2 * time.Second
 )
+
+type ClipboardService interface {
+	Copy(context.Context, string) (clipboardMethod, error)
+}
+
+type defaultClipboardService struct{}
+
+type clipboardCopyResult struct {
+	method clipboardMethod
+	err    error
+}
+
+func (defaultClipboardService) Copy(ctx context.Context, text string) (clipboardMethod, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return clipboardMethodSystem, err
+	}
+	done := make(chan clipboardCopyResult, 1)
+	go func() {
+		method, err := copyTextToClipboard(text)
+		done <- clipboardCopyResult{method: method, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return clipboardMethodSystem, ctx.Err()
+	case result := <-done:
+		if err := ctx.Err(); err != nil {
+			return clipboardMethodSystem, err
+		}
+		return result.method, result.err
+	}
+}
+
+func WithClipboardService(service ClipboardService) ModelOption {
+	return func(m *Model) {
+		if m == nil || service == nil {
+			return
+		}
+		m.clipboard = service
+	}
+}
 
 var clipboardWriteAll = clipboard.WriteAll
 var clipboardWriteOSC52 = writeOSC52Clipboard
@@ -35,14 +82,24 @@ func copyTextToClipboard(text string) (clipboardMethod, error) {
 	}
 }
 
-func (m *Model) copyWithStatus(text, success string) bool {
-	_, err := copyTextToClipboard(text)
-	if err != nil {
-		m.setCopyStatusError("copy failed: " + err.Error())
-		return false
+func (m *Model) copyWithStatusCmd(text, success string) tea.Cmd {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
 	}
-	m.setCopyStatusInfo(success)
-	return true
+	service := m.clipboard
+	if service == nil {
+		service = defaultClipboardService{}
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), clipboardCopyTimeout)
+		defer cancel()
+		_, err := service.Copy(ctx, text)
+		return clipboardResultMsg{
+			success: success,
+			err:     err,
+		}
+	}
 }
 
 func writeOSC52Clipboard(text string) error {

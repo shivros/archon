@@ -180,7 +180,7 @@ func TestPhase0ConsumeCodexTickSetsPendingApprovalStatus(t *testing.T) {
 	close(events)
 
 	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick()
+	m.consumeCodexTick(time.Now())
 
 	if m.pendingApproval == nil {
 		t.Fatalf("expected pending approval to be visible")
@@ -231,7 +231,7 @@ func TestPhase0ConsumeCodexTickKeepsApprovalOrderWithLaterAgentMessages(t *testi
 	close(events)
 
 	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick()
+	m.consumeCodexTick(time.Now())
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 5 {
@@ -305,7 +305,7 @@ func TestPhase0ConsumeCodexTickAcceptsApprovalRequestIDZero(t *testing.T) {
 	close(events)
 
 	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick()
+	m.consumeCodexTick(time.Now())
 
 	if m.pendingApproval == nil {
 		t.Fatalf("expected pending approval to be visible")
@@ -348,7 +348,7 @@ func TestPhase0ConsumeCodexTickPersistsApprovalWhenActiveStreamTargetMissing(t *
 	close(events)
 
 	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick()
+	m.consumeCodexTick(time.Now())
 
 	if m.pendingApproval == nil || m.pendingApproval.RequestID != 9 {
 		t.Fatalf("expected pending approval request 9, got %#v", m.pendingApproval)

@@ -95,7 +95,7 @@ func TestConsumeCodexTickDoesNotOverwriteNotesView(t *testing.T) {
 	close(ch)
 	m.codexStream.SetStream(ch, nil)
 
-	m.consumeCodexTick()
+	m.consumeCodexTick(time.Now())
 
 	after := m.currentBlocks()
 	if !reflect.DeepEqual(before, after) {

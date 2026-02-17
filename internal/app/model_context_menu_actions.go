@@ -75,8 +75,7 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 			m.setCopyStatusWarning("workspace path unavailable")
 			return true, nil
 		}
-		m.copyWithStatus(path, "copied workspace path")
-		return true, nil
+		return true, m.copyWithStatusCmd(path, "copied workspace path")
 	case ContextMenuWorkspaceDelete:
 		if target.id == "" || target.id == unassignedWorkspaceID {
 			m.setValidationStatus("select a workspace to delete")
@@ -134,8 +133,7 @@ func (m *Model) handleWorktreeContextMenuAction(action ContextMenuAction, target
 			m.setCopyStatusWarning("worktree path unavailable")
 			return true, nil
 		}
-		m.copyWithStatus(path, "copied worktree path")
-		return true, nil
+		return true, m.copyWithStatusCmd(path, "copied worktree path")
 	case ContextMenuWorktreeDelete:
 		if target.worktreeID == "" || target.workspaceID == "" {
 			m.setValidationStatus("select a worktree")
@@ -204,8 +202,7 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			m.setCopyStatusWarning("select a session")
 			return true, nil
 		}
-		m.copyWithStatus(target.sessionID, "copied session id")
-		return true, nil
+		return true, m.copyWithStatusCmd(target.sessionID, "copied session id")
 	default:
 		return false, nil
 	}

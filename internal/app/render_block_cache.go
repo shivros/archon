@@ -132,18 +132,18 @@ func writeHashInt(hasher hash.Hash64, value int) {
 	if hasher == nil {
 		return
 	}
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(value))
-	_, _ = hasher.Write(buf)
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(value))
+	_, _ = hasher.Write(buf[:])
 }
 
 func writeHashInt64(hasher hash.Hash64, value int64) {
 	if hasher == nil {
 		return
 	}
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(value))
-	_, _ = hasher.Write(buf)
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(value))
+	_, _ = hasher.Write(buf[:])
 }
 
 func writeHashBool(hasher hash.Hash64, value bool) {

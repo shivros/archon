@@ -692,6 +692,7 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatus(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected global status click to be handled")
 	}
+	flushPendingMouseCmd(t, &m)
 	if copied != "follow: paused" {
 		t.Fatalf("expected status copy payload %q, got %q", "follow: paused", copied)
 	}
@@ -801,6 +802,7 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatusOnZeroBasedBottomRow(t *tes
 	if !handled {
 		t.Fatalf("expected global status click on zero-based bottom row to be handled")
 	}
+	flushPendingMouseCmd(t, &m)
 	if copied != "ready" {
 		t.Fatalf("expected status copy payload %q, got %q", "ready", copied)
 	}
@@ -841,8 +843,29 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatusWithOneBasedX(t *testing.T)
 	if !handled {
 		t.Fatalf("expected global status click with one-based X to be handled")
 	}
+	flushPendingMouseCmd(t, &m)
 	if copied != "ready" {
 		t.Fatalf("expected status copy payload %q, got %q", "ready", copied)
+	}
+}
+
+func flushPendingMouseCmd(t *testing.T, m *Model) {
+	t.Helper()
+	if m == nil || m.pendingMouseCmd == nil {
+		return
+	}
+	cmd := m.pendingMouseCmd
+	m.pendingMouseCmd = nil
+	msg := cmd()
+	if msg == nil {
+		return
+	}
+	handled, next := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected pending mouse command message to be handled, got %T", msg)
+	}
+	if next != nil {
+		_ = next()
 	}
 }
 
