@@ -7,6 +7,14 @@ import (
 	"control/internal/types"
 )
 
+type staticSidebarProjectionInvalidationPolicy struct {
+	shouldInvalidate bool
+}
+
+func (p staticSidebarProjectionInvalidationPolicy) ShouldInvalidate(sidebarProjectionChangeReason) bool {
+	return p.shouldInvalidate
+}
+
 func TestSidebarProjectionBuilderFiltersBySelectedGroups(t *testing.T) {
 	builder := NewDefaultSidebarProjectionBuilder()
 	now := time.Now().UTC()
@@ -62,5 +70,37 @@ func TestSidebarProjectionBuilderIncludesUngrouped(t *testing.T) {
 	}
 	if len(projection.Sessions) != 1 || projection.Sessions[0].ID != "s-a" {
 		t.Fatalf("expected unassigned session to be visible, got %#v", projection.Sessions)
+	}
+}
+
+func TestDefaultSidebarProjectionInvalidationPolicyRecognizesKnownReasons(t *testing.T) {
+	policy := NewDefaultSidebarProjectionInvalidationPolicy()
+	reasons := []sidebarProjectionChangeReason{
+		sidebarProjectionChangeSessions,
+		sidebarProjectionChangeMeta,
+		sidebarProjectionChangeWorkspace,
+		sidebarProjectionChangeWorktree,
+		sidebarProjectionChangeGroup,
+		sidebarProjectionChangeDismissed,
+		sidebarProjectionChangeAppState,
+	}
+	for _, reason := range reasons {
+		if !policy.ShouldInvalidate(reason) {
+			t.Fatalf("expected policy to invalidate reason %q", reason)
+		}
+	}
+	if policy.ShouldInvalidate(sidebarProjectionChangeReason("unknown")) {
+		t.Fatalf("expected unknown reason to skip invalidation")
+	}
+}
+
+func TestModelInvalidateSidebarProjectionHonorsPolicy(t *testing.T) {
+	m := NewModel(nil, WithSidebarProjectionInvalidationPolicy(staticSidebarProjectionInvalidationPolicy{
+		shouldInvalidate: false,
+	}))
+	initial := m.sidebarProjectionRevision
+	m.invalidateSidebarProjection(sidebarProjectionChangeSessions)
+	if m.sidebarProjectionRevision != initial {
+		t.Fatalf("expected revision to remain %d, got %d", initial, m.sidebarProjectionRevision)
 	}
 }

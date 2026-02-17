@@ -76,160 +76,161 @@ const (
 )
 
 type Model struct {
-	workspaceAPI                WorkspaceAPI
-	sessionAPI                  SessionAPI
-	sessionSelectionAPI         SessionSelectionAPI
-	sessionHistoryAPI           SessionHistoryAPI
-	notesAPI                    NotesAPI
-	stateAPI                    StateAPI
-	clipboard                   ClipboardService
-	pickerPasteNormalizer       PickerPasteNormalizer
-	sidebar                     *SidebarController
-	viewport                    viewport.Model
-	mode                        uiMode
-	addWorkspace                *AddWorkspaceController
-	addWorktree                 *AddWorktreeController
-	providerPicker              *ProviderPicker
-	compose                     *ComposeController
-	chatAddonController         *ChatInputAddonController
-	chatInput                   *TextInput
-	searchInput                 *TextInput
-	renameInput                 *TextInput
-	groupInput                  *TextInput
-	groupPicker                 *GroupPicker
-	workspacePicker             *SelectPicker
-	groupSelectPicker           *SelectPicker
-	workspaceMulti              *MultiSelectPicker
-	noteInput                   *TextInput
-	approvalInput               *TextInput
-	renameWorkspaceID           string
-	renameWorktreeWorkspaceID   string
-	renameWorktreeID            string
-	renameSessionID             string
-	editWorkspaceID             string
-	renameGroupID               string
-	assignGroupID               string
-	status                      string
-	toastText                   string
-	toastLevel                  toastLevel
-	toastUntil                  time.Time
-	startupToasts               []queuedToast
-	width                       int
-	height                      int
-	follow                      bool
-	showDismissed               bool
-	workspaces                  []*types.Workspace
-	groups                      []*types.WorkspaceGroup
-	worktrees                   map[string][]*types.Worktree
-	sessions                    []*types.Session
-	sessionMeta                 map[string]*types.SessionMeta
-	providerOptions             map[string]*types.ProviderOptionCatalog
-	appState                    types.AppState
-	hasAppState                 bool
-	initialStateLoaded          bool
-	appStateSaveSeq             int
-	appStateSaveDirty           bool
-	appStateSaveScheduled       bool
-	appStateSaveScheduledSeq    int
-	appStateSaveInFlight        bool
-	stream                      *StreamController
-	codexStream                 *CodexStreamController
-	itemStream                  *ItemStreamController
-	input                       *InputController
-	chat                        *SessionChatController
-	pendingApproval             *ApprovalRequest
-	approvalResponseRequest     *ApprovalRequest
-	approvalResponseSessionID   string
-	approvalResponseRequestID   int
-	approvalResponseReturnMode  uiMode
-	approvalResponseReturnFocus inputFocus
-	sessionApprovals            map[string][]*ApprovalRequest
-	sessionApprovalResolutions  map[string][]*ApprovalResolution
-	contentRaw                  string
-	contentEsc                  bool
-	contentBlocks               []ChatBlock
-	contentBlockSpans           []renderedBlockSpan
-	reasoningExpanded           map[string]bool
-	renderedText                string
-	renderedLines               []string
-	renderedPlain               []string
-	contentVersion              int
-	renderVersion               int
-	renderedForWidth            int
-	renderedForContent          int
-	renderedForSelection        int
-	renderedForTimestampMode    ChatTimestampMode
-	renderedForRelativeBucket   int64
-	searchQuery                 string
-	searchMatches               []int
-	searchIndex                 int
-	searchVersion               int
-	messageSelectActive         bool
-	messageSelectIndex          int
-	sectionOffsets              []int
-	sectionVersion              int
-	transcriptCache             map[string][]ChatBlock
-	pendingSessionKey           string
-	loading                     bool
-	loadingKey                  string
-	loader                      spinner.Model
-	pendingMouseCmd             tea.Cmd
-	lastSidebarWheelAt          time.Time
-	pendingSidebarWheel         bool
-	sidebarDragging             bool
-	lastSessionMetaRefreshAt    time.Time
-	lastSessionMetaSyncAt       time.Time
-	sessionMetaRefreshPending   bool
-	sessionMetaSyncPending      bool
-	streamRenderScheduler       RenderScheduler
-	pendingComposeOptionTarget  composeOptionKind
-	pendingComposeOptionFor     string
-	menu                        *MenuController
-	hotkeys                     *HotkeyRenderer
-	keybindings                 *Keybindings
-	contextMenu                 *ContextMenuController
-	confirm                     *ConfirmController
-	newSession                  *newSessionTarget
-	pendingSelectID             string
-	selectSeq                   int
-	sendSeq                     int
-	pendingSends                map[int]pendingSend
-	composeHistory              map[string]*composeHistoryState
-	composeDrafts               map[string]string
-	noteDrafts                  map[string]string
-	requestActivity             requestActivity
-	tickFn                      func() tea.Cmd
-	pendingConfirm              confirmAction
-	scrollOnLoad                bool
-	notes                       []*types.Note
-	notesByScope                map[types.NoteScope][]*types.Note
-	notesFilters                notesFilterState
-	notesScope                  noteScopeTarget
-	notesReturnMode             uiMode
-	notesPanelOpen              bool
-	notesPanelVisible           bool
-	notesPanelWidth             int
-	notesPanelMainWidth         int
-	notesPanelPendingScopes     map[types.NoteScope]struct{}
-	notesPanelLoadErrors        int
-	notesPanelBlocks            []ChatBlock
-	notesPanelSpans             []renderedBlockSpan
-	notesPanelViewport          viewport.Model
-	noteMoveNoteID              string
-	noteMoveReturnMode          uiMode
-	uiLatency                   *uiLatencyTracker
-	selectionLoadPolicy         SessionSelectionLoadPolicy
-	historyLoadPolicy           SessionHistoryLoadPolicy
-	sidebarProjectionBuilder    SidebarProjectionBuilder
-	sidebarProjectionRevision   uint64
-	sidebarProjectionApplied    uint64
-	renderPipeline              RenderPipeline
-	layerComposer               LayerComposer
-	timestampMode               ChatTimestampMode
-	clockNow                    time.Time
-	reasoningSnapshotHash       uint64
-	reasoningSnapshotHas        bool
-	reasoningSnapshotCollapsed  bool
+	workspaceAPI                        WorkspaceAPI
+	sessionAPI                          SessionAPI
+	sessionSelectionAPI                 SessionSelectionAPI
+	sessionHistoryAPI                   SessionHistoryAPI
+	notesAPI                            NotesAPI
+	stateAPI                            StateAPI
+	clipboard                           ClipboardService
+	pickerPasteNormalizer               PickerPasteNormalizer
+	sidebar                             *SidebarController
+	viewport                            viewport.Model
+	mode                                uiMode
+	addWorkspace                        *AddWorkspaceController
+	addWorktree                         *AddWorktreeController
+	providerPicker                      *ProviderPicker
+	compose                             *ComposeController
+	chatAddonController                 *ChatInputAddonController
+	chatInput                           *TextInput
+	searchInput                         *TextInput
+	renameInput                         *TextInput
+	groupInput                          *TextInput
+	groupPicker                         *GroupPicker
+	workspacePicker                     *SelectPicker
+	groupSelectPicker                   *SelectPicker
+	workspaceMulti                      *MultiSelectPicker
+	noteInput                           *TextInput
+	approvalInput                       *TextInput
+	renameWorkspaceID                   string
+	renameWorktreeWorkspaceID           string
+	renameWorktreeID                    string
+	renameSessionID                     string
+	editWorkspaceID                     string
+	renameGroupID                       string
+	assignGroupID                       string
+	status                              string
+	toastText                           string
+	toastLevel                          toastLevel
+	toastUntil                          time.Time
+	startupToasts                       []queuedToast
+	width                               int
+	height                              int
+	follow                              bool
+	showDismissed                       bool
+	workspaces                          []*types.Workspace
+	groups                              []*types.WorkspaceGroup
+	worktrees                           map[string][]*types.Worktree
+	sessions                            []*types.Session
+	sessionMeta                         map[string]*types.SessionMeta
+	providerOptions                     map[string]*types.ProviderOptionCatalog
+	appState                            types.AppState
+	hasAppState                         bool
+	initialStateLoaded                  bool
+	appStateSaveSeq                     int
+	appStateSaveDirty                   bool
+	appStateSaveScheduled               bool
+	appStateSaveScheduledSeq            int
+	appStateSaveInFlight                bool
+	stream                              *StreamController
+	codexStream                         *CodexStreamController
+	itemStream                          *ItemStreamController
+	input                               *InputController
+	chat                                *SessionChatController
+	pendingApproval                     *ApprovalRequest
+	approvalResponseRequest             *ApprovalRequest
+	approvalResponseSessionID           string
+	approvalResponseRequestID           int
+	approvalResponseReturnMode          uiMode
+	approvalResponseReturnFocus         inputFocus
+	sessionApprovals                    map[string][]*ApprovalRequest
+	sessionApprovalResolutions          map[string][]*ApprovalResolution
+	contentRaw                          string
+	contentEsc                          bool
+	contentBlocks                       []ChatBlock
+	contentBlockSpans                   []renderedBlockSpan
+	reasoningExpanded                   map[string]bool
+	renderedText                        string
+	renderedLines                       []string
+	renderedPlain                       []string
+	contentVersion                      int
+	renderVersion                       int
+	renderedForWidth                    int
+	renderedForContent                  int
+	renderedForSelection                int
+	renderedForTimestampMode            ChatTimestampMode
+	renderedForRelativeBucket           int64
+	searchQuery                         string
+	searchMatches                       []int
+	searchIndex                         int
+	searchVersion                       int
+	messageSelectActive                 bool
+	messageSelectIndex                  int
+	sectionOffsets                      []int
+	sectionVersion                      int
+	transcriptCache                     map[string][]ChatBlock
+	pendingSessionKey                   string
+	loading                             bool
+	loadingKey                          string
+	loader                              spinner.Model
+	pendingMouseCmd                     tea.Cmd
+	lastSidebarWheelAt                  time.Time
+	pendingSidebarWheel                 bool
+	sidebarDragging                     bool
+	lastSessionMetaRefreshAt            time.Time
+	lastSessionMetaSyncAt               time.Time
+	sessionMetaRefreshPending           bool
+	sessionMetaSyncPending              bool
+	streamRenderScheduler               RenderScheduler
+	pendingComposeOptionTarget          composeOptionKind
+	pendingComposeOptionFor             string
+	menu                                *MenuController
+	hotkeys                             *HotkeyRenderer
+	keybindings                         *Keybindings
+	contextMenu                         *ContextMenuController
+	confirm                             *ConfirmController
+	newSession                          *newSessionTarget
+	pendingSelectID                     string
+	selectSeq                           int
+	sendSeq                             int
+	pendingSends                        map[int]pendingSend
+	composeHistory                      map[string]*composeHistoryState
+	composeDrafts                       map[string]string
+	noteDrafts                          map[string]string
+	requestActivity                     requestActivity
+	tickFn                              func() tea.Cmd
+	pendingConfirm                      confirmAction
+	scrollOnLoad                        bool
+	notes                               []*types.Note
+	notesByScope                        map[types.NoteScope][]*types.Note
+	notesFilters                        notesFilterState
+	notesScope                          noteScopeTarget
+	notesReturnMode                     uiMode
+	notesPanelOpen                      bool
+	notesPanelVisible                   bool
+	notesPanelWidth                     int
+	notesPanelMainWidth                 int
+	notesPanelPendingScopes             map[types.NoteScope]struct{}
+	notesPanelLoadErrors                int
+	notesPanelBlocks                    []ChatBlock
+	notesPanelSpans                     []renderedBlockSpan
+	notesPanelViewport                  viewport.Model
+	noteMoveNoteID                      string
+	noteMoveReturnMode                  uiMode
+	uiLatency                           *uiLatencyTracker
+	selectionLoadPolicy                 SessionSelectionLoadPolicy
+	historyLoadPolicy                   SessionHistoryLoadPolicy
+	sidebarProjectionBuilder            SidebarProjectionBuilder
+	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
+	sidebarProjectionRevision           uint64
+	sidebarProjectionApplied            uint64
+	renderPipeline                      RenderPipeline
+	layerComposer                       LayerComposer
+	timestampMode                       ChatTimestampMode
+	clockNow                            time.Time
+	reasoningSnapshotHash               uint64
+	reasoningSnapshotHas                bool
+	reasoningSnapshotCollapsed          bool
 }
 
 type newSessionTarget struct {
@@ -287,18 +288,6 @@ type confirmAction struct {
 	sessionIDs  []string
 }
 
-type sidebarProjectionChangeReason string
-
-const (
-	sidebarProjectionChangeSessions  sidebarProjectionChangeReason = "sessions"
-	sidebarProjectionChangeMeta      sidebarProjectionChangeReason = "meta"
-	sidebarProjectionChangeWorkspace sidebarProjectionChangeReason = "workspace"
-	sidebarProjectionChangeWorktree  sidebarProjectionChangeReason = "worktree"
-	sidebarProjectionChangeGroup     sidebarProjectionChangeReason = "group"
-	sidebarProjectionChangeDismissed sidebarProjectionChangeReason = "dismissed"
-	sidebarProjectionChangeAppState  sidebarProjectionChangeReason = "app_state"
-)
-
 func NewModel(client *client.Client, opts ...ModelOption) Model {
 	vp := viewport.New(viewport.WithWidth(minViewportWidth), viewport.WithHeight(minContentHeight-1))
 	vp.SetContent("No sessions.")
@@ -318,82 +307,83 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	chatAddon := NewChatInputAddon(minViewportWidth, 8)
 
 	model := Model{
-		workspaceAPI:               api,
-		sessionAPI:                 api,
-		sessionSelectionAPI:        api,
-		sessionHistoryAPI:          api,
-		notesAPI:                   api,
-		stateAPI:                   api,
-		clipboard:                  defaultClipboardService{},
-		pickerPasteNormalizer:      defaultPickerPasteNormalizer{},
-		sidebar:                    NewSidebarController(),
-		viewport:                   vp,
-		notesPanelViewport:         notesPanelVP,
-		stream:                     stream,
-		codexStream:                codexStream,
-		itemStream:                 itemStream,
-		input:                      NewInputController(),
-		chat:                       NewSessionChatController(api, codexStream),
-		mode:                       uiModeNormal,
-		addWorkspace:               NewAddWorkspaceController(minViewportWidth),
-		addWorktree:                NewAddWorktreeController(minViewportWidth),
-		providerPicker:             NewProviderPicker(minViewportWidth, minContentHeight-1),
-		compose:                    NewComposeController(minViewportWidth),
-		chatAddonController:        NewChatInputAddonController(chatAddon),
-		chatInput:                  NewTextInput(minViewportWidth, DefaultTextInputConfig()),
-		searchInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
-		renameInput:                NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
-		groupInput:                 NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
-		groupPicker:                NewGroupPicker(minViewportWidth, minContentHeight-1),
-		workspacePicker:            NewSelectPicker(minViewportWidth, minContentHeight-1),
-		groupSelectPicker:          NewSelectPicker(minViewportWidth, minContentHeight-1),
-		workspaceMulti:             NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
-		noteInput:                  NewTextInput(minViewportWidth, DefaultTextInputConfig()),
-		approvalInput:              NewTextInput(minViewportWidth, DefaultTextInputConfig()),
-		status:                     "",
-		toastLevel:                 toastLevelInfo,
-		follow:                     true,
-		groups:                     []*types.WorkspaceGroup{},
-		worktrees:                  map[string][]*types.Worktree{},
-		sessionMeta:                map[string]*types.SessionMeta{},
-		providerOptions:            map[string]*types.ProviderOptionCatalog{},
-		contentRaw:                 "No sessions.",
-		contentEsc:                 false,
-		searchIndex:                -1,
-		searchVersion:              -1,
-		approvalResponseRequestID:  -1,
-		messageSelectIndex:         -1,
-		renderedForSelection:       -2,
-		renderedForRelativeBucket:  -1,
-		sectionVersion:             -1,
-		transcriptCache:            map[string][]ChatBlock{},
-		reasoningExpanded:          map[string]bool{},
-		sessionApprovals:           map[string][]*ApprovalRequest{},
-		sessionApprovalResolutions: map[string][]*ApprovalResolution{},
-		loader:                     loader,
-		lastSessionMetaRefreshAt:   now,
-		lastSessionMetaSyncAt:      now,
-		hotkeys:                    hotkeyRenderer,
-		keybindings:                keybindings,
-		pendingSends:               map[int]pendingSend{},
-		composeHistory:             map[string]*composeHistoryState{},
-		composeDrafts:              map[string]string{},
-		noteDrafts:                 map[string]string{},
-		menu:                       NewMenuController(),
-		contextMenu:                NewContextMenuController(),
-		confirm:                    NewConfirmController(),
-		notesByScope:               map[types.NoteScope][]*types.Note{},
-		notesPanelPendingScopes:    map[types.NoteScope]struct{}{},
-		uiLatency:                  newUILatencyTracker(nil),
-		selectionLoadPolicy:        defaultSessionSelectionLoadPolicy{},
-		historyLoadPolicy:          defaultSessionHistoryLoadPolicy{},
-		sidebarProjectionBuilder:   NewDefaultSidebarProjectionBuilder(),
-		sidebarProjectionRevision:  1,
-		renderPipeline:             NewDefaultRenderPipeline(),
-		streamRenderScheduler:      NewDefaultRenderScheduler(),
-		layerComposer:              NewTextLayerComposer(),
-		timestampMode:              ChatTimestampModeRelative,
-		clockNow:                   now,
+		workspaceAPI:                        api,
+		sessionAPI:                          api,
+		sessionSelectionAPI:                 api,
+		sessionHistoryAPI:                   api,
+		notesAPI:                            api,
+		stateAPI:                            api,
+		clipboard:                           defaultClipboardService{},
+		pickerPasteNormalizer:               defaultPickerPasteNormalizer{},
+		sidebar:                             NewSidebarController(),
+		viewport:                            vp,
+		notesPanelViewport:                  notesPanelVP,
+		stream:                              stream,
+		codexStream:                         codexStream,
+		itemStream:                          itemStream,
+		input:                               NewInputController(),
+		chat:                                NewSessionChatController(api, codexStream),
+		mode:                                uiModeNormal,
+		addWorkspace:                        NewAddWorkspaceController(minViewportWidth),
+		addWorktree:                         NewAddWorktreeController(minViewportWidth),
+		providerPicker:                      NewProviderPicker(minViewportWidth, minContentHeight-1),
+		compose:                             NewComposeController(minViewportWidth),
+		chatAddonController:                 NewChatInputAddonController(chatAddon),
+		chatInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		searchInput:                         NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
+		renameInput:                         NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
+		groupInput:                          NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
+		groupPicker:                         NewGroupPicker(minViewportWidth, minContentHeight-1),
+		workspacePicker:                     NewSelectPicker(minViewportWidth, minContentHeight-1),
+		groupSelectPicker:                   NewSelectPicker(minViewportWidth, minContentHeight-1),
+		workspaceMulti:                      NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
+		noteInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		approvalInput:                       NewTextInput(minViewportWidth, DefaultTextInputConfig()),
+		status:                              "",
+		toastLevel:                          toastLevelInfo,
+		follow:                              true,
+		groups:                              []*types.WorkspaceGroup{},
+		worktrees:                           map[string][]*types.Worktree{},
+		sessionMeta:                         map[string]*types.SessionMeta{},
+		providerOptions:                     map[string]*types.ProviderOptionCatalog{},
+		contentRaw:                          "No sessions.",
+		contentEsc:                          false,
+		searchIndex:                         -1,
+		searchVersion:                       -1,
+		approvalResponseRequestID:           -1,
+		messageSelectIndex:                  -1,
+		renderedForSelection:                -2,
+		renderedForRelativeBucket:           -1,
+		sectionVersion:                      -1,
+		transcriptCache:                     map[string][]ChatBlock{},
+		reasoningExpanded:                   map[string]bool{},
+		sessionApprovals:                    map[string][]*ApprovalRequest{},
+		sessionApprovalResolutions:          map[string][]*ApprovalResolution{},
+		loader:                              loader,
+		lastSessionMetaRefreshAt:            now,
+		lastSessionMetaSyncAt:               now,
+		hotkeys:                             hotkeyRenderer,
+		keybindings:                         keybindings,
+		pendingSends:                        map[int]pendingSend{},
+		composeHistory:                      map[string]*composeHistoryState{},
+		composeDrafts:                       map[string]string{},
+		noteDrafts:                          map[string]string{},
+		menu:                                NewMenuController(),
+		contextMenu:                         NewContextMenuController(),
+		confirm:                             NewConfirmController(),
+		notesByScope:                        map[types.NoteScope][]*types.Note{},
+		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
+		uiLatency:                           newUILatencyTracker(nil),
+		selectionLoadPolicy:                 defaultSessionSelectionLoadPolicy{},
+		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
+		sidebarProjectionBuilder:            NewDefaultSidebarProjectionBuilder(),
+		sidebarProjectionInvalidationPolicy: NewDefaultSidebarProjectionInvalidationPolicy(),
+		sidebarProjectionRevision:           1,
+		renderPipeline:                      NewDefaultRenderPipeline(),
+		streamRenderScheduler:               NewDefaultRenderScheduler(),
+		layerComposer:                       NewTextLayerComposer(),
+		timestampMode:                       ChatTimestampModeRelative,
+		clockNow:                            now,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -977,8 +967,16 @@ func sessionIDFromSidebarKey(key string) string {
 	return strings.TrimSpace(strings.TrimPrefix(key, "sess:"))
 }
 
-func (m *Model) invalidateSidebarProjection(_ sidebarProjectionChangeReason) {
+func (m *Model) invalidateSidebarProjection(reason sidebarProjectionChangeReason) {
 	if m == nil {
+		return
+	}
+	policy := m.sidebarProjectionInvalidationPolicy
+	if policy == nil {
+		policy = NewDefaultSidebarProjectionInvalidationPolicy()
+		m.sidebarProjectionInvalidationPolicy = policy
+	}
+	if !policy.ShouldInvalidate(reason) {
 		return
 	}
 	m.sidebarProjectionRevision++

@@ -6,6 +6,18 @@ import (
 	"control/internal/types"
 )
 
+type sidebarProjectionChangeReason string
+
+const (
+	sidebarProjectionChangeSessions  sidebarProjectionChangeReason = "sessions"
+	sidebarProjectionChangeMeta      sidebarProjectionChangeReason = "meta"
+	sidebarProjectionChangeWorkspace sidebarProjectionChangeReason = "workspace"
+	sidebarProjectionChangeWorktree  sidebarProjectionChangeReason = "worktree"
+	sidebarProjectionChangeGroup     sidebarProjectionChangeReason = "group"
+	sidebarProjectionChangeDismissed sidebarProjectionChangeReason = "dismissed"
+	sidebarProjectionChangeAppState  sidebarProjectionChangeReason = "app_state"
+)
+
 type SidebarProjectionInput struct {
 	Workspaces         []*types.Workspace
 	Worktrees          map[string][]*types.Worktree
@@ -21,6 +33,10 @@ type SidebarProjection struct {
 
 type SidebarProjectionBuilder interface {
 	Build(input SidebarProjectionInput) SidebarProjection
+}
+
+type SidebarProjectionInvalidationPolicy interface {
+	ShouldInvalidate(reason sidebarProjectionChangeReason) bool
 }
 
 type defaultSidebarProjectionBuilder struct{}
@@ -146,5 +162,35 @@ func WithSidebarProjectionBuilder(builder SidebarProjectionBuilder) ModelOption 
 			return
 		}
 		m.sidebarProjectionBuilder = builder
+	}
+}
+
+type defaultSidebarProjectionInvalidationPolicy struct{}
+
+func NewDefaultSidebarProjectionInvalidationPolicy() SidebarProjectionInvalidationPolicy {
+	return defaultSidebarProjectionInvalidationPolicy{}
+}
+
+func (defaultSidebarProjectionInvalidationPolicy) ShouldInvalidate(reason sidebarProjectionChangeReason) bool {
+	switch reason {
+	case sidebarProjectionChangeSessions,
+		sidebarProjectionChangeMeta,
+		sidebarProjectionChangeWorkspace,
+		sidebarProjectionChangeWorktree,
+		sidebarProjectionChangeGroup,
+		sidebarProjectionChangeDismissed,
+		sidebarProjectionChangeAppState:
+		return true
+	default:
+		return false
+	}
+}
+
+func WithSidebarProjectionInvalidationPolicy(policy SidebarProjectionInvalidationPolicy) ModelOption {
+	return func(m *Model) {
+		if m == nil || policy == nil {
+			return
+		}
+		m.sidebarProjectionInvalidationPolicy = policy
 	}
 }
