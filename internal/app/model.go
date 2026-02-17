@@ -1210,7 +1210,9 @@ func (m *Model) handleMenuGroupChange(previous []string) bool {
 func (m *Model) applySidebarItems() {
 	if m.sidebar == nil {
 		m.resetStream()
-		m.setContentText("No sessions.")
+		if m.mode != uiModeGuidedWorkflow {
+			m.setContentText("No sessions.")
+		}
 		return
 	}
 	builder := m.sidebarProjectionBuilder
@@ -1231,7 +1233,9 @@ func (m *Model) applySidebarItems() {
 	m.sidebarProjectionApplied = m.sidebarProjectionRevision
 	if item == nil {
 		m.resetStream()
-		m.setContentText("No sessions.")
+		if m.mode != uiModeGuidedWorkflow {
+			m.setContentText("No sessions.")
+		}
 		return
 	}
 	if !item.isSession() {
@@ -1244,7 +1248,9 @@ func (m *Model) applySidebarItems() {
 			}
 			return
 		}
-		m.setContentText("Select a session.")
+		if m.mode != uiModeGuidedWorkflow {
+			m.setContentText("Select a session.")
+		}
 	}
 	if m.mode == uiModeRecents {
 		m.refreshRecentsContent()

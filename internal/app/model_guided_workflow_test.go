@@ -265,8 +265,8 @@ func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 		t.Fatalf("expected prompt input to capture pasted text, got %q", got)
 	}
 	inputView, _ := m.modeInputView()
-	if !strings.Contains(inputView, "Task Description") {
-		t.Fatalf("expected setup input panel guidance, got %q", inputView)
+	if strings.Contains(inputView, "Task Description") {
+		t.Fatalf("expected setup input panel to omit instructional footer text, got %q", inputView)
 	}
 }
 
@@ -377,6 +377,44 @@ func TestGuidedWorkflowSetupResizesViewportOnEnterAndInputGrowth(t *testing.T) {
 	maxContentLines := m.height - 1
 	if visibleLines > maxContentLines {
 		t.Fatalf("expected guided setup layout to fit viewport; visible=%d max=%d", visibleLines, maxContentLines)
+	}
+}
+
+func TestGuidedWorkflowSetupContentNotOverwrittenBySidebarRefresh(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+
+	workspaceRow := -1
+	for idx, item := range m.sidebar.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkspace {
+			continue
+		}
+		workspaceRow = idx
+		break
+	}
+	if workspaceRow < 0 {
+		t.Fatalf("expected workspace row in sidebar")
+	}
+	m.sidebar.Select(workspaceRow)
+
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+	})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+	if !strings.Contains(m.contentRaw, "Run Setup") {
+		t.Fatalf("expected setup content before sidebar refresh, got %q", m.contentRaw)
+	}
+
+	m.applySidebarItems()
+	if strings.Contains(m.contentRaw, "Select a session.") {
+		t.Fatalf("expected guided workflow content not to be overwritten by sidebar refresh, got %q", m.contentRaw)
+	}
+	if !strings.Contains(m.contentRaw, "Run Setup") {
+		t.Fatalf("expected setup content to remain visible after sidebar refresh, got %q", m.contentRaw)
 	}
 }
 

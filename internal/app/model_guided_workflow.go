@@ -412,17 +412,7 @@ func (m *Model) guidedWorkflowSetupInputView() (line string, scrollable bool) {
 	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowPromptInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
 		return "", false
 	}
-	panel, scrollable := (InputPanel{
-		Input: m.guidedWorkflowPromptInput,
-		Footer: InputFooterFunc(func() string {
-			return strings.Join([]string{
-				"Task Description",
-				"- Paste is supported",
-				"- Shift+Enter inserts a newline",
-				"- Enter starts the guided run",
-			}, "\n")
-		}),
-	}).View()
+	panel, scrollable := (InputPanel{Input: m.guidedWorkflowPromptInput}).View()
 	if panel == "" {
 		return "", scrollable
 	}
@@ -437,9 +427,8 @@ func (m *Model) guidedWorkflowSetupInputLineCount() int {
 	if m.guidedWorkflowPromptInput != nil {
 		inputLines = max(1, m.guidedWorkflowPromptInput.Height())
 	}
-	const footerLines = 4
 	const frameLines = 2
-	return inputLines + footerLines + frameLines
+	return inputLines + frameLines
 }
 
 func (m *Model) openGuidedWorkflowLauncherFromSetup() {
