@@ -469,7 +469,7 @@ func watchRecentsTurnCompletionCmd(api SessionEventStreamAPI, id, expectedTurn s
 					// The daemon stream endpoint closes after turn completion.
 					return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn}
 				}
-				if strings.TrimSpace(event.Method) != "turn/completed" {
+				if !isTurnCompletedEventMethod(event.Method) {
 					continue
 				}
 				return recentsTurnCompletedMsg{
@@ -482,19 +482,36 @@ func watchRecentsTurnCompletionCmd(api SessionEventStreamAPI, id, expectedTurn s
 	}
 }
 
+func isTurnCompletedEventMethod(method string) bool {
+	switch strings.ToLower(strings.TrimSpace(method)) {
+	case "turn/completed", "turn.completed", "turn_completed":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseRecentsCompletionTurnID(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	var payload struct {
-		Turn struct {
-			ID string `json:"id"`
-		} `json:"turn"`
-	}
+	payload := map[string]any{}
 	if json.Unmarshal(raw, &payload) != nil {
 		return ""
 	}
-	return strings.TrimSpace(payload.Turn.ID)
+	if turnRaw, ok := payload["turn"]; ok {
+		if turnMap, ok := turnRaw.(map[string]any); ok {
+			if turnID := strings.TrimSpace(asString(turnMap["id"])); turnID != "" {
+				return turnID
+			}
+		}
+	}
+	for _, key := range []string{"turn_id", "turnID", "id"} {
+		if turnID := strings.TrimSpace(asString(payload[key])); turnID != "" {
+			return turnID
+		}
+	}
+	return ""
 }
 
 func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {

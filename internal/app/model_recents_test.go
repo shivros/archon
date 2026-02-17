@@ -86,6 +86,9 @@ func TestRecentsCardRendersControlsAboveBubble(t *testing.T) {
 	if replyIndex > bubbleIndex {
 		t.Fatalf("expected controls above bubble text, got %q", rendered)
 	}
+	if strings.Contains(m.renderRecentsContent(state), "\x1b[") {
+		t.Fatalf("expected recents content without ANSI escape sequences")
+	}
 }
 
 func TestRecentsTurnCompletedMessageMovesRunToReady(t *testing.T) {

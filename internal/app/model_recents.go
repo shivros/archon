@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
 )
@@ -309,7 +309,9 @@ func (m *Model) renderRecentsContent(state recentsViewState) string {
 
 func (m *Model) renderRecentsSection(builder *strings.Builder, title string, entries []recentsEntry) {
 	heading := fmt.Sprintf("%s (%d)", title, len(entries))
-	builder.WriteString(headerStyle.Render(heading))
+	builder.WriteString(heading)
+	builder.WriteString("\n")
+	builder.WriteString(strings.Repeat("-", min(72, max(16, len(heading)))))
 	builder.WriteString("\n")
 	if len(entries) == 0 {
 		builder.WriteString("No sessions.\n")
@@ -328,7 +330,7 @@ func (m *Model) renderRecentsCard(builder *strings.Builder, entry recentsEntry) 
 	}
 	selected := strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID
 	if selected {
-		builder.WriteString(selectedMessageStyle.Render("▶ Selected"))
+		builder.WriteString("▶ Selected")
 		builder.WriteString("\n")
 	}
 	statusLabel := "Running"
@@ -345,7 +347,7 @@ func (m *Model) renderRecentsCard(builder *strings.Builder, entry recentsEntry) 
 	if width > 0 {
 		metaSummary = truncateToWidth(metaSummary, width)
 	}
-	builder.WriteString(chatMetaStyle.Render(metaSummary))
+	builder.WriteString(metaSummary)
 	builder.WriteString("\n")
 	text := recentsPreviewText(entry, expanded)
 	bubble := m.renderRecentsBubble(text, selected, width)
@@ -368,44 +370,22 @@ func (m *Model) recentsContentWidth() int {
 }
 
 func (m *Model) renderRecentsControlsLine(entry recentsEntry, expanded bool, selected bool, width int) string {
-	if width <= 0 {
-		width = 80
-	}
 	expandLabel := "[Expand]"
 	if expanded {
 		expandLabel = "[Collapse]"
 	}
-	controls := []struct {
-		label string
-		style lipgloss.Style
-	}{
-		{label: "[Reply]", style: copyButtonStyle},
-		{label: expandLabel, style: copyButtonStyle},
-		{label: "[Open]", style: pinButtonStyle},
-	}
+	controls := []string{"[Reply]", expandLabel, "[Open]"}
 	if entry.Status == recentsEntryReady {
-		controls = append(controls, struct {
-			label string
-			style lipgloss.Style
-		}{
-			label: "[Dismiss]",
-			style: deleteButtonStyle,
-		})
+		controls = append(controls, "[Dismiss]")
 	}
-	plainParts := make([]string, 0, len(controls))
-	displayParts := make([]string, 0, len(controls))
-	for _, control := range controls {
-		plainParts = append(plainParts, control.label)
-		displayParts = append(displayParts, control.style.Render(control.label))
-	}
-	metaPlain := strings.Join(plainParts, " ")
-	metaDisplay := strings.Join(displayParts, chatMetaStyle.Render(" "))
-	metaStyle := chatMetaStyle
+	line := strings.Join(controls, " ")
 	if selected {
-		metaStyle = chatMetaSelectedStyle
+		line = "▶ " + line
 	}
-	metaLine, _ := composeChatMetaLine(width, lipgloss.Left, metaPlain, metaDisplay, "", "", false)
-	return metaStyle.Render(metaLine)
+	if width > 0 {
+		line = truncateToWidth(line, width)
+	}
+	return line
 }
 
 func recentsPreviewText(entry recentsEntry, expanded bool) string {
@@ -433,21 +413,55 @@ func (m *Model) renderRecentsBubble(text string, selected bool, width int) strin
 	if width <= 0 {
 		width = 80
 	}
-	maxBubbleWidth := width - 4
+	maxBubbleWidth := width - 2
 	if maxBubbleWidth < 10 {
 		maxBubbleWidth = width
 	}
-	innerWidth := maxBubbleWidth - 2 - 2
+	innerWidth := maxBubbleWidth - 4
 	if innerWidth < 1 {
 		innerWidth = 1
 	}
-	rendered := renderChatText(ChatRoleAgent, text, innerWidth)
-	style := agentBubbleStyle
-	if selected {
-		style = style.Copy().BorderForeground(lipgloss.Color("117"))
+	rendered := strings.TrimSpace(xansi.Strip(renderChatText(ChatRoleAgent, text, innerWidth)))
+	if rendered == "" {
+		rendered = " "
 	}
-	bubble := style.Render(rendered)
-	return lipgloss.PlaceHorizontal(width, lipgloss.Left, bubble)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		lines = []string{" "}
+	}
+	var builder strings.Builder
+	borderRune := "-"
+	if selected {
+		borderRune = "="
+	}
+	hRule := strings.Repeat(borderRune, innerWidth+2)
+	builder.WriteString("+")
+	builder.WriteString(hRule)
+	builder.WriteString("+")
+	builder.WriteString("\n")
+	for i, line := range lines {
+		if innerWidth > 0 {
+			line = truncateToWidth(line, innerWidth)
+		}
+		padding := innerWidth - xansi.StringWidth(line)
+		if padding < 0 {
+			padding = 0
+		}
+		builder.WriteString("| ")
+		builder.WriteString(line)
+		if padding > 0 {
+			builder.WriteString(strings.Repeat(" ", padding))
+		}
+		builder.WriteString(" |")
+		if i < len(lines)-1 {
+			builder.WriteString("\n")
+		}
+	}
+	builder.WriteString("\n")
+	builder.WriteString("+")
+	builder.WriteString(hRule)
+	builder.WriteString("+")
+	return builder.String()
 }
 
 func (m *Model) selectedRecentsEntry() (recentsEntry, bool) {
