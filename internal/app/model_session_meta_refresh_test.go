@@ -68,7 +68,7 @@ func TestSendMsgMarksNonSelectedSessionUnread(t *testing.T) {
 	}
 }
 
-func TestSendMsgRunTransitionsToReadyOnMetaAdvance(t *testing.T) {
+func TestSendMsgRunStaysRunningOnMetaAdvanceForEventProvider(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.showRecents = true
 	m.sessionMeta["s1"].LastTurnID = "turn-old"
@@ -90,11 +90,101 @@ func TestSendMsgRunTransitionsToReadyOnMetaAdvance(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected sessionsWithMetaMsg to be handled")
 	}
+	if !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to remain running; metadata should not complete event-capable runs")
+	}
+	if m.recents.IsReady("s1") {
+		t.Fatalf("expected s1 not to enter ready queue from metadata-only updates")
+	}
+}
+
+func TestSendMsgRunTransitionsToReadyOnMetaAdvanceForNonEventProvider(t *testing.T) {
+	m := newPhase0ModelWithSession("claude")
+	m.showRecents = true
+	m.sessionMeta["s1"].LastTurnID = "turn-old"
+
+	handled, _ := m.reduceStateMessages(sendMsg{id: "s1"})
+	if !handled {
+		t.Fatalf("expected sendMsg to be handled")
+	}
+	if m.recents == nil || !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to be tracked as running after send")
+	}
+
+	handled, _ = m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: m.sessions,
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-new"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
 	if !m.recents.IsReady("s1") {
-		t.Fatalf("expected s1 to move into ready queue after metadata advance")
+		t.Fatalf("expected non-event provider run to move into ready from metadata advance")
 	}
 	if m.recents.IsRunning("s1") {
-		t.Fatalf("expected s1 to leave running queue after metadata advance")
+		t.Fatalf("expected s1 to leave running after metadata completion fallback")
+	}
+}
+
+func TestSendMsgUsesSendTurnIDAsFallbackBaseline(t *testing.T) {
+	m := newPhase0ModelWithSession("claude")
+	m.showRecents = true
+	m.sessionMeta["s1"].LastTurnID = "turn-old"
+
+	handled, _ := m.reduceStateMessages(sendMsg{id: "s1", turnID: "turn-new"})
+	if !handled {
+		t.Fatalf("expected sendMsg to be handled")
+	}
+	if m.recents == nil || !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to be tracked as running after send")
+	}
+
+	handled, _ = m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: m.sessions,
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-new"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if !m.recents.IsRunning("s1") {
+		t.Fatalf("expected run to stay running when metadata equals send turn baseline")
+	}
+	if m.recents.IsReady("s1") {
+		t.Fatalf("expected no ready transition when metadata does not advance past send turn")
+	}
+}
+
+func TestSendMsgRunStaysRunningOnMetaAdvanceForUnknownProvider(t *testing.T) {
+	m := newPhase0ModelWithSession("my-provider")
+	m.showRecents = true
+	m.sessionMeta["s1"].LastTurnID = "turn-old"
+
+	handled, _ := m.reduceStateMessages(sendMsg{id: "s1"})
+	if !handled {
+		t.Fatalf("expected sendMsg to be handled")
+	}
+	if m.recents == nil || !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to be tracked as running after send")
+	}
+
+	handled, _ = m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: m.sessions,
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-new"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if !m.recents.IsRunning("s1") {
+		t.Fatalf("expected unknown-provider run to remain running without explicit completion signal")
+	}
+	if m.recents.IsReady("s1") {
+		t.Fatalf("expected unknown-provider run not to enter ready from metadata-only updates")
 	}
 }
 

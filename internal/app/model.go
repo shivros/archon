@@ -230,6 +230,7 @@ type Model struct {
 	uiLatency                           *uiLatencyTracker
 	selectionLoadPolicy                 SessionSelectionLoadPolicy
 	historyLoadPolicy                   SessionHistoryLoadPolicy
+	recentsCompletionPolicy             RecentsCompletionPolicy
 	sidebarProjectionBuilder            SidebarProjectionBuilder
 	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
 	sidebarProjectionRevision           uint64
@@ -409,6 +410,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		uiLatency:                           newUILatencyTracker(nil),
 		selectionLoadPolicy:                 defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
+		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
 		sidebarProjectionBuilder:            NewDefaultSidebarProjectionBuilder(),
 		sidebarProjectionInvalidationPolicy: NewDefaultSidebarProjectionInvalidationPolicy(),
 		sidebarProjectionRevision:           1,

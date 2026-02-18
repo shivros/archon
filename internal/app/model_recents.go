@@ -759,7 +759,7 @@ func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.
 		return nil
 	}
 	provider := m.providerForSessionID(sessionID)
-	if !providerSupportsEvents(provider) {
+	if !m.recentsCompletionPolicyOrDefault().ShouldWatchCompletion(provider) {
 		return nil
 	}
 	if m.recentsCompletionWatching == nil {
@@ -791,12 +791,7 @@ func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd 
 	if msg.err != nil {
 		return nil
 	}
-	completionTurn := strings.TrimSpace(msg.turnID)
-	if completionTurn == "" {
-		if meta := m.sessionMeta[sessionID]; meta != nil {
-			completionTurn = strings.TrimSpace(meta.LastTurnID)
-		}
-	}
+	completionTurn := m.recentsCompletionPolicyOrDefault().CompletionTurnID(msg.turnID, m.sessionMeta[sessionID])
 	if _, ok := m.recents.CompleteRun(sessionID, expectedTurn, completionTurn, time.Now().UTC()); !ok {
 		return nil
 	}
@@ -897,6 +892,37 @@ func (m *Model) refreshRecentsSidebarState() {
 	}
 	projection := m.buildSidebarProjection()
 	m.sidebar.SetRecentsState(m.sidebarRecentsState(projection.Sessions))
+}
+
+func (m *Model) recentsMetaFallbackMap() map[string]*types.SessionMeta {
+	if m == nil || len(m.sessionMeta) == 0 {
+		return nil
+	}
+	policy := m.recentsCompletionPolicyOrDefault()
+	providerBySessionID := make(map[string]string, len(m.sessions))
+	for _, session := range m.sessions {
+		if session == nil {
+			continue
+		}
+		sessionID := strings.TrimSpace(session.ID)
+		if sessionID == "" {
+			continue
+		}
+		providerBySessionID[sessionID] = strings.TrimSpace(session.Provider)
+	}
+	filtered := make(map[string]*types.SessionMeta, len(m.sessionMeta))
+	for sessionID, meta := range m.sessionMeta {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" || meta == nil {
+			continue
+		}
+		provider, ok := providerBySessionID[sessionID]
+		if !ok || !policy.ShouldUseMetaFallback(provider) {
+			continue
+		}
+		filtered[sessionID] = meta
+	}
+	return filtered
 }
 
 func (m *Model) recentsSectionEmptyText(title string) string {

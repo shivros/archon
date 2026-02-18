@@ -176,7 +176,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		recentsStateSaveCmd := tea.Cmd(nil)
 		if m.recents != nil {
 			m.recents.ObserveSessions(msg.sessions)
-			m.recents.ObserveMeta(m.sessionMeta, now)
+			m.recents.ObserveMeta(m.recentsMetaFallbackMap(), now)
 			m.syncRecentsCompletionWatches()
 			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
 		}
@@ -505,9 +505,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		now := time.Now().UTC()
 		baselineTurnID := ""
 		if m.recents != nil {
-			if entry := m.sessionMeta[msg.id]; entry != nil {
-				baselineTurnID = strings.TrimSpace(entry.LastTurnID)
-			}
+			baselineTurnID = m.recentsCompletionPolicyOrDefault().RunBaselineTurnID(msg.turnID, m.sessionMeta[msg.id])
 		}
 		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
 		watchCmd := tea.Cmd(nil)
@@ -650,9 +648,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		recentsStateSaveCmd := tea.Cmd(nil)
 		if m.recents != nil {
 			baseline := ""
-			if entry := m.sessionMeta[msg.session.ID]; entry != nil {
-				baseline = strings.TrimSpace(entry.LastTurnID)
-			}
+			baseline = m.recentsCompletionPolicyOrDefault().RunBaselineTurnID("", m.sessionMeta[msg.session.ID])
 			m.recents.StartRun(msg.session.ID, baseline, time.Now().UTC())
 			m.refreshRecentsSidebarState()
 			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
