@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -383,14 +384,63 @@ func TestGuidedWorkflowPromptDispatcherSkipsUnsupportedProvider(t *testing.T) {
 		WorkspaceID: "ws-1",
 		Prompt:      "hello",
 	})
-	if err != nil {
-		t.Fatalf("DispatchStepPrompt: %v", err)
+	if err == nil {
+		t.Fatalf("expected unsupported provider flow to fail dispatch")
+	}
+	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		t.Fatalf("expected ErrStepDispatch, got %v", err)
 	}
 	if result.Dispatched {
 		t.Fatalf("expected unsupported provider to skip dispatch, got %#v", result)
 	}
 	if len(gateway.sendCalls) != 0 {
 		t.Fatalf("expected no send calls for unsupported provider, got %#v", gateway.sendCalls)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one fallback start attempt, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "codex" {
+		t.Fatalf("expected codex fallback provider, got %q", gateway.startReqs[0].Provider)
+	}
+	if gateway.startReqs[0].WorkspaceID != "ws-1" {
+		t.Fatalf("expected workspace context on fallback start, got %+v", gateway.startReqs[0])
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherFallsBackToSupportedSession(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-claude", Provider: "claude", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-claude", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+		},
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-4",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-codex" || result.Provider != "codex" {
+		t.Fatalf("expected fallback dispatch through supported session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one fallback start request, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "codex" {
+		t.Fatalf("expected codex provider for fallback start, got %q", gateway.startReqs[0].Provider)
+	}
+	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-codex" {
+		t.Fatalf("expected send call against fallback session, got %#v", gateway.sendCalls)
 	}
 }
 

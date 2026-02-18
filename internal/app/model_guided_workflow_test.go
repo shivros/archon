@@ -685,6 +685,37 @@ func TestSelectingWorkflowChildSessionLoadsChat(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
+	now := time.Date(2026, 2, 18, 9, 0, 0, 0, time.UTC)
+	completedAt := now.Add(10 * time.Minute)
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:           "gwf-format",
+		TemplateID:   guidedworkflows.TemplateIDSolidPhaseDelivery,
+		TemplateName: "SOLID Phase Delivery",
+		Status:       guidedworkflows.WorkflowRunStatusCompleted,
+		CompletedAt:  &completedAt,
+		Phases: []guidedworkflows.PhaseRun{
+			{
+				ID:   "phase_delivery",
+				Name: "Phase Delivery",
+				Steps: []guidedworkflows.StepRun{
+					{ID: "phase_plan", Name: "phase plan", Status: guidedworkflows.StepRunStatusCompleted},
+					{ID: "implementation", Name: "implementation", Status: guidedworkflows.StepRunStatusCompleted},
+				},
+			},
+		},
+	})
+	content := controller.Render()
+	if !strings.Contains(content, "- Final status: completed  \n- Completed steps: 2/2") {
+		t.Fatalf("expected summary fields to render on separate lines, got %q", content)
+	}
+	if !strings.Contains(content, "- Completed steps: 2/2  \n- Decisions requested: 0") {
+		t.Fatalf("expected decision count on a separate line, got %q", content)
+	}
+}
+
 func newWorkflowRunFixture(id string, status guidedworkflows.WorkflowRunStatus, now time.Time) *guidedworkflows.WorkflowRun {
 	startedAt := now
 	return &guidedworkflows.WorkflowRun{

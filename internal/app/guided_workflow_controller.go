@@ -379,7 +379,7 @@ func (c *GuidedWorkflowUIController) renderLauncher() string {
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
-	return strings.Join(lines, "\n")
+	return joinGuidedWorkflowLines(lines)
 }
 
 func (c *GuidedWorkflowUIController) renderSetup() string {
@@ -412,7 +412,7 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
-	return strings.Join(lines, "\n")
+	return joinGuidedWorkflowLines(lines)
 }
 
 func (c *GuidedWorkflowUIController) renderLive() string {
@@ -423,14 +423,15 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 	lines := []string{
 		"Live Timeline",
 		"",
-		fmt.Sprintf("Run: %s", valueOrFallback(run.ID, "(pending)")),
-		fmt.Sprintf("Status: %s", runStatusText(run.Status)),
-		fmt.Sprintf("Template: %s", valueOrFallback(run.TemplateName, run.TemplateID)),
-		fmt.Sprintf("Checkpoint style: %s", valueOrFallback(run.CheckpointStyle, guidedworkflows.DefaultCheckpointStyle)),
-		fmt.Sprintf("Policy sensitivity: %s", c.sensitivityLabel()),
+		"Run Overview",
+		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(pending)")),
+		fmt.Sprintf("- Status: %s", runStatusText(run.Status)),
+		fmt.Sprintf("- Template: %s", valueOrFallback(run.TemplateName, run.TemplateID)),
+		fmt.Sprintf("- Checkpoint style: %s", valueOrFallback(run.CheckpointStyle, guidedworkflows.DefaultCheckpointStyle)),
+		fmt.Sprintf("- Policy sensitivity: %s", c.sensitivityLabel()),
 	}
 	if explain := c.decisionExplanation(); explain != "" {
-		lines = append(lines, fmt.Sprintf("Decision explanation: %s", explain))
+		lines = append(lines, fmt.Sprintf("- Decision explanation: %s", explain))
 	}
 	lines = append(lines, "", "Phase Progress")
 	lines = append(lines, c.renderPhaseProgress()...)
@@ -451,7 +452,7 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
-	return strings.Join(lines, "\n")
+	return joinGuidedWorkflowLines(lines)
 }
 
 func (c *GuidedWorkflowUIController) renderSummary() string {
@@ -472,24 +473,42 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 	lines := []string{
 		"Post-run Summary",
 		"",
-		fmt.Sprintf("Run: %s", valueOrFallback(run.ID, "(unknown)")),
-		fmt.Sprintf("Final status: %s", runStatusText(run.Status)),
-		fmt.Sprintf("Completed steps: %d/%d", completedSteps, totalSteps),
-		fmt.Sprintf("Decisions requested: %d", len(run.CheckpointDecisions)),
+		"Outcome",
+		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(unknown)")),
+		fmt.Sprintf("- Final status: %s", runStatusText(run.Status)),
+		fmt.Sprintf("- Completed steps: %d/%d", completedSteps, totalSteps),
+		fmt.Sprintf("- Decisions requested: %d", len(run.CheckpointDecisions)),
 	}
 	linkedSteps, unavailableSteps := c.traceabilityCounts()
-	lines = append(lines, fmt.Sprintf("Traceability: %d/%d linked (%d unavailable)", linkedSteps, totalSteps, unavailableSteps))
+	lines = append(lines, fmt.Sprintf("- Traceability: %d/%d linked (%d unavailable)", linkedSteps, totalSteps, unavailableSteps))
 	if run.CompletedAt != nil {
-		lines = append(lines, fmt.Sprintf("Completed at: %s", run.CompletedAt.UTC().Format(time.RFC3339)))
+		lines = append(lines, fmt.Sprintf("- Completed at: %s", run.CompletedAt.UTC().Format(time.RFC3339)))
 	}
 	if strings.TrimSpace(run.LastError) != "" {
-		lines = append(lines, fmt.Sprintf("Failure detail: %s", strings.TrimSpace(run.LastError)))
+		lines = append(lines, fmt.Sprintf("- Failure detail: %s", strings.TrimSpace(run.LastError)))
 	}
 	if explain := c.decisionExplanation(); explain != "" {
-		lines = append(lines, fmt.Sprintf("Final decision explanation: %s", explain))
+		lines = append(lines, fmt.Sprintf("- Final decision explanation: %s", explain))
 	}
 	lines = append(lines, "", "Controls", "- enter: close summary", "- esc: close summary")
-	return strings.Join(lines, "\n")
+	return joinGuidedWorkflowLines(lines)
+}
+
+func joinGuidedWorkflowLines(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			out = append(out, "")
+			continue
+		}
+		// Guided workflow content is rendered through markdown; add hard line
+		// breaks so single-line fields don't collapse into one paragraph.
+		out = append(out, line+"  ")
+	}
+	return strings.Join(out, "\n")
 }
 
 func (c *GuidedWorkflowUIController) renderPhaseProgress() []string {

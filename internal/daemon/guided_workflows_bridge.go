@@ -128,18 +128,30 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	req guidedworkflows.StepPromptDispatchRequest,
 ) (guidedworkflows.StepPromptDispatchResult, error) {
 	if d == nil || d.sessions == nil {
-		return guidedworkflows.StepPromptDispatchResult{}, nil
+		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf("%w: session gateway unavailable", guidedworkflows.ErrStepDispatch)
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		return guidedworkflows.StepPromptDispatchResult{}, nil
+		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf("%w: prompt is empty", guidedworkflows.ErrStepDispatch)
 	}
 	sessionID, provider, model, err := d.resolveSession(ctx, req)
 	if err != nil {
 		return guidedworkflows.StepPromptDispatchResult{}, err
 	}
-	if strings.TrimSpace(sessionID) == "" || !guidedWorkflowProviderSupportsPromptDispatch(provider) {
-		return guidedworkflows.StepPromptDispatchResult{}, nil
+	if strings.TrimSpace(sessionID) == "" {
+		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf(
+			"%w: no dispatchable session found for workspace=%q worktree=%q",
+			guidedworkflows.ErrStepDispatch,
+			strings.TrimSpace(req.WorkspaceID),
+			strings.TrimSpace(req.WorktreeID),
+		)
+	}
+	if !guidedWorkflowProviderSupportsPromptDispatch(provider) {
+		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf(
+			"%w: provider %q does not support step prompt dispatch",
+			guidedworkflows.ErrStepDispatch,
+			strings.TrimSpace(provider),
+		)
 	}
 	turnID, err := d.sessions.SendMessage(ctx, sessionID, []map[string]any{
 		{"type": "text", "text": prompt},
@@ -203,10 +215,34 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 				continue
 			}
 			if strings.TrimSpace(session.ID) == explicitSessionID {
-				return explicitSessionID, strings.TrimSpace(session.Provider), sessionModel(metaBySessionID[explicitSessionID]), nil
+				provider := strings.TrimSpace(session.Provider)
+				model := sessionModel(metaBySessionID[explicitSessionID])
+				if guidedWorkflowProviderSupportsPromptDispatch(provider) {
+					return explicitSessionID, provider, model, nil
+				}
+				fallbackSessionID, fallbackProvider, fallbackModel, err := d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
+				if err != nil {
+					return "", "", "", err
+				}
+				if strings.TrimSpace(fallbackSessionID) != "" {
+					return strings.TrimSpace(fallbackSessionID), strings.TrimSpace(fallbackProvider), strings.TrimSpace(fallbackModel), nil
+				}
+				return "", "", "", fmt.Errorf(
+					"%w: explicit session %q uses unsupported provider %q",
+					guidedworkflows.ErrStepDispatch,
+					explicitSessionID,
+					provider,
+				)
 			}
 		}
-		return "", "", "", nil
+		fallbackSessionID, fallbackProvider, fallbackModel, err := d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
+		if err != nil {
+			return "", "", "", err
+		}
+		if strings.TrimSpace(fallbackSessionID) != "" {
+			return strings.TrimSpace(fallbackSessionID), strings.TrimSpace(fallbackProvider), strings.TrimSpace(fallbackModel), nil
+		}
+		return "", "", "", fmt.Errorf("%w: explicit session %q not found", guidedworkflows.ErrStepDispatch, explicitSessionID)
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	worktreeID := strings.TrimSpace(req.WorktreeID)
@@ -221,6 +257,9 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 			continue
 		}
 		if !isGuidedWorkflowDispatchableSessionStatus(session.Status) {
+			continue
+		}
+		if !guidedWorkflowProviderSupportsPromptDispatch(session.Provider) {
 			continue
 		}
 		sessionID := strings.TrimSpace(session.ID)
