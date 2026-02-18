@@ -103,3 +103,174 @@ func TestCodexControllerFlow(t *testing.T) {
 		t.Fatalf("expected stdout to contain codex output")
 	}
 }
+
+func TestCodexProviderStartSkipsInitialTurnWhenInputIsEmpty(t *testing.T) {
+	wrapper := codexProviderHelperWrapper(t)
+	sink := &testProviderLogSink{}
+	provider := &codexProvider{cmdName: wrapper, model: "gpt-5"}
+
+	proc, err := provider.Start(StartSessionConfig{
+		Cwd: t.TempDir(),
+		Env: []string{
+			"GO_WANT_CODEX_PROVIDER_HELPER_PROCESS=1",
+			"ARCHON_CODEX_HELPER_FAIL_ON_TURN_START=1",
+		},
+	}, sink, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if proc == nil || proc.Process == nil {
+		t.Fatalf("expected provider process")
+	}
+	if strings.TrimSpace(proc.ThreadID) == "" {
+		t.Fatalf("expected thread id")
+	}
+	stopProviderProcess(proc)
+}
+
+func TestCodexProviderStartRunsInitialTurnWhenInputProvided(t *testing.T) {
+	wrapper := codexProviderHelperWrapper(t)
+	sink := &testProviderLogSink{}
+	provider := &codexProvider{cmdName: wrapper, model: "gpt-5"}
+	inputFile := filepath.Join(t.TempDir(), "turn-input.txt")
+	initialInput := "workflow bootstrap prompt"
+
+	proc, err := provider.Start(StartSessionConfig{
+		Cwd:  t.TempDir(),
+		Args: []string{initialInput},
+		Env: []string{
+			"GO_WANT_CODEX_PROVIDER_HELPER_PROCESS=1",
+			"ARCHON_CODEX_HELPER_TURN_INPUT_FILE=" + inputFile,
+		},
+	}, sink, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if proc == nil || proc.Process == nil {
+		t.Fatalf("expected provider process")
+	}
+	if strings.TrimSpace(proc.ThreadID) == "" {
+		t.Fatalf("expected thread id")
+	}
+	got, err := os.ReadFile(filepath.Clean(inputFile))
+	if err != nil {
+		t.Fatalf("read turn input file: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != initialInput {
+		t.Fatalf("unexpected turn input payload: %q", strings.TrimSpace(string(got)))
+	}
+	stopProviderProcess(proc)
+}
+
+func codexProviderHelperWrapper(t *testing.T) string {
+	t.Helper()
+	testBin := os.Args[0]
+	wrapper := filepath.Join(t.TempDir(), "codex-provider-helper.sh")
+	script := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexProviderHelperProcess -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper wrapper: %v", err)
+	}
+	return wrapper
+}
+
+func stopProviderProcess(proc *providerProcess) {
+	if proc == nil {
+		return
+	}
+	if proc.Process != nil {
+		_ = proc.Process.Kill()
+	}
+	if proc.Wait != nil {
+		_ = proc.Wait()
+	}
+}
+
+func TestCodexProviderHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_CODEX_PROVIDER_HELPER_PROCESS") != "1" {
+		return
+	}
+	failOnTurnStart := os.Getenv("ARCHON_CODEX_HELPER_FAIL_ON_TURN_START") == "1"
+	turnInputFile := strings.TrimSpace(os.Getenv("ARCHON_CODEX_HELPER_TURN_INPUT_FILE"))
+
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var msg map[string]any
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+		method, _ := msg["method"].(string)
+		id, hasID := msg["id"].(float64)
+		if !hasID {
+			continue
+		}
+		switch method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{
+				"id": int(id),
+				"result": map[string]any{
+					"userAgent": "codex-helper",
+				},
+			})
+		case "thread/start":
+			_ = encoder.Encode(map[string]any{
+				"id": int(id),
+				"result": map[string]any{
+					"thread": map[string]any{
+						"id": "thr-helper",
+					},
+				},
+			})
+		case "turn/start":
+			if failOnTurnStart {
+				_ = encoder.Encode(map[string]any{
+					"id": int(id),
+					"error": map[string]any{
+						"code":    -32600,
+						"message": "unexpected turn/start",
+					},
+				})
+				continue
+			}
+			if turnInputFile != "" {
+				text := helperTurnInputText(msg["params"])
+				_ = os.WriteFile(turnInputFile, []byte(text), 0o600)
+			}
+			_ = encoder.Encode(map[string]any{
+				"id": int(id),
+				"result": map[string]any{
+					"turn": map[string]any{
+						"id": "turn-helper",
+					},
+				},
+			})
+		default:
+			_ = encoder.Encode(map[string]any{
+				"id":     int(id),
+				"result": map[string]any{},
+			})
+		}
+	}
+	os.Exit(0)
+}
+
+func helperTurnInputText(raw any) string {
+	params, _ := raw.(map[string]any)
+	if params == nil {
+		return ""
+	}
+	input, _ := params["input"].([]any)
+	if len(input) == 0 {
+		return ""
+	}
+	first, _ := input[0].(map[string]any)
+	if first == nil {
+		return ""
+	}
+	text, _ := first["text"].(string)
+	return strings.TrimSpace(text)
+}
