@@ -126,6 +126,7 @@ func hashChatBlock(block ChatBlock) uint64 {
 
 func hashChatBlockMetaPresentation(meta ChatBlockMetaPresentation) uint64 {
 	hasher := fnv.New64a()
+	writeHashString(hasher, meta.PrimaryLabel)
 	writeHashString(hasher, meta.Label)
 	writeHashInt(hasher, len(meta.Controls))
 	for _, control := range meta.Controls {

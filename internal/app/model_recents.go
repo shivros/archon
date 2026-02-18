@@ -367,13 +367,16 @@ func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlock
 	if strings.TrimSpace(sessionTitleText) == "" {
 		sessionTitleText = entry.SessionID
 	}
+	primaryLabel := sessionTitleText
+	if location := strings.TrimSpace(entry.LocationName); location != "" {
+		primaryLabel += " • " + location
+	}
+	if strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID {
+		primaryLabel = "▶ " + primaryLabel
+	}
 	statusLabel := "Running"
 	if entry.Status == recentsEntryReady {
 		statusLabel = "Ready"
-	}
-	metaLabel := fmt.Sprintf("%s • %s • %s", statusLabel, sessionTitleText, entry.LocationName)
-	if strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID {
-		metaLabel = "▶ " + metaLabel
 	}
 	expandLabel := "[Expand]"
 	if m.recentsExpandedSessions[entry.SessionID] {
@@ -401,8 +404,9 @@ func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlock
 		CreatedAt: createdAt,
 	}
 	return block, ChatBlockMetaPresentation{
-		Label:    metaLabel,
-		Controls: controls,
+		PrimaryLabel: primaryLabel,
+		Label:        statusLabel,
+		Controls:     controls,
 	}
 }
 
@@ -439,18 +443,11 @@ func recentsPreviewText(entry recentsEntry, expanded bool) string {
 	if previewText == "" {
 		previewText = "No assistant response cached yet."
 	}
-	detail := recentsEntryDetail(entry)
 	if expanded {
 		if fullText == "" {
 			fullText = previewText
 		}
-		if detail != "" {
-			return detail + "\n\n" + fullText
-		}
 		return fullText
-	}
-	if detail != "" {
-		return detail + "\n" + previewText
 	}
 	return previewText
 }

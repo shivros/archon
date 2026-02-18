@@ -4061,7 +4061,8 @@ func cloneChatBlockMetaByID(input map[string]ChatBlockMetaPresentation) map[stri
 			continue
 		}
 		copyMeta := ChatBlockMetaPresentation{
-			Label: strings.TrimSpace(meta.Label),
+			PrimaryLabel: strings.TrimSpace(meta.PrimaryLabel),
+			Label:        strings.TrimSpace(meta.Label),
 		}
 		if len(meta.Controls) > 0 {
 			copyMeta.Controls = make([]ChatMetaControl, 0, len(meta.Controls))

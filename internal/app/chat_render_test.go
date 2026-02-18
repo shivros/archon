@@ -207,6 +207,72 @@ func TestRenderChatBlocksCustomMetaControlsOverrideDefaults(t *testing.T) {
 	}
 }
 
+func TestRenderChatBlocksCustomMetaPrimaryLabelRendersTwoLines(t *testing.T) {
+	now := time.Now().UTC()
+	blocks := []ChatBlock{
+		{
+			ID:        "recents:ready:s1",
+			Role:      ChatRoleAgent,
+			Text:      "hello",
+			CreatedAt: now.Add(-3 * time.Minute),
+		},
+	}
+	rendered, spans := renderChatBlocksWithRendererAndContext(
+		blocks,
+		80,
+		2000,
+		-1,
+		defaultChatBlockRenderer{},
+		chatRenderContext{
+			TimestampMode: ChatTimestampModeRelative,
+			Now:           now,
+			MetaByBlockID: map[string]ChatBlockMetaPresentation{
+				"recents:ready:s1": {
+					PrimaryLabel: "Session Alpha • Workspace / feature/refactor",
+					Label:        "Ready",
+					Controls: []ChatMetaControl{
+						{ID: recentsControlReply, Label: "[Reply]", Tone: ChatMetaControlToneCopy},
+						{ID: recentsControlOpen, Label: "[Open]", Tone: ChatMetaControlTonePin},
+					},
+				},
+			},
+		},
+	)
+	plain := xansi.Strip(rendered)
+	lines := strings.Split(plain, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least two rendered lines, got %q", plain)
+	}
+	primaryLine := ""
+	secondaryLine := ""
+	for _, line := range lines {
+		if strings.Contains(line, "Session Alpha • Workspace / feature/refactor") {
+			primaryLine = line
+		}
+		if strings.Contains(line, "[Reply]") && strings.Contains(line, "Ready") {
+			secondaryLine = line
+		}
+	}
+	if primaryLine == "" {
+		t.Fatalf("expected primary metadata line in output, got %q", plain)
+	}
+	if strings.Contains(primaryLine, "[Reply]") || strings.Contains(primaryLine, "[Open]") {
+		t.Fatalf("expected controls on secondary metadata line, got primary %q", primaryLine)
+	}
+	if secondaryLine == "" {
+		t.Fatalf("expected secondary metadata line with controls, got %q", plain)
+	}
+	if !strings.Contains(secondaryLine, "3 minutes ago") {
+		t.Fatalf("expected timestamp on secondary metadata line, got %q", secondaryLine)
+	}
+	if len(spans) != 1 || len(spans[0].MetaControls) != 2 {
+		t.Fatalf("expected custom control hitboxes on two-line meta, got %#v", spans)
+	}
+	if spans[0].MetaControls[0].Line == spans[0].StartLine {
+		t.Fatalf("expected control hitboxes on secondary metadata line, got span %#v", spans[0])
+	}
+}
+
 func TestRenderChatBlocksReasoningShowsToggleControlAndHitbox(t *testing.T) {
 	blocks := []ChatBlock{
 		{Role: ChatRoleReasoning, Text: "hello", Collapsed: true},

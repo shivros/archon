@@ -52,8 +52,9 @@ type ChatMetaControl struct {
 }
 
 type ChatBlockMetaPresentation struct {
-	Label    string
-	Controls []ChatMetaControl
+	PrimaryLabel string
+	Label        string
+	Controls     []ChatMetaControl
 }
 
 type ChatBlock struct {
@@ -630,12 +631,19 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 	}
 	meta := ""
 	metaDisplay := ""
+	primaryMeta := ""
+	primaryMetaDisplay := ""
+	twoLineCustomMeta := false
 	customControlDefs := make([]ChatMetaControl, 0)
 	override, customMeta := ctx.metaForBlock(block)
 	if customMeta {
 		meta = strings.TrimSpace(override.Label)
 		if meta == "" {
 			meta = roleLabel
+		}
+		primaryMeta = strings.TrimSpace(override.PrimaryLabel)
+		if primaryMeta != "" && width > 0 {
+			primaryMeta = truncateToWidth(primaryMeta, width)
 		}
 		parts := []string{metaStyle.Render(meta)}
 		for _, control := range override.Controls {
@@ -648,6 +656,10 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 			parts = append(parts, metaStyle.Render(" "), renderCustomMetaControl(label, control.Tone))
 		}
 		metaDisplay = strings.Join(parts, "")
+		if primaryMeta != "" {
+			primaryMetaDisplay = metaStyle.Render(primaryMeta)
+			twoLineCustomMeta = true
+		}
 		copyLabel = ""
 		pinLabel = ""
 		moveLabel = ""
@@ -891,9 +903,14 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 		marker := lipgloss.PlaceHorizontal(width, align, selectedMessageStyle.Render("▶ Selected"))
 		lines = append(lines, marker)
 	}
+	metaLineIndex := len(lines)
+	if customMeta && twoLineCustomMeta {
+		primaryLine := lipgloss.PlaceHorizontal(width, align, primaryMetaDisplay)
+		lines = append(lines, primaryLine)
+		metaLineIndex = len(lines)
+	}
 	bubble := bubbleStyle.Render(renderedText)
 	placed := lipgloss.PlaceHorizontal(width, align, bubble)
-	metaLineIndex := len(lines)
 	if customMeta && len(customControlDefs) > 0 {
 		customControlHits = buildCustomMetaControlHits(metaPlain, metaLineIndex, customControlDefs)
 	}

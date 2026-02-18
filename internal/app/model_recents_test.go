@@ -192,8 +192,59 @@ func TestRecentsEntryShowsWorktreeInLocationLabel(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected recents running block metadata")
 	}
-	if !strings.Contains(meta.Label, "Workspace / feature/refactor") {
-		t.Fatalf("expected recents location to include worktree, got %q", meta.Label)
+	if !strings.Contains(meta.PrimaryLabel, "Workspace / feature/refactor") {
+		t.Fatalf("expected recents location to include worktree, got %q", meta.PrimaryLabel)
+	}
+	if meta.Label != "Running" {
+		t.Fatalf("expected recents secondary metadata line to contain running status, got %q", meta.Label)
+	}
+}
+
+func TestRecentsMetadataUsesPrimaryAndSecondaryLines(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.width = 120
+	m.height = 40
+	m.viewport.SetWidth(90)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace"},
+	}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.recentsPreviews = map[string]recentsPreview{
+		"s1": {Revision: "turn-1", Preview: "assistant preview"},
+	}
+	m.mode = uiModeRecents
+	m.recentsSelectedSessionID = "s1"
+
+	m.refreshRecentsContent()
+	plain := xansi.Strip(m.renderedText)
+	lines := strings.Split(plain, "\n")
+	primaryLine := ""
+	secondaryLine := ""
+	for _, line := range lines {
+		if strings.Contains(line, "Workspace") && strings.Contains(line, "•") {
+			primaryLine = line
+		}
+		if strings.Contains(line, "Running") && strings.Contains(line, "[Reply]") {
+			secondaryLine = line
+		}
+	}
+	if primaryLine == "" {
+		t.Fatalf("expected primary metadata line with session and location, got %q", plain)
+	}
+	if strings.Contains(primaryLine, "[Reply]") {
+		t.Fatalf("expected controls on secondary metadata line, got primary %q", primaryLine)
+	}
+	if secondaryLine == "" {
+		t.Fatalf("expected secondary metadata line with status and controls, got %q", plain)
 	}
 }
 
