@@ -171,11 +171,19 @@ func (codexConversationAdapter) SendMessage(ctx context.Context, service *Sessio
 	if err != nil {
 		return "", invalidError(err.Error(), err)
 	}
+	resolvedThreadID := threadID
+	if service.stores != nil && service.stores.SessionMeta != nil {
+		if latest, ok, getErr := service.stores.SessionMeta.Get(ctx, session.ID); getErr == nil && ok && latest != nil {
+			if updatedThreadID := strings.TrimSpace(latest.ThreadID); updatedThreadID != "" {
+				resolvedThreadID = updatedThreadID
+			}
+		}
+	}
 	now := time.Now().UTC()
 	if service.stores != nil && service.stores.SessionMeta != nil {
 		_, _ = service.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
 			SessionID:    session.ID,
-			ThreadID:     threadID,
+			ThreadID:     resolvedThreadID,
 			LastTurnID:   turnID,
 			LastActiveAt: &now,
 		})

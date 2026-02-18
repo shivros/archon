@@ -255,6 +255,33 @@ func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) erro
 	return c.request(ctx, "thread/resume", params, nil)
 }
 
+func (c *codexAppServer) StartThread(ctx context.Context, model, cwd string, runtimeOptions *types.SessionRuntimeOptions) (string, error) {
+	params := map[string]any{}
+	if strings.TrimSpace(model) != "" {
+		params["model"] = strings.TrimSpace(model)
+	}
+	if strings.TrimSpace(cwd) != "" {
+		params["cwd"] = strings.TrimSpace(cwd)
+	}
+	if opts := codexThreadOptions(runtimeOptions); len(opts) > 0 {
+		for key, value := range opts {
+			params[key] = value
+		}
+	}
+	var result struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := c.request(ctx, "thread/start", params, &result); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(result.Thread.ID) == "" {
+		return "", errors.New("codex thread id missing")
+	}
+	return strings.TrimSpace(result.Thread.ID), nil
+}
+
 func (c *codexAppServer) StartTurn(ctx context.Context, threadID string, input []map[string]any, runtimeOptions *types.SessionRuntimeOptions, model string) (string, error) {
 	params := map[string]any{
 		"threadId": threadID,

@@ -2,6 +2,8 @@ package guidedworkflows
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -57,7 +59,6 @@ type InMemoryRunService struct {
 	stepDispatcher   StepPromptDispatcher
 
 	mu        sync.RWMutex
-	sequence  int
 	runs      map[string]*WorkflowRun
 	timelines map[string][]RunTimelineEvent
 	turnSeen  map[string]struct{}
@@ -226,8 +227,7 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 	if s.maxActiveRuns > 0 && s.activeRunsLocked() >= s.maxActiveRuns {
 		return nil, fmt.Errorf("%w: max_active_runs=%d", ErrRunLimitExceeded, s.maxActiveRuns)
 	}
-	s.sequence++
-	runID := fmt.Sprintf("gwf-%d", s.sequence)
+	runID := newWorkflowRunID()
 	now := s.engine.now()
 
 	run := &WorkflowRun{
@@ -591,6 +591,14 @@ func runListSortTime(run *WorkflowRun) time.Time {
 		}
 	}
 	return latest
+}
+
+func newWorkflowRunID() string {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err == nil {
+		return "gwf-" + hex.EncodeToString(suffix[:])
+	}
+	return fmt.Sprintf("gwf-%d", time.Now().UTC().UnixNano())
 }
 
 func (s *InMemoryRunService) GetRunTimeline(_ context.Context, runID string) ([]RunTimelineEvent, error) {
