@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"control/internal/types"
 )
 
 type RunService interface {
@@ -229,9 +231,16 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 	now := s.engine.now()
 
 	run := &WorkflowRun{
-		ID:                runID,
-		TemplateID:        template.ID,
-		TemplateName:      template.Name,
+		ID:           runID,
+		TemplateID:   template.ID,
+		TemplateName: template.Name,
+		DefaultAccessLevel: func() types.AccessLevel {
+			level, ok := NormalizeTemplateAccessLevel(template.DefaultAccessLevel)
+			if !ok {
+				return ""
+			}
+			return level
+		}(),
 		WorkspaceID:       strings.TrimSpace(req.WorkspaceID),
 		WorktreeID:        strings.TrimSpace(req.WorktreeID),
 		SessionID:         strings.TrimSpace(req.SessionID),
@@ -755,14 +764,15 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 		dispatchPrompt = composeInitialDispatchPrompt(run.UserPrompt, templatePrompt)
 	}
 	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
-		RunID:       strings.TrimSpace(run.ID),
-		TemplateID:  strings.TrimSpace(run.TemplateID),
-		WorkspaceID: strings.TrimSpace(run.WorkspaceID),
-		WorktreeID:  strings.TrimSpace(run.WorktreeID),
-		SessionID:   strings.TrimSpace(run.SessionID),
-		PhaseID:     strings.TrimSpace(phase.ID),
-		StepID:      strings.TrimSpace(step.ID),
-		Prompt:      dispatchPrompt,
+		RunID:              strings.TrimSpace(run.ID),
+		TemplateID:         strings.TrimSpace(run.TemplateID),
+		DefaultAccessLevel: run.DefaultAccessLevel,
+		WorkspaceID:        strings.TrimSpace(run.WorkspaceID),
+		WorktreeID:         strings.TrimSpace(run.WorktreeID),
+		SessionID:          strings.TrimSpace(run.SessionID),
+		PhaseID:            strings.TrimSpace(phase.ID),
+		StepID:             strings.TrimSpace(step.ID),
+		Prompt:             dispatchPrompt,
 	})
 	if err != nil {
 		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)

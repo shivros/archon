@@ -2,7 +2,10 @@ package guidedworkflows
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	"control/internal/types"
 )
 
 const (
@@ -10,10 +13,11 @@ const (
 )
 
 type WorkflowTemplate struct {
-	ID          string                  `json:"id"`
-	Name        string                  `json:"name"`
-	Description string                  `json:"description,omitempty"`
-	Phases      []WorkflowTemplatePhase `json:"phases"`
+	ID                 string                  `json:"id"`
+	Name               string                  `json:"name"`
+	Description        string                  `json:"description,omitempty"`
+	DefaultAccessLevel types.AccessLevel       `json:"default_access_level,omitempty"`
+	Phases             []WorkflowTemplatePhase `json:"phases"`
 }
 
 type WorkflowTemplatePhase struct {
@@ -60,6 +64,7 @@ type WorkflowRun struct {
 	ID                  string                    `json:"id"`
 	TemplateID          string                    `json:"template_id"`
 	TemplateName        string                    `json:"template_name"`
+	DefaultAccessLevel  types.AccessLevel         `json:"default_access_level,omitempty"`
 	WorkspaceID         string                    `json:"workspace_id,omitempty"`
 	WorktreeID          string                    `json:"worktree_id,omitempty"`
 	SessionID           string                    `json:"session_id,omitempty"`
@@ -198,14 +203,15 @@ type TurnSignal struct {
 }
 
 type StepPromptDispatchRequest struct {
-	RunID       string `json:"run_id"`
-	TemplateID  string `json:"template_id,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	WorktreeID  string `json:"worktree_id,omitempty"`
-	SessionID   string `json:"session_id,omitempty"`
-	PhaseID     string `json:"phase_id,omitempty"`
-	StepID      string `json:"step_id,omitempty"`
-	Prompt      string `json:"prompt"`
+	RunID              string            `json:"run_id"`
+	TemplateID         string            `json:"template_id,omitempty"`
+	DefaultAccessLevel types.AccessLevel `json:"default_access_level,omitempty"`
+	WorkspaceID        string            `json:"workspace_id,omitempty"`
+	WorktreeID         string            `json:"worktree_id,omitempty"`
+	SessionID          string            `json:"session_id,omitempty"`
+	PhaseID            string            `json:"phase_id,omitempty"`
+	StepID             string            `json:"step_id,omitempty"`
+	Prompt             string            `json:"prompt"`
 }
 
 type StepPromptDispatchResult struct {
@@ -218,6 +224,22 @@ type StepPromptDispatchResult struct {
 
 type StepPromptDispatcher interface {
 	DispatchStepPrompt(ctx context.Context, req StepPromptDispatchRequest) (StepPromptDispatchResult, error)
+}
+
+func NormalizeTemplateAccessLevel(raw types.AccessLevel) (types.AccessLevel, bool) {
+	value := strings.ToLower(strings.TrimSpace(string(raw)))
+	switch value {
+	case "":
+		return "", true
+	case "read_only", "readonly", "read-only":
+		return types.AccessReadOnly, true
+	case "on_request", "onrequest", "on-request":
+		return types.AccessOnRequest, true
+	case "full_access", "fullaccess", "full-access":
+		return types.AccessFull, true
+	default:
+		return "", false
+	}
 }
 
 type RunStatusSnapshot struct {

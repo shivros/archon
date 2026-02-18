@@ -408,6 +408,32 @@ func TestNotificationTitleBodyGuidedWorkflowDecision(t *testing.T) {
 	}
 }
 
+func TestNotificationTitleBodyApprovalRequired(t *testing.T) {
+	summary, body := notificationTitleBody(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-approval",
+		Provider:  "codex",
+		Status:    "approval_required",
+		Source:    "approval_request:sess-approval:7",
+		Payload: map[string]any{
+			"method":     "item/commandExecution/requestApproval",
+			"request_id": "7",
+		},
+	})
+	if summary != "Archon approval required" {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	if !strings.Contains(body, "sess-approval (codex)") {
+		t.Fatalf("expected session/provider in body, got %q", body)
+	}
+	if !strings.Contains(body, "method: item/commandExecution/requestApproval") {
+		t.Fatalf("expected method in body, got %q", body)
+	}
+	if !strings.Contains(body, "request: 7") {
+		t.Fatalf("expected request id in body, got %q", body)
+	}
+}
+
 func TestSessionLifecycleEmitterBackfillsMetaContext(t *testing.T) {
 	publisher := &captureNotificationPublisher{}
 	metaStore := &stubEmitterSessionMetaStore{

@@ -446,8 +446,9 @@ func TestGuidedWorkflowPromptDispatcherFallsBackToSupportedSession(t *testing.T)
 
 func TestGuidedWorkflowRunServiceDispatchCreatesSessionAndReusesItAcrossSteps(t *testing.T) {
 	template := guidedworkflows.WorkflowTemplate{
-		ID:   "gwf_integration_simple",
-		Name: "Simple",
+		ID:                 "gwf_integration_simple",
+		Name:               "Simple",
+		DefaultAccessLevel: types.AccessReadOnly,
 		Phases: []guidedworkflows.WorkflowTemplatePhase{
 			{
 				ID:   "phase_1",
@@ -500,6 +501,9 @@ func TestGuidedWorkflowRunServiceDispatchCreatesSessionAndReusesItAcrossSteps(t 
 	}
 	if gateway.startReqs[0].WorkspaceID != "ws-1" || gateway.startReqs[0].WorktreeID != "wt-1" {
 		t.Fatalf("expected workspace/worktree context to be propagated, got %+v", gateway.startReqs[0])
+	}
+	if gateway.startReqs[0].RuntimeOptions == nil || gateway.startReqs[0].RuntimeOptions.Access != types.AccessReadOnly {
+		t.Fatalf("expected template default access on auto-created session, got %+v", gateway.startReqs[0].RuntimeOptions)
 	}
 	if run.SessionID != "sess-created" {
 		t.Fatalf("expected run to bind created session, got %q", run.SessionID)

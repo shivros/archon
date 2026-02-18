@@ -1,10 +1,13 @@
 package guidedworkflows
 
+import "control/internal/types"
+
 func BuiltinTemplateSolidPhaseDelivery() WorkflowTemplate {
 	return WorkflowTemplate{
-		ID:          TemplateIDSolidPhaseDelivery,
-		Name:        "SOLID Phase Delivery",
-		Description: "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+		ID:                 TemplateIDSolidPhaseDelivery,
+		Name:               "SOLID Phase Delivery",
+		Description:        "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+		DefaultAccessLevel: types.AccessOnRequest,
 		Phases: []WorkflowTemplatePhase{
 			{
 				ID:   "phase_delivery",

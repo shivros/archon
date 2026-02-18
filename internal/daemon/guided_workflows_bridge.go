@@ -316,10 +316,11 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 		provider = "codex"
 	}
 	session, err := starter.Start(ctx, StartSessionRequest{
-		Provider:    provider,
-		Title:       guidedWorkflowSessionTitle(req.RunID),
-		WorkspaceID: workspaceID,
-		WorktreeID:  worktreeID,
+		Provider:       provider,
+		Title:          guidedWorkflowSessionTitle(req.RunID),
+		WorkspaceID:    workspaceID,
+		WorktreeID:     worktreeID,
+		RuntimeOptions: guidedWorkflowRuntimeOptionsForDispatch(req.DefaultAccessLevel),
 	})
 	if err != nil {
 		return "", "", "", err
@@ -395,6 +396,14 @@ func sessionModel(meta *types.SessionMeta) string {
 		return ""
 	}
 	return strings.TrimSpace(meta.RuntimeOptions.Model)
+}
+
+func guidedWorkflowRuntimeOptionsForDispatch(level types.AccessLevel) *types.SessionRuntimeOptions {
+	normalized, ok := guidedworkflows.NormalizeTemplateAccessLevel(level)
+	if !ok || normalized == "" {
+		return nil
+	}
+	return &types.SessionRuntimeOptions{Access: normalized}
 }
 
 func guidedWorkflowsExecutionControlsFromCoreConfig(cfg config.CoreConfig) guidedworkflows.ExecutionControls {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"control/internal/types"
 )
 
 type stubRunMetricsStore struct {
@@ -681,8 +683,9 @@ func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
 
 func TestRunLifecycleFirstDispatchPrependsUserPromptOnlyOnce(t *testing.T) {
 	template := WorkflowTemplate{
-		ID:   "prompted_with_brief",
-		Name: "Prompted with brief",
+		ID:                 "prompted_with_brief",
+		Name:               "Prompted with brief",
+		DefaultAccessLevel: types.AccessReadOnly,
 		Phases: []WorkflowTemplatePhase{
 			{
 				ID:   "phase",
@@ -729,6 +732,9 @@ func TestRunLifecycleFirstDispatchPrependsUserPromptOnlyOnce(t *testing.T) {
 	if got := dispatcher.calls[0].Prompt; got != "Fix bug in workflow setup\n\noverall plan prompt" {
 		t.Fatalf("expected first dispatch to prepend user prompt, got %q", got)
 	}
+	if got := dispatcher.calls[0].DefaultAccessLevel; got != types.AccessReadOnly {
+		t.Fatalf("expected first dispatch default access %q, got %q", types.AccessReadOnly, got)
+	}
 
 	_, err = service.OnTurnCompleted(context.Background(), TurnSignal{
 		SessionID: "sess-1",
@@ -742,6 +748,32 @@ func TestRunLifecycleFirstDispatchPrependsUserPromptOnlyOnce(t *testing.T) {
 	}
 	if got := dispatcher.calls[1].Prompt; got != "phase plan prompt" {
 		t.Fatalf("expected only template prompt after first dispatch, got %q", got)
+	}
+	if got := dispatcher.calls[1].DefaultAccessLevel; got != types.AccessReadOnly {
+		t.Fatalf("expected second dispatch default access %q, got %q", types.AccessReadOnly, got)
+	}
+}
+
+func TestNormalizeTemplateAccessLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		in   types.AccessLevel
+		want types.AccessLevel
+		ok   bool
+	}{
+		{name: "empty", in: "", want: "", ok: true},
+		{name: "read_only", in: types.AccessReadOnly, want: types.AccessReadOnly, ok: true},
+		{name: "on-request", in: "on-request", want: types.AccessOnRequest, ok: true},
+		{name: "full-access", in: "full-access", want: types.AccessFull, ok: true},
+		{name: "invalid", in: "invalid", want: "", ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := NormalizeTemplateAccessLevel(tt.in)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("NormalizeTemplateAccessLevel(%q) = (%q, %v), want (%q, %v)", tt.in, got, ok, tt.want, tt.ok)
+			}
+		})
 	}
 }
 

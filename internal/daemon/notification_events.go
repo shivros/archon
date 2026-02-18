@@ -112,6 +112,19 @@ func notificationTitleBody(event types.NotificationEvent) (string, string) {
 		}
 		return summary, strings.Join(parts, " | ")
 	}
+	if isApprovalRequiredNotification(event) {
+		summary := "Archon approval required"
+		method := notificationPayloadString(event.Payload, "method")
+		requestID := notificationPayloadString(event.Payload, "request_id")
+		parts := []string{name + " (" + provider + ")"}
+		if method != "" {
+			parts = append(parts, "method: "+method)
+		}
+		if requestID != "" {
+			parts = append(parts, "request: "+requestID)
+		}
+		return summary, strings.Join(parts, " | ")
+	}
 	summary := "Archon"
 	body := ""
 	switch event.Trigger {
@@ -142,6 +155,13 @@ func isGuidedWorkflowDecisionNotification(event types.NotificationEvent) bool {
 		return false
 	}
 	return strings.HasPrefix(strings.TrimSpace(event.Source), "guided_workflow_decision:")
+}
+
+func isApprovalRequiredNotification(event types.NotificationEvent) bool {
+	if !strings.EqualFold(strings.TrimSpace(event.Status), "approval_required") {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(event.Source), "approval_request:")
 }
 
 func notificationPayloadString(payload map[string]any, key string) string {

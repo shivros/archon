@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -340,6 +341,41 @@ func (s *codexLiveSession) handleRequest(msg rpcMessage) {
 		}
 		_, _ = s.stores.Approvals.Upsert(context.Background(), approval)
 	}
+	s.publishApprovalRequiredNotification(msg)
+}
+
+func (s *codexLiveSession) publishApprovalRequiredNotification(msg rpcMessage) {
+	if s == nil || s.notifier == nil || msg.ID == nil || !isApprovalMethod(msg.Method) {
+		return
+	}
+	requestID := *msg.ID
+	source := "approval_request:" + strings.TrimSpace(s.sessionID) + ":" + strconv.Itoa(requestID)
+	event := types.NotificationEvent{
+		Trigger:    types.NotificationTriggerTurnCompleted,
+		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:  strings.TrimSpace(s.sessionID),
+		Status:     "approval_required",
+		Source:     source,
+		Payload: map[string]any{
+			"kind":       "approval_required",
+			"request_id": requestID,
+			"method":     strings.TrimSpace(msg.Method),
+		},
+	}
+	if s.stores != nil && s.stores.Sessions != nil {
+		if record, ok, err := s.stores.Sessions.GetRecord(context.Background(), s.sessionID); err == nil && ok && record != nil && record.Session != nil {
+			event.Provider = strings.TrimSpace(record.Session.Provider)
+			event.Title = strings.TrimSpace(record.Session.Title)
+			event.Cwd = strings.TrimSpace(record.Session.Cwd)
+		}
+	}
+	if s.stores != nil && s.stores.SessionMeta != nil {
+		if meta, ok, err := s.stores.SessionMeta.Get(context.Background(), s.sessionID); err == nil && ok && meta != nil {
+			event.WorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+			event.WorktreeID = strings.TrimSpace(meta.WorktreeID)
+		}
+	}
+	s.notifier.Publish(event)
 }
 
 func (s *codexLiveSession) maybeClose() {

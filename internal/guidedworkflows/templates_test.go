@@ -1,6 +1,10 @@
 package guidedworkflows
 
-import "testing"
+import (
+	"testing"
+
+	"control/internal/types"
+)
 
 func TestBuiltinTemplateSolidPhaseDeliverySequence(t *testing.T) {
 	tpl := BuiltinTemplateSolidPhaseDelivery()
@@ -9,6 +13,9 @@ func TestBuiltinTemplateSolidPhaseDeliverySequence(t *testing.T) {
 	}
 	if tpl.Name != "SOLID Phase Delivery" {
 		t.Fatalf("unexpected template name: %q", tpl.Name)
+	}
+	if tpl.DefaultAccessLevel != types.AccessOnRequest {
+		t.Fatalf("unexpected default access level: %q", tpl.DefaultAccessLevel)
 	}
 	if len(tpl.Phases) != 1 {
 		t.Fatalf("expected one phase, got %d", len(tpl.Phases))

@@ -178,6 +178,11 @@ func normalizeWorkflowTemplate(template guidedworkflows.WorkflowTemplate) (guide
 	template.ID = strings.TrimSpace(template.ID)
 	template.Name = strings.TrimSpace(template.Name)
 	template.Description = strings.TrimSpace(template.Description)
+	normalizedAccess, ok := guidedworkflows.NormalizeTemplateAccessLevel(template.DefaultAccessLevel)
+	if !ok {
+		return guidedworkflows.WorkflowTemplate{}, errors.New("invalid template default_access_level: " + strings.TrimSpace(string(template.DefaultAccessLevel)))
+	}
+	template.DefaultAccessLevel = normalizedAccess
 	if template.ID == "" {
 		return guidedworkflows.WorkflowTemplate{}, errors.New("template id is required")
 	}

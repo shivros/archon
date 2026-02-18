@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
@@ -22,9 +23,10 @@ func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
 	}
 
 	template := guidedworkflows.WorkflowTemplate{
-		ID:          "custom_workflow",
-		Name:        "Custom Workflow",
-		Description: "Test template",
+		ID:                 "custom_workflow",
+		Name:               "Custom Workflow",
+		Description:        "Test template",
+		DefaultAccessLevel: types.AccessOnRequest,
 		Phases: []guidedworkflows.WorkflowTemplatePhase{
 			{
 				ID:   "phase_1",
@@ -56,6 +58,9 @@ func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
 	}
 	if loaded.Phases[0].Steps[0].Prompt != "Write a plan" {
 		t.Fatalf("expected prompt to round-trip, got %q", loaded.Phases[0].Steps[0].Prompt)
+	}
+	if loaded.DefaultAccessLevel != types.AccessOnRequest {
+		t.Fatalf("expected default_access_level to round-trip, got %q", loaded.DefaultAccessLevel)
 	}
 
 	templates, err = store.ListWorkflowTemplates(ctx)
@@ -101,5 +106,33 @@ func TestWorkflowTemplateStoreValidatesRequiredFields(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected validation error for missing step prompt")
+	}
+}
+
+func TestWorkflowTemplateStoreValidatesDefaultAccessLevel(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+
+	_, err := store.UpsertWorkflowTemplate(ctx, guidedworkflows.WorkflowTemplate{
+		ID:                 "invalid_access",
+		Name:               "Invalid Access",
+		DefaultAccessLevel: "invalid",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{
+						ID:     "step_1",
+						Name:   "Step 1",
+						Prompt: "hello",
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for invalid default_access_level")
 	}
 }
