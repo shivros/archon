@@ -122,8 +122,11 @@ func TestRecentsTurnCompletedMessageMovesRunToReady(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected recents completion message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command")
+	if cmd == nil {
+		t.Fatalf("expected recents completion to request app-state persistence")
+	}
+	if _, ok := cmd().(appStateSaveFlushMsg); !ok {
+		t.Fatalf("expected app-state save debounce command, got %T", cmd())
 	}
 	if m.recents.IsRunning("s1") {
 		t.Fatalf("expected s1 to leave running after completion")

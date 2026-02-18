@@ -86,6 +86,7 @@ func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) 
 	if session.Provider == "codex" {
 		expected++ // history polling safety refresh
 	}
+	expected++ // recents state save debounce
 	if len(batch) != expected {
 		t.Fatalf("expected %d start-session commands without backfill, got %d", expected, len(batch))
 	}

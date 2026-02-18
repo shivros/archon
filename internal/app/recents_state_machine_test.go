@@ -187,3 +187,39 @@ func TestRecentsStateMachinePruneRemovesMissingSessions(t *testing.T) {
 		t.Fatalf("expected empty ready queue after pruning missing sessions, got %#v", got)
 	}
 }
+
+func TestRecentsStateMachineRestoreNormalizesAndPreservesDeterministicFIFO(t *testing.T) {
+	sm := NewRecentsStateMachine()
+	now := time.Now().UTC()
+
+	sm.Restore(RecentsSnapshot{
+		Running: map[string]recentsRun{
+			"s1": {SessionID: "s1", BaselineTurnID: "turn-u1", StartedAt: now},
+		},
+		Ready: map[string]recentsReadyItem{
+			"s2": {SessionID: "s2", CompletionTurn: "turn-a2", CompletedAt: now.Add(2 * time.Second)},
+			"s3": {SessionID: "s3", CompletionTurn: "turn-a3", CompletedAt: now.Add(3 * time.Second)},
+		},
+		ReadyQueue: []recentsReadyQueueEntry{
+			{SessionID: "s2", Seq: 2},
+			{SessionID: "s2", Seq: 1}, // duplicate should collapse
+			{SessionID: "s3", Seq: 3},
+		},
+		DismissedTurn: map[string]string{"s4": "turn-a4"},
+	})
+
+	if !sm.IsRunning("s1") {
+		t.Fatalf("expected running session s1 after restore")
+	}
+	if !sm.IsReady("s2") || !sm.IsReady("s3") {
+		t.Fatalf("expected ready sessions after restore")
+	}
+	if got := sm.ReadyIDs(); len(got) != 2 || got[0] != "s2" || got[1] != "s3" {
+		t.Fatalf("expected deterministic ready fifo [s2 s3], got %#v", got)
+	}
+
+	snap := sm.Snapshot()
+	if len(snap.DismissedTurn) != 1 || snap.DismissedTurn["s4"] != "turn-a4" {
+		t.Fatalf("expected dismissed turn to round-trip after restore")
+	}
+}

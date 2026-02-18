@@ -12,9 +12,36 @@ type AppState struct {
 	NoteDrafts                map[string]string                 `json:"note_drafts,omitempty"`
 	ComposeDefaultsByProvider map[string]*SessionRuntimeOptions `json:"compose_defaults_by_provider,omitempty"`
 	ProviderBadges            map[string]*ProviderBadgeConfig   `json:"provider_badges,omitempty"`
+	Recents                   *AppStateRecents                  `json:"recents,omitempty"`
 }
 
 type ProviderBadgeConfig struct {
 	Prefix string `json:"prefix,omitempty"`
 	Color  string `json:"color,omitempty"`
+}
+
+type AppStateRecents struct {
+	Version       int                          `json:"version,omitempty"`
+	Running       map[string]AppStateRecentRun `json:"running,omitempty"`
+	Ready         map[string]AppStateReadyItem `json:"ready,omitempty"`
+	ReadyQueue    []AppStateReadyQueueEntry    `json:"ready_queue,omitempty"`
+	DismissedTurn map[string]string            `json:"dismissed_turn,omitempty"`
+}
+
+type AppStateRecentRun struct {
+	SessionID      string `json:"session_id"`
+	BaselineTurnID string `json:"baseline_turn_id,omitempty"`
+	StartedAtUnix  int64  `json:"started_at_unix,omitempty"`
+}
+
+type AppStateReadyItem struct {
+	SessionID       string `json:"session_id"`
+	CompletionTurn  string `json:"completion_turn,omitempty"`
+	CompletedAtUnix int64  `json:"completed_at_unix,omitempty"`
+	LastKnownTurnID string `json:"last_known_turn_id,omitempty"`
+}
+
+type AppStateReadyQueueEntry struct {
+	SessionID string `json:"session_id"`
+	Seq       int64  `json:"seq"`
 }

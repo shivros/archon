@@ -547,8 +547,9 @@ func (m *Model) applyRecentsControlClick(hit recentsControlClick) tea.Cmd {
 	case recentsControlDismiss:
 		if !m.dismissSelectedRecentsReady() {
 			m.setValidationStatus("select a ready session to dismiss")
+			return nil
 		}
-		return nil
+		return m.requestRecentsStateSaveCmd()
 	default:
 		// Unknown controls are consumed to avoid accidental fallback actions.
 		return nil
@@ -659,6 +660,9 @@ func (m *Model) dismissSelectedRecentsReady() bool {
 	}
 	if !m.recents.DismissReady(entry.SessionID) {
 		return false
+	}
+	if m.syncAppStateRecents() {
+		m.hasAppState = true
 	}
 	m.refreshRecentsSidebarState()
 	m.setStatusInfo("dismissed from recents")
@@ -793,7 +797,7 @@ func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd 
 	if m.mode == uiModeRecents {
 		m.refreshRecentsContent()
 	}
-	return nil
+	return m.requestRecentsStateSaveCmd()
 }
 
 func (m *Model) syncRecentsCompletionWatches() {
@@ -856,7 +860,7 @@ func (m *Model) reduceRecentsMode(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		case "d":
 			if m.dismissSelectedRecentsReady() {
-				return true, nil
+				return true, m.requestRecentsStateSaveCmd()
 			}
 			m.setValidationStatus("select a ready session to dismiss")
 			return true, nil

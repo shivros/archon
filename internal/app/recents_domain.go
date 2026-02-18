@@ -113,6 +113,134 @@ func (s *RecentsStateMachine) Snapshot() RecentsSnapshot {
 	}
 }
 
+func (s *RecentsStateMachine) Restore(snapshot RecentsSnapshot) {
+	if s == nil {
+		return
+	}
+
+	s.running = map[string]recentsRun{}
+	for key, run := range snapshot.Running {
+		sessionID := normalizeRecentsSessionID(key, run.SessionID)
+		if sessionID == "" {
+			continue
+		}
+		startedAt := run.StartedAt.UTC()
+		s.running[sessionID] = recentsRun{
+			SessionID:      sessionID,
+			BaselineTurnID: strings.TrimSpace(run.BaselineTurnID),
+			StartedAt:      startedAt,
+		}
+	}
+
+	s.ready = map[string]recentsReadyItem{}
+	for key, item := range snapshot.Ready {
+		sessionID := normalizeRecentsSessionID(key, item.SessionID)
+		if sessionID == "" {
+			continue
+		}
+		completionTurn := strings.TrimSpace(item.CompletionTurn)
+		if completionTurn == "" {
+			continue
+		}
+		s.ready[sessionID] = recentsReadyItem{
+			SessionID:       sessionID,
+			CompletionTurn:  completionTurn,
+			CompletedAt:     item.CompletedAt.UTC(),
+			LastKnownTurnID: strings.TrimSpace(item.LastKnownTurnID),
+		}
+	}
+
+	s.dismissedTurn = map[string]string{}
+	for key, turnID := range snapshot.DismissedTurn {
+		sessionID := strings.TrimSpace(key)
+		completionTurn := strings.TrimSpace(turnID)
+		if sessionID == "" || completionTurn == "" {
+			continue
+		}
+		s.dismissedTurn[sessionID] = completionTurn
+	}
+
+	type queueCandidate struct {
+		sessionID string
+		seq       int64
+		order     int
+	}
+	candidates := make([]queueCandidate, 0, len(snapshot.ReadyQueue))
+	seen := map[string]struct{}{}
+	for idx, entry := range snapshot.ReadyQueue {
+		sessionID := strings.TrimSpace(entry.SessionID)
+		if sessionID == "" {
+			continue
+		}
+		if _, ok := s.ready[sessionID]; !ok {
+			continue
+		}
+		if _, duplicate := seen[sessionID]; duplicate {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		candidates = append(candidates, queueCandidate{
+			sessionID: sessionID,
+			seq:       entry.Seq,
+			order:     idx,
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		leftHasSeq := candidates[i].seq > 0
+		rightHasSeq := candidates[j].seq > 0
+		if leftHasSeq && rightHasSeq {
+			if candidates[i].seq == candidates[j].seq {
+				return candidates[i].sessionID < candidates[j].sessionID
+			}
+			return candidates[i].seq < candidates[j].seq
+		}
+		if leftHasSeq != rightHasSeq {
+			return leftHasSeq
+		}
+		return candidates[i].order < candidates[j].order
+	})
+
+	maxSeq := int64(0)
+	s.readyQueue = make([]recentsReadyQueueEntry, 0, len(s.ready))
+	for _, candidate := range candidates {
+		seq := candidate.seq
+		if seq <= 0 {
+			maxSeq++
+			seq = maxSeq
+		} else if seq > maxSeq {
+			maxSeq = seq
+		}
+		s.readyQueue = append(s.readyQueue, recentsReadyQueueEntry{
+			SessionID: candidate.sessionID,
+			Seq:       seq,
+		})
+	}
+
+	missing := make([]recentsReadyItem, 0)
+	for sessionID, item := range s.ready {
+		if _, ok := seen[sessionID]; ok {
+			continue
+		}
+		missing = append(missing, item)
+	}
+	sort.SliceStable(missing, func(i, j int) bool {
+		left := missing[i].CompletedAt
+		right := missing[j].CompletedAt
+		if left.Equal(right) {
+			return missing[i].SessionID < missing[j].SessionID
+		}
+		return left.Before(right)
+	})
+	for _, item := range missing {
+		maxSeq++
+		s.readyQueue = append(s.readyQueue, recentsReadyQueueEntry{
+			SessionID: item.SessionID,
+			Seq:       maxSeq,
+		})
+	}
+	s.nextReadySeq = maxSeq
+}
+
 func (s *RecentsStateMachine) Apply(event RecentsEvent) RecentsTransition {
 	if s == nil {
 		return RecentsTransition{Ignored: true, Reason: "nil state machine"}
@@ -627,4 +755,27 @@ func (t *RecentsTracker) RunningCount() int {
 		return 0
 	}
 	return sm.RunningCount()
+}
+
+func (t *RecentsTracker) Snapshot() RecentsSnapshot {
+	sm := t.machine()
+	if sm == nil {
+		return RecentsSnapshot{}
+	}
+	return sm.Snapshot()
+}
+
+func (t *RecentsTracker) Restore(snapshot RecentsSnapshot) {
+	sm := t.machine()
+	if sm == nil {
+		return
+	}
+	sm.Restore(snapshot)
+}
+
+func normalizeRecentsSessionID(primary, fallback string) string {
+	if sessionID := strings.TrimSpace(primary); sessionID != "" {
+		return sessionID
+	}
+	return strings.TrimSpace(fallback)
 }

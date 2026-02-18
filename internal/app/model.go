@@ -264,6 +264,8 @@ type recentsDomain interface {
 	IsRunning(sessionID string) bool
 	ReadyCount() int
 	RunningCount() int
+	Snapshot() RecentsSnapshot
+	Restore(snapshot RecentsSnapshot)
 }
 
 type composeOptionKind int
@@ -2777,6 +2779,7 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 	}
 	m.syncAppStateComposeHistory()
 	m.syncAppStateInputDrafts()
+	m.syncAppStateRecents()
 	m.appStateSaveSeq++
 	requestSeq := m.appStateSaveSeq
 	state := m.appState

@@ -173,10 +173,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		previousSelection := m.selectedSessionSnapshot()
 		m.setSessionsAndMeta(msg.sessions, normalizeSessionMeta(msg.meta))
+		recentsStateSaveCmd := tea.Cmd(nil)
 		if m.recents != nil {
 			m.recents.ObserveSessions(msg.sessions)
 			m.recents.ObserveMeta(m.sessionMeta, now)
 			m.syncRecentsCompletionWatches()
+			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
 		}
 		m.applySidebarItemsIfDirty()
 		saveSidebarExpansionCmd := tea.Cmd(nil)
@@ -188,6 +190,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				}
 			}
 		}
+		saveStateCmd := tea.Batch(saveSidebarExpansionCmd, recentsStateSaveCmd)
 		nextSelection := m.selectedSessionSnapshot()
 		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
 		recentsCmd := tea.Cmd(nil)
@@ -197,13 +200,13 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection) {
 			if m.shouldSkipSelectionReloadOnSessionsUpdate(previousSelection, nextSelection) {
-				if recentsCmd != nil && saveSidebarExpansionCmd != nil {
-					return true, tea.Batch(recentsCmd, saveSidebarExpansionCmd)
+				if recentsCmd != nil && saveStateCmd != nil {
+					return true, tea.Batch(recentsCmd, saveStateCmd)
 				}
 				if recentsCmd != nil {
 					return true, recentsCmd
 				}
-				return true, saveSidebarExpansionCmd
+				return true, saveStateCmd
 			}
 			selectionCmd := m.onSelectionChangedImmediate()
 			if recentsCmd != nil && selectionCmd != nil {
@@ -211,21 +214,21 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			} else if recentsCmd != nil {
 				selectionCmd = recentsCmd
 			}
-			if selectionCmd != nil && saveSidebarExpansionCmd != nil {
-				return true, tea.Batch(selectionCmd, saveSidebarExpansionCmd)
+			if selectionCmd != nil && saveStateCmd != nil {
+				return true, tea.Batch(selectionCmd, saveStateCmd)
 			}
 			if selectionCmd != nil {
 				return true, selectionCmd
 			}
-			return true, saveSidebarExpansionCmd
+			return true, saveStateCmd
 		}
-		if recentsCmd != nil && saveSidebarExpansionCmd != nil {
-			return true, tea.Batch(recentsCmd, saveSidebarExpansionCmd)
+		if recentsCmd != nil && saveStateCmd != nil {
+			return true, tea.Batch(recentsCmd, saveStateCmd)
 		}
 		if recentsCmd != nil {
 			return true, recentsCmd
 		}
-		return true, saveSidebarExpansionCmd
+		return true, saveStateCmd
 	case workspacesMsg:
 		if msg.err != nil {
 			m.setBackgroundError("workspaces error: " + msg.err.Error())
@@ -314,6 +317,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if msg.state != nil {
 			m.applyAppState(msg.state)
+			m.restoreRecentsFromAppState(msg.state)
 			m.initialStateLoaded = true
 			m.applySidebarItems()
 			m.resize(m.width, m.height)
@@ -507,9 +511,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.noteSessionMetaActivity(msg.id, msg.turnID, now)
 		watchCmd := tea.Cmd(nil)
+		recentsStateSaveCmd := tea.Cmd(nil)
 		if m.recents != nil {
 			m.recents.StartRun(msg.id, baselineTurnID, now)
 			m.refreshRecentsSidebarState()
+			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
 			watchCmd = m.beginRecentsCompletionWatch(msg.id, baselineTurnID)
 		}
 		if m.sidebar != nil {
@@ -522,6 +528,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.lastSessionMetaRefreshAt = now
 		provider := m.providerForSessionID(msg.id)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
+		if recentsStateSaveCmd != nil {
+			cmds = append(cmds, recentsStateSaveCmd)
+		}
 		if watchCmd != nil {
 			cmds = append(cmds, watchCmd)
 		}
@@ -638,6 +647,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.setLoadingContent()
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		watchCmd := tea.Cmd(nil)
+		recentsStateSaveCmd := tea.Cmd(nil)
 		if m.recents != nil {
 			baseline := ""
 			if entry := m.sessionMeta[msg.session.ID]; entry != nil {
@@ -645,11 +655,15 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			m.recents.StartRun(msg.session.ID, baseline, time.Now().UTC())
 			m.refreshRecentsSidebarState()
+			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
 			watchCmd = m.beginRecentsCompletionWatch(msg.session.ID, baseline)
 		}
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, initialLines)}
+		if recentsStateSaveCmd != nil {
+			cmds = append(cmds, recentsStateSaveCmd)
+		}
 		if watchCmd != nil {
 			cmds = append(cmds, watchCmd)
 		}

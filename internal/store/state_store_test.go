@@ -36,6 +36,17 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	state.ProviderBadges = map[string]*types.ProviderBadgeConfig{
 		"codex": {Prefix: "[GPT]", Color: "231"},
 	}
+	state.Recents = &types.AppStateRecents{
+		Version: 1,
+		Running: map[string]types.AppStateRecentRun{
+			"s-running": {SessionID: "s-running", BaselineTurnID: "turn-u1", StartedAtUnix: 1710000000},
+		},
+		Ready: map[string]types.AppStateReadyItem{
+			"s-ready": {SessionID: "s-ready", CompletionTurn: "turn-a1", CompletedAtUnix: 1710000300, LastKnownTurnID: "turn-a1"},
+		},
+		ReadyQueue:    []types.AppStateReadyQueueEntry{{SessionID: "s-ready", Seq: 1}},
+		DismissedTurn: map[string]string{"s-dismissed": "turn-a0"},
+	}
 
 	if err := store.Save(ctx, state); err != nil {
 		t.Fatalf("save: %v", err)
@@ -59,5 +70,20 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	}
 	if loaded.ProviderBadges["codex"] == nil || loaded.ProviderBadges["codex"].Prefix != "[GPT]" || loaded.ProviderBadges["codex"].Color != "231" {
 		t.Fatalf("expected provider badge overrides to round-trip")
+	}
+	if loaded.Recents == nil {
+		t.Fatalf("expected recents state to round-trip")
+	}
+	if run, ok := loaded.Recents.Running["s-running"]; !ok || run.BaselineTurnID != "turn-u1" {
+		t.Fatalf("expected running recents state to round-trip, got %#v", loaded.Recents.Running)
+	}
+	if item, ok := loaded.Recents.Ready["s-ready"]; !ok || item.CompletionTurn != "turn-a1" {
+		t.Fatalf("expected ready recents state to round-trip, got %#v", loaded.Recents.Ready)
+	}
+	if len(loaded.Recents.ReadyQueue) != 1 || loaded.Recents.ReadyQueue[0].SessionID != "s-ready" {
+		t.Fatalf("expected ready queue to round-trip, got %#v", loaded.Recents.ReadyQueue)
+	}
+	if got := loaded.Recents.DismissedTurn["s-dismissed"]; got != "turn-a0" {
+		t.Fatalf("expected dismissed turn to round-trip, got %q", got)
 	}
 }

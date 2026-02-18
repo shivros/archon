@@ -376,5 +376,10 @@ func isZeroAppState(state *types.AppState) bool {
 		len(state.ComposeDrafts) == 0 &&
 		len(state.NoteDrafts) == 0 &&
 		len(state.ComposeDefaultsByProvider) == 0 &&
-		len(state.ProviderBadges) == 0
+		len(state.ProviderBadges) == 0 &&
+		(state.Recents == nil ||
+			(len(state.Recents.Running) == 0 &&
+				len(state.Recents.Ready) == 0 &&
+				len(state.Recents.ReadyQueue) == 0 &&
+				len(state.Recents.DismissedTurn) == 0))
 }
