@@ -41,6 +41,7 @@ type pooledCodexHistoryClient struct {
 
 type codexHistoryClient interface {
 	ReadThread(ctx context.Context, threadID string) (*codexThread, error)
+	ResumeThread(ctx context.Context, threadID string) error
 	Close()
 }
 
@@ -71,7 +72,7 @@ func (p *codexHistoryPool) ReadThread(ctx context.Context, cwd, codexHome, threa
 	if err != nil {
 		return nil, err
 	}
-	thread, err := entry.client.ReadThread(ctx, threadID)
+	thread, err := p.readThreadWithRecovery(ctx, entry.client, threadID)
 	release()
 	if err == nil {
 		return thread, nil
@@ -84,9 +85,34 @@ func (p *codexHistoryPool) ReadThread(ctx context.Context, cwd, codexHome, threa
 	if reacquireErr != nil {
 		return nil, reacquireErr
 	}
-	thread, err = entry.client.ReadThread(ctx, threadID)
+	thread, err = p.readThreadWithRecovery(ctx, entry.client, threadID)
 	release()
 	return thread, err
+}
+
+func (p *codexHistoryPool) readThreadWithRecovery(ctx context.Context, client codexHistoryClient, threadID string) (*codexThread, error) {
+	if client == nil {
+		return nil, errors.New("codex history client is required")
+	}
+	thread, err := client.ReadThread(ctx, threadID)
+	if err == nil {
+		return thread, nil
+	}
+	if !isCodexHistoryResumeRequiredError(err) {
+		return nil, err
+	}
+	if resumeErr := client.ResumeThread(ctx, threadID); resumeErr != nil {
+		return nil, err
+	}
+	return client.ReadThread(ctx, threadID)
+}
+
+func isCodexHistoryResumeRequiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "thread not loaded") || strings.Contains(text, "no rollout found for thread id")
 }
 
 func (p *codexHistoryPool) Close() {
