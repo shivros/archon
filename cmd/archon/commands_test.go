@@ -160,8 +160,39 @@ func TestUICommandEnsuresVersionAndRunsUI(t *testing.T) {
 	if fake.ensureVersionCalls != 1 {
 		t.Fatalf("expected ensure daemon version once, got %d", fake.ensureVersionCalls)
 	}
+	if fake.ensureDaemonCalls != 0 {
+		t.Fatalf("expected ensure daemon to not be called, got %d", fake.ensureDaemonCalls)
+	}
 	if fake.ensureVersionExpected != "v-test" || !fake.ensureVersionRestart {
 		t.Fatalf("unexpected ensure version args: expected=%q restart=%v", fake.ensureVersionExpected, fake.ensureVersionRestart)
+	}
+	if fake.runUICalls != 1 {
+		t.Fatalf("expected ui runner once, got %d", fake.runUICalls)
+	}
+}
+
+func TestUICommandIgnoresVersionMismatchWhenFlagSet(t *testing.T) {
+	fake := &fakeCommandClient{}
+	logConfigured := 0
+
+	cmd := NewUICommand(
+		&bytes.Buffer{},
+		fixedFactory(fake),
+		func() { logConfigured++ },
+		"v-test",
+	)
+
+	if err := cmd.Run([]string{"--ignore-daemon-mismatch"}); err != nil {
+		t.Fatalf("expected ui command to succeed, got err=%v", err)
+	}
+	if logConfigured != 1 {
+		t.Fatalf("expected UI logging to be configured once, got %d", logConfigured)
+	}
+	if fake.ensureDaemonCalls != 1 {
+		t.Fatalf("expected ensure daemon once, got %d", fake.ensureDaemonCalls)
+	}
+	if fake.ensureVersionCalls != 0 {
+		t.Fatalf("expected ensure daemon version to not be called, got %d", fake.ensureVersionCalls)
 	}
 	if fake.runUICalls != 1 {
 		t.Fatalf("expected ui runner once, got %d", fake.runUICalls)

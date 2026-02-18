@@ -31,6 +31,7 @@ func (c *UICommand) Run(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
 	restartDaemon := fs.Bool("restart-daemon", false, "restart daemon if version mismatch")
+	ignoreDaemonMismatch := fs.Bool("ignore-daemon-mismatch", false, "start UI even if daemon version mismatches")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -44,8 +45,14 @@ func (c *UICommand) Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := client.EnsureDaemonVersion(ctx, c.version, *restartDaemon); err != nil {
-		return err
+	if *ignoreDaemonMismatch {
+		if err := client.EnsureDaemon(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := client.EnsureDaemonVersion(ctx, c.version, *restartDaemon); err != nil {
+			return err
+		}
 	}
 	return client.RunUI()
 }
