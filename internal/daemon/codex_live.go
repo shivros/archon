@@ -274,7 +274,6 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 	}
 	s.hub.Broadcast(event)
 	if msg.Method == "turn/completed" {
-		s.publishTurnCompleted(parseTurnIDFromEventParams(msg.Params))
 		var payload struct {
 			Turn struct {
 				ID string `json:"id"`
@@ -291,6 +290,7 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 			s.activeTurn = ""
 			s.mu.Unlock()
 		}
+		s.publishTurnCompleted(parseTurnIDFromEventParams(msg.Params))
 		s.maybeClose()
 	}
 }
@@ -439,6 +439,41 @@ func isClosedPipeError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "file already closed") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "closed pipe")
+}
+
+func isCodexMissingThreadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "thread not found") ||
+		strings.Contains(text, "thread not loaded") ||
+		strings.Contains(text, "no rollout found for thread id")
+}
+
+func reserveSessionTurn(ls *codexLiveSession, start func() (string, error)) (string, error) {
+	if ls == nil {
+		return "", errors.New("live session is required")
+	}
+	if start == nil {
+		return "", errors.New("turn starter is required")
+	}
+	ls.mu.Lock()
+	if ls.activeTurn != "" {
+		ls.mu.Unlock()
+		return "", errors.New("turn already in progress")
+	}
+	ls.mu.Unlock()
+
+	turnID, err := start()
+	if err != nil {
+		return "", err
+	}
+	ls.mu.Lock()
+	ls.activeTurn = turnID
+	ls.lastActive = time.Now().UTC()
+	ls.mu.Unlock()
+	return turnID, nil
 }
 
 type codexSubscriber struct {

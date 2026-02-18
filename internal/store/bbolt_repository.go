@@ -26,6 +26,7 @@ var (
 	bucketWorktrees         = []byte("worktrees")
 	bucketGroups            = []byte("workspace_groups")
 	bucketWorkflowTemplates = []byte("workflow_templates")
+	bucketWorkflowRuns      = []byte("workflow_runs")
 	bucketApprovals         = []byte("approvals")
 	bucketNotes             = []byte("notes")
 	keyAppState             = []byte("state")
@@ -142,6 +143,9 @@ func initBboltSchema(db *bolt.DB) error {
 			return err
 		}
 		if _, err := tx.CreateBucketIfNotExists(bucketWorkflowTemplates); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucketIfNotExists(bucketWorkflowRuns); err != nil {
 			return err
 		}
 		if _, err := tx.CreateBucketIfNotExists(bucketApprovals); err != nil {
