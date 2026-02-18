@@ -137,7 +137,7 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	}
 	sessionID, provider, model, err := d.resolveSession(ctx, req)
 	if err != nil {
-		return guidedworkflows.StepPromptDispatchResult{}, err
+		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf(

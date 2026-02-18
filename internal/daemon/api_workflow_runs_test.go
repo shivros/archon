@@ -2,15 +2,19 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
@@ -295,6 +299,134 @@ func TestWorkflowRunEndpointsMaxActiveRunsGuardrail(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 409 conflict when max active runs exceeded, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+}
+
+func TestWorkflowRunEndpointsTwoStepWorkflowDispatchIntegration(t *testing.T) {
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "gwf_two_step_integration",
+		Name: "Two Step Integration",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "overall plan prompt"},
+					{ID: "step_2", Name: "Step 2", Prompt: "phase plan prompt"},
+				},
+			},
+		},
+	}
+	gateway := &stubGuidedWorkflowSessionGateway{
+		turnID: "turn-1",
+		started: []*types.Session{
+			{
+				ID:        "sess-gwf",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: time.Now().UTC(),
+			},
+		},
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway, sessionMeta: metaStore}
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithTemplate(template),
+		guidedworkflows.WithStepPromptDispatcher(dispatcher),
+	)
+
+	api := &API{Version: "test", WorkflowRuns: runService}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:  "gwf_two_step_integration",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		UserPrompt:  "Fix parser bug",
+	})
+	started := postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+	if started.Status != guidedworkflows.WorkflowRunStatusRunning {
+		t.Fatalf("expected running start status, got %q", started.Status)
+	}
+	if started.SessionID != "sess-gwf" {
+		t.Fatalf("expected workflow run to bind created session, got %q", started.SessionID)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one workflow session start request, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 1 {
+		t.Fatalf("expected first step prompt dispatch, got %d calls", len(gateway.sendCalls))
+	}
+	firstText, _ := gateway.sendCalls[0].input[0]["text"].(string)
+	if firstText != "Fix parser bug\n\noverall plan prompt" {
+		t.Fatalf("unexpected first step prompt payload: %q", firstText)
+	}
+
+	updated, err := runService.OnTurnCompleted(context.Background(), guidedworkflows.TurnSignal{
+		SessionID: "sess-gwf",
+		TurnID:    "turn-1",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one run update after turn completion, got %d", len(updated))
+	}
+	if len(gateway.sendCalls) != 2 {
+		t.Fatalf("expected second step prompt dispatch, got %d calls", len(gateway.sendCalls))
+	}
+	if gateway.sendCalls[1].sessionID != "sess-gwf" {
+		t.Fatalf("expected second step on same session, got %q", gateway.sendCalls[1].sessionID)
+	}
+	secondText, _ := gateway.sendCalls[1].input[0]["text"].(string)
+	if secondText != "phase plan prompt" {
+		t.Fatalf("unexpected second step prompt payload: %q", secondText)
+	}
+}
+
+func TestWorkflowRunEndpointsStartWrapsSessionResolutionErrors(t *testing.T) {
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "gwf_step_dispatch_error",
+		Name: "Dispatch Error",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	gateway := &stubGuidedWorkflowSessionGateway{
+		startErr: errors.New("codex input is required"),
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithTemplate(template),
+		guidedworkflows.WithStepPromptDispatcher(dispatcher),
+	)
+	api := &API{Version: "test", WorkflowRuns: runService}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:  "gwf_step_dispatch_error",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	resp := postWorkflowRunActionRaw(t, server, created.ID, "start", http.StatusInternalServerError)
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(resp.Body)
+	body := strings.ToLower(strings.TrimSpace(string(payload)))
+	if !strings.Contains(body, "workflow step prompt dispatch unavailable") {
+		t.Fatalf("expected wrapped step dispatch error, got %q", body)
+	}
+	if strings.Contains(body, "guided workflow request failed") {
+		t.Fatalf("expected specific error instead of generic request failure, got %q", body)
 	}
 }
 
