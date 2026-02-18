@@ -104,6 +104,44 @@ func TestRecentsCardRendersControlsAboveBubble(t *testing.T) {
 	}
 }
 
+func TestRecentsEntryShowsWorktreeInLocationLabel(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.width = 120
+	m.height = 40
+	m.viewport.SetWidth(90)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace"},
+	}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "feature/refactor"},
+		},
+	}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.recentsPreviews = map[string]recentsPreview{
+		"s1": {Revision: "turn-1", Preview: "assistant preview"},
+	}
+	m.mode = uiModeRecents
+
+	m.refreshRecentsContent()
+	meta, ok := m.contentBlockMetaByID["recents:running:s1"]
+	if !ok {
+		t.Fatalf("expected recents running block metadata")
+	}
+	if !strings.Contains(meta.Label, "Workspace / feature/refactor") {
+		t.Fatalf("expected recents location to include worktree, got %q", meta.Label)
+	}
+}
+
 func TestRecentsTurnCompletedMessageMovesRunToReady(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()

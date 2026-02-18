@@ -40,7 +40,7 @@ type recentsEntry struct {
 	Session         *types.Session
 	Meta            *types.SessionMeta
 	Status          recentsEntryStatus
-	WorkspaceName   string
+	LocationName    string
 	CompletedAt     time.Time
 	PreviewRevision string
 	Preview         recentsPreview
@@ -200,10 +200,23 @@ func (m *Model) buildRecentsEntry(session *types.Session, status recentsEntrySta
 	}
 	sessionID := strings.TrimSpace(session.ID)
 	meta := m.sessionMeta[sessionID]
-	workspaceName := "Unassigned"
+	locationName := "Unassigned"
 	if meta != nil {
+		worktreeName := ""
+		worktreeID := strings.TrimSpace(meta.WorktreeID)
+		if worktreeID != "" {
+			worktreeName = worktreeID
+			if wt := m.worktreeByID(worktreeID); wt != nil {
+				if name := strings.TrimSpace(wt.Name); name != "" {
+					worktreeName = name
+				}
+			}
+		}
 		if ws := m.workspaceByID(strings.TrimSpace(meta.WorkspaceID)); ws != nil && strings.TrimSpace(ws.Name) != "" {
-			workspaceName = ws.Name
+			locationName = ws.Name
+		}
+		if worktreeName != "" {
+			locationName += " / " + worktreeName
 		}
 	}
 	revision := ""
@@ -216,7 +229,7 @@ func (m *Model) buildRecentsEntry(session *types.Session, status recentsEntrySta
 		Session:         session,
 		Meta:            meta,
 		Status:          status,
-		WorkspaceName:   workspaceName,
+		LocationName:    locationName,
 		PreviewRevision: revision,
 		Preview:         preview,
 	}
@@ -358,7 +371,7 @@ func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlock
 	if entry.Status == recentsEntryReady {
 		statusLabel = "Ready"
 	}
-	metaLabel := fmt.Sprintf("%s • %s • %s", statusLabel, sessionTitleText, entry.WorkspaceName)
+	metaLabel := fmt.Sprintf("%s • %s • %s", statusLabel, sessionTitleText, entry.LocationName)
 	if strings.TrimSpace(m.recentsSelectedSessionID) == entry.SessionID {
 		metaLabel = "▶ " + metaLabel
 	}
