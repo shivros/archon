@@ -237,6 +237,7 @@ func (defaultSidebarProjectionInvalidationPolicy) ShouldInvalidate(reason sideba
 		sidebarProjectionChangeWorktree,
 		sidebarProjectionChangeGroup,
 		sidebarProjectionChangeDismissed,
+		sidebarProjectionChangeWorkflow,
 		sidebarProjectionChangeAppState:
 		return true
 	default:

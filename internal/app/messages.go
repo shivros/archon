@@ -316,6 +316,7 @@ type workflowRunDecisionMsg struct {
 }
 
 type workflowRunVisibilityMsg struct {
+	runID     string
 	run       *guidedworkflows.WorkflowRun
 	err       error
 	dismissed bool

@@ -549,15 +549,17 @@ func buildSidebarItemsWithRecents(
 ) []list.Item {
 	visibleSessions := filterVisibleSessions(sessions, meta, showDismissed)
 	workflowByID := make(map[string]*guidedworkflows.WorkflowRun, len(workflows))
+	hiddenDismissedWorkflowIDs := map[string]struct{}{}
 	for _, run := range workflows {
 		if run == nil {
 			continue
 		}
-		if run.DismissedAt != nil && !showDismissed {
-			continue
-		}
 		runID := strings.TrimSpace(run.ID)
 		if runID == "" {
+			continue
+		}
+		if run.DismissedAt != nil && !showDismissed {
+			hiddenDismissedWorkflowIDs[runID] = struct{}{}
 			continue
 		}
 		workflowByID[runID] = run
@@ -644,6 +646,9 @@ func buildSidebarItemsWithRecents(
 	}
 	for runID, bucket := range workflowSessionBuckets {
 		if _, exists := workflowByID[runID]; exists {
+			continue
+		}
+		if _, hidden := hiddenDismissedWorkflowIDs[runID]; hidden {
 			continue
 		}
 		workspaceID := ""

@@ -418,6 +418,109 @@ func TestGuidedWorkflowSetupContentNotOverwrittenBySidebarRefresh(t *testing.T) 
 	}
 }
 
+func TestWorkflowDismissNotFoundFallsBackToLocalDismiss(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	meta := m.sessionMeta["s1"]
+	if meta == nil {
+		t.Fatalf("expected session meta fixture")
+	}
+	meta.WorkflowRunID = "gwf-missing"
+	m.applySidebarItems()
+	if !sidebarHasWorkflowItem(m, "gwf-missing") {
+		t.Fatalf("expected missing workflow placeholder to be visible before dismiss")
+	}
+
+	updated, cmd := m.Update(workflowRunVisibilityMsg{
+		runID:     "gwf-missing",
+		err:       &client.APIError{StatusCode: 404, Message: "workflow run not found"},
+		dismissed: true,
+	})
+	m = asModel(t, updated)
+	if cmd != nil {
+		if _, ok := cmd().(appStateSaveFlushMsg); !ok {
+			t.Fatalf("expected app state save scheduling command, got %T", cmd())
+		}
+	}
+	if !strings.Contains(strings.ToLower(m.status), "dismissed locally") {
+		t.Fatalf("expected local dismiss status, got %q", m.status)
+	}
+	if sidebarHasWorkflowItem(m, "gwf-missing") {
+		t.Fatalf("expected missing workflow placeholder to be hidden after local dismiss")
+	}
+	found := false
+	for _, run := range m.workflowRuns {
+		if run == nil || strings.TrimSpace(run.ID) != "gwf-missing" {
+			continue
+		}
+		found = true
+		if run.DismissedAt == nil {
+			t.Fatalf("expected local fallback run to be marked dismissed")
+		}
+	}
+	if !found {
+		t.Fatalf("expected synthetic dismissed workflow run to be tracked")
+	}
+	if len(m.appState.DismissedMissingWorkflowRunIDs) != 1 || m.appState.DismissedMissingWorkflowRunIDs[0] != "gwf-missing" {
+		t.Fatalf("expected dismissed missing workflow id persisted in app state, got %#v", m.appState.DismissedMissingWorkflowRunIDs)
+	}
+}
+
+func TestWorkflowDismissNotFoundStaysHiddenAfterRunsRefresh(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	meta := m.sessionMeta["s1"]
+	if meta == nil {
+		t.Fatalf("expected session meta fixture")
+	}
+	meta.WorkflowRunID = "gwf-missing"
+	m.applySidebarItems()
+	if !sidebarHasWorkflowItem(m, "gwf-missing") {
+		t.Fatalf("expected missing workflow placeholder to be visible before dismiss")
+	}
+
+	updated, _ := m.Update(workflowRunVisibilityMsg{
+		runID:     "gwf-missing",
+		err:       &client.APIError{StatusCode: 404, Message: "workflow run not found"},
+		dismissed: true,
+	})
+	m = asModel(t, updated)
+	updated, _ = m.Update(workflowRunsMsg{runs: []*guidedworkflows.WorkflowRun{}})
+	m = asModel(t, updated)
+
+	if sidebarHasWorkflowItem(m, "gwf-missing") {
+		t.Fatalf("expected missing workflow placeholder to stay hidden after workflow refresh")
+	}
+}
+
+func TestWorkflowDismissNotFoundSurvivesAppStateRestore(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	meta := m.sessionMeta["s1"]
+	if meta == nil {
+		t.Fatalf("expected session meta fixture")
+	}
+	meta.WorkflowRunID = "gwf-missing"
+
+	updated, _ := m.Update(workflowRunVisibilityMsg{
+		runID:     "gwf-missing",
+		err:       &client.APIError{StatusCode: 404, Message: "workflow run not found"},
+		dismissed: true,
+	})
+	m = asModel(t, updated)
+	state := m.appState
+
+	restored := newPhase0ModelWithSession("codex")
+	if restored.sessionMeta["s1"] == nil {
+		t.Fatalf("expected restored session meta fixture")
+	}
+	restored.sessionMeta["s1"].WorkflowRunID = "gwf-missing"
+	restored.applyAppState(&state)
+	restored.setWorkflowRunsData(nil)
+	restored.applySidebarItems()
+
+	if sidebarHasWorkflowItem(restored, "gwf-missing") {
+		t.Fatalf("expected missing workflow placeholder to remain hidden after app-state restore")
+	}
+}
+
 func TestGuidedWorkflowTimelineSnapshotUpdatesArtifacts(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 30, 0, 0, time.UTC)
 	m := NewModel(nil)
@@ -443,6 +546,26 @@ func TestGuidedWorkflowTimelineSnapshotUpdatesArtifacts(t *testing.T) {
 	if !strings.Contains(m.contentRaw, "quality checks complete") {
 		t.Fatalf("expected artifact text in content, got %q", m.contentRaw)
 	}
+}
+
+func sidebarHasWorkflowItem(m Model, runID string) bool {
+	if m.sidebar == nil {
+		return false
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	for _, item := range m.sidebar.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkflow {
+			continue
+		}
+		if strings.TrimSpace(entry.workflowRunID()) == runID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGuidedWorkflowTimelineShowsStepSessionTraceability(t *testing.T) {

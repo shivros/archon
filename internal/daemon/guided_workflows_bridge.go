@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -153,11 +154,24 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 			strings.TrimSpace(provider),
 		)
 	}
-	turnID, err := d.sessions.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": prompt},
-	})
+	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt)
+	if err != nil && shouldFallbackToReplacementWorkflowSession(err) {
+		fallbackSessionID, fallbackProvider, fallbackModel, startErr := d.startWorkflowSession(ctx, req, nil, nil)
+		if startErr == nil && strings.TrimSpace(fallbackSessionID) != "" && strings.TrimSpace(fallbackSessionID) != strings.TrimSpace(sessionID) {
+			fallbackTurnID, fallbackErr := d.sendStepPrompt(ctx, fallbackSessionID, prompt)
+			if fallbackErr == nil {
+				sessionID = strings.TrimSpace(fallbackSessionID)
+				provider = strings.TrimSpace(fallbackProvider)
+				model = strings.TrimSpace(fallbackModel)
+				turnID = strings.TrimSpace(fallbackTurnID)
+				err = nil
+			} else {
+				err = fallbackErr
+			}
+		}
+	}
 	if err != nil {
-		return guidedworkflows.StepPromptDispatchResult{}, err
+		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
 	}
 	d.linkSessionToWorkflow(ctx, sessionID, req.RunID)
 	return guidedworkflows.StepPromptDispatchResult{
@@ -167,6 +181,41 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		Provider:   strings.TrimSpace(provider),
 		Model:      strings.TrimSpace(model),
 	}, nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, sessionID string, prompt string) (string, error) {
+	if d == nil || d.sessions == nil {
+		return "", fmt.Errorf("%w: session gateway unavailable", guidedworkflows.ErrStepDispatch)
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", fmt.Errorf("%w: session id is required", guidedworkflows.ErrStepDispatch)
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", fmt.Errorf("%w: prompt is empty", guidedworkflows.ErrStepDispatch)
+	}
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		turnID, err := d.sessions.SendMessage(ctx, sessionID, []map[string]any{
+			{"type": "text", "text": prompt},
+		})
+		if err == nil {
+			return strings.TrimSpace(turnID), nil
+		}
+		lastErr = err
+		if !isTurnAlreadyInProgressError(err) || attempt == maxAttempts {
+			break
+		}
+		delay := time.Duration(attempt*150) * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return "", lastErr
 }
 
 func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Context, sessionID, runID string) {
@@ -244,53 +293,62 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 		}
 		return "", "", "", fmt.Errorf("%w: explicit session %q not found", guidedworkflows.ErrStepDispatch, explicitSessionID)
 	}
+	workflowSessionID, workflowProvider, workflowModel := d.resolveOwnedWorkflowSession(req, sessions, metaBySessionID)
+	if workflowSessionID != "" {
+		return workflowSessionID, workflowProvider, workflowModel, nil
+	}
+	return d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
+}
+
+func (d *guidedWorkflowPromptDispatcher) resolveOwnedWorkflowSession(
+	req guidedworkflows.StepPromptDispatchRequest,
+	sessions []*types.Session,
+	metaBySessionID map[string]*types.SessionMeta,
+) (string, string, string) {
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" {
+		return "", "", ""
+	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	worktreeID := strings.TrimSpace(req.WorktreeID)
-	if workspaceID == "" && worktreeID == "" {
-		return "", "", "", nil
-	}
-	var selected *types.Session
-	var selectedMeta *types.SessionMeta
+	var selectedSessionID string
+	var selectedProvider string
+	var selectedModel string
 	var selectedAt time.Time
 	for _, session := range sessions {
-		if session == nil {
-			continue
-		}
-		if !isGuidedWorkflowDispatchableSessionStatus(session.Status) {
-			continue
-		}
-		if !guidedWorkflowProviderSupportsPromptDispatch(session.Provider) {
+		if session == nil || !isGuidedWorkflowDispatchableSessionStatus(session.Status) {
 			continue
 		}
 		sessionID := strings.TrimSpace(session.ID)
 		if sessionID == "" {
 			continue
 		}
-		sessionMeta := metaBySessionID[sessionID]
-		if sessionMeta == nil {
+		meta := metaBySessionID[sessionID]
+		if meta == nil || strings.TrimSpace(meta.WorkflowRunID) != runID {
 			continue
 		}
-		if worktreeID != "" {
-			if strings.TrimSpace(sessionMeta.WorktreeID) != worktreeID {
-				continue
-			}
-		} else if workspaceID != "" && strings.TrimSpace(sessionMeta.WorkspaceID) != workspaceID {
+		if worktreeID != "" && strings.TrimSpace(meta.WorktreeID) != worktreeID {
+			continue
+		}
+		if worktreeID == "" && workspaceID != "" && strings.TrimSpace(meta.WorkspaceID) != workspaceID {
+			continue
+		}
+		provider := strings.TrimSpace(session.Provider)
+		if !guidedWorkflowProviderSupportsPromptDispatch(provider) {
 			continue
 		}
 		candidateAt := session.CreatedAt
-		if sessionMeta.LastActiveAt != nil {
-			candidateAt = sessionMeta.LastActiveAt.UTC()
+		if meta.LastActiveAt != nil {
+			candidateAt = meta.LastActiveAt.UTC()
 		}
-		if selected == nil || candidateAt.After(selectedAt) {
-			selected = session
-			selectedMeta = sessionMeta
+		if selectedSessionID == "" || candidateAt.After(selectedAt) {
+			selectedSessionID = sessionID
+			selectedProvider = provider
+			selectedModel = sessionModel(meta)
 			selectedAt = candidateAt
 		}
 	}
-	if selected == nil {
-		return d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
-	}
-	return strings.TrimSpace(selected.ID), strings.TrimSpace(selected.Provider), sessionModel(selectedMeta), nil
+	return selectedSessionID, selectedProvider, selectedModel
 }
 
 func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
@@ -404,6 +462,30 @@ func guidedWorkflowRuntimeOptionsForDispatch(level types.AccessLevel) *types.Ses
 		return nil
 	}
 	return &types.SessionRuntimeOptions{Access: normalized}
+}
+
+func wrapStepDispatchError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		return err
+	}
+	return fmt.Errorf("%w: %v", guidedworkflows.ErrStepDispatch, err)
+}
+
+func isTurnAlreadyInProgressError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "turn already in progress")
+}
+
+func shouldFallbackToReplacementWorkflowSession(err error) bool {
+	if err == nil {
+		return false
+	}
+	return isTurnAlreadyInProgressError(err) || isCodexMissingThreadError(err)
 }
 
 func guidedWorkflowsExecutionControlsFromCoreConfig(cfg config.CoreConfig) guidedworkflows.ExecutionControls {

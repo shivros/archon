@@ -1144,6 +1144,34 @@ func (m *Model) setWorkflowRunsData(runs []*guidedworkflows.WorkflowRun) {
 	m.invalidateSidebarProjection(sidebarProjectionChangeWorkflow)
 }
 
+func (m *Model) workflowRunsForSidebar() []*guidedworkflows.WorkflowRun {
+	if m == nil {
+		return nil
+	}
+	out := make([]*guidedworkflows.WorkflowRun, 0, len(m.workflowRuns))
+	present := make(map[string]struct{}, len(m.workflowRuns))
+	for _, run := range m.workflowRuns {
+		if run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		out = append(out, run)
+		present[runID] = struct{}{}
+	}
+	for runID := range m.dismissedMissingWorkflowRunIDSet() {
+		if _, ok := present[runID]; ok {
+			continue
+		}
+		if synthetic := m.syntheticDismissedWorkflowRun(runID); synthetic != nil {
+			out = append(out, synthetic)
+		}
+	}
+	return out
+}
+
 func (m *Model) upsertWorkflowRun(run *guidedworkflows.WorkflowRun) {
 	if m == nil || run == nil {
 		return
@@ -1170,6 +1198,194 @@ func (m *Model) upsertWorkflowRun(run *guidedworkflows.WorkflowRun) {
 	}
 	m.workflowRuns = out
 	m.invalidateSidebarProjection(sidebarProjectionChangeWorkflow)
+}
+
+func (m *Model) dismissWorkflowRunLocally(runID string) bool {
+	if m == nil {
+		return false
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	now := time.Now().UTC()
+	var run *guidedworkflows.WorkflowRun
+	for _, existing := range m.workflowRuns {
+		if existing == nil || strings.TrimSpace(existing.ID) != runID {
+			continue
+		}
+		run = cloneWorkflowRun(existing)
+		break
+	}
+	if run == nil {
+		workspaceID, worktreeID, sessionID := m.workflowRunContextFromSessions(runID)
+		run = &guidedworkflows.WorkflowRun{
+			ID:          runID,
+			WorkspaceID: workspaceID,
+			WorktreeID:  worktreeID,
+			SessionID:   sessionID,
+			Status:      guidedworkflows.WorkflowRunStatusFailed,
+			CreatedAt:   now,
+			LastError:   "workflow run not found",
+		}
+	}
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = now
+	}
+	run.DismissedAt = &now
+	m.upsertWorkflowRun(run)
+	m.addDismissedMissingWorkflowRunID(runID)
+	if m.guidedWorkflow != nil && strings.TrimSpace(m.guidedWorkflow.RunID()) == runID {
+		m.guidedWorkflow.SetRun(run)
+		m.renderGuidedWorkflowContent()
+	}
+	m.applySidebarItemsIfDirty()
+	return true
+}
+
+func (m *Model) syntheticDismissedWorkflowRun(runID string) *guidedworkflows.WorkflowRun {
+	if m == nil {
+		return nil
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil
+	}
+	workspaceID, worktreeID, sessionID := m.workflowRunContextFromSessions(runID)
+	hiddenAt := time.Unix(1, 0).UTC()
+	return &guidedworkflows.WorkflowRun{
+		ID:          runID,
+		WorkspaceID: workspaceID,
+		WorktreeID:  worktreeID,
+		SessionID:   sessionID,
+		Status:      guidedworkflows.WorkflowRunStatusFailed,
+		CreatedAt:   hiddenAt,
+		DismissedAt: &hiddenAt,
+		LastError:   "workflow run not found",
+	}
+}
+
+func (m *Model) dismissedMissingWorkflowRunIDSet() map[string]struct{} {
+	if m == nil {
+		return map[string]struct{}{}
+	}
+	out := make(map[string]struct{}, len(m.appState.DismissedMissingWorkflowRunIDs))
+	for _, runID := range m.appState.DismissedMissingWorkflowRunIDs {
+		runID = strings.TrimSpace(runID)
+		if runID == "" {
+			continue
+		}
+		out[runID] = struct{}{}
+	}
+	return out
+}
+
+func (m *Model) setDismissedMissingWorkflowRunIDSet(ids map[string]struct{}) bool {
+	if m == nil {
+		return false
+	}
+	if len(ids) == 0 {
+		if len(m.appState.DismissedMissingWorkflowRunIDs) == 0 {
+			return false
+		}
+		m.appState.DismissedMissingWorkflowRunIDs = nil
+		m.hasAppState = true
+		return true
+	}
+	normalized := make([]string, 0, len(ids))
+	for runID := range ids {
+		runID = strings.TrimSpace(runID)
+		if runID == "" {
+			continue
+		}
+		normalized = append(normalized, runID)
+	}
+	sort.Strings(normalized)
+	if slicesEqual(m.appState.DismissedMissingWorkflowRunIDs, normalized) {
+		return false
+	}
+	m.appState.DismissedMissingWorkflowRunIDs = normalized
+	m.hasAppState = true
+	return true
+}
+
+func (m *Model) addDismissedMissingWorkflowRunID(runID string) bool {
+	if m == nil {
+		return false
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	ids := m.dismissedMissingWorkflowRunIDSet()
+	if _, exists := ids[runID]; exists {
+		return false
+	}
+	ids[runID] = struct{}{}
+	return m.setDismissedMissingWorkflowRunIDSet(ids)
+}
+
+func (m *Model) removeDismissedMissingWorkflowRunID(runID string) bool {
+	if m == nil {
+		return false
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	ids := m.dismissedMissingWorkflowRunIDSet()
+	if _, exists := ids[runID]; !exists {
+		return false
+	}
+	delete(ids, runID)
+	return m.setDismissedMissingWorkflowRunIDSet(ids)
+}
+
+func (m *Model) workflowRunContextFromSessions(runID string) (workspaceID, worktreeID, sessionID string) {
+	if m == nil {
+		return "", "", ""
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "", "", ""
+	}
+	for _, session := range m.sessions {
+		if session == nil || strings.TrimSpace(session.ID) == "" {
+			continue
+		}
+		meta := m.sessionMeta[session.ID]
+		if meta == nil || strings.TrimSpace(meta.WorkflowRunID) != runID {
+			continue
+		}
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(session.ID)
+		}
+		if workspaceID == "" {
+			workspaceID = strings.TrimSpace(meta.WorkspaceID)
+		}
+		if worktreeID == "" {
+			worktreeID = strings.TrimSpace(meta.WorktreeID)
+		}
+		if workspaceID != "" || worktreeID != "" || sessionID != "" {
+			return workspaceID, worktreeID, sessionID
+		}
+	}
+	for id, meta := range m.sessionMeta {
+		if meta == nil || strings.TrimSpace(meta.WorkflowRunID) != runID {
+			continue
+		}
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(id)
+		}
+		if workspaceID == "" {
+			workspaceID = strings.TrimSpace(meta.WorkspaceID)
+		}
+		if worktreeID == "" {
+			worktreeID = strings.TrimSpace(meta.WorktreeID)
+		}
+		return workspaceID, worktreeID, sessionID
+	}
+	return workspaceID, worktreeID, sessionID
 }
 
 func (m *Model) setWorktreesData(workspaceID string, worktrees []*types.Worktree) {
@@ -1225,7 +1441,7 @@ func (m *Model) applySidebarItems() {
 		Worktrees:          m.worktrees,
 		Sessions:           m.sessions,
 		SessionMeta:        m.sessionMeta,
-		WorkflowRuns:       m.workflowRuns,
+		WorkflowRuns:       m.workflowRunsForSidebar(),
 		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
 	})
 	m.sidebar.recentsState = m.sidebarRecentsState(projection.Sessions)
@@ -1271,6 +1487,7 @@ func (m *Model) buildSidebarProjection() SidebarProjection {
 		Worktrees:          m.worktrees,
 		Sessions:           m.sessions,
 		SessionMeta:        m.sessionMeta,
+		WorkflowRuns:       m.workflowRunsForSidebar(),
 		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
 	})
 }

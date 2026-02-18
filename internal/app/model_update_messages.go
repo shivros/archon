@@ -1,10 +1,13 @@
 package app
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"control/internal/client"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 
@@ -107,6 +110,10 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
 	case workflowRunVisibilityMsg:
 		if msg.err != nil {
+			if msg.dismissed && isWorkflowRunNotFoundError(msg.err) && m.dismissWorkflowRunLocally(msg.runID) {
+				m.setStatusWarning("guided workflow missing in backend; dismissed locally")
+				return true, m.requestAppStateSaveCmd()
+			}
 			if msg.dismissed {
 				m.setStatusError("guided workflow dismiss error: " + msg.err.Error())
 			} else {
@@ -117,13 +124,21 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.run != nil {
 			m.upsertWorkflowRun(msg.run)
 		}
+		runID := strings.TrimSpace(msg.runID)
+		if runID == "" && msg.run != nil {
+			runID = strings.TrimSpace(msg.run.ID)
+		}
+		appStateSaveCmd := tea.Cmd(nil)
+		if runID != "" && m.removeDismissedMissingWorkflowRunID(runID) {
+			appStateSaveCmd = m.requestAppStateSaveCmd()
+		}
 		m.applySidebarItemsIfDirty()
 		if msg.dismissed {
 			m.setStatusInfo("guided workflow dismissed")
 		} else {
 			m.setStatusInfo("guided workflow restored")
 		}
-		return true, fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed)
+		return true, tea.Batch(fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed), appStateSaveCmd)
 	case createWorkspaceMsg:
 		if msg.err != nil {
 			m.exitAddWorkspace("add workspace error: " + msg.err.Error())
@@ -269,6 +284,18 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	default:
 		return false, nil
 	}
+}
+
+func isWorkflowRunNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound && strings.Contains(strings.ToLower(strings.TrimSpace(apiErr.Message)), "workflow run not found")
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "workflow run not found")
 }
 
 func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {

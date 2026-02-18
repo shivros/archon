@@ -363,26 +363,28 @@ func decideWorkflowRunCmd(api GuidedWorkflowAPI, runID string, req client.Workfl
 }
 
 func dismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	runID = strings.TrimSpace(runID)
 	return func() tea.Msg {
 		if api == nil {
-			return workflowRunVisibilityMsg{err: errors.New("guided workflow api is unavailable"), dismissed: true}
+			return workflowRunVisibilityMsg{runID: runID, err: errors.New("guided workflow api is unavailable"), dismissed: true}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		run, err := api.DismissWorkflowRun(ctx, runID)
-		return workflowRunVisibilityMsg{run: run, err: err, dismissed: true}
+		return workflowRunVisibilityMsg{runID: runID, run: run, err: err, dismissed: true}
 	}
 }
 
 func undismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	runID = strings.TrimSpace(runID)
 	return func() tea.Msg {
 		if api == nil {
-			return workflowRunVisibilityMsg{err: errors.New("guided workflow api is unavailable"), dismissed: false}
+			return workflowRunVisibilityMsg{runID: runID, err: errors.New("guided workflow api is unavailable"), dismissed: false}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		run, err := api.UndismissWorkflowRun(ctx, runID)
-		return workflowRunVisibilityMsg{run: run, err: err, dismissed: false}
+		return workflowRunVisibilityMsg{runID: runID, run: run, err: err, dismissed: false}
 	}
 }
 

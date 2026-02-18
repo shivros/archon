@@ -835,8 +835,8 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 		StepID:  step.ID,
 		Message: "awaiting turn completion",
 	})
-	if run.SessionID == "" {
-		run.SessionID = strings.TrimSpace(result.SessionID)
+	if sessionID := strings.TrimSpace(result.SessionID); sessionID != "" && strings.TrimSpace(run.SessionID) != sessionID {
+		run.SessionID = sessionID
 	}
 	return true, nil
 }

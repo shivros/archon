@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -374,6 +375,16 @@ func TestToGuidedWorkflowServiceErrorMappings(t *testing.T) {
 	check(guidedworkflows.ErrInvalidTransition, ServiceErrorConflict)
 	check(guidedworkflows.ErrRunLimitExceeded, ServiceErrorConflict)
 	check(guidedworkflows.ErrDisabled, ServiceErrorUnavailable)
+	check(guidedworkflows.ErrStepDispatch, ServiceErrorUnavailable)
+
+	mapped := toGuidedWorkflowServiceError(fmt.Errorf("%w: turn already in progress", guidedworkflows.ErrStepDispatch))
+	serviceErr, ok := mapped.(*ServiceError)
+	if !ok {
+		t.Fatalf("expected *ServiceError for turn conflict, got %T", mapped)
+	}
+	if serviceErr.Kind != ServiceErrorConflict {
+		t.Fatalf("expected conflict kind for turn-in-progress dispatch error, got %s", serviceErr.Kind)
+	}
 }
 
 func newWorkflowRunTestServer(t *testing.T, api *API) *httptest.Server {

@@ -20,6 +20,7 @@ type stubGuidedWorkflowSessionGateway struct {
 	sessions  []*types.Session
 	meta      []*types.SessionMeta
 	sendErr   error
+	sendErrs  []error
 	turnID    string
 	startErr  error
 	started   []*types.Session
@@ -56,6 +57,17 @@ func (s *stubGuidedWorkflowSessionGateway) SendMessage(_ context.Context, id str
 		sessionID: id,
 		input:     input,
 	})
+	if len(s.sendErrs) > 0 {
+		err := s.sendErrs[0]
+		if len(s.sendErrs) == 1 {
+			s.sendErrs = s.sendErrs[:0]
+		} else {
+			s.sendErrs = s.sendErrs[1:]
+		}
+		if err != nil {
+			return "", err
+		}
+	}
 	if s.sendErr != nil {
 		return "", s.sendErr
 	}
@@ -321,13 +333,16 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 	}
 }
 
-func TestGuidedWorkflowPromptDispatcherResolvesMostRecentContextSession(t *testing.T) {
+func TestGuidedWorkflowPromptDispatcherStartsWorkflowOwnedSessionWhenUnspecified(t *testing.T) {
 	older := time.Now().UTC().Add(-2 * time.Hour)
 	newer := time.Now().UTC()
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
 			{ID: "sess-old", Provider: "codex", Status: types.SessionStatusRunning},
 			{ID: "sess-new", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		started: []*types.Session{
+			{ID: "sess-workflow", Provider: "codex", Status: types.SessionStatusRunning},
 		},
 		meta: []*types.SessionMeta{
 			{
@@ -357,14 +372,85 @@ func TestGuidedWorkflowPromptDispatcherResolvesMostRecentContextSession(t *testi
 	if err != nil {
 		t.Fatalf("DispatchStepPrompt: %v", err)
 	}
-	if !result.Dispatched || result.SessionID != "sess-new" {
-		t.Fatalf("expected newest matching session, got %#v", result)
+	if !result.Dispatched || result.SessionID != "sess-workflow" {
+		t.Fatalf("expected workflow-owned session dispatch, got %#v", result)
 	}
-	if result.Provider != "codex" || result.Model != "gpt-5" {
-		t.Fatalf("expected newest model to be carried through, got %#v", result)
+	if result.Provider != "codex" {
+		t.Fatalf("expected codex provider to be carried through, got %#v", result)
 	}
-	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-new" {
-		t.Fatalf("expected send to sess-new, got %#v", gateway.sendCalls)
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one workflow session start request, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-workflow" {
+		t.Fatalf("expected send to sess-workflow, got %#v", gateway.sendCalls)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherReusesOwnedWorkflowSession(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1", WorkflowRunID: "gwf-1"},
+		},
+		turnID: "turn-owned",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-owned" {
+		t.Fatalf("expected dispatch to owned workflow session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no fallback start request, got %d", len(gateway.startReqs))
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherFallsBackWhenOwnedSessionBusy(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1", WorkflowRunID: "gwf-1"},
+		},
+		started: []*types.Session{
+			{ID: "sess-fallback", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		sendErrs: []error{
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+			nil,
+		},
+		turnID: "turn-fallback",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-fallback" {
+		t.Fatalf("expected dispatch to fallback session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected fallback session start request, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 4 {
+		t.Fatalf("expected retries before fallback dispatch, got %d calls", len(gateway.sendCalls))
 	}
 }
 
