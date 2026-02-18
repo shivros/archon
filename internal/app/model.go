@@ -366,7 +366,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		workspaceMulti:                      NewMultiSelectPicker(minViewportWidth, minContentHeight-1),
 		noteInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		approvalInput:                       NewTextInput(minViewportWidth, DefaultTextInputConfig()),
-		recentsReplyInput:                   NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
+		recentsReplyInput:                   NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		status:                              "",
 		toastLevel:                          toastLevelInfo,
 		follow:                              true,
@@ -679,7 +679,10 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	if m.approvalInput != nil {
 		m.approvalInput.SetConfig(cfg)
 	}
-	inputHeightChanged := m.consumeInputHeightChanges(m.chatInput, m.noteInput, m.approvalInput)
+	if m.recentsReplyInput != nil {
+		m.recentsReplyInput.SetConfig(cfg)
+	}
+	inputHeightChanged := m.consumeInputHeightChanges(m.chatInput, m.noteInput, m.approvalInput, m.recentsReplyInput)
 	if inputHeightChanged && m.width > 0 && m.height > 0 {
 		m.resize(m.width, m.height)
 		return

@@ -242,6 +242,31 @@ func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	}
 }
 
+func TestMouseReducerLeftPressInputFocusesAddNoteInput(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeAddNote
+	m.notesScope = noteScopeTarget{Scope: types.NoteScopeWorkspace, WorkspaceID: "ws1"}
+	if m.noteInput == nil || m.input == nil {
+		t.Fatalf("expected note input controllers")
+	}
+	m.noteInput.Blur()
+	m.input.FocusSidebar()
+	layout := m.resolveMouseLayout()
+	y := m.viewport.Height() + 2
+
+	handled := m.reduceInputFocusLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected add-note input click to be handled")
+	}
+	if !m.noteInput.Focused() {
+		t.Fatalf("expected note input to be focused")
+	}
+	if !m.input.IsChatFocused() {
+		t.Fatalf("expected input controller focus to switch to chat")
+	}
+}
+
 func TestMouseReducerWheelDownKeepsFollowEnabled(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

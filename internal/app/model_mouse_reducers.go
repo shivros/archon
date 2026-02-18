@@ -37,24 +37,10 @@ func (m *Model) resolveMouseLayout() mouseLayout {
 }
 
 func (m *Model) mouseOverInput(y int) bool {
-	if m.mode == uiModeCompose && m.chatInput != nil {
+	input := m.activeInput()
+	if input != nil {
 		start := m.viewport.Height() + 2
-		end := start + m.chatInput.Height() - 1
-		return y >= start && y <= end
-	}
-	if m.mode == uiModeAddNote && m.noteInput != nil {
-		start := m.viewport.Height() + 2
-		end := start + m.noteInput.Height() - 1
-		return y >= start && y <= end
-	}
-	if m.mode == uiModeSearch && m.searchInput != nil {
-		start := m.viewport.Height() + 2
-		end := start + m.searchInput.Height() - 1
-		return y >= start && y <= end
-	}
-	if m.mode == uiModeRecents && m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
-		start := m.viewport.Height() + 2
-		end := start + m.recentsReplyInput.Height() - 1
+		end := start + input.Height() - 1
 		return y >= start && y <= end
 	}
 	return false
@@ -274,16 +260,8 @@ func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta
 		}
 	}
 	if mouse.X >= layout.rightStart && m.mouseOverInput(mouse.Y) {
-		if m.mode == uiModeCompose && m.chatInput != nil {
-			m.pendingMouseCmd = m.chatInput.Scroll(delta)
-			return true
-		}
-		if m.mode == uiModeAddNote && m.noteInput != nil {
-			m.pendingMouseCmd = m.noteInput.Scroll(delta)
-			return true
-		}
-		if m.mode == uiModeSearch && m.searchInput != nil {
-			m.pendingMouseCmd = m.searchInput.Scroll(delta)
+		if input := m.activeInput(); input != nil {
+			m.pendingMouseCmd = input.Scroll(delta)
 			return true
 		}
 	}
@@ -373,22 +351,8 @@ func (m *Model) reduceInputFocusLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 	if mouse.X < layout.rightStart || !m.mouseOverInput(mouse.Y) {
 		return false
 	}
-	if m.mode == uiModeCompose && m.chatInput != nil {
-		m.chatInput.Focus()
-		if m.input != nil {
-			m.input.FocusChatInput()
-		}
-		return true
-	}
-	if m.mode == uiModeSearch && m.searchInput != nil {
-		m.searchInput.Focus()
-		if m.input != nil {
-			m.input.FocusChatInput()
-		}
-		return true
-	}
-	if m.mode == uiModeRecents && m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
-		m.recentsReplyInput.Focus()
+	if input := m.activeInput(); input != nil {
+		input.Focus()
 		if m.input != nil {
 			m.input.FocusChatInput()
 		}

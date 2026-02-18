@@ -97,28 +97,11 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 }
 
 func (m *Model) modeInputView() (line string, scrollable bool) {
-	switch m.mode {
-	case uiModeCompose:
+	if ctx, ok := m.activeInputContext(); ok {
 		return InputPanel{
-			Input:  m.chatInput,
-			Footer: InputFooterFunc(m.composeControlsLine),
+			Input:  ctx.input,
+			Footer: ctx.footer,
 		}.View()
-	case uiModeApprovalResponse:
-		return InputPanel{
-			Input:  m.approvalInput,
-			Footer: InputFooterFunc(m.approvalResponseFooter),
-		}.View()
-	case uiModeAddNote:
-		return InputPanel{Input: m.noteInput}.View()
-	case uiModeSearch:
-		return InputPanel{Input: m.searchInput}.View()
-	case uiModeRecents:
-		if m.recentsReplySessionID != "" {
-			return InputPanel{
-				Input:  m.recentsReplyInput,
-				Footer: InputFooterFunc(m.recentsReplyFooter),
-			}.View()
-		}
 	}
 	return "", false
 }

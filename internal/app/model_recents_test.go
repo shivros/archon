@@ -104,6 +104,61 @@ func TestRecentsCardRendersControlsAboveBubble(t *testing.T) {
 	}
 }
 
+func TestStartRecentsReplyUsesSharedMultilineInputStyle(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.mode = uiModeRecents
+	m.recentsSelectedSessionID = "s1"
+
+	if !m.startRecentsReply() {
+		t.Fatalf("expected to start recents reply")
+	}
+	if m.chatInput == nil || m.recentsReplyInput == nil {
+		t.Fatalf("expected chat and recents reply inputs")
+	}
+	if got, want := m.recentsReplyInput.Height(), m.chatInput.Height(); got != want {
+		t.Fatalf("expected recents reply input height to match chat input style, got %d want %d", got, want)
+	}
+}
+
+func TestRecentsReplyShiftEnterInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.mode = uiModeRecents
+	m.recentsSelectedSessionID = "s1"
+	if !m.startRecentsReply() {
+		t.Fatalf("expected to start recents reply")
+	}
+
+	handled, _ := m.reduceRecentsMode(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	if !handled {
+		t.Fatalf("expected shift+enter to be handled by recents reply input")
+	}
+	if got := m.recentsReplyInput.Value(); !strings.Contains(got, "\n") {
+		t.Fatalf("expected shift+enter to insert newline, got %q", got)
+	}
+}
+
 func TestRecentsEntryShowsWorktreeInLocationLabel(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()

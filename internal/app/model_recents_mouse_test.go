@@ -62,6 +62,51 @@ func TestMouseReducerRecentsOpenControlClickQueuesSelectionCommand(t *testing.T)
 	}
 }
 
+func TestMouseReducerRecentsReplyInputWheelDoesNotScrollViewport(t *testing.T) {
+	m := setupRecentsMouseModel(t, true)
+	if !m.startRecentsReply() {
+		t.Fatalf("expected recents reply to start")
+	}
+	layout := m.resolveMouseLayout()
+	m.viewport.SetContent(strings.Repeat("line\n", 220))
+	m.viewport.SetYOffset(20)
+	beforeOffset := m.viewport.YOffset()
+	y := m.viewport.Height() + 2
+
+	handled := m.reduceMouseWheel(tea.MouseClickMsg{Button: tea.MouseWheelUp, X: layout.rightStart, Y: y}, layout, -1)
+	if !handled {
+		t.Fatalf("expected wheel event over recents input to be handled")
+	}
+	if got := m.viewport.YOffset(); got != beforeOffset {
+		t.Fatalf("expected recents input wheel to avoid viewport scroll, got %d want %d", got, beforeOffset)
+	}
+}
+
+func TestMouseReducerRecentsReplyInputClickFocusesInput(t *testing.T) {
+	m := setupRecentsMouseModel(t, true)
+	if !m.startRecentsReply() {
+		t.Fatalf("expected recents reply to start")
+	}
+	if m.recentsReplyInput == nil || m.input == nil {
+		t.Fatalf("expected recents input controllers")
+	}
+	m.recentsReplyInput.Blur()
+	m.input.FocusSidebar()
+	layout := m.resolveMouseLayout()
+	y := m.viewport.Height() + 2
+
+	handled := m.reduceInputFocusLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected recents input click to be handled")
+	}
+	if !m.recentsReplyInput.Focused() {
+		t.Fatalf("expected recents reply input to be focused")
+	}
+	if !m.input.IsChatFocused() {
+		t.Fatalf("expected input controller focus to switch to chat")
+	}
+}
+
 func setupRecentsMouseModel(t *testing.T, ready bool) *Model {
 	t.Helper()
 	m := NewModel(nil)

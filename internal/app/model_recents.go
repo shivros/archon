@@ -640,6 +640,7 @@ func (m *Model) startRecentsReply() bool {
 		m.input.FocusChatInput()
 	}
 	m.setStatusMessage("replying inline")
+	m.resize(m.width, m.height)
 	return true
 }
 
@@ -652,6 +653,7 @@ func (m *Model) cancelRecentsReply() {
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
+	m.resize(m.width, m.height)
 }
 
 func (m *Model) submitRecentsReplyInput(text string) tea.Cmd {
@@ -830,27 +832,29 @@ func (m *Model) reduceRecentsMode(msg tea.Msg) (bool, tea.Cmd) {
 	if m.mode != uiModeRecents {
 		return false, nil
 	}
-	switch msg := msg.(type) {
-	case tea.PasteMsg:
-		if m.recentsReplySessionID == "" || m.recentsReplyInput == nil {
+	if m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
+		if !isTextInputMsg(msg) {
 			return false, nil
 		}
-		cmd := m.recentsReplyInput.Update(msg)
-		return true, cmd
-	case tea.KeyMsg:
-		if m.recentsReplySessionID != "" && m.recentsReplyInput != nil {
-			switch m.keyString(msg) {
-			case "esc":
+		controller := textInputModeController{
+			input:             m.recentsReplyInput,
+			keyString:         m.keyString,
+			keyMatchesCommand: m.keyMatchesCommand,
+			onCancel: func() tea.Cmd {
 				m.cancelRecentsReply()
 				m.setStatusMessage("reply canceled")
-				return true, nil
-			case "enter":
-				return true, m.submitRecentsReplyInput(m.recentsReplyInput.Value())
-			default:
-				cmd := m.recentsReplyInput.Update(msg)
-				return true, cmd
-			}
+				return nil
+			},
+			onSubmit: m.submitRecentsReplyInput,
 		}
+		handled, cmd := controller.Update(msg)
+		if handled && m.consumeInputHeightChanges(m.recentsReplyInput) {
+			m.resize(m.width, m.height)
+		}
+		return handled, cmd
+	}
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
 		switch m.keyString(msg) {
 		case "1":
 			return true, m.switchRecentsFilter(sidebarRecentsFilterAll)
