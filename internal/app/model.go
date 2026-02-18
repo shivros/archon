@@ -2544,7 +2544,7 @@ func (m *Model) currentBlocks() []ChatBlock {
 }
 
 func (m *Model) transcriptViewportVisible() bool {
-	return m.mode != uiModeNotes && m.mode != uiModeAddNote
+	return m.mode != uiModeNotes && m.mode != uiModeAddNote && m.mode != uiModeRecents
 }
 
 func (m *Model) cacheTranscriptBlocks(key string, blocks []ChatBlock) {
