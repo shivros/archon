@@ -99,6 +99,10 @@ type guidedWorkflowSessionGateway interface {
 	SendMessage(ctx context.Context, id string, input []map[string]any) (string, error)
 }
 
+type guidedWorkflowSessionStarter interface {
+	Start(ctx context.Context, req StartSessionRequest) (*types.Session, error)
+}
+
 type guidedWorkflowPromptDispatcher struct {
 	sessions    guidedWorkflowSessionGateway
 	sessionMeta SessionMetaStore
@@ -245,9 +249,97 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 		}
 	}
 	if selected == nil {
-		return "", "", "", nil
+		return d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
 	}
 	return strings.TrimSpace(selected.ID), strings.TrimSpace(selected.Provider), sessionModel(selectedMeta), nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
+	ctx context.Context,
+	req guidedworkflows.StepPromptDispatchRequest,
+	sessions []*types.Session,
+	metaBySessionID map[string]*types.SessionMeta,
+) (string, string, string, error) {
+	if d == nil || d.sessions == nil {
+		return "", "", "", nil
+	}
+	starter, ok := d.sessions.(guidedWorkflowSessionStarter)
+	if !ok || starter == nil {
+		return "", "", "", nil
+	}
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	worktreeID := strings.TrimSpace(req.WorktreeID)
+	if workspaceID == "" && worktreeID == "" {
+		return "", "", "", nil
+	}
+	provider := d.preferredProviderForContext(workspaceID, worktreeID, sessions, metaBySessionID)
+	if provider == "" {
+		provider = "codex"
+	}
+	session, err := starter.Start(ctx, StartSessionRequest{
+		Provider:    provider,
+		Title:       guidedWorkflowSessionTitle(req.RunID),
+		WorkspaceID: workspaceID,
+		WorktreeID:  worktreeID,
+	})
+	if err != nil {
+		return "", "", "", err
+	}
+	if session == nil {
+		return "", "", "", nil
+	}
+	return strings.TrimSpace(session.ID), strings.TrimSpace(session.Provider), "", nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) preferredProviderForContext(
+	workspaceID string,
+	worktreeID string,
+	sessions []*types.Session,
+	metaBySessionID map[string]*types.SessionMeta,
+) string {
+	var selectedProvider string
+	var selectedAt time.Time
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		provider := strings.TrimSpace(session.Provider)
+		if !guidedWorkflowProviderSupportsPromptDispatch(provider) {
+			continue
+		}
+		sessionID := strings.TrimSpace(session.ID)
+		if sessionID == "" {
+			continue
+		}
+		meta := metaBySessionID[sessionID]
+		if meta == nil {
+			continue
+		}
+		if worktreeID != "" {
+			if strings.TrimSpace(meta.WorktreeID) != worktreeID {
+				continue
+			}
+		} else if workspaceID != "" && strings.TrimSpace(meta.WorkspaceID) != workspaceID {
+			continue
+		}
+		candidateAt := session.CreatedAt
+		if meta.LastActiveAt != nil {
+			candidateAt = meta.LastActiveAt.UTC()
+		}
+		if selectedProvider == "" || candidateAt.After(selectedAt) {
+			selectedProvider = provider
+			selectedAt = candidateAt
+		}
+	}
+	return selectedProvider
+}
+
+func guidedWorkflowSessionTitle(runID string) string {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "guided workflow"
+	}
+	return "guided workflow " + runID
 }
 
 func isGuidedWorkflowDispatchableSessionStatus(status types.SessionStatus) bool {

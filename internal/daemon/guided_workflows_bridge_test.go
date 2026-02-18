@@ -20,6 +20,9 @@ type stubGuidedWorkflowSessionGateway struct {
 	meta      []*types.SessionMeta
 	sendErr   error
 	turnID    string
+	startErr  error
+	started   []*types.Session
+	startReqs []StartSessionRequest
 	sendCalls []struct {
 		sessionID string
 		input     []map[string]any
@@ -56,6 +59,24 @@ func (s *stubGuidedWorkflowSessionGateway) SendMessage(_ context.Context, id str
 		return "", s.sendErr
 	}
 	return s.turnID, nil
+}
+
+func (s *stubGuidedWorkflowSessionGateway) Start(_ context.Context, req StartSessionRequest) (*types.Session, error) {
+	s.startReqs = append(s.startReqs, req)
+	if s.startErr != nil {
+		return nil, s.startErr
+	}
+	if len(s.started) == 0 {
+		return nil, nil
+	}
+	session := s.started[0]
+	if len(s.started) == 1 {
+		s.started = s.started[:0]
+	} else {
+		s.started = s.started[1:]
+	}
+	s.sessions = append(s.sessions, session)
+	return session, nil
 }
 
 func (s *stubGuidedWorkflowSessionMetaStore) List(context.Context) ([]*types.SessionMeta, error) {
@@ -370,6 +391,119 @@ func TestGuidedWorkflowPromptDispatcherSkipsUnsupportedProvider(t *testing.T) {
 	}
 	if len(gateway.sendCalls) != 0 {
 		t.Fatalf("expected no send calls for unsupported provider, got %#v", gateway.sendCalls)
+	}
+}
+
+func TestGuidedWorkflowRunServiceDispatchCreatesSessionAndReusesItAcrossSteps(t *testing.T) {
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "gwf_integration_simple",
+		Name: "Simple",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "overall plan prompt"},
+					{ID: "step_2", Name: "Step 2", Prompt: "phase plan prompt"},
+				},
+			},
+		},
+	}
+	now := time.Now().UTC()
+	gateway := &stubGuidedWorkflowSessionGateway{
+		turnID: "turn-dispatch",
+		started: []*types.Session{
+			{
+				ID:        "sess-created",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: now,
+			},
+		},
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway, sessionMeta: metaStore}
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithTemplate(template),
+		guidedworkflows.WithStepPromptDispatcher(dispatcher),
+	)
+
+	run, err := runService.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		TemplateID:  "gwf_integration_simple",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		UserPrompt:  "Fix setup workflow dispatch",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = runService.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one auto-created session request, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "codex" {
+		t.Fatalf("expected codex provider for auto-created workflow session, got %q", gateway.startReqs[0].Provider)
+	}
+	if gateway.startReqs[0].WorkspaceID != "ws-1" || gateway.startReqs[0].WorktreeID != "wt-1" {
+		t.Fatalf("expected workspace/worktree context to be propagated, got %+v", gateway.startReqs[0])
+	}
+	if run.SessionID != "sess-created" {
+		t.Fatalf("expected run to bind created session, got %q", run.SessionID)
+	}
+	if len(gateway.sendCalls) != 1 {
+		t.Fatalf("expected first prompt dispatch call, got %d", len(gateway.sendCalls))
+	}
+	if gateway.sendCalls[0].sessionID != "sess-created" {
+		t.Fatalf("expected first dispatch to created session, got %q", gateway.sendCalls[0].sessionID)
+	}
+	firstInput := gateway.sendCalls[0].input
+	if len(firstInput) != 1 {
+		t.Fatalf("expected single input item on first dispatch, got %#v", firstInput)
+	}
+	firstText, _ := firstInput[0]["text"].(string)
+	if firstText != "Fix setup workflow dispatch\n\noverall plan prompt" {
+		t.Fatalf("unexpected first step prompt payload: %q", firstText)
+	}
+	linked, ok, err := metaStore.Get(context.Background(), "sess-created")
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
+	}
+	if !ok || linked.WorkflowRunID != run.ID {
+		t.Fatalf("expected created session to be linked to workflow run, got %#v", linked)
+	}
+
+	updated, err := runService.OnTurnCompleted(context.Background(), guidedworkflows.TurnSignal{
+		SessionID: "sess-created",
+		TurnID:    "turn-1",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after turn completion, got %d", len(updated))
+	}
+	run = updated[0]
+	if len(gateway.sendCalls) != 2 {
+		t.Fatalf("expected second prompt dispatch call, got %d", len(gateway.sendCalls))
+	}
+	if gateway.sendCalls[1].sessionID != "sess-created" {
+		t.Fatalf("expected second dispatch to same session, got %q", gateway.sendCalls[1].sessionID)
+	}
+	secondInput := gateway.sendCalls[1].input
+	if len(secondInput) != 1 {
+		t.Fatalf("expected single input item on second dispatch, got %#v", secondInput)
+	}
+	secondText, _ := secondInput[0]["text"].(string)
+	if secondText != "phase plan prompt" {
+		t.Fatalf("unexpected second step prompt payload: %q", secondText)
+	}
+	secondStep := run.Phases[0].Steps[1]
+	if secondStep.Execution == nil || secondStep.Execution.SessionID != "sess-created" {
+		t.Fatalf("expected second step execution to link same session, got %#v", secondStep.Execution)
 	}
 }
 
