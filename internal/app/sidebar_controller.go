@@ -14,6 +14,8 @@ import (
 type SidebarController struct {
 	list                  list.Model
 	delegate              *sidebarDelegate
+	selectedKey           string
+	scrollOffset          int
 	viewedSessionActivity map[string]string
 	unreadSessions        map[string]struct{}
 	unreadInitialized     bool
@@ -35,7 +37,7 @@ type sessionSidebarParent struct {
 }
 
 const sidebarScrollbarWidth = 1
-const sidebarScrollingEnabled = false
+const sidebarScrollingEnabled = true
 
 func NewSidebarController() *SidebarController {
 	items := []list.Item{}
@@ -60,7 +62,7 @@ func NewSidebarController() *SidebarController {
 }
 
 func (c *SidebarController) View() string {
-	view := c.list.View()
+	view := c.view()
 	if !sidebarScrollingEnabled {
 		return view
 	}
@@ -81,23 +83,48 @@ func (c *SidebarController) Update(msg tea.Msg) tea.Cmd {
 func (c *SidebarController) SetSize(width, height int) {
 	if !sidebarScrollingEnabled {
 		c.list.SetSize(width, height)
+		c.clampScrollOffset()
 		return
 	}
 	if width <= sidebarScrollbarWidth {
 		c.list.SetSize(width, height)
+		c.clampScrollOffset()
 		return
 	}
 	c.list.SetSize(width-sidebarScrollbarWidth, height)
+	c.clampScrollOffset()
 }
 
 func (c *SidebarController) CursorDown() {
-	c.list.CursorDown()
-	c.markSelectedSessionViewed()
+	items := c.list.Items()
+	if len(items) == 0 {
+		return
+	}
+	current := c.selectedIndex()
+	if current < 0 {
+		c.selectIndex(0)
+		return
+	}
+	if current >= len(items)-1 {
+		return
+	}
+	c.selectIndex(current + 1)
 }
 
 func (c *SidebarController) CursorUp() {
-	c.list.CursorUp()
-	c.markSelectedSessionViewed()
+	items := c.list.Items()
+	if len(items) == 0 {
+		return
+	}
+	current := c.selectedIndex()
+	if current < 0 {
+		c.selectIndex(0)
+		return
+	}
+	if current <= 0 {
+		return
+	}
+	c.selectIndex(current - 1)
 }
 
 func (c *SidebarController) Scroll(lines int) bool {
@@ -107,24 +134,11 @@ func (c *SidebarController) Scroll(lines int) bool {
 	if lines == 0 {
 		return false
 	}
-	steps := lines
-	if steps < 0 {
-		steps = -steps
-	}
-	for i := 0; i < steps; i++ {
-		if lines < 0 {
-			c.list.CursorUp()
-		} else {
-			c.list.CursorDown()
-		}
-	}
-	c.markSelectedSessionViewed()
-	return true
+	return c.scrollTo(c.scrollOffset + lines)
 }
 
 func (c *SidebarController) Select(idx int) {
-	c.list.Select(idx)
-	c.markSelectedSessionViewed()
+	c.selectIndex(idx)
 }
 
 func (c *SidebarController) SelectBySessionID(id string) bool {
@@ -158,8 +172,7 @@ func (c *SidebarController) selectVisibleSessionByID(id string) bool {
 			continue
 		}
 		if entry.session.ID == id {
-			c.list.Select(i)
-			c.markSelectedSessionViewed()
+			c.selectIndex(i)
 			return true
 		}
 	}
@@ -192,15 +205,12 @@ func (c *SidebarController) SelectByRow(row int) {
 		step = 1
 	}
 	pageIndex := idx / step
-	perPage := c.list.Paginator.PerPage
-	if perPage <= 0 {
-		perPage = len(items)
+	itemsOnPage := c.itemsPerView()
+	if itemsOnPage <= 0 {
+		itemsOnPage = len(items)
 	}
-	start := c.list.Paginator.Page * perPage
-	if start >= len(items) {
-		start = 0
-	}
-	end := start + perPage - 1
+	start := c.scrollOffset
+	end := start + itemsOnPage - 1
 	if end >= len(items) {
 		end = len(items) - 1
 	}
@@ -211,8 +221,7 @@ func (c *SidebarController) SelectByRow(row int) {
 	if target < 0 {
 		target = 0
 	}
-	c.list.Select(target)
-	c.markSelectedSessionViewed()
+	c.selectIndex(target)
 }
 
 func (c *SidebarController) ItemAtRow(row int) *sidebarItem {
@@ -241,15 +250,12 @@ func (c *SidebarController) ItemAtRow(row int) *sidebarItem {
 		step = 1
 	}
 	pageIndex := idx / step
-	perPage := c.list.Paginator.PerPage
-	if perPage <= 0 {
-		perPage = len(items)
+	itemsOnPage := c.itemsPerView()
+	if itemsOnPage <= 0 {
+		itemsOnPage = len(items)
 	}
-	start := c.list.Paginator.Page * perPage
-	if start >= len(items) {
-		start = 0
-	}
-	end := start + perPage - 1
+	start := c.scrollOffset
+	end := start + itemsOnPage - 1
 	if end >= len(items) {
 		end = len(items) - 1
 	}
@@ -312,17 +318,9 @@ func (c *SidebarController) ScrollbarSelect(row int) bool {
 	targetStart := 0
 	denom := trackHeight - 1
 	if denom > 0 {
-		targetStart = int(math.Round(float64(trackRow) / float64(denom) * float64(maxStart*3)))
+		targetStart = int(math.Round(float64(trackRow) / float64(denom) * float64(maxStart)))
 	}
-	if targetStart < 0 {
-		targetStart = 0
-	}
-	if targetStart > maxStart {
-		targetStart = maxStart
-	}
-	c.list.Select(targetStart)
-	c.markSelectedSessionViewed()
-	return true
+	return c.scrollTo(targetStart)
 }
 
 func (c *SidebarController) scrollbarView() string {
@@ -337,8 +335,8 @@ func (c *SidebarController) scrollbarView() string {
 		return ""
 	}
 	total := len(c.list.VisibleItems())
-	itemsOnPage := c.list.Paginator.ItemsOnPage(total)
-	if itemsOnPage <= 0 {
+	itemsOnPage := c.itemsPerView()
+	if itemsOnPage <= 0 || itemsOnPage > total {
 		itemsOnPage = total
 	}
 	headerRows := c.headerRows()
@@ -370,7 +368,7 @@ func (c *SidebarController) scrollbarView() string {
 	if maxStart < 0 {
 		maxStart = 0
 	}
-	startIdx, _ := c.list.Paginator.GetSliceBounds(total)
+	startIdx := c.scrollOffset
 	denom := total - itemsOnPage
 	startPos := 0
 	if denom > 0 && maxStart > 0 {
@@ -399,7 +397,7 @@ func (c *SidebarController) headerRows() int {
 	}
 	rows := 0
 	if c.list.ShowTitle() {
-		rows += 1 + c.list.Styles.TitleBar.GetPaddingTop() + c.list.Styles.TitleBar.GetPaddingBottom()
+		rows += lipgloss.Height(c.list.Styles.TitleBar.Render(c.list.Styles.Title.Render(c.list.Title)))
 	}
 	if c.list.ShowStatusBar() {
 		rows += 1 + c.list.Styles.StatusBar.GetPaddingTop() + c.list.Styles.StatusBar.GetPaddingBottom()
@@ -422,23 +420,29 @@ func (c *SidebarController) Items() []list.Item {
 }
 
 func (c *SidebarController) SelectedItem() *sidebarItem {
-	item := c.list.SelectedItem()
-	if item == nil {
+	if c == nil {
 		return nil
 	}
-	entry, ok := item.(*sidebarItem)
-	if !ok {
+	if c.selectedKey == "" {
 		return nil
 	}
-	return entry
+	for _, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if entry.key() == c.selectedKey {
+			return entry
+		}
+	}
+	return nil
 }
 
 func (c *SidebarController) SelectedKey() string {
-	item := c.SelectedItem()
-	if item == nil {
+	if c == nil {
 		return ""
 	}
-	return item.key()
+	return c.selectedKey
 }
 
 func (c *SidebarController) SelectedSessionID() string {
@@ -454,14 +458,16 @@ func (c *SidebarController) AdvanceToNextSession() bool {
 	if len(items) == 0 {
 		return false
 	}
-	start := c.list.Index() + 1
+	start := c.selectedIndex() + 1
+	if start < 0 {
+		start = 0
+	}
 	for i := start; i < len(items); i++ {
 		entry, ok := items[i].(*sidebarItem)
 		if !ok || entry == nil || !entry.isSession() {
 			continue
 		}
-		c.list.Select(i)
-		c.markSelectedSessionViewed()
+		c.selectIndex(i)
 		return true
 	}
 	return false
@@ -580,6 +586,8 @@ func (c *SidebarController) IsWorktreeExpanded(id string) bool {
 }
 
 func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string, showDismissed bool) *sidebarItem {
+	viewAnchorKey := c.viewAnchorKey()
+	viewAnchorOffset := c.scrollOffset
 	c.workspacesSnapshot = workspaces
 	c.worktreesSnapshot = worktrees
 	c.sessionsSnapshot = sessions
@@ -596,11 +604,25 @@ func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[s
 	selectedKey := c.SelectedKey()
 	c.list.SetItems(items)
 	if len(items) == 0 {
+		c.selectedKey = ""
+		c.scrollOffset = 0
+		c.syncDelegate()
 		c.updateUnreadSessions(sessions, meta)
 		return nil
 	}
-	selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
-	c.list.Select(selectedIdx)
+	if !sidebarItemsContainKey(items, selectedKey) {
+		selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
+		if selectedIdx < 0 || selectedIdx >= len(items) {
+			selectedIdx = 0
+		}
+		if entry, ok := items[selectedIdx].(*sidebarItem); ok && entry != nil {
+			c.selectedKey = entry.key()
+		}
+	}
+	if !c.restoreScrollAnchor(items, viewAnchorKey, viewAnchorOffset) {
+		c.clampScrollOffset()
+	}
+	c.syncDelegate()
 	c.updateUnreadSessions(sessions, meta)
 	return c.SelectedItem()
 }
@@ -635,6 +657,7 @@ func (c *SidebarController) SetRecentsState(state sidebarRecentsState) bool {
 func (c *SidebarController) syncDelegate() {
 	if c.delegate != nil {
 		c.delegate.unreadSessions = c.unreadSessions
+		c.delegate.selectedKey = c.selectedKey
 	}
 }
 
@@ -754,6 +777,8 @@ func (c *SidebarController) rebuild(selectedKey string) {
 	if c == nil {
 		return
 	}
+	viewAnchorKey := c.viewAnchorKey()
+	viewAnchorOffset := c.scrollOffset
 	items := buildSidebarItemsWithRecents(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, c.recentsState, sidebarExpansionResolver{
 		workspace: c.workspaceExpanded,
 		worktree:  c.worktreeExpanded,
@@ -761,6 +786,9 @@ func (c *SidebarController) rebuild(selectedKey string) {
 	})
 	c.list.SetItems(items)
 	if len(items) == 0 {
+		c.selectedKey = ""
+		c.scrollOffset = 0
+		c.syncDelegate()
 		return
 	}
 	activeWorkspaceID := ""
@@ -769,8 +797,21 @@ func (c *SidebarController) rebuild(selectedKey string) {
 		activeWorkspaceID = c.delegate.activeWorkspaceID
 		activeWorktreeID = c.delegate.activeWorktreeID
 	}
-	selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
-	c.list.Select(selectedIdx)
+	if !sidebarItemsContainKey(items, selectedKey) {
+		selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
+		if selectedIdx < 0 || selectedIdx >= len(items) {
+			selectedIdx = 0
+		}
+		if entry, ok := items[selectedIdx].(*sidebarItem); ok && entry != nil {
+			c.selectedKey = entry.key()
+		}
+	} else {
+		c.selectedKey = selectedKey
+	}
+	if !c.restoreScrollAnchor(items, viewAnchorKey, viewAnchorOffset) {
+		c.clampScrollOffset()
+	}
+	c.syncDelegate()
 	c.markSelectedSessionViewed()
 }
 
@@ -840,6 +881,244 @@ func cloneBoolMap(input map[string]bool) map[string]bool {
 		return nil
 	}
 	return out
+}
+
+func (c *SidebarController) view() string {
+	if c == nil {
+		return ""
+	}
+	title := ""
+	if c.list.ShowTitle() {
+		title = c.list.Styles.TitleBar.Render(c.list.Styles.Title.Render(c.list.Title))
+	}
+	contentHeight := c.list.Height()
+	if title != "" {
+		contentHeight -= lipgloss.Height(title)
+	}
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	body := c.renderItems(contentHeight)
+	if title == "" {
+		return body
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, title, body)
+}
+
+func (c *SidebarController) renderItems(contentHeight int) string {
+	items := c.list.VisibleItems()
+	if len(items) == 0 {
+		return lipgloss.NewStyle().Height(contentHeight).Render("")
+	}
+	itemHeight := 1
+	itemSpacing := 0
+	if c.delegate != nil {
+		if h := c.delegate.Height(); h > 0 {
+			itemHeight = h
+		}
+		itemSpacing = c.delegate.Spacing()
+	}
+	step := itemHeight + itemSpacing
+	if step <= 0 {
+		step = 1
+	}
+	itemsOnPage := c.itemsPerView()
+	if itemsOnPage <= 0 {
+		itemsOnPage = len(items)
+	}
+	start := c.scrollOffset
+	end := start + itemsOnPage
+	if end > len(items) {
+		end = len(items)
+	}
+	var b strings.Builder
+	renderModel := c.list
+	for i := start; i < end; i++ {
+		c.delegate.Render(&b, renderModel, i, items[i])
+		if i != end-1 {
+			b.WriteString(strings.Repeat("\n", itemSpacing+1))
+		}
+	}
+	itemsRendered := end - start
+	if itemsRendered < itemsOnPage {
+		n := (itemsOnPage - itemsRendered) * step
+		if itemsRendered > 0 {
+			b.WriteString(strings.Repeat("\n", n))
+		}
+	}
+	return lipgloss.NewStyle().Height(contentHeight).Render(b.String())
+}
+
+func (c *SidebarController) itemsPerView() int {
+	if c == nil {
+		return 0
+	}
+	contentHeight := c.list.Height() - c.headerRows()
+	if contentHeight < 1 {
+		return 1
+	}
+	itemHeight := 1
+	itemSpacing := 0
+	if c.delegate != nil {
+		if h := c.delegate.Height(); h > 0 {
+			itemHeight = h
+		}
+		itemSpacing = c.delegate.Spacing()
+	}
+	step := itemHeight + itemSpacing
+	if step <= 0 {
+		step = 1
+	}
+	return max(1, contentHeight/step)
+}
+
+func (c *SidebarController) maxScrollOffset(total int) int {
+	itemsOnPage := c.itemsPerView()
+	if itemsOnPage <= 0 || total <= itemsOnPage {
+		return 0
+	}
+	return total - itemsOnPage
+}
+
+func (c *SidebarController) clampScrollOffset() {
+	if c == nil {
+		return
+	}
+	total := len(c.list.VisibleItems())
+	maxOffset := c.maxScrollOffset(total)
+	if c.scrollOffset < 0 {
+		c.scrollOffset = 0
+	}
+	if c.scrollOffset > maxOffset {
+		c.scrollOffset = maxOffset
+	}
+}
+
+func (c *SidebarController) scrollTo(offset int) bool {
+	if c == nil {
+		return false
+	}
+	total := len(c.list.VisibleItems())
+	maxOffset := c.maxScrollOffset(total)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if c.scrollOffset == offset {
+		return false
+	}
+	c.scrollOffset = offset
+	return true
+}
+
+func (c *SidebarController) selectedIndex() int {
+	if c == nil || c.selectedKey == "" {
+		return -1
+	}
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if entry.key() == c.selectedKey {
+			return i
+		}
+	}
+	return -1
+}
+
+func (c *SidebarController) selectIndex(idx int) {
+	items := c.list.Items()
+	if len(items) == 0 {
+		c.selectedKey = ""
+		c.scrollOffset = 0
+		c.syncDelegate()
+		return
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(items) {
+		idx = len(items) - 1
+	}
+	entry, ok := items[idx].(*sidebarItem)
+	if !ok || entry == nil {
+		return
+	}
+	c.selectedKey = entry.key()
+	c.ensureVisible(idx)
+	c.syncDelegate()
+	c.markSelectedSessionViewed()
+}
+
+func (c *SidebarController) ensureVisible(idx int) {
+	if c == nil {
+		return
+	}
+	itemsOnPage := c.itemsPerView()
+	if itemsOnPage <= 0 {
+		itemsOnPage = 1
+	}
+	if idx < c.scrollOffset {
+		c.scrollOffset = idx
+	} else if idx >= c.scrollOffset+itemsOnPage {
+		c.scrollOffset = idx - itemsOnPage + 1
+	}
+	c.clampScrollOffset()
+}
+
+func (c *SidebarController) viewAnchorKey() string {
+	if c == nil {
+		return ""
+	}
+	items := c.list.VisibleItems()
+	if c.scrollOffset < 0 || c.scrollOffset >= len(items) {
+		return ""
+	}
+	entry, ok := items[c.scrollOffset].(*sidebarItem)
+	if !ok || entry == nil {
+		return ""
+	}
+	return entry.key()
+}
+
+func (c *SidebarController) restoreScrollAnchor(items []list.Item, anchorKey string, fallbackOffset int) bool {
+	if c == nil {
+		return false
+	}
+	if anchorKey != "" {
+		for i, item := range items {
+			entry, ok := item.(*sidebarItem)
+			if !ok || entry == nil {
+				continue
+			}
+			if entry.key() == anchorKey {
+				c.scrollOffset = i
+				c.clampScrollOffset()
+				return true
+			}
+		}
+	}
+	c.scrollOffset = fallbackOffset
+	return false
+}
+
+func sidebarItemsContainKey(items []list.Item, key string) bool {
+	if strings.TrimSpace(key) == "" {
+		return false
+	}
+	for _, item := range items {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if entry.key() == key {
+			return true
+		}
+	}
+	return false
 }
 
 func selectSidebarIndex(items []list.Item, selectedKey, activeWorkspaceID, activeWorktreeID string) int {

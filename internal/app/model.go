@@ -27,7 +27,6 @@ const (
 	maxEventsPerTick          = 64
 	tickInterval              = 100 * time.Millisecond
 	sidebarWheelCooldown      = 30 * time.Millisecond
-	sidebarWheelSettle        = 120 * time.Millisecond
 	appStateSaveDebounce      = 250 * time.Millisecond
 	historyPollDelay          = 500 * time.Millisecond
 	historyPollMax            = 20
@@ -179,7 +178,6 @@ type Model struct {
 	loader                              spinner.Model
 	pendingMouseCmd                     tea.Cmd
 	lastSidebarWheelAt                  time.Time
-	pendingSidebarWheel                 bool
 	sidebarDragging                     bool
 	lastSessionMetaRefreshAt            time.Time
 	lastSessionMetaSyncAt               time.Time
@@ -1568,14 +1566,6 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	}
 	m.maybeShowNextStartupToast(now)
 	cmds := make([]tea.Cmd, 0, 3)
-	if m.pendingSidebarWheel {
-		if time.Since(m.lastSidebarWheelAt) >= sidebarWheelSettle {
-			m.pendingSidebarWheel = false
-			if cmd := m.onSelectionChangedImmediate(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-	}
 	if cmd := m.maybeAutoRefreshHistory(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}

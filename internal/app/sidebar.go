@@ -183,6 +183,7 @@ func (s *sidebarItem) sessionProvider() string {
 type sidebarDelegate struct {
 	activeWorkspaceID string
 	activeWorktreeID  string
+	selectedKey       string
 	unreadSessions    map[string]struct{}
 	providerBadges    map[string]*types.ProviderBadgeConfig
 }
@@ -204,7 +205,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 	if !ok {
 		return
 	}
-	isSelected := index == m.Index()
+	isSelected := d.selectedKey != "" && entry.key() == d.selectedKey
 	maxWidth := m.Width()
 	switch entry.kind {
 	case sidebarRecentsAll:

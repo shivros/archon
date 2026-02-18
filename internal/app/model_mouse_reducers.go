@@ -228,7 +228,6 @@ func (m *Model) reduceSidebarDragMouse(msg tea.MouseMsg, layout mouseLayout) boo
 			if layout.listWidth > 0 && mouse.X < layout.listWidth && layout.barWidth > 0 && mouse.X >= layout.barStart {
 				if m.sidebar != nil && m.sidebar.ScrollbarSelect(mouse.Y) {
 					m.lastSidebarWheelAt = time.Now()
-					m.pendingSidebarWheel = true
 					return true
 				}
 			}
@@ -247,7 +246,6 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 		}
 		m.lastSidebarWheelAt = now
 		if m.sidebar != nil && m.sidebar.Scroll(delta) {
-			m.pendingSidebarWheel = true
 			return true
 		}
 	}
@@ -360,7 +358,6 @@ func (m *Model) reduceSidebarScrollbarLeftPressMouse(msg tea.MouseMsg, layout mo
 	if layout.listWidth > 0 && mouse.X < layout.listWidth && layout.barWidth > 0 && mouse.X >= layout.barStart {
 		if m.sidebar != nil && m.sidebar.ScrollbarSelect(mouse.Y) {
 			m.lastSidebarWheelAt = time.Now()
-			m.pendingSidebarWheel = true
 			m.sidebarDragging = true
 			return true
 		}

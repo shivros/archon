@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -296,6 +297,91 @@ func TestMouseReducerWheelDownWhilePausedAtBottomResumesFollow(t *testing.T) {
 	}
 	if m.status != "follow: on" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestMouseReducerSidebarWheelScrollKeepsSessionSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.SidebarCollapsed = false
+	m.resize(120, 16)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = make([]*types.Session, 0, 30)
+	m.sessionMeta = make(map[string]*types.SessionMeta, 30)
+	for i := 1; i <= 30; i++ {
+		id := "s" + strconv.Itoa(i)
+		m.sessions = append(m.sessions, &types.Session{ID: id, Status: types.SessionStatusRunning})
+		m.sessionMeta[id] = &types.SessionMeta{SessionID: id, WorkspaceID: "ws1"}
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection")
+	}
+	layout := m.resolveMouseLayout()
+	header := m.sidebar.headerRows()
+	beforeTop := m.sidebar.ItemAtRow(header)
+	if beforeTop == nil {
+		t.Fatalf("expected visible sidebar row")
+	}
+	selectedBefore := m.selectedSessionID()
+
+	handled := m.reduceMouseWheel(tea.MouseClickMsg{Button: tea.MouseWheelDown, X: 1, Y: header + 1}, layout, 1)
+	if !handled {
+		t.Fatalf("expected sidebar wheel to be handled")
+	}
+	if got := m.selectedSessionID(); got != selectedBefore {
+		t.Fatalf("expected sidebar wheel to preserve selected session, got %q want %q", got, selectedBefore)
+	}
+	afterTop := m.sidebar.ItemAtRow(header)
+	if afterTop == nil {
+		t.Fatalf("expected visible sidebar row after wheel scroll")
+	}
+	if afterTop.key() == beforeTop.key() {
+		t.Fatalf("expected sidebar wheel to move viewport")
+	}
+}
+
+func TestMouseReducerSidebarScrollbarClickKeepsSessionSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.SidebarCollapsed = false
+	m.resize(120, 16)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = make([]*types.Session, 0, 30)
+	m.sessionMeta = make(map[string]*types.SessionMeta, 30)
+	for i := 1; i <= 30; i++ {
+		id := "s" + strconv.Itoa(i)
+		m.sessions = append(m.sessions, &types.Session{ID: id, Status: types.SessionStatusRunning})
+		m.sessionMeta[id] = &types.SessionMeta{SessionID: id, WorkspaceID: "ws1"}
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection")
+	}
+	layout := m.resolveMouseLayout()
+	header := m.sidebar.headerRows()
+	beforeTop := m.sidebar.ItemAtRow(header)
+	if beforeTop == nil {
+		t.Fatalf("expected visible sidebar row")
+	}
+	selectedBefore := m.selectedSessionID()
+
+	y := header + max(1, m.sidebar.list.Height()-header-1)
+	handled := m.reduceSidebarScrollbarLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.barStart, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar scrollbar click to be handled")
+	}
+	if got := m.selectedSessionID(); got != selectedBefore {
+		t.Fatalf("expected scrollbar click to preserve selected session, got %q want %q", got, selectedBefore)
+	}
+	afterTop := m.sidebar.ItemAtRow(header)
+	if afterTop == nil {
+		t.Fatalf("expected visible sidebar row after scrollbar click")
+	}
+	if afterTop.key() == beforeTop.key() {
+		t.Fatalf("expected scrollbar click to move viewport")
 	}
 }
 

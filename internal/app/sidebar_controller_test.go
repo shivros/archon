@@ -1,23 +1,75 @@
 package app
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
 	"control/internal/types"
 )
 
-func TestSidebarControllerScrollingDisabled(t *testing.T) {
+func TestSidebarControllerScrollingEnabledViewOnly(t *testing.T) {
 	controller := NewSidebarController()
+	controller.SetSize(32, 6)
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions, meta := makeSidebarSessionFixtures("ws1", 20)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s20") {
+		t.Fatalf("expected to select session s20")
+	}
 
-	if got := controller.ScrollbarWidth(); got != 0 {
-		t.Fatalf("expected no sidebar scrollbar width when scrolling is disabled, got %d", got)
+	if got := controller.ScrollbarWidth(); got != 1 {
+		t.Fatalf("expected sidebar scrollbar width when scrolling is enabled, got %d", got)
 	}
-	if controller.Scroll(1) {
-		t.Fatalf("expected sidebar scroll to be disabled")
+	header := controller.headerRows()
+	beforeTop := controller.ItemAtRow(header)
+	if beforeTop == nil {
+		t.Fatalf("expected a visible sidebar row")
 	}
-	if controller.ScrollbarSelect(0) {
-		t.Fatalf("expected sidebar scrollbar selection to be disabled")
+	selectedBefore := controller.SelectedSessionID()
+	if !controller.Scroll(2) {
+		t.Fatalf("expected sidebar scroll to adjust viewport")
+	}
+	if got := controller.SelectedSessionID(); got != selectedBefore {
+		t.Fatalf("expected sidebar scroll to preserve selection, got %q want %q", got, selectedBefore)
+	}
+	afterTop := controller.ItemAtRow(header)
+	if afterTop == nil {
+		t.Fatalf("expected visible row after scroll")
+	}
+	if afterTop.key() == beforeTop.key() {
+		t.Fatalf("expected sidebar scroll to move viewport")
+	}
+}
+
+func TestSidebarControllerScrollbarSelectMovesViewportOnly(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetSize(32, 6)
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions, meta := makeSidebarSessionFixtures("ws1", 24)
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s24") {
+		t.Fatalf("expected to select session s24")
+	}
+	header := controller.headerRows()
+	beforeTop := controller.ItemAtRow(header)
+	if beforeTop == nil {
+		t.Fatalf("expected a visible sidebar row before scrollbar selection")
+	}
+	selectedBefore := controller.SelectedSessionID()
+	targetRow := header + max(1, controller.list.Height()-header-1)
+	if !controller.ScrollbarSelect(targetRow) {
+		t.Fatalf("expected scrollbar select to adjust viewport")
+	}
+	if got := controller.SelectedSessionID(); got != selectedBefore {
+		t.Fatalf("expected scrollbar selection to preserve session, got %q want %q", got, selectedBefore)
+	}
+	afterTop := controller.ItemAtRow(header)
+	if afterTop == nil {
+		t.Fatalf("expected visible row after scrollbar selection")
+	}
+	if afterTop.key() == beforeTop.key() {
+		t.Fatalf("expected scrollbar selection to move viewport")
 	}
 }
 
@@ -123,4 +175,24 @@ func TestSidebarControllerSelectBySessionIDAutoExpandsParents(t *testing.T) {
 	if !controller.IsWorktreeExpanded("wt1") {
 		t.Fatalf("expected worktree wt1 to be expanded")
 	}
+}
+
+func makeSidebarSessionFixtures(workspaceID string, count int) ([]*types.Session, map[string]*types.SessionMeta) {
+	now := time.Now().UTC()
+	sessions := make([]*types.Session, 0, count)
+	meta := make(map[string]*types.SessionMeta, count)
+	for i := 1; i <= count; i++ {
+		id := "s" + strconv.Itoa(i)
+		sessions = append(sessions, &types.Session{
+			ID:        id,
+			Status:    types.SessionStatusRunning,
+			CreatedAt: now.Add(time.Duration(-count+i) * time.Minute),
+		})
+		meta[id] = &types.SessionMeta{
+			SessionID:   id,
+			WorkspaceID: workspaceID,
+			LastTurnID:  "turn-" + strconv.Itoa(i),
+		}
+	}
+	return sessions, meta
 }
