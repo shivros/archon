@@ -308,7 +308,7 @@ func (m *Model) buildRecentsRenderContent(state recentsViewState) recentsRenderC
 			{
 				ID:   "recents:help",
 				Role: ChatRoleSystem,
-				Text: "Use j/k to choose • r reply • x expand • enter open • d dismiss ready",
+				Text: "Use j/k to choose • 1/2/3 or tab to switch all/ready/running • r reply • x expand • enter open • d dismiss ready",
 			},
 		},
 		metaByBlockID: map[string]ChatBlockMetaPresentation{
@@ -333,7 +333,7 @@ func (m *Model) appendRecentsSectionBlocks(content recentsRenderContent, title s
 	sectionID := "recents:section:" + strings.ToLower(strings.TrimSpace(title))
 	sectionText := fmt.Sprintf("%s (%d)", title, len(entries))
 	if len(entries) == 0 {
-		sectionText += "\nNo sessions."
+		sectionText += "\n" + m.recentsSectionEmptyText(title)
 	}
 	content.blocks = append(content.blocks, ChatBlock{
 		ID:   sectionID,
@@ -426,11 +426,18 @@ func recentsPreviewText(entry recentsEntry, expanded bool) string {
 	if previewText == "" {
 		previewText = "No assistant response cached yet."
 	}
+	detail := recentsEntryDetail(entry)
 	if expanded {
 		if fullText == "" {
 			fullText = previewText
 		}
+		if detail != "" {
+			return detail + "\n\n" + fullText
+		}
 		return fullText
+	}
+	if detail != "" {
+		return detail + "\n" + previewText
 	}
 	return previewText
 }
@@ -837,6 +844,16 @@ func (m *Model) reduceRecentsMode(msg tea.Msg) (bool, tea.Cmd) {
 			}
 		}
 		switch m.keyString(msg) {
+		case "1":
+			return true, m.switchRecentsFilter(sidebarRecentsFilterAll)
+		case "2":
+			return true, m.switchRecentsFilter(sidebarRecentsFilterReady)
+		case "3":
+			return true, m.switchRecentsFilter(sidebarRecentsFilterRunning)
+		case "tab":
+			return true, m.cycleRecentsFilter(1)
+		case "shift+tab", "backtab":
+			return true, m.cycleRecentsFilter(-1)
 		case "j":
 			if m.moveRecentsSelection(1) {
 				return true, m.ensureRecentsPreviewForSelection()
@@ -880,4 +897,95 @@ func (m *Model) refreshRecentsSidebarState() {
 	}
 	projection := m.buildSidebarProjection()
 	m.sidebar.SetRecentsState(m.sidebarRecentsState(projection.Sessions))
+}
+
+func (m *Model) recentsSectionEmptyText(title string) string {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	switch lower {
+	case "ready":
+		return "No ready sessions waiting for reply."
+	case "running":
+		if m != nil && m.sessionMetaRefreshPending {
+			return "Refreshing running sessions..."
+		}
+		return "No running sessions yet."
+	default:
+		return "No recents to show yet."
+	}
+}
+
+func recentsEntryDetail(entry recentsEntry) string {
+	switch entry.Status {
+	case recentsEntryReady:
+		if !entry.CompletedAt.IsZero() {
+			completedAt := entry.CompletedAt
+			return "completed " + formatSince(&completedAt)
+		}
+		return "awaiting reply"
+	default:
+		if lastActive := sessionLastActive(entry.Session, entry.Meta); lastActive != nil {
+			return "updated " + formatSince(lastActive)
+		}
+		return "running"
+	}
+}
+
+func (m *Model) switchRecentsFilter(filter sidebarRecentsFilter) tea.Cmd {
+	if m == nil || m.sidebar == nil {
+		return nil
+	}
+	targetKey := recentsFilterKey(filter)
+	if targetKey == "" || strings.TrimSpace(m.sidebar.SelectedKey()) == targetKey {
+		return nil
+	}
+	for idx, raw := range m.sidebar.Items() {
+		entry, ok := raw.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if strings.TrimSpace(entry.key()) != targetKey {
+			continue
+		}
+		m.sidebar.Select(idx)
+		return m.onSelectionChangedImmediate()
+	}
+	return nil
+}
+
+func (m *Model) cycleRecentsFilter(step int) tea.Cmd {
+	if m == nil || m.sidebar == nil || step == 0 {
+		return nil
+	}
+	order := []sidebarRecentsFilter{
+		sidebarRecentsFilterAll,
+		sidebarRecentsFilterReady,
+		sidebarRecentsFilterRunning,
+	}
+	current := m.recentsFilter()
+	index := 0
+	for i, filter := range order {
+		if filter == current {
+			index = i
+			break
+		}
+	}
+	next := index + step
+	for next < 0 {
+		next += len(order)
+	}
+	next = next % len(order)
+	return m.switchRecentsFilter(order[next])
+}
+
+func recentsFilterKey(filter sidebarRecentsFilter) string {
+	switch filter {
+	case sidebarRecentsFilterAll:
+		return "recents:all"
+	case sidebarRecentsFilterReady:
+		return "recents:ready"
+	case sidebarRecentsFilterRunning:
+		return "recents:running"
+	default:
+		return ""
+	}
 }

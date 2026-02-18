@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
+	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
@@ -150,4 +152,66 @@ func TestFormatRecentsPreviewTextRemovesANSIEscapeFragments(t *testing.T) {
 	if !strings.Contains(preview, "hello world") {
 		t.Fatalf("expected flattened preview text, got %q", preview)
 	}
+}
+
+func TestRecentsSwitchFilterUsesSidebarRows(t *testing.T) {
+	m := NewModel(nil)
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.applySidebarItems()
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
+
+	_ = m.switchRecentsFilter(sidebarRecentsFilterRunning)
+	if got := m.recentsFilter(); got != sidebarRecentsFilterRunning {
+		t.Fatalf("expected running filter after switch, got %q", got)
+	}
+}
+
+func TestRecentsKeyTabCyclesFilters(t *testing.T) {
+	m := NewModel(nil)
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.applySidebarItems()
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
+
+	handled, _ := m.reduceRecentsMode(tea.KeyPressMsg{Code: tea.KeyTab})
+	if !handled {
+		t.Fatalf("expected tab to be handled in recents mode")
+	}
+	if got := m.recentsFilter(); got != sidebarRecentsFilterReady {
+		t.Fatalf("expected ready filter after tab cycle, got %q", got)
+	}
+}
+
+func TestRecentsEmptySectionTextIsContextual(t *testing.T) {
+	m := NewModel(nil)
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.applySidebarItems()
+
+	_ = m.switchRecentsFilter(sidebarRecentsFilterReady)
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsReady})
+	m.refreshRecentsContent()
+	plain := normalizeWhitespace(xansi.Strip(m.renderedText))
+	if !strings.Contains(plain, "No ready") || !strings.Contains(plain, "waiting for") || !strings.Contains(plain, "reply.") {
+		t.Fatalf("expected contextual empty-state text for ready section, got %q", plain)
+	}
+}
+
+func normalizeWhitespace(value string) string {
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range value {
+		if unicode.IsSpace(r) {
+			if lastSpace {
+				continue
+			}
+			b.WriteRune(' ')
+			lastSpace = true
+			continue
+		}
+		b.WriteRune(r)
+		lastSpace = false
+	}
+	return strings.TrimSpace(b.String())
 }
