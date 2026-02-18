@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"control/internal/config"
 	"control/internal/types"
@@ -109,10 +110,11 @@ func (s *SessionService) appendSessionItems(id string, items []map[string]any) e
 	}
 	defer file.Close()
 	for _, item := range items {
-		if item == nil {
+		prepared := prepareItemForPersistence(item, time.Now().UTC())
+		if prepared == nil {
 			continue
 		}
-		data, err := json.Marshal(item)
+		data, err := json.Marshal(prepared)
 		if err != nil {
 			continue
 		}

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -49,6 +50,7 @@ type SessionManager struct {
 	notifier     NotificationPublisher
 	emitter      SessionLifecycleEmitter
 	defaultEmit  bool
+	logger       logging.Logger
 }
 
 type sessionRuntime struct {
@@ -76,7 +78,36 @@ func NewSessionManager(baseDir string) (*SessionManager, error) {
 	return &SessionManager{
 		baseDir:  baseDir,
 		sessions: make(map[string]*sessionRuntime),
+		logger:   logging.Nop(),
 	}, nil
+}
+
+func (m *SessionManager) SetLogger(logger logging.Logger) {
+	if m == nil {
+		return
+	}
+	if logger == nil {
+		logger = logging.Nop()
+	}
+	m.mu.Lock()
+	m.logger = logger
+	m.mu.Unlock()
+}
+
+func (m *SessionManager) newItemTimestampMetrics(provider, sessionID string) itemTimestampMetricsSink {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	logger := m.logger
+	m.mu.Unlock()
+	if logger == nil {
+		logger = logging.Nop()
+	}
+	return newItemTimestampLogMetricsSink(logger.With(
+		logging.F("provider", strings.TrimSpace(provider)),
+		logging.F("session_id", strings.TrimSpace(sessionID)),
+	))
 }
 
 func (m *SessionManager) SetMetaStore(store SessionMetaStore) {
@@ -150,7 +181,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	if providerUsesItems(cfg.Provider) {
 		itemsPath := filepath.Join(sessionDir, "items.jsonl")
 		itemsHub = newItemHub()
-		items, err = newItemSink(itemsPath, itemsHub)
+		items, err = newItemSink(itemsPath, itemsHub, m.newItemTimestampMetrics(cfg.Provider, sessionID))
 		if err != nil {
 			_ = stdoutFile.Close()
 			_ = stderrFile.Close()
@@ -338,7 +369,7 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 	if providerUsesItems(cfg.Provider) {
 		itemsPath := filepath.Join(sessionDir, "items.jsonl")
 		itemsHub = newItemHub()
-		items, err = newItemSink(itemsPath, itemsHub)
+		items, err = newItemSink(itemsPath, itemsHub, m.newItemTimestampMetrics(cfg.Provider, session.ID))
 		if err != nil {
 			_ = stdoutFile.Close()
 			_ = stderrFile.Close()

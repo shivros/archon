@@ -4,15 +4,17 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"time"
 )
 
 type itemSink struct {
-	file *os.File
-	mu   sync.Mutex
-	hub  *itemHub
+	file    *os.File
+	mu      sync.Mutex
+	hub     *itemHub
+	metrics itemTimestampMetricsSink
 }
 
-func newItemSink(path string, hub *itemHub) (*itemSink, error) {
+func newItemSink(path string, hub *itemHub, metrics itemTimestampMetricsSink) (*itemSink, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -20,14 +22,15 @@ func newItemSink(path string, hub *itemHub) (*itemSink, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &itemSink{file: file, hub: hub}, nil
+	return &itemSink{file: file, hub: hub, metrics: metrics}, nil
 }
 
 func (s *itemSink) Append(item map[string]any) {
 	if s == nil || s.file == nil || item == nil {
 		return
 	}
-	data, err := json.Marshal(item)
+	prepared, classification := prepareItemForPersistenceWithClassification(item, time.Now().UTC())
+	data, err := json.Marshal(prepared)
 	if err != nil {
 		return
 	}
@@ -36,13 +39,19 @@ func (s *itemSink) Append(item map[string]any) {
 	_, _ = s.file.Write([]byte("\n"))
 	s.mu.Unlock()
 	if s.hub != nil {
-		s.hub.Broadcast(item)
+		s.hub.Broadcast(prepared)
+	}
+	if s.metrics != nil {
+		s.metrics.Record(classification)
 	}
 }
 
 func (s *itemSink) Close() {
 	if s == nil || s.file == nil {
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.Close()
 	}
 	_ = s.file.Close()
 }

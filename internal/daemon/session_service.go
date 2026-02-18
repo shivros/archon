@@ -59,6 +59,9 @@ func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveM
 	if logger == nil {
 		logger = logging.Nop()
 	}
+	if manager != nil {
+		manager.SetLogger(logger)
+	}
 	svc := &SessionService{
 		manager:      manager,
 		stores:       stores,
