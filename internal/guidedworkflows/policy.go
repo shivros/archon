@@ -138,6 +138,10 @@ func cloneCheckpointPolicyOverride(in *CheckpointPolicyOverride) *CheckpointPoli
 	return &out
 }
 
+func CloneCheckpointPolicyOverride(in *CheckpointPolicyOverride) *CheckpointPolicyOverride {
+	return cloneCheckpointPolicyOverride(in)
+}
+
 func cloneCheckpointPolicyGatesOverride(in *CheckpointPolicyGatesOverride) CheckpointPolicyGatesOverride {
 	if in == nil {
 		return CheckpointPolicyGatesOverride{}

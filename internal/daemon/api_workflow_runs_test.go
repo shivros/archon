@@ -9,15 +9,27 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"control/internal/config"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
+
+type recordGuidedWorkflowPolicyResolver struct {
+	calls    int
+	resolved *guidedworkflows.CheckpointPolicyOverride
+}
+
+func (r *recordGuidedWorkflowPolicyResolver) ResolvePolicyOverrides(explicit *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride {
+	r.calls++
+	if r.resolved != nil {
+		return guidedworkflows.CloneCheckpointPolicyOverride(r.resolved)
+	}
+	return guidedworkflows.CloneCheckpointPolicyOverride(explicit)
+}
 
 func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	api := &API{
@@ -158,23 +170,12 @@ func TestWorkflowRunEndpointsCreateWithPolicyOverrides(t *testing.T) {
 }
 
 func TestWorkflowRunEndpointsCreateUsesConfiguredResolutionBoundaryDefaults(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
-	dataDir := filepath.Join(home, ".archon")
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	content := []byte(`
-[guided_workflows.defaults]
-resolution_boundary = "high"
-`)
-	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
-		t.Fatalf("WriteFile config.toml: %v", err)
-	}
-
+	coreCfg := config.DefaultCoreConfig()
+	coreCfg.GuidedWorkflows.Defaults.ResolutionBoundary = "high"
 	api := &API{
-		Version:      "test",
-		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Version:        "test",
+		WorkflowRuns:   guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		WorkflowPolicy: newGuidedWorkflowPolicyResolver(coreCfg),
 	}
 	server := newWorkflowRunTestServer(t, api)
 	defer server.Close()
@@ -183,11 +184,43 @@ resolution_boundary = "high"
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 	})
-	if created.Policy.ConfidenceThreshold != guidedWorkflowBoundaryHighConfidenceThreshold {
-		t.Fatalf("expected configured high confidence threshold %v, got %v", guidedWorkflowBoundaryHighConfidenceThreshold, created.Policy.ConfidenceThreshold)
+	if created.Policy.ConfidenceThreshold != guidedworkflows.PolicyPresetHighConfidenceThreshold {
+		t.Fatalf("expected configured high confidence threshold %v, got %v", guidedworkflows.PolicyPresetHighConfidenceThreshold, created.Policy.ConfidenceThreshold)
 	}
-	if created.Policy.PauseThreshold != guidedWorkflowBoundaryHighPauseThreshold {
-		t.Fatalf("expected configured high pause threshold %v, got %v", guidedWorkflowBoundaryHighPauseThreshold, created.Policy.PauseThreshold)
+	if created.Policy.PauseThreshold != guidedworkflows.PolicyPresetHighPauseThreshold {
+		t.Fatalf("expected configured high pause threshold %v, got %v", guidedworkflows.PolicyPresetHighPauseThreshold, created.Policy.PauseThreshold)
+	}
+}
+
+func TestWorkflowRunEndpointsCreateUsesInjectedPolicyResolver(t *testing.T) {
+	confidence := 0.51
+	pause := 0.77
+	resolver := &recordGuidedWorkflowPolicyResolver{
+		resolved: &guidedworkflows.CheckpointPolicyOverride{
+			ConfidenceThreshold: &confidence,
+			PauseThreshold:      &pause,
+		},
+	}
+	api := &API{
+		Version:        "test",
+		WorkflowRuns:   guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		WorkflowPolicy: resolver,
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if resolver.calls != 1 {
+		t.Fatalf("expected workflow policy resolver to be called once, got %d", resolver.calls)
+	}
+	if created.Policy.ConfidenceThreshold != 0.51 {
+		t.Fatalf("expected resolver confidence threshold override, got %v", created.Policy.ConfidenceThreshold)
+	}
+	if created.Policy.PauseThreshold != 0.77 {
+		t.Fatalf("expected resolver pause threshold override, got %v", created.Policy.PauseThreshold)
 	}
 }
 

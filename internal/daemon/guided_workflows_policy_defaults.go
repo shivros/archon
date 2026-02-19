@@ -5,23 +5,38 @@ import (
 	"control/internal/guidedworkflows"
 )
 
-const (
-	guidedWorkflowBoundaryLowConfidenceThreshold  = 0.35
-	guidedWorkflowBoundaryLowPauseThreshold       = 0.85
-	guidedWorkflowBoundaryHighConfidenceThreshold = 0.75
-	guidedWorkflowBoundaryHighPauseThreshold      = 0.45
-)
-
 type guidedWorkflowPolicyDefaults struct {
-	Risk               string
-	ResolutionBoundary string
+	Risk               guidedworkflows.PolicyPreset
+	ResolutionBoundary guidedworkflows.PolicyPreset
+}
+
+type guidedWorkflowCorePolicyResolver struct {
+	defaults guidedWorkflowPolicyDefaults
+}
+
+type guidedWorkflowNoopPolicyResolver struct{}
+
+func newGuidedWorkflowPolicyResolver(cfg config.CoreConfig) GuidedWorkflowPolicyResolver {
+	return guidedWorkflowCorePolicyResolver{
+		defaults: guidedWorkflowPolicyDefaultsFromCoreConfig(cfg),
+	}
 }
 
 func guidedWorkflowPolicyDefaultsFromCoreConfig(cfg config.CoreConfig) guidedWorkflowPolicyDefaults {
+	risk, _ := guidedworkflows.NormalizePolicyPreset(cfg.GuidedWorkflowsDefaultRisk())
+	boundary, _ := guidedworkflows.NormalizePolicyPreset(cfg.GuidedWorkflowsDefaultResolutionBoundary())
 	return guidedWorkflowPolicyDefaults{
-		Risk:               cfg.GuidedWorkflowsDefaultRisk(),
-		ResolutionBoundary: cfg.GuidedWorkflowsDefaultResolutionBoundary(),
+		Risk:               risk,
+		ResolutionBoundary: boundary,
 	}
+}
+
+func (r guidedWorkflowCorePolicyResolver) ResolvePolicyOverrides(explicit *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride {
+	return resolveGuidedWorkflowPolicyOverrides(explicit, r.defaults)
+}
+
+func (guidedWorkflowNoopPolicyResolver) ResolvePolicyOverrides(explicit *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride {
+	return guidedworkflows.CloneCheckpointPolicyOverride(explicit)
 }
 
 func resolveGuidedWorkflowPolicyOverrides(
@@ -29,48 +44,8 @@ func resolveGuidedWorkflowPolicyOverrides(
 	defaults guidedWorkflowPolicyDefaults,
 ) *guidedworkflows.CheckpointPolicyOverride {
 	if explicit != nil {
-		return cloneGuidedWorkflowPolicyOverride(explicit)
+		return guidedworkflows.CloneCheckpointPolicyOverride(explicit)
 	}
-	boundary := defaults.ResolutionBoundary
-	if boundary == "" {
-		boundary = defaults.Risk
-	}
-	return guidedWorkflowPolicyOverridesForBoundary(boundary)
-}
-
-func guidedWorkflowPolicyOverridesForBoundary(boundary string) *guidedworkflows.CheckpointPolicyOverride {
-	switch boundary {
-	case "low":
-		confidence := guidedWorkflowBoundaryLowConfidenceThreshold
-		pause := guidedWorkflowBoundaryLowPauseThreshold
-		return &guidedworkflows.CheckpointPolicyOverride{
-			ConfidenceThreshold: &confidence,
-			PauseThreshold:      &pause,
-		}
-	case "high":
-		confidence := guidedWorkflowBoundaryHighConfidenceThreshold
-		pause := guidedWorkflowBoundaryHighPauseThreshold
-		return &guidedworkflows.CheckpointPolicyOverride{
-			ConfidenceThreshold: &confidence,
-			PauseThreshold:      &pause,
-		}
-	default:
-		return nil
-	}
-}
-
-func cloneGuidedWorkflowPolicyOverride(in *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	if in.HardGates != nil {
-		hardGates := *in.HardGates
-		out.HardGates = &hardGates
-	}
-	if in.ConditionalGates != nil {
-		conditionalGates := *in.ConditionalGates
-		out.ConditionalGates = &conditionalGates
-	}
-	return &out
+	preset := guidedworkflows.ResolvePolicyPreset(defaults.ResolutionBoundary, defaults.Risk)
+	return guidedworkflows.PolicyOverrideForPreset(preset)
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"control/internal/guidedworkflows"
 	"control/internal/providers"
 	"control/internal/types"
 
@@ -834,18 +835,11 @@ func normalizeGuidedWorkflowsReasoningLevel(raw string) (types.ReasoningLevel, b
 }
 
 func normalizeGuidedWorkflowsSensitivityPreset(raw string) (string, bool) {
-	switch normalizeGuidedWorkflowsValue(raw) {
-	case "":
-		return "", true
-	case "low":
-		return "low", true
-	case "balanced", "medium", "default":
-		return "balanced", true
-	case "high":
-		return "high", true
-	default:
+	preset, ok := guidedworkflows.NormalizePolicyPreset(raw)
+	if !ok {
 		return "", false
 	}
+	return string(preset), true
 }
 
 func boolPtr(value bool) *bool {

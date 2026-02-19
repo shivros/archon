@@ -17,10 +17,10 @@ func TestGuidedWorkflowPolicyDefaultsFromCoreConfig(t *testing.T) {
 		},
 	}
 	defaults := guidedWorkflowPolicyDefaultsFromCoreConfig(cfg)
-	if defaults.Risk != "high" {
+	if defaults.Risk != guidedworkflows.PolicyPresetHigh {
 		t.Fatalf("expected risk default high, got %q", defaults.Risk)
 	}
-	if defaults.ResolutionBoundary != "low" {
+	if defaults.ResolutionBoundary != guidedworkflows.PolicyPresetLow {
 		t.Fatalf("expected resolution boundary low, got %q", defaults.ResolutionBoundary)
 	}
 }
@@ -34,8 +34,8 @@ func TestResolveGuidedWorkflowPolicyOverridesPrefersExplicitOverride(t *testing.
 	}
 
 	got := resolveGuidedWorkflowPolicyOverrides(explicit, guidedWorkflowPolicyDefaults{
-		Risk:               "low",
-		ResolutionBoundary: "high",
+		Risk:               guidedworkflows.PolicyPresetLow,
+		ResolutionBoundary: guidedworkflows.PolicyPresetHigh,
 	})
 	if got == nil {
 		t.Fatalf("expected explicit policy override to be preserved")
@@ -53,40 +53,53 @@ func TestResolveGuidedWorkflowPolicyOverridesPrefersExplicitOverride(t *testing.
 
 func TestResolveGuidedWorkflowPolicyOverridesUsesBoundaryBeforeRisk(t *testing.T) {
 	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{
-		Risk:               "low",
-		ResolutionBoundary: "high",
+		Risk:               guidedworkflows.PolicyPresetLow,
+		ResolutionBoundary: guidedworkflows.PolicyPresetHigh,
 	})
 	if got == nil {
 		t.Fatalf("expected high boundary defaults")
 	}
-	if got.ConfidenceThreshold == nil || *got.ConfidenceThreshold != guidedWorkflowBoundaryHighConfidenceThreshold {
+	if got.ConfidenceThreshold == nil || *got.ConfidenceThreshold != guidedworkflows.PolicyPresetHighConfidenceThreshold {
 		t.Fatalf("unexpected confidence threshold for high boundary: %#v", got.ConfidenceThreshold)
 	}
-	if got.PauseThreshold == nil || *got.PauseThreshold != guidedWorkflowBoundaryHighPauseThreshold {
+	if got.PauseThreshold == nil || *got.PauseThreshold != guidedworkflows.PolicyPresetHighPauseThreshold {
 		t.Fatalf("unexpected pause threshold for high boundary: %#v", got.PauseThreshold)
 	}
 }
 
 func TestResolveGuidedWorkflowPolicyOverridesUsesRiskWhenBoundaryUnset(t *testing.T) {
 	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{
-		Risk: "low",
+		Risk: guidedworkflows.PolicyPresetLow,
 	})
 	if got == nil {
 		t.Fatalf("expected low risk defaults when boundary is unset")
 	}
-	if got.ConfidenceThreshold == nil || *got.ConfidenceThreshold != guidedWorkflowBoundaryLowConfidenceThreshold {
+	if got.ConfidenceThreshold == nil || *got.ConfidenceThreshold != guidedworkflows.PolicyPresetLowConfidenceThreshold {
 		t.Fatalf("unexpected confidence threshold for low risk: %#v", got.ConfidenceThreshold)
 	}
-	if got.PauseThreshold == nil || *got.PauseThreshold != guidedWorkflowBoundaryLowPauseThreshold {
+	if got.PauseThreshold == nil || *got.PauseThreshold != guidedworkflows.PolicyPresetLowPauseThreshold {
 		t.Fatalf("unexpected pause threshold for low risk: %#v", got.PauseThreshold)
 	}
 }
 
 func TestResolveGuidedWorkflowPolicyOverridesReturnsNilForBalancedOrUnknown(t *testing.T) {
-	if got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{ResolutionBoundary: "balanced"}); got != nil {
+	if got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{ResolutionBoundary: guidedworkflows.PolicyPresetBalanced}); got != nil {
 		t.Fatalf("expected nil override for balanced boundary, got %#v", got)
 	}
-	if got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{ResolutionBoundary: "unknown"}); got != nil {
+	if got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{}); got != nil {
 		t.Fatalf("expected nil override for unknown boundary, got %#v", got)
+	}
+}
+
+func TestGuidedWorkflowNoopPolicyResolverClonesExplicitOverrides(t *testing.T) {
+	confidence := 0.5
+	explicit := &guidedworkflows.CheckpointPolicyOverride{ConfidenceThreshold: &confidence}
+	resolver := guidedWorkflowNoopPolicyResolver{}
+	got := resolver.ResolvePolicyOverrides(explicit)
+	if got == nil || got.ConfidenceThreshold == nil || *got.ConfidenceThreshold != 0.5 {
+		t.Fatalf("unexpected cloned override: %#v", got)
+	}
+	if got == explicit {
+		t.Fatalf("expected clone, got same pointer")
 	}
 }

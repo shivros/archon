@@ -856,34 +856,32 @@ func decisionActionText(action guidedworkflows.DecisionAction) string {
 }
 
 func policyOverrideForSensitivity(sensitivity guidedPolicySensitivity) *guidedworkflows.CheckpointPolicyOverride {
-	switch sensitivity {
-	case guidedPolicySensitivityLow:
-		confidence := 0.35
-		pause := 0.85
-		return &guidedworkflows.CheckpointPolicyOverride{
-			ConfidenceThreshold: &confidence,
-			PauseThreshold:      &pause,
-		}
-	case guidedPolicySensitivityHigh:
-		confidence := 0.75
-		pause := 0.45
-		return &guidedworkflows.CheckpointPolicyOverride{
-			ConfidenceThreshold: &confidence,
-			PauseThreshold:      &pause,
-		}
-	default:
-		return nil
-	}
+	return guidedworkflows.PolicyOverrideForPreset(policyPresetForSensitivity(sensitivity))
 }
 
 func guidedPolicySensitivityFromPreset(preset string) guidedPolicySensitivity {
-	switch strings.ToLower(strings.TrimSpace(preset)) {
-	case "low":
+	normalized, ok := guidedworkflows.NormalizePolicyPreset(preset)
+	if !ok {
+		return guidedPolicySensitivityBalanced
+	}
+	switch normalized {
+	case guidedworkflows.PolicyPresetLow:
 		return guidedPolicySensitivityLow
-	case "high":
+	case guidedworkflows.PolicyPresetHigh:
 		return guidedPolicySensitivityHigh
 	default:
 		return guidedPolicySensitivityBalanced
+	}
+}
+
+func policyPresetForSensitivity(sensitivity guidedPolicySensitivity) guidedworkflows.PolicyPreset {
+	switch sensitivity {
+	case guidedPolicySensitivityLow:
+		return guidedworkflows.PolicyPresetLow
+	case guidedPolicySensitivityHigh:
+		return guidedworkflows.PolicyPresetHigh
+	default:
+		return guidedworkflows.PolicyPresetBalanced
 	}
 }
 

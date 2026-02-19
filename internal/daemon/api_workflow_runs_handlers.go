@@ -49,16 +49,13 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		run, err := service.CreateRun(r.Context(), guidedworkflows.CreateRunRequest{
-			TemplateID:  strings.TrimSpace(req.TemplateID),
-			WorkspaceID: strings.TrimSpace(req.WorkspaceID),
-			WorktreeID:  strings.TrimSpace(req.WorktreeID),
-			SessionID:   strings.TrimSpace(req.SessionID),
-			TaskID:      strings.TrimSpace(req.TaskID),
-			UserPrompt:  strings.TrimSpace(req.UserPrompt),
-			PolicyOverrides: resolveGuidedWorkflowPolicyOverrides(
-				req.PolicyOverrides,
-				guidedWorkflowPolicyDefaultsFromCoreConfig(loadCoreConfigOrDefault()),
-			),
+			TemplateID:      strings.TrimSpace(req.TemplateID),
+			WorkspaceID:     strings.TrimSpace(req.WorkspaceID),
+			WorktreeID:      strings.TrimSpace(req.WorktreeID),
+			SessionID:       strings.TrimSpace(req.SessionID),
+			TaskID:          strings.TrimSpace(req.TaskID),
+			UserPrompt:      strings.TrimSpace(req.UserPrompt),
+			PolicyOverrides: a.workflowPolicyResolver().ResolvePolicyOverrides(req.PolicyOverrides),
 		})
 		if err != nil {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
