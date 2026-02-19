@@ -208,7 +208,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				}
 				return true, saveStateCmd
 			}
-			selectionCmd := m.onSelectionChangedImmediate()
+			selectionCmd := m.onSystemSelectionChangedImmediate()
 			if recentsCmd != nil && selectionCmd != nil {
 				selectionCmd = tea.Batch(recentsCmd, selectionCmd)
 			} else if recentsCmd != nil {

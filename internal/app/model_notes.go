@@ -148,7 +148,7 @@ func (m *Model) exitNotes(status string) tea.Cmd {
 		m.setStatusMessage(status)
 	}
 	m.resize(m.width, m.height)
-	nextCmd := m.onSelectionChangedImmediate()
+	nextCmd := m.onSystemSelectionChangedImmediate()
 	if !draftsChanged {
 		return nextCmd
 	}

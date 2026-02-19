@@ -22,27 +22,28 @@ import (
 )
 
 const (
-	defaultTailLines          = 200
-	maxViewportLines          = 2000
-	maxEventsPerTick          = 64
-	tickInterval              = 100 * time.Millisecond
-	sidebarWheelCooldown      = 30 * time.Millisecond
-	appStateSaveDebounce      = 250 * time.Millisecond
-	historyPollDelay          = 500 * time.Millisecond
-	historyPollMax            = 20
-	composeHistoryMaxEntries  = 200
-	composeHistoryMaxSessions = 200
-	toastDuration             = 2 * time.Second
-	viewportScrollbarWidth    = 1
-	minListWidth              = 24
-	maxListWidth              = 40
-	minViewportWidth          = 20
-	minContentHeight          = 6
-	statusLinePadding         = 1
-	requestStaleRefreshDelay  = 4 * time.Second
-	requestRefreshCooldown    = 3 * time.Second
-	sessionMetaRefreshDelay   = 15 * time.Second
-	sessionMetaSyncDelay      = 2 * time.Minute
+	defaultTailLines           = 200
+	maxViewportLines           = 2000
+	maxEventsPerTick           = 64
+	tickInterval               = 100 * time.Millisecond
+	sidebarWheelCooldown       = 30 * time.Millisecond
+	appStateSaveDebounce       = 250 * time.Millisecond
+	historyPollDelay           = 500 * time.Millisecond
+	historyPollMax             = 20
+	composeHistoryMaxEntries   = 200
+	composeHistoryMaxSessions  = 200
+	toastDuration              = 2 * time.Second
+	viewportScrollbarWidth     = 1
+	minListWidth               = 24
+	maxListWidth               = 40
+	minViewportWidth           = 20
+	minContentHeight           = 6
+	statusLinePadding          = 1
+	requestStaleRefreshDelay   = 4 * time.Second
+	requestRefreshCooldown     = 3 * time.Second
+	sessionMetaRefreshDelay    = 15 * time.Second
+	sessionMetaSyncDelay       = 2 * time.Minute
+	selectionHistoryMaxEntries = 256
 )
 
 type uiMode int
@@ -240,6 +241,9 @@ type Model struct {
 	reasoningSnapshotHash               uint64
 	reasoningSnapshotHas                bool
 	reasoningSnapshotCollapsed          bool
+	selectionHistory                    SelectionHistory
+	selectionOriginPolicy               SelectionOriginPolicy
+	selectionTransitionService          SelectionTransitionService
 }
 
 type newSessionTarget struct {
@@ -417,6 +421,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		layerComposer:                       NewTextLayerComposer(),
 		timestampMode:                       ChatTimestampModeRelative,
 		clockNow:                            now,
+		selectionHistory:                    NewSelectionHistory(selectionHistoryMaxEntries),
+		selectionOriginPolicy:               DefaultSelectionOriginPolicy(),
+		selectionTransitionService:          NewDefaultSelectionTransitionService(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -808,31 +815,28 @@ func (m *Model) resizeWithoutRender(width, height int) {
 }
 
 func (m *Model) onSelectionChanged() tea.Cmd {
-	return m.onSelectionChangedWithDelay(0)
+	return m.onSelectionChangedWithDelayAndSource(0, selectionChangeSourceUser)
 }
 
 func (m *Model) onSelectionChangedImmediate() tea.Cmd {
-	return m.onSelectionChangedWithDelay(0)
+	return m.onSelectionChangedWithDelayAndSource(0, selectionChangeSourceUser)
 }
 
 func (m *Model) onSelectionChangedWithDelay(delay time.Duration) tea.Cmd {
-	item := m.selectedItem()
-	handled, stateChanged, draftChanged := m.applySelectionState(item)
-	var cmd tea.Cmd
-	if !handled {
-		cmd = m.scheduleSessionLoad(item, delay)
-	} else if m.mode == uiModeRecents {
-		cmd = m.ensureRecentsPreviewForSelection()
-	}
-	if stateChanged || draftChanged {
-		save := m.requestAppStateSaveCmd()
-		if cmd != nil && save != nil {
-			cmd = tea.Batch(cmd, save)
-		} else if save != nil {
-			cmd = save
-		}
-	}
-	return m.batchWithNotesPanelSync(cmd)
+	return m.onSelectionChangedWithDelayAndSource(delay, selectionChangeSourceUser)
+}
+
+func (m *Model) onSystemSelectionChangedImmediate() tea.Cmd {
+	return m.onSelectionChangedWithDelayAndSource(0, selectionChangeSourceSystem)
+}
+
+func (m *Model) onHistorySelectionChangedImmediate() tea.Cmd {
+	return m.onSelectionChangedWithDelayAndSource(0, selectionChangeSourceHistory)
+}
+
+func (m *Model) onSelectionChangedWithDelayAndSource(delay time.Duration, source selectionChangeSource) tea.Cmd {
+	service := m.selectionTransitionServiceOrDefault()
+	return service.SelectionChanged(m, delay, source)
 }
 
 func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChanged bool, draftChanged bool) {
@@ -2430,7 +2434,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	}
 
 	mouse := msg.Mouse()
-	if mouse.Button == tea.MouseLeft || mouse.Button == tea.MouseRight {
+	if mouse.Button == tea.MouseLeft || mouse.Button == tea.MouseRight || mouse.Button == tea.MouseBackward || mouse.Button == tea.MouseForward {
 		if _, ok := msg.(tea.MouseClickMsg); !ok {
 			return false
 		}
@@ -2446,6 +2450,10 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return m.reduceMouseWheel(msg, layout, -1)
 	case tea.MouseWheelDown:
 		return m.reduceMouseWheel(msg, layout, 1)
+	case tea.MouseBackward:
+		return m.reduceMouseBackPress()
+	case tea.MouseForward:
+		return m.reduceMouseForwardPress()
 	case tea.MouseLeft:
 	default:
 		return false

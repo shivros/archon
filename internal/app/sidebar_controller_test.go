@@ -177,6 +177,62 @@ func TestSidebarControllerSelectBySessionIDAutoExpandsParents(t *testing.T) {
 	}
 }
 
+func TestSidebarControllerSelectByKeySessionAutoExpandsParents(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree"},
+		},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
+	}
+
+	controller.Apply(workspaces, worktrees, sessions, meta, "ws1", "wt1", false)
+	if !controller.SelectByKey("sess:s1") {
+		t.Fatalf("expected SelectByKey(sess:s1) to select hidden session")
+	}
+	if got := controller.SelectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1, got %q", got)
+	}
+}
+
+func TestSidebarControllerSelectByKeyWorktreeAutoExpandsWorkspace(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree"},
+		},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
+	}
+
+	controller.Apply(workspaces, worktrees, sessions, meta, "ws1", "wt1", false)
+	if !controller.CanSelectKey("wt:wt1") {
+		t.Fatalf("expected CanSelectKey(wt:wt1) to be true")
+	}
+	if !controller.SelectByKey("wt:wt1") {
+		t.Fatalf("expected SelectByKey(wt:wt1) to select hidden worktree")
+	}
+	item := controller.SelectedItem()
+	if item == nil || item.kind != sidebarWorktree || item.worktree == nil || item.worktree.ID != "wt1" {
+		t.Fatalf("expected selected worktree wt1, got %#v", item)
+	}
+}
+
 func makeSidebarSessionFixtures(workspaceID string, count int) ([]*types.Session, map[string]*types.SessionMeta) {
 	now := time.Now().UTC()
 	sessions := make([]*types.Session, 0, count)

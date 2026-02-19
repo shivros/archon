@@ -150,7 +150,13 @@ func (c *SidebarController) SelectBySessionID(id string) bool {
 	}
 	parent, ok := c.sessionParents[id]
 	if !ok {
-		return false
+		if !c.canSelectSessionID(id) {
+			return false
+		}
+		parent = sessionSidebarParent{workspaceID: unassignedWorkspaceID}
+	}
+	if strings.TrimSpace(parent.workspaceID) == "" {
+		parent.workspaceID = unassignedWorkspaceID
 	}
 	changed := false
 	if parent.workspaceID != "" {
@@ -165,6 +171,58 @@ func (c *SidebarController) SelectBySessionID(id string) bool {
 	return c.selectVisibleSessionByID(id)
 }
 
+func (c *SidebarController) SelectByWorktreeID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	if c.selectVisibleWorktreeByID(id) {
+		return true
+	}
+	workspaceID, ok := c.findWorkspaceIDForWorktree(id)
+	if !ok {
+		return false
+	}
+	if c.setWorkspaceExpanded(workspaceID, true) {
+		c.rebuild(c.SelectedKey())
+	}
+	return c.selectVisibleWorktreeByID(id)
+}
+
+func (c *SidebarController) SelectByKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	if c.selectVisibleByKey(key) {
+		return true
+	}
+	if id := sessionIDFromSidebarKey(key); id != "" {
+		return c.SelectBySessionID(id)
+	}
+	if strings.HasPrefix(key, "wt:") {
+		return c.SelectByWorktreeID(strings.TrimSpace(strings.TrimPrefix(key, "wt:")))
+	}
+	return false
+}
+
+func (c *SidebarController) CanSelectKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	if sidebarItemsContainKey(c.list.Items(), key) {
+		return true
+	}
+	if id := sessionIDFromSidebarKey(key); id != "" {
+		return c.canSelectSessionID(id)
+	}
+	if strings.HasPrefix(key, "wt:") {
+		return c.canSelectWorktreeID(strings.TrimSpace(strings.TrimPrefix(key, "wt:")))
+	}
+	return false
+}
+
 func (c *SidebarController) selectVisibleSessionByID(id string) bool {
 	for i, item := range c.list.Items() {
 		entry, ok := item.(*sidebarItem)
@@ -177,6 +235,91 @@ func (c *SidebarController) selectVisibleSessionByID(id string) bool {
 		}
 	}
 	return false
+}
+
+func (c *SidebarController) selectVisibleWorktreeByID(id string) bool {
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.worktree == nil {
+			continue
+		}
+		if entry.worktree.ID == id {
+			c.selectIndex(i)
+			return true
+		}
+	}
+	return false
+}
+
+func (c *SidebarController) selectVisibleByKey(key string) bool {
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if entry.key() == key {
+			c.selectIndex(i)
+			return true
+		}
+	}
+	return false
+}
+
+func (c *SidebarController) canSelectSessionID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, session := range c.sessionsSnapshot {
+		if session == nil {
+			continue
+		}
+		if strings.TrimSpace(session.ID) == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *SidebarController) canSelectWorktreeID(id string) bool {
+	_, ok := c.findWorkspaceIDForWorktree(id)
+	return ok
+}
+
+func (c *SidebarController) findWorkspaceIDForWorktree(worktreeID string) (string, bool) {
+	worktreeID = strings.TrimSpace(worktreeID)
+	if worktreeID == "" {
+		return "", false
+	}
+	visibleWorkspaces := map[string]struct{}{}
+	for _, ws := range c.workspacesSnapshot {
+		if ws == nil {
+			continue
+		}
+		id := strings.TrimSpace(ws.ID)
+		if id == "" {
+			continue
+		}
+		visibleWorkspaces[id] = struct{}{}
+	}
+	for workspaceID, worktrees := range c.worktreesSnapshot {
+		workspaceID = strings.TrimSpace(workspaceID)
+		if workspaceID == "" {
+			continue
+		}
+		if _, ok := visibleWorkspaces[workspaceID]; !ok {
+			continue
+		}
+		for _, worktree := range worktrees {
+			if worktree == nil {
+				continue
+			}
+			if strings.TrimSpace(worktree.ID) == worktreeID {
+				return workspaceID, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (c *SidebarController) SelectByRow(row int) {
