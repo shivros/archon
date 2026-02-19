@@ -1,10 +1,14 @@
 package app
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"control/internal/client"
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +16,129 @@ import (
 
 func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case workflowRunCreatedMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetCreateError(msg.err)
+			m.setStatusError("guided workflow create error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		runID := ""
+		if msg.run != nil {
+			m.upsertWorkflowRun(msg.run)
+			m.applySidebarItemsIfDirty()
+			m.guidedWorkflow.SetRun(msg.run)
+			runID = strings.TrimSpace(msg.run.ID)
+		}
+		if runID == "" {
+			m.guidedWorkflow.SetCreateError(fmt.Errorf("guided workflow run id is missing"))
+			m.setStatusError("guided workflow create error: missing run id")
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.setStatusMessage("starting guided workflow run")
+		m.renderGuidedWorkflowContent()
+		return true, startWorkflowRunCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunStartedMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetStartError(msg.err)
+			m.setStatusError("guided workflow start error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
+		m.guidedWorkflow.SetRun(msg.run)
+		m.setStatusInfo("guided workflow running")
+		m.renderGuidedWorkflowContent()
+		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+		if runID == "" {
+			return true, nil
+		}
+		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
+		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunSnapshotMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetSnapshotError(msg.err)
+			m.setBackgroundError("guided workflow refresh error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
+		m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
+		if msg.run != nil {
+			switch msg.run.Status {
+			case guidedworkflows.WorkflowRunStatusPaused:
+				m.setStatusInfo("guided workflow paused: decision needed")
+			case guidedworkflows.WorkflowRunStatusCompleted:
+				m.setStatusInfo("guided workflow completed")
+			case guidedworkflows.WorkflowRunStatusFailed:
+				m.setStatusError("guided workflow failed")
+			}
+		}
+		m.renderGuidedWorkflowContent()
+		return true, nil
+	case workflowRunDecisionMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetDecisionError(msg.err)
+			m.setStatusError("guided workflow decision error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
+		m.guidedWorkflow.SetRun(msg.run)
+		m.renderGuidedWorkflowContent()
+		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+		if runID == "" {
+			return true, nil
+		}
+		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
+		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunVisibilityMsg:
+		if msg.err != nil {
+			if msg.dismissed && isWorkflowRunNotFoundError(msg.err) && m.dismissWorkflowRunLocally(msg.runID) {
+				m.setStatusWarning("guided workflow missing in backend; dismissed locally")
+				return true, m.requestAppStateSaveCmd()
+			}
+			if msg.dismissed {
+				m.setStatusError("guided workflow dismiss error: " + msg.err.Error())
+			} else {
+				m.setStatusError("guided workflow undismiss error: " + msg.err.Error())
+			}
+			return true, nil
+		}
+		if msg.run != nil {
+			m.upsertWorkflowRun(msg.run)
+		}
+		runID := strings.TrimSpace(msg.runID)
+		if runID == "" && msg.run != nil {
+			runID = strings.TrimSpace(msg.run.ID)
+		}
+		appStateSaveCmd := tea.Cmd(nil)
+		if runID != "" && m.removeDismissedMissingWorkflowRunID(runID) {
+			appStateSaveCmd = m.requestAppStateSaveCmd()
+		}
+		m.applySidebarItemsIfDirty()
+		if msg.dismissed {
+			m.setStatusInfo("guided workflow dismissed")
+		} else {
+			m.setStatusInfo("guided workflow restored")
+		}
+		return true, tea.Batch(fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed), appStateSaveCmd)
 	case createWorkspaceMsg:
 		if msg.err != nil {
 			m.exitAddWorkspace("add workspace error: " + msg.err.Error())
@@ -159,8 +286,28 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	}
 }
 
+func isWorkflowRunNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound && strings.Contains(strings.ToLower(strings.TrimSpace(apiErr.Message)), "workflow run not found")
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "workflow run not found")
+}
+
 func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case workflowRunsMsg:
+		if msg.err != nil {
+			m.setBackgroundError("guided workflow runs error: " + msg.err.Error())
+			return true, nil
+		}
+		m.setWorkflowRunsData(msg.runs)
+		m.applySidebarItemsIfDirty()
+		return true, nil
 	case sessionsWithMetaMsg:
 		m.sessionMetaRefreshPending = false
 		m.sessionMetaSyncPending = false

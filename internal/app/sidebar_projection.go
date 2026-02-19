@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -15,6 +16,7 @@ const (
 	sidebarProjectionChangeWorktree  sidebarProjectionChangeReason = "worktree"
 	sidebarProjectionChangeGroup     sidebarProjectionChangeReason = "group"
 	sidebarProjectionChangeDismissed sidebarProjectionChangeReason = "dismissed"
+	sidebarProjectionChangeWorkflow  sidebarProjectionChangeReason = "workflow"
 	sidebarProjectionChangeAppState  sidebarProjectionChangeReason = "app_state"
 )
 
@@ -23,12 +25,14 @@ type SidebarProjectionInput struct {
 	Worktrees          map[string][]*types.Worktree
 	Sessions           []*types.Session
 	SessionMeta        map[string]*types.SessionMeta
+	WorkflowRuns       []*guidedworkflows.WorkflowRun
 	ActiveWorkspaceIDs []string
 }
 
 type SidebarProjection struct {
-	Workspaces []*types.Workspace
-	Sessions   []*types.Session
+	Workspaces   []*types.Workspace
+	Sessions     []*types.Session
+	WorkflowRuns []*guidedworkflows.WorkflowRun
 }
 
 type SidebarProjectionBuilder interface {
@@ -49,15 +53,18 @@ func (defaultSidebarProjectionBuilder) Build(input SidebarProjectionInput) Sideb
 	selected := selectedWorkspaceGroups(input.ActiveWorkspaceIDs)
 	if len(selected) == 0 {
 		return SidebarProjection{
-			Workspaces: []*types.Workspace{},
-			Sessions:   []*types.Session{},
+			Workspaces:   []*types.Workspace{},
+			Sessions:     []*types.Session{},
+			WorkflowRuns: []*guidedworkflows.WorkflowRun{},
 		}
 	}
 	workspaces := filterWorkspacesForSidebar(input.Workspaces, selected)
 	sessions := filterSessionsForSidebar(input.Sessions, input.SessionMeta, input.Worktrees, workspaces, selected)
+	workflowRuns := filterWorkflowRunsForSidebar(input.WorkflowRuns, input.Worktrees, workspaces, selected)
 	return SidebarProjection{
-		Workspaces: workspaces,
-		Sessions:   sessions,
+		Workspaces:   workspaces,
+		Sessions:     sessions,
+		WorkflowRuns: workflowRuns,
 	}
 }
 
@@ -156,6 +163,57 @@ func filterSessionsForSidebar(
 	return out
 }
 
+func filterWorkflowRunsForSidebar(
+	runs []*guidedworkflows.WorkflowRun,
+	worktrees map[string][]*types.Worktree,
+	workspaces []*types.Workspace,
+	selected map[string]bool,
+) []*guidedworkflows.WorkflowRun {
+	if len(selected) == 0 {
+		return []*guidedworkflows.WorkflowRun{}
+	}
+	visibleWorkspaces := map[string]struct{}{}
+	for _, ws := range workspaces {
+		if ws == nil {
+			continue
+		}
+		visibleWorkspaces[ws.ID] = struct{}{}
+	}
+	visibleWorktrees := map[string]struct{}{}
+	for wsID := range visibleWorkspaces {
+		for _, wt := range worktrees[wsID] {
+			if wt == nil {
+				continue
+			}
+			visibleWorktrees[wt.ID] = struct{}{}
+		}
+	}
+	out := make([]*guidedworkflows.WorkflowRun, 0, len(runs))
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		workspaceID := strings.TrimSpace(run.WorkspaceID)
+		worktreeID := strings.TrimSpace(run.WorktreeID)
+		if worktreeID != "" {
+			if _, ok := visibleWorktrees[worktreeID]; ok {
+				out = append(out, run)
+			}
+			continue
+		}
+		if workspaceID != "" {
+			if _, ok := visibleWorkspaces[workspaceID]; ok {
+				out = append(out, run)
+			}
+			continue
+		}
+		if selected["ungrouped"] {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
 func WithSidebarProjectionBuilder(builder SidebarProjectionBuilder) ModelOption {
 	return func(m *Model) {
 		if m == nil || builder == nil {
@@ -179,6 +237,7 @@ func (defaultSidebarProjectionInvalidationPolicy) ShouldInvalidate(reason sideba
 		sidebarProjectionChangeWorktree,
 		sidebarProjectionChangeGroup,
 		sidebarProjectionChangeDismissed,
+		sidebarProjectionChangeWorkflow,
 		sidebarProjectionChangeAppState:
 		return true
 	default:

@@ -12,7 +12,7 @@ func TestRenameHotkeyRoutesWorkspaceSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
 	m.worktrees = map[string][]*types.Worktree{}
-	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
 
 	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
 	if !handled {
@@ -37,7 +37,7 @@ func TestRenameHotkeyRoutesWorktreeSelection(t *testing.T) {
 			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree", Path: "/tmp/ws1/wt1"},
 		},
 	}
-	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarWorktree)
 
 	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
@@ -63,7 +63,7 @@ func TestRenameHotkeyRoutesSessionSelection(t *testing.T) {
 	m.sessionMeta = map[string]*types.SessionMeta{
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
 	}
-	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarSession)
 
 	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
@@ -85,7 +85,7 @@ func TestDeleteHotkeyRoutesWorkspaceSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
 	m.worktrees = map[string][]*types.Worktree{}
-	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
 
 	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('d'))
 	if !handled {
@@ -110,7 +110,7 @@ func TestDeleteHotkeyRoutesWorktreeSelection(t *testing.T) {
 			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree", Path: "/tmp/ws1/wt1"},
 		},
 	}
-	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarWorktree)
 
 	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('d'))
@@ -136,7 +136,7 @@ func TestDeleteHotkeyRoutesSessionSelection(t *testing.T) {
 	m.sessionMeta = map[string]*types.SessionMeta{
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
 	}
-	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarSession)
 
 	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('d'))
@@ -211,7 +211,7 @@ func TestNotesNewOverrideWorksFromSidebarSelection(t *testing.T) {
 	m.sessionMeta = map[string]*types.SessionMeta{
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
 	}
-	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarSession)
 	m.applyKeybindings(NewKeybindings(map[string]string{
 		KeyCommandNotesNew:   "ctrl+n",
@@ -243,7 +243,7 @@ func TestSpaceDoesNotEnableSessionMultiSelect(t *testing.T) {
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session One"},
 		"s2": {SessionID: "s2", WorkspaceID: "ws1", Title: "Session Two"},
 	}
-	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, m.sessionMeta, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
 	selectSidebarItemKind(t, &m, sidebarSession)
 
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})

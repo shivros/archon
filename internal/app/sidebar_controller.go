@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -22,9 +23,11 @@ type SidebarController struct {
 	expandByDefault       bool
 	workspaceExpanded     map[string]bool
 	worktreeExpanded      map[string]bool
+	workflowExpanded      map[string]bool
 	workspacesSnapshot    []*types.Workspace
 	worktreesSnapshot     map[string][]*types.Worktree
 	sessionsSnapshot      []*types.Session
+	workflowRunsSnapshot  []*guidedworkflows.WorkflowRun
 	metaSnapshot          map[string]*types.SessionMeta
 	showDismissedSnapshot bool
 	sessionParents        map[string]sessionSidebarParent
@@ -34,6 +37,7 @@ type SidebarController struct {
 type sessionSidebarParent struct {
 	workspaceID string
 	worktreeID  string
+	workflowID  string
 }
 
 const sidebarScrollbarWidth = 1
@@ -57,6 +61,7 @@ func NewSidebarController() *SidebarController {
 		expandByDefault:       true,
 		workspaceExpanded:     map[string]bool{},
 		worktreeExpanded:      map[string]bool{},
+		workflowExpanded:      map[string]bool{},
 		sessionParents:        map[string]sessionSidebarParent{},
 	}
 }
@@ -165,6 +170,9 @@ func (c *SidebarController) SelectBySessionID(id string) bool {
 	if parent.worktreeID != "" {
 		changed = c.setWorktreeExpanded(parent.worktreeID, true) || changed
 	}
+	if parent.workflowID != "" {
+		changed = c.setWorkflowExpanded(parent.workflowID, true) || changed
+	}
 	if changed {
 		c.rebuild(c.SelectedKey())
 	}
@@ -203,6 +211,9 @@ func (c *SidebarController) SelectByKey(key string) bool {
 	if strings.HasPrefix(key, "wt:") {
 		return c.SelectByWorktreeID(strings.TrimSpace(strings.TrimPrefix(key, "wt:")))
 	}
+	if strings.HasPrefix(key, "gwf:") {
+		return c.SelectByWorkflowID(strings.TrimSpace(strings.TrimPrefix(key, "gwf:")))
+	}
 	return false
 }
 
@@ -220,7 +231,38 @@ func (c *SidebarController) CanSelectKey(key string) bool {
 	if strings.HasPrefix(key, "wt:") {
 		return c.canSelectWorktreeID(strings.TrimSpace(strings.TrimPrefix(key, "wt:")))
 	}
+	if strings.HasPrefix(key, "gwf:") {
+		return c.canSelectWorkflowID(strings.TrimSpace(strings.TrimPrefix(key, "gwf:")))
+	}
 	return false
+}
+
+func (c *SidebarController) SelectByWorkflowID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	if c.selectVisibleWorkflowByID(id) {
+		return true
+	}
+	changed := false
+	for _, run := range c.workflowRunsSnapshot {
+		if run == nil || strings.TrimSpace(run.ID) != id {
+			continue
+		}
+		if workspaceID := strings.TrimSpace(run.WorkspaceID); workspaceID != "" {
+			changed = c.setWorkspaceExpanded(workspaceID, true) || changed
+		}
+		if worktreeID := strings.TrimSpace(run.WorktreeID); worktreeID != "" {
+			changed = c.setWorktreeExpanded(worktreeID, true) || changed
+		}
+		break
+	}
+	changed = c.setWorkflowExpanded(id, true) || changed
+	if changed {
+		c.rebuild(c.SelectedKey())
+	}
+	return c.selectVisibleWorkflowByID(id)
 }
 
 func (c *SidebarController) selectVisibleSessionByID(id string) bool {
@@ -286,6 +328,22 @@ func (c *SidebarController) canSelectWorktreeID(id string) bool {
 	return ok
 }
 
+func (c *SidebarController) canSelectWorkflowID(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, run := range c.workflowRunsSnapshot {
+		if run == nil {
+			continue
+		}
+		if strings.TrimSpace(run.ID) == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *SidebarController) findWorkspaceIDForWorktree(worktreeID string) (string, bool) {
 	worktreeID = strings.TrimSpace(worktreeID)
 	if worktreeID == "" {
@@ -320,6 +378,20 @@ func (c *SidebarController) findWorkspaceIDForWorktree(worktreeID string) (strin
 		}
 	}
 	return "", false
+}
+
+func (c *SidebarController) selectVisibleWorkflowByID(id string) bool {
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkflow {
+			continue
+		}
+		if strings.TrimSpace(entry.workflowRunID()) == id {
+			c.selectIndex(i)
+			return true
+		}
+	}
+	return false
 }
 
 func (c *SidebarController) SelectByRow(row int) {
@@ -628,20 +700,21 @@ func (c *SidebarController) SetExpandByDefault(enabled bool) bool {
 	return true
 }
 
-func (c *SidebarController) SetExpansionOverrides(workspaceExpanded, worktreeExpanded map[string]bool) {
+func (c *SidebarController) SetExpansionOverrides(workspaceExpanded, worktreeExpanded, workflowExpanded map[string]bool) {
 	if c == nil {
 		return
 	}
 	c.workspaceExpanded = cloneBoolMap(workspaceExpanded)
 	c.worktreeExpanded = cloneBoolMap(worktreeExpanded)
+	c.workflowExpanded = cloneBoolMap(workflowExpanded)
 	c.rebuild(c.SelectedKey())
 }
 
-func (c *SidebarController) ExpansionOverrides() (map[string]bool, map[string]bool) {
+func (c *SidebarController) ExpansionOverrides() (map[string]bool, map[string]bool, map[string]bool) {
 	if c == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return cloneBoolMap(c.workspaceExpanded), cloneBoolMap(c.worktreeExpanded)
+	return cloneBoolMap(c.workspaceExpanded), cloneBoolMap(c.worktreeExpanded), cloneBoolMap(c.workflowExpanded)
 }
 
 func (c *SidebarController) ToggleSelectedContainer() bool {
@@ -660,6 +733,12 @@ func (c *SidebarController) ToggleSelectedContainer() bool {
 			return false
 		}
 		return c.SetWorktreeExpanded(item.worktree.ID, !item.expanded)
+	case sidebarWorkflow:
+		runID := item.workflowRunID()
+		if runID == "" {
+			return false
+		}
+		return c.SetWorkflowExpanded(runID, !item.expanded)
 	default:
 		return false
 	}
@@ -681,6 +760,12 @@ func (c *SidebarController) SetSelectedContainerExpanded(expanded bool) bool {
 			return false
 		}
 		return c.SetWorktreeExpanded(item.worktree.ID, expanded)
+	case sidebarWorkflow:
+		runID := item.workflowRunID()
+		if runID == "" {
+			return false
+		}
+		return c.SetWorkflowExpanded(runID, expanded)
 	default:
 		return false
 	}
@@ -708,6 +793,17 @@ func (c *SidebarController) SetWorktreeExpanded(id string, expanded bool) bool {
 	return true
 }
 
+func (c *SidebarController) SetWorkflowExpanded(id string, expanded bool) bool {
+	if c == nil || strings.TrimSpace(id) == "" {
+		return false
+	}
+	if !c.setWorkflowExpanded(id, expanded) {
+		return false
+	}
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
 func (c *SidebarController) IsWorkspaceExpanded(id string) bool {
 	if c == nil || strings.TrimSpace(id) == "" {
 		return c != nil && c.expandByDefault
@@ -728,20 +824,32 @@ func (c *SidebarController) IsWorktreeExpanded(id string) bool {
 	return c.expandByDefault
 }
 
-func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string, showDismissed bool) *sidebarItem {
+func (c *SidebarController) IsWorkflowExpanded(id string) bool {
+	if c == nil || strings.TrimSpace(id) == "" {
+		return c != nil && c.expandByDefault
+	}
+	if value, ok := c.workflowExpanded[id]; ok {
+		return value
+	}
+	return c.expandByDefault
+}
+
+func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, workflowRuns []*guidedworkflows.WorkflowRun, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string, showDismissed bool) *sidebarItem {
 	viewAnchorKey := c.viewAnchorKey()
 	viewAnchorOffset := c.scrollOffset
 	c.workspacesSnapshot = workspaces
 	c.worktreesSnapshot = worktrees
 	c.sessionsSnapshot = sessions
+	c.workflowRunsSnapshot = workflowRuns
 	c.metaSnapshot = meta
 	c.showDismissedSnapshot = showDismissed
 	c.sessionParents = buildSessionSidebarParents(sessions, meta)
-	c.pruneExpansionOverrides(workspaces, worktrees)
+	c.pruneExpansionOverrides(workspaces, worktrees, workflowRuns, sessions, meta)
 
-	items := buildSidebarItemsWithRecents(workspaces, worktrees, sessions, meta, showDismissed, c.recentsState, sidebarExpansionResolver{
+	items := buildSidebarItemsWithRecents(workspaces, worktrees, sessions, workflowRuns, meta, showDismissed, c.recentsState, sidebarExpansionResolver{
 		workspace: c.workspaceExpanded,
 		worktree:  c.worktreeExpanded,
+		workflow:  c.workflowExpanded,
 		defaultOn: c.expandByDefault,
 	})
 	selectedKey := c.SelectedKey()
@@ -916,15 +1024,27 @@ func (c *SidebarController) setWorktreeExpanded(id string, expanded bool) bool {
 	return true
 }
 
+func (c *SidebarController) setWorkflowExpanded(id string, expanded bool) bool {
+	if c.workflowExpanded == nil {
+		c.workflowExpanded = map[string]bool{}
+	}
+	if current, ok := c.workflowExpanded[id]; ok && current == expanded {
+		return false
+	}
+	c.workflowExpanded[id] = expanded
+	return true
+}
+
 func (c *SidebarController) rebuild(selectedKey string) {
 	if c == nil {
 		return
 	}
 	viewAnchorKey := c.viewAnchorKey()
 	viewAnchorOffset := c.scrollOffset
-	items := buildSidebarItemsWithRecents(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, c.recentsState, sidebarExpansionResolver{
+	items := buildSidebarItemsWithRecents(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.workflowRunsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, c.recentsState, sidebarExpansionResolver{
 		workspace: c.workspaceExpanded,
 		worktree:  c.worktreeExpanded,
+		workflow:  c.workflowExpanded,
 		defaultOn: c.expandByDefault,
 	})
 	c.list.SetItems(items)
@@ -958,7 +1078,7 @@ func (c *SidebarController) rebuild(selectedKey string) {
 	c.markSelectedSessionViewed()
 }
 
-func (c *SidebarController) pruneExpansionOverrides(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree) {
+func (c *SidebarController) pruneExpansionOverrides(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, workflowRuns []*guidedworkflows.WorkflowRun, sessions []*types.Session, meta map[string]*types.SessionMeta) {
 	knownWorkspaces := map[string]struct{}{
 		unassignedWorkspaceID: {},
 	}
@@ -988,6 +1108,37 @@ func (c *SidebarController) pruneExpansionOverrides(workspaces []*types.Workspac
 			delete(c.worktreeExpanded, id)
 		}
 	}
+
+	knownWorkflowRuns := map[string]struct{}{}
+	for _, run := range workflowRuns {
+		if run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		knownWorkflowRuns[runID] = struct{}{}
+	}
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		entry := meta[session.ID]
+		if entry == nil {
+			continue
+		}
+		runID := strings.TrimSpace(entry.WorkflowRunID)
+		if runID == "" {
+			continue
+		}
+		knownWorkflowRuns[runID] = struct{}{}
+	}
+	for id := range c.workflowExpanded {
+		if _, ok := knownWorkflowRuns[id]; !ok {
+			delete(c.workflowExpanded, id)
+		}
+	}
 }
 
 func buildSessionSidebarParents(sessions []*types.Session, meta map[string]*types.SessionMeta) map[string]sessionSidebarParent {
@@ -1003,6 +1154,7 @@ func buildSessionSidebarParents(sessions []*types.Session, meta map[string]*type
 		if m := meta[session.ID]; m != nil {
 			parent.workspaceID = strings.TrimSpace(m.WorkspaceID)
 			parent.worktreeID = strings.TrimSpace(m.WorktreeID)
+			parent.workflowID = strings.TrimSpace(m.WorkflowRunID)
 		}
 		out[session.ID] = parent
 	}

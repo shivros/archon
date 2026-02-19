@@ -14,6 +14,7 @@ func TestBuildSidebarItemsWithRecentsAddsRowsAtTop(t *testing.T) {
 		workspaces,
 		map[string][]*types.Worktree{},
 		nil,
+		nil,
 		map[string]*types.SessionMeta{},
 		false,
 		sidebarRecentsState{Enabled: true, ReadyCount: 2, RunningCount: 1},
@@ -43,6 +44,7 @@ func TestBuildSidebarItemsWithRecentsDisabledOmitsRows(t *testing.T) {
 	items := buildSidebarItemsWithRecents(
 		workspaces,
 		map[string][]*types.Worktree{},
+		nil,
 		nil,
 		map[string]*types.SessionMeta{},
 		false,

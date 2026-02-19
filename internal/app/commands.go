@@ -15,9 +15,10 @@ import (
 )
 
 type fetchSessionsOptions struct {
-	refresh          bool
-	workspaceID      string
-	includeDismissed bool
+	refresh              bool
+	workspaceID          string
+	includeDismissed     bool
+	includeWorkflowOwned bool
 }
 
 func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessionsOptions) tea.Cmd {
@@ -38,8 +39,18 @@ func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessio
 			err      error
 		)
 		if opts.refresh {
+			if refresher, ok := api.(SessionListWithMetaRefreshWithOptionsAPI); ok {
+				sessions, meta, err = refresher.ListSessionsWithMetaRefreshWithOptions(ctx, opts.workspaceID, opts.includeDismissed, opts.includeWorkflowOwned)
+				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
+			}
 			if refresher, ok := api.(SessionListWithMetaRefreshAPI); ok {
 				sessions, meta, err = refresher.ListSessionsWithMetaRefresh(ctx, opts.workspaceID, opts.includeDismissed)
+				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
+			}
+		}
+		if opts.includeWorkflowOwned {
+			if includer, ok := api.(SessionListWithMetaIncludeWorkflowOwnedAPI); ok {
+				sessions, meta, err = includer.ListSessionsWithMetaIncludeWorkflowOwned(ctx)
 				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
 			}
 		}
@@ -284,6 +295,96 @@ func updateSessionRuntimeCmd(api SessionUpdateAPI, id string, runtimeOptions *ty
 		defer cancel()
 		err := api.UpdateSession(ctx, id, client.UpdateSessionRequest{RuntimeOptions: types.CloneRuntimeOptions(runtimeOptions)})
 		return updateSessionMsg{id: id, err: err}
+	}
+}
+
+func createWorkflowRunCmd(api GuidedWorkflowAPI, req client.CreateWorkflowRunRequest) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunCreatedMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.CreateWorkflowRun(ctx, req)
+		return workflowRunCreatedMsg{run: run, err: err}
+	}
+}
+
+func fetchWorkflowRunsCmd(api GuidedWorkflowAPI, includeDismissed bool) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunsMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		runs, err := api.ListWorkflowRunsWithOptions(ctx, includeDismissed)
+		return workflowRunsMsg{runs: runs, err: err}
+	}
+}
+
+func startWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunStartedMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.StartWorkflowRun(ctx, runID)
+		return workflowRunStartedMsg{run: run, err: err}
+	}
+}
+
+func fetchWorkflowRunSnapshotCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunSnapshotMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.GetWorkflowRun(ctx, runID)
+		if err != nil {
+			return workflowRunSnapshotMsg{err: err}
+		}
+		timeline, err := api.GetWorkflowRunTimeline(ctx, runID)
+		return workflowRunSnapshotMsg{run: run, timeline: timeline, err: err}
+	}
+}
+
+func decideWorkflowRunCmd(api GuidedWorkflowAPI, runID string, req client.WorkflowRunDecisionRequest) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunDecisionMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.DecideWorkflowRun(ctx, runID, req)
+		return workflowRunDecisionMsg{run: run, err: err}
+	}
+}
+
+func dismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	runID = strings.TrimSpace(runID)
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunVisibilityMsg{runID: runID, err: errors.New("guided workflow api is unavailable"), dismissed: true}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.DismissWorkflowRun(ctx, runID)
+		return workflowRunVisibilityMsg{runID: runID, run: run, err: err, dismissed: true}
+	}
+}
+
+func undismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+	runID = strings.TrimSpace(runID)
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunVisibilityMsg{runID: runID, err: errors.New("guided workflow api is unavailable"), dismissed: false}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.UndismissWorkflowRun(ctx, runID)
+		return workflowRunVisibilityMsg{runID: runID, run: run, err: err, dismissed: false}
 	}
 }
 

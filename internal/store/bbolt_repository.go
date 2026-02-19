@@ -14,31 +14,35 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
 var (
-	bucketAppState     = []byte("app_state")
-	bucketSessionMeta  = []byte("session_meta")
-	bucketSessionIndex = []byte("session_index")
-	bucketWorkspaces   = []byte("workspaces")
-	bucketWorktrees    = []byte("worktrees")
-	bucketGroups       = []byte("workspace_groups")
-	bucketApprovals    = []byte("approvals")
-	bucketNotes        = []byte("notes")
-	keyAppState        = []byte("state")
+	bucketAppState          = []byte("app_state")
+	bucketSessionMeta       = []byte("session_meta")
+	bucketSessionIndex      = []byte("session_index")
+	bucketWorkspaces        = []byte("workspaces")
+	bucketWorktrees         = []byte("worktrees")
+	bucketGroups            = []byte("workspace_groups")
+	bucketWorkflowTemplates = []byte("workflow_templates")
+	bucketWorkflowRuns      = []byte("workflow_runs")
+	bucketApprovals         = []byte("approvals")
+	bucketNotes             = []byte("notes")
+	keyAppState             = []byte("state")
 )
 
 type bboltRepository struct {
-	db         *bolt.DB
-	workspaces WorkspaceStore
-	worktrees  WorktreeStore
-	groups     WorkspaceGroupStore
-	appState   AppStateStore
-	meta       SessionMetaStore
-	sessions   SessionIndexStore
-	approvals  ApprovalStore
-	notes      NoteStore
+	db                *bolt.DB
+	workspaces        WorkspaceStore
+	worktrees         WorktreeStore
+	groups            WorkspaceGroupStore
+	workflowTemplates WorkflowTemplateStore
+	appState          AppStateStore
+	meta              SessionMetaStore
+	sessions          SessionIndexStore
+	approvals         ApprovalStore
+	notes             NoteStore
 }
 
 func NewBboltRepository(path string) (Repository, error) {
@@ -62,6 +66,7 @@ func NewBboltRepository(path string) (Repository, error) {
 	repo.workspaces = workspaceStore
 	repo.worktrees = workspaceStore
 	repo.groups = workspaceStore
+	repo.workflowTemplates = &bboltWorkflowTemplateStore{db: db}
 	repo.appState = &bboltAppStateStore{db: db}
 	repo.meta = &bboltSessionMetaStore{db: db}
 	repo.sessions = &bboltSessionIndexStore{db: db}
@@ -80,6 +85,10 @@ func (r *bboltRepository) Worktrees() WorktreeStore {
 
 func (r *bboltRepository) Groups() WorkspaceGroupStore {
 	return r.groups
+}
+
+func (r *bboltRepository) WorkflowTemplates() WorkflowTemplateStore {
+	return r.workflowTemplates
 }
 
 func (r *bboltRepository) AppState() AppStateStore {
@@ -131,6 +140,12 @@ func initBboltSchema(db *bolt.DB) error {
 			return err
 		}
 		if _, err := tx.CreateBucketIfNotExists(bucketGroups); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucketIfNotExists(bucketWorkflowTemplates); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucketIfNotExists(bucketWorkflowRuns); err != nil {
 			return err
 		}
 		if _, err := tx.CreateBucketIfNotExists(bucketApprovals); err != nil {
@@ -761,6 +776,115 @@ func (s *bboltAppStateStore) Save(ctx context.Context, state *types.AppState) er
 			return errors.New("app state bucket missing")
 		}
 		return b.Put(keyAppState, raw)
+	})
+}
+
+type bboltWorkflowTemplateStore struct {
+	db *bolt.DB
+	mu sync.Mutex
+}
+
+func (s *bboltWorkflowTemplateStore) ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	out := make([]guidedworkflows.WorkflowTemplate, 0)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketWorkflowTemplates)
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(_, v []byte) error {
+			var template guidedworkflows.WorkflowTemplate
+			if err := json.Unmarshal(v, &template); err != nil {
+				return err
+			}
+			out = append(out, cloneWorkflowTemplate(template))
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (s *bboltWorkflowTemplateStore) GetWorkflowTemplate(ctx context.Context, templateID string) (*guidedworkflows.WorkflowTemplate, bool, error) {
+	id := strings.TrimSpace(templateID)
+	if id == "" {
+		return nil, false, nil
+	}
+	var (
+		out *guidedworkflows.WorkflowTemplate
+		ok  bool
+	)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketWorkflowTemplates)
+		if b == nil {
+			return nil
+		}
+		raw := b.Get([]byte(id))
+		if len(raw) == 0 {
+			return nil
+		}
+		var template guidedworkflows.WorkflowTemplate
+		if err := json.Unmarshal(raw, &template); err != nil {
+			return err
+		}
+		copyTemplate := cloneWorkflowTemplate(template)
+		out = &copyTemplate
+		ok = true
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return out, ok, nil
+}
+
+func (s *bboltWorkflowTemplateStore) UpsertWorkflowTemplate(ctx context.Context, template guidedworkflows.WorkflowTemplate) (*guidedworkflows.WorkflowTemplate, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	normalized, err := normalizeWorkflowTemplate(template)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketWorkflowTemplates)
+		if b == nil {
+			return errors.New("workflow templates bucket missing")
+		}
+		return b.Put([]byte(normalized.ID), raw)
+	}); err != nil {
+		return nil, err
+	}
+	out := cloneWorkflowTemplate(normalized)
+	return &out, nil
+}
+
+func (s *bboltWorkflowTemplateStore) DeleteWorkflowTemplate(ctx context.Context, templateID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := strings.TrimSpace(templateID)
+	if id == "" {
+		return ErrWorkflowTemplateNotFound
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketWorkflowTemplates)
+		if b == nil {
+			return errors.New("workflow templates bucket missing")
+		}
+		key := []byte(id)
+		if b.Get(key) == nil {
+			return ErrWorkflowTemplateNotFound
+		}
+		return b.Delete(key)
 	})
 }
 

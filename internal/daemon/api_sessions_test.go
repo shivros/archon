@@ -369,6 +369,44 @@ func TestAPIDismissAndUndismissSession(t *testing.T) {
 	}
 }
 
+func TestAPISessionsIncludeWorkflowOwnedQuery(t *testing.T) {
+	sessionStore := storeSessionsIndex(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	now := time.Now().UTC()
+	_, err := sessionStore.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-workflow-owned",
+			Provider:  "codex",
+			Cmd:       "codex app-server",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if _, err := metaStore.Upsert(context.Background(), &types.SessionMeta{
+		SessionID:     "sess-workflow-owned",
+		WorkflowRunID: "gwf-1",
+	}); err != nil {
+		t.Fatalf("upsert meta: %v", err)
+	}
+
+	server := newTestServerWithStores(t, nil, &Stores{Sessions: sessionStore, SessionMeta: metaStore})
+	defer server.Close()
+
+	defaultList := listSessions(t, server)
+	if len(defaultList.Sessions) != 0 {
+		t.Fatalf("expected workflow-owned sessions excluded by default, got %+v", defaultList.Sessions)
+	}
+
+	includedList := listSessionsPath(t, server, "/v1/sessions?include_workflow_owned=1")
+	if len(includedList.Sessions) != 1 || includedList.Sessions[0].ID != "sess-workflow-owned" {
+		t.Fatalf("expected workflow-owned session when include_workflow_owned=1, got %+v", includedList.Sessions)
+	}
+}
+
 func newTestServer(t *testing.T, manager *SessionManager) *httptest.Server {
 	return newTestServerWithStores(t, manager, nil)
 }

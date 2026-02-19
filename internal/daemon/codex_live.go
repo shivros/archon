@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,51 +48,83 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 	if session.Provider != "codex" {
 		return "", errors.New("provider does not support live events")
 	}
-	ls, err := m.ensure(session, meta, codexHome)
-	if err != nil {
-		m.logger.Error("codex_live_ensure_error", logging.F("session_id", session.ID), logging.F("error", err))
-		return "", err
-	}
-	ls.mu.Lock()
-	if ls.activeTurn != "" {
-		ls.mu.Unlock()
-		return "", errors.New("turn already in progress")
-	}
-	ls.mu.Unlock()
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		latestMeta := m.refreshSessionMeta(session.ID, meta)
+		runtimeOptions, model := codexRuntimeConfig(latestMeta)
 
-	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
-	model := ""
-	if meta != nil {
-		runtimeOptions = meta.RuntimeOptions
-		if runtimeOptions != nil {
-			model = runtimeOptions.Model
-		}
-	}
-	turnID, err := ls.client.StartTurn(ctx, ls.threadID, input, runtimeOptions, model)
-	if err != nil {
-		if isClosedPipeError(err) {
-			m.dropSession(session.ID)
-			ls, err = m.ensure(session, meta, codexHome)
-			if err != nil {
-				m.logger.Error("codex_live_restart_error", logging.F("session_id", session.ID), logging.F("error", err))
-				return "", err
-			}
-			turnID, err = ls.client.StartTurn(ctx, ls.threadID, input, runtimeOptions, model)
-			if err != nil {
-				m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", err))
-				return "", err
-			}
-		} else {
-			m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", err))
+		ls, err := m.ensure(ctx, session, latestMeta, codexHome)
+		if err != nil {
+			m.logger.Error("codex_live_ensure_error", logging.F("session_id", session.ID), logging.F("error", err))
 			return "", err
 		}
+		startTurn := func() (string, error) {
+			ls.mu.Lock()
+			threadID := ls.threadID
+			ls.mu.Unlock()
+			return ls.client.StartTurn(ctx, threadID, input, runtimeOptions, model)
+		}
+		turnID, err := reserveSessionTurn(ls, startTurn)
+		if err == nil {
+			m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
+			return turnID, nil
+		}
+		lastErr = err
+		if isCodexMissingThreadError(err) {
+			const maxInPlaceRecoveries = 3
+			for i := 0; i < maxInPlaceRecoveries && isCodexMissingThreadError(lastErr); i++ {
+				if recoverErr := m.recoverMissingThread(ctx, ls, session, latestMeta); recoverErr != nil {
+					lastErr = recoverErr
+					break
+				}
+				turnID, retryErr := reserveSessionTurn(ls, startTurn)
+				if retryErr == nil {
+					m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
+					return turnID, nil
+				}
+				lastErr = retryErr
+			}
+		}
+		if !(isClosedPipeError(lastErr) || isCodexMissingThreadError(lastErr)) {
+			m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", lastErr))
+			return "", lastErr
+		}
+		m.dropSession(session.ID)
+		if attempt < maxAttempts {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt*100) * time.Millisecond):
+			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("codex turn start failed")
+	}
+	m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", lastErr))
+	return "", lastErr
+}
+
+func (m *CodexLiveManager) recoverMissingThread(
+	ctx context.Context,
+	ls *codexLiveSession,
+	session *types.Session,
+	meta *types.SessionMeta,
+) error {
+	if m == nil || ls == nil || ls.client == nil || session == nil {
+		return errors.New("codex missing-thread recovery unavailable")
+	}
+	runtimeOptions, model := codexRuntimeConfig(meta)
+	threadID, err := ls.client.StartThread(ctx, model, session.Cwd, runtimeOptions)
+	if err != nil {
+		return err
 	}
 	ls.mu.Lock()
-	ls.activeTurn = turnID
-	ls.lastActive = time.Now().UTC()
+	ls.threadID = strings.TrimSpace(threadID)
 	ls.mu.Unlock()
-	m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
-	return turnID, nil
+	m.persistSessionThreadID(session.ID, threadID)
+	return nil
 }
 
 func (m *CodexLiveManager) Subscribe(session *types.Session, meta *types.SessionMeta, codexHome string) (<-chan types.CodexEvent, func(), error) {
@@ -101,7 +134,7 @@ func (m *CodexLiveManager) Subscribe(session *types.Session, meta *types.Session
 	if session.Provider != "codex" {
 		return nil, nil, errors.New("provider does not support live events")
 	}
-	ls, err := m.ensure(session, meta, codexHome)
+	ls, err := m.ensure(context.Background(), session, meta, codexHome)
 	if err != nil {
 		m.logger.Error("codex_live_subscribe_error", logging.F("session_id", session.ID), logging.F("error", err))
 		return nil, nil, err
@@ -125,7 +158,7 @@ func (m *CodexLiveManager) Respond(ctx context.Context, session *types.Session, 
 	if requestID < 0 {
 		return errors.New("request id is required")
 	}
-	ls, err := m.ensure(session, meta, codexHome)
+	ls, err := m.ensure(ctx, session, meta, codexHome)
 	if err != nil {
 		return err
 	}
@@ -146,7 +179,7 @@ func (m *CodexLiveManager) Interrupt(ctx context.Context, session *types.Session
 	if session.Provider != "codex" {
 		return errors.New("provider does not support live events")
 	}
-	ls, err := m.ensure(session, meta, codexHome)
+	ls, err := m.ensure(ctx, session, meta, codexHome)
 	if err != nil {
 		return err
 	}
@@ -171,7 +204,10 @@ func (m *CodexLiveManager) Interrupt(ctx context.Context, session *types.Session
 	return nil
 }
 
-func (m *CodexLiveManager) ensure(session *types.Session, meta *types.SessionMeta, codexHome string) (*codexLiveSession, error) {
+func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string) (*codexLiveSession, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	m.mu.Lock()
 	ls := m.sessions[session.ID]
 	if ls != nil && ls.isClosed() {
@@ -184,19 +220,38 @@ func (m *CodexLiveManager) ensure(session *types.Session, meta *types.SessionMet
 	}
 	m.mu.Unlock()
 
-	threadID := resolveThreadID(session, meta)
-	if threadID == "" {
-		return nil, errors.New("thread id not available")
-	}
-	client, err := startCodexAppServer(context.Background(), session.Cwd, codexHome, m.logger)
+	latestMeta := m.refreshSessionMeta(session.ID, meta)
+	runtimeOptions, model := codexRuntimeConfig(latestMeta)
+	client, err := startCodexAppServer(ctx, session.Cwd, codexHome, m.logger)
 	if err != nil {
 		m.logger.Error("codex_start_error", logging.F("session_id", session.ID), logging.F("error", err))
 		return nil, err
 	}
-	if err := client.ResumeThread(context.Background(), threadID); err != nil {
-		m.logger.Error("codex_resume_error", logging.F("session_id", session.ID), logging.F("thread_id", threadID), logging.F("error", err))
-		client.Close()
-		return nil, err
+	threadID := resolveThreadID(session, latestMeta)
+	if threadID == "" {
+		threadID, err = client.StartThread(ctx, model, session.Cwd, runtimeOptions)
+		if err != nil {
+			client.Close()
+			return nil, err
+		}
+		m.persistSessionThreadID(session.ID, threadID)
+	} else if err := client.ResumeThread(ctx, threadID); err != nil {
+		if !isCodexMissingThreadError(err) {
+			m.logger.Error("codex_resume_error", logging.F("session_id", session.ID), logging.F("thread_id", threadID), logging.F("error", err))
+			client.Close()
+			return nil, err
+		}
+		m.logger.Warn("codex_resume_missing_thread",
+			logging.F("session_id", session.ID),
+			logging.F("thread_id", threadID),
+			logging.F("error", err),
+		)
+		threadID, err = client.StartThread(ctx, model, session.Cwd, runtimeOptions)
+		if err != nil {
+			client.Close()
+			return nil, err
+		}
+		m.persistSessionThreadID(session.ID, threadID)
 	}
 
 	ls = &codexLiveSession{
@@ -215,6 +270,46 @@ func (m *CodexLiveManager) ensure(session *types.Session, meta *types.SessionMet
 	return ls, nil
 }
 
+func codexRuntimeConfig(meta *types.SessionMeta) (*types.SessionRuntimeOptions, string) {
+	if meta == nil || meta.RuntimeOptions == nil {
+		return nil, loadCoreConfigOrDefault().CodexDefaultModel()
+	}
+	runtimeOptions := types.CloneRuntimeOptions(meta.RuntimeOptions)
+	model := strings.TrimSpace(runtimeOptions.Model)
+	if model == "" {
+		model = loadCoreConfigOrDefault().CodexDefaultModel()
+	}
+	return runtimeOptions, model
+}
+
+func (m *CodexLiveManager) refreshSessionMeta(sessionID string, fallback *types.SessionMeta) *types.SessionMeta {
+	if m == nil || m.stores == nil || m.stores.SessionMeta == nil {
+		return fallback
+	}
+	meta, ok, err := m.stores.SessionMeta.Get(context.Background(), sessionID)
+	if err != nil || !ok || meta == nil {
+		return fallback
+	}
+	return meta
+}
+
+func (m *CodexLiveManager) persistSessionThreadID(sessionID, threadID string) {
+	if m == nil || m.stores == nil || m.stores.SessionMeta == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	threadID = strings.TrimSpace(threadID)
+	if sessionID == "" || threadID == "" {
+		return
+	}
+	now := time.Now().UTC()
+	_, _ = m.stores.SessionMeta.Upsert(context.Background(), &types.SessionMeta{
+		SessionID:    sessionID,
+		ThreadID:     threadID,
+		LastActiveAt: &now,
+	})
+}
+
 type codexLiveSession struct {
 	mu         sync.Mutex
 	sessionID  string
@@ -224,6 +319,7 @@ type codexLiveSession struct {
 	stores     *Stores
 	notifier   NotificationPublisher
 	activeTurn string
+	starting   bool
 	lastActive time.Time
 	closed     bool
 }
@@ -273,7 +369,6 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 	}
 	s.hub.Broadcast(event)
 	if msg.Method == "turn/completed" {
-		s.publishTurnCompleted(parseTurnIDFromEventParams(msg.Params))
 		var payload struct {
 			Turn struct {
 				ID string `json:"id"`
@@ -290,6 +385,7 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 			s.activeTurn = ""
 			s.mu.Unlock()
 		}
+		s.publishTurnCompleted(parseTurnIDFromEventParams(msg.Params))
 		s.maybeClose()
 	}
 }
@@ -340,6 +436,41 @@ func (s *codexLiveSession) handleRequest(msg rpcMessage) {
 		}
 		_, _ = s.stores.Approvals.Upsert(context.Background(), approval)
 	}
+	s.publishApprovalRequiredNotification(msg)
+}
+
+func (s *codexLiveSession) publishApprovalRequiredNotification(msg rpcMessage) {
+	if s == nil || s.notifier == nil || msg.ID == nil || !isApprovalMethod(msg.Method) {
+		return
+	}
+	requestID := *msg.ID
+	source := "approval_request:" + strings.TrimSpace(s.sessionID) + ":" + strconv.Itoa(requestID)
+	event := types.NotificationEvent{
+		Trigger:    types.NotificationTriggerTurnCompleted,
+		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:  strings.TrimSpace(s.sessionID),
+		Status:     "approval_required",
+		Source:     source,
+		Payload: map[string]any{
+			"kind":       "approval_required",
+			"request_id": requestID,
+			"method":     strings.TrimSpace(msg.Method),
+		},
+	}
+	if s.stores != nil && s.stores.Sessions != nil {
+		if record, ok, err := s.stores.Sessions.GetRecord(context.Background(), s.sessionID); err == nil && ok && record != nil && record.Session != nil {
+			event.Provider = strings.TrimSpace(record.Session.Provider)
+			event.Title = strings.TrimSpace(record.Session.Title)
+			event.Cwd = strings.TrimSpace(record.Session.Cwd)
+		}
+	}
+	if s.stores != nil && s.stores.SessionMeta != nil {
+		if meta, ok, err := s.stores.SessionMeta.Get(context.Background(), s.sessionID); err == nil && ok && meta != nil {
+			event.WorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+			event.WorktreeID = strings.TrimSpace(meta.WorktreeID)
+		}
+	}
+	s.notifier.Publish(event)
 }
 
 func (s *codexLiveSession) maybeClose() {
@@ -403,6 +534,44 @@ func isClosedPipeError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "file already closed") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "closed pipe")
+}
+
+func isCodexMissingThreadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "thread not found") ||
+		strings.Contains(text, "thread not loaded") ||
+		strings.Contains(text, "no rollout found for thread id")
+}
+
+func reserveSessionTurn(ls *codexLiveSession, start func() (string, error)) (string, error) {
+	if ls == nil {
+		return "", errors.New("live session is required")
+	}
+	if start == nil {
+		return "", errors.New("turn starter is required")
+	}
+	ls.mu.Lock()
+	if ls.activeTurn != "" || ls.starting {
+		ls.mu.Unlock()
+		return "", errors.New("turn already in progress")
+	}
+	ls.starting = true
+	ls.mu.Unlock()
+
+	turnID, err := start()
+	now := time.Now().UTC()
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.starting = false
+	if err != nil {
+		return "", err
+	}
+	ls.activeTurn = turnID
+	ls.lastActive = now
+	return turnID, nil
 }
 
 type codexSubscriber struct {

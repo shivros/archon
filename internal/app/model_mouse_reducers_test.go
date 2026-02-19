@@ -51,7 +51,7 @@ func TestMouseReducerRightReleaseDoesNotOpenContextMenu(t *testing.T) {
 	m.resize(120, 40)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
 	m.worktrees = map[string][]*types.Worktree{}
-	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, "", "", false)
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
 	if m.contextMenu == nil {
 		t.Fatalf("expected context menu controller")
 	}

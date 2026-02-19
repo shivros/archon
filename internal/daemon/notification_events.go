@@ -72,6 +72,10 @@ func (e *defaultSessionLifecycleEmitter) EmitSessionLifecycleEvent(ctx context.C
 func notificationDedupeKey(event types.NotificationEvent) string {
 	parts := []string{string(event.Trigger), strings.TrimSpace(event.SessionID)}
 	if strings.TrimSpace(event.TurnID) != "" {
+		if isGuidedWorkflowDecisionNotification(event) {
+			parts = append(parts, strings.TrimSpace(event.TurnID), strings.TrimSpace(event.Source))
+			return strings.Join(parts, "|")
+		}
 		parts = append(parts, strings.TrimSpace(event.TurnID))
 	} else {
 		parts = append(parts, strings.TrimSpace(event.Status), strings.TrimSpace(event.Source))
@@ -90,6 +94,36 @@ func notificationTitleBody(event types.NotificationEvent) (string, string) {
 	provider := strings.TrimSpace(event.Provider)
 	if provider == "" {
 		provider = "unknown"
+	}
+	if isGuidedWorkflowDecisionNotification(event) {
+		summary := "Archon workflow decision needed"
+		reason := notificationPayloadString(event.Payload, "reason")
+		risk := notificationPayloadString(event.Payload, "risk_summary")
+		recommended := notificationPayloadString(event.Payload, "recommended_action")
+		parts := []string{name}
+		if reason != "" {
+			parts = append(parts, "reason: "+reason)
+		}
+		if risk != "" {
+			parts = append(parts, "risk: "+risk)
+		}
+		if recommended != "" {
+			parts = append(parts, "recommended: "+recommended)
+		}
+		return summary, strings.Join(parts, " | ")
+	}
+	if isApprovalRequiredNotification(event) {
+		summary := "Archon approval required"
+		method := notificationPayloadString(event.Payload, "method")
+		requestID := notificationPayloadString(event.Payload, "request_id")
+		parts := []string{name + " (" + provider + ")"}
+		if method != "" {
+			parts = append(parts, "method: "+method)
+		}
+		if requestID != "" {
+			parts = append(parts, "request: "+requestID)
+		}
+		return summary, strings.Join(parts, " | ")
 	}
 	summary := "Archon"
 	body := ""
@@ -114,6 +148,27 @@ func notificationTitleBody(event types.NotificationEvent) (string, string) {
 		body = body + " - status: " + status
 	}
 	return summary, body
+}
+
+func isGuidedWorkflowDecisionNotification(event types.NotificationEvent) bool {
+	if !strings.EqualFold(strings.TrimSpace(event.Status), "decision_needed") {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(event.Source), "guided_workflow_decision:")
+}
+
+func isApprovalRequiredNotification(event types.NotificationEvent) bool {
+	if !strings.EqualFold(strings.TrimSpace(event.Status), "approval_required") {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(event.Source), "approval_request:")
+}
+
+func notificationPayloadString(payload map[string]any, key string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(asString(payload[strings.TrimSpace(key)]))
 }
 
 func notificationScriptEnv(event types.NotificationEvent) []string {

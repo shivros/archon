@@ -72,6 +72,43 @@ func TestCodexHistoryPoolRetriesAfterClosedPipe(t *testing.T) {
 	}
 }
 
+func TestCodexHistoryPoolRecoversWhenThreadNotLoaded(t *testing.T) {
+	client := &stubCodexHistoryClient{
+		readErrs: []error{
+			errors.New("rpc error -32600: thread not loaded: thread-3"),
+			nil,
+		},
+		readThreads: []*codexThread{
+			nil,
+			{ID: "thread-3"},
+		},
+	}
+
+	pool := &codexHistoryPool{
+		clients:    map[string]*pooledCodexHistoryClient{},
+		idleTTL:    0,
+		maxClients: 4,
+		logger:     logging.Nop(),
+		startFn: func(context.Context, string, string, logging.Logger) (codexHistoryClient, error) {
+			return client, nil
+		},
+	}
+
+	thread, err := pool.ReadThread(context.Background(), "/repo", "/repo/.codex", "thread-3")
+	if err != nil {
+		t.Fatalf("expected resume recovery to succeed, got err=%v", err)
+	}
+	if thread == nil || thread.ID != "thread-3" {
+		t.Fatalf("unexpected thread after resume recovery: %#v", thread)
+	}
+	if client.resumeCalls != 1 {
+		t.Fatalf("expected one resume call, got %d", client.resumeCalls)
+	}
+	if client.readCalls != 2 {
+		t.Fatalf("expected two read calls, got %d", client.readCalls)
+	}
+}
+
 func TestCodexHistoryPoolEvictsLRUWhenOverLimit(t *testing.T) {
 	clients := map[string]*stubCodexHistoryClient{}
 	pool := &codexHistoryPool{
@@ -98,12 +135,26 @@ func TestCodexHistoryPoolEvictsLRUWhenOverLimit(t *testing.T) {
 }
 
 type stubCodexHistoryClient struct {
-	thread     *codexThread
-	err        error
-	closeCalls int
+	thread      *codexThread
+	err         error
+	readErrs    []error
+	readThreads []*codexThread
+	readCalls   int
+	resumeCalls int
+	resumeErr   error
+	closeCalls  int
 }
 
 func (s *stubCodexHistoryClient) ReadThread(context.Context, string) (*codexThread, error) {
+	s.readCalls++
+	if idx := s.readCalls - 1; idx >= 0 && idx < len(s.readErrs) {
+		if s.readErrs[idx] != nil {
+			return nil, s.readErrs[idx]
+		}
+		if idx < len(s.readThreads) && s.readThreads[idx] != nil {
+			return s.readThreads[idx], nil
+		}
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -111,6 +162,11 @@ func (s *stubCodexHistoryClient) ReadThread(context.Context, string) (*codexThre
 		return s.thread, nil
 	}
 	return &codexThread{}, nil
+}
+
+func (s *stubCodexHistoryClient) ResumeThread(context.Context, string) error {
+	s.resumeCalls++
+	return s.resumeErr
 }
 
 func (s *stubCodexHistoryClient) Close() {

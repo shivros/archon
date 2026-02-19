@@ -43,6 +43,15 @@ func WorkspacesPath() (string, error) {
 	return filepath.Join(dataDir, "workspaces.json"), nil
 }
 
+// WorkflowTemplatesPath returns the path to the workflow template metadata file.
+func WorkflowTemplatesPath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "workflow_templates.json"), nil
+}
+
 // StatePath returns the path to the persisted UI state file.
 func StatePath() (string, error) {
 	dataDir, err := DataDir()

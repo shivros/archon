@@ -11,8 +11,21 @@ import (
 
 const defaultDaemonAddress = "127.0.0.1:7777"
 const (
-	defaultCodexModel  = "gpt-5.1-codex"
-	defaultClaudeModel = "sonnet"
+	defaultCodexModel                              = "gpt-5.1-codex"
+	defaultClaudeModel                             = "sonnet"
+	defaultGuidedWorkflowsCheckpointStyle          = "confidence_weighted"
+	defaultGuidedWorkflowsMode                     = "guarded_autopilot"
+	defaultGuidedWorkflowsConfidenceThreshold      = 0.70
+	defaultGuidedWorkflowsPauseThreshold           = 0.60
+	defaultGuidedWorkflowsHighBlastRadiusFileCount = 20
+	defaultGuidedWorkflowsRolloutTelemetryEnabled  = true
+	defaultGuidedWorkflowsRolloutMaxActiveRuns     = 3
+	defaultGuidedWorkflowsRolloutAutomationEnabled = false
+	defaultGuidedWorkflowsRolloutAllowQuality      = false
+	defaultGuidedWorkflowsRolloutAllowCommit       = false
+	defaultGuidedWorkflowsRolloutCommitApproval    = true
+	defaultGuidedWorkflowsRolloutMaxRetryAttempts  = 2
+	maxGuidedWorkflowsRolloutRetryAttempts         = 5
 )
 
 var defaultCodexModels = []string{
@@ -32,11 +45,12 @@ var defaultNotificationTriggers = []string{
 var defaultNotificationMethods = []string{"auto"}
 
 type CoreConfig struct {
-	Daemon        CoreDaemonConfig        `toml:"daemon"`
-	Providers     CoreProvidersConfig     `toml:"providers"`
-	Logging       CoreLoggingConfig       `toml:"logging"`
-	Debug         CoreDebugConfig         `toml:"debug"`
-	Notifications CoreNotificationsConfig `toml:"notifications"`
+	Daemon          CoreDaemonConfig          `toml:"daemon"`
+	Providers       CoreProvidersConfig       `toml:"providers"`
+	Logging         CoreLoggingConfig         `toml:"logging"`
+	Debug           CoreDebugConfig           `toml:"debug"`
+	Notifications   CoreNotificationsConfig   `toml:"notifications"`
+	GuidedWorkflows CoreGuidedWorkflowsConfig `toml:"guided_workflows"`
 }
 
 type CoreDaemonConfig struct {
@@ -58,6 +72,42 @@ type CoreNotificationsConfig struct {
 	ScriptCommands       []string `toml:"script_commands"`
 	ScriptTimeoutSeconds int      `toml:"script_timeout_seconds"`
 	DedupeWindowSeconds  int      `toml:"dedupe_window_seconds"`
+}
+
+type CoreGuidedWorkflowsConfig struct {
+	Enabled         *bool                            `toml:"enabled"`
+	AutoStart       *bool                            `toml:"auto_start"`
+	CheckpointStyle string                           `toml:"checkpoint_style"`
+	Mode            string                           `toml:"mode"`
+	Policy          CoreGuidedWorkflowsPolicyConfig  `toml:"policy"`
+	Rollout         CoreGuidedWorkflowsRolloutConfig `toml:"rollout"`
+}
+
+type CoreGuidedWorkflowsPolicyConfig struct {
+	ConfidenceThreshold      float64                              `toml:"confidence_threshold"`
+	PauseThreshold           float64                              `toml:"pause_threshold"`
+	HighBlastRadiusFileCount int                                  `toml:"high_blast_radius_file_count"`
+	HardGates                CoreGuidedWorkflowsPolicyGatesConfig `toml:"hard_gates"`
+	ConditionalGates         CoreGuidedWorkflowsPolicyGatesConfig `toml:"conditional_gates"`
+}
+
+type CoreGuidedWorkflowsPolicyGatesConfig struct {
+	AmbiguityBlocker         *bool `toml:"ambiguity_blocker"`
+	ConfidenceBelowThreshold *bool `toml:"confidence_below_threshold"`
+	HighBlastRadius          *bool `toml:"high_blast_radius"`
+	SensitiveFiles           *bool `toml:"sensitive_files"`
+	PreCommitApproval        *bool `toml:"pre_commit_approval"`
+	FailingChecks            *bool `toml:"failing_checks"`
+}
+
+type CoreGuidedWorkflowsRolloutConfig struct {
+	TelemetryEnabled      *bool `toml:"telemetry_enabled"`
+	MaxActiveRuns         int   `toml:"max_active_runs"`
+	AutomationEnabled     *bool `toml:"automation_enabled"`
+	AllowQualityChecks    *bool `toml:"allow_quality_checks"`
+	AllowCommit           *bool `toml:"allow_commit"`
+	RequireCommitApproval *bool `toml:"require_commit_approval"`
+	MaxRetryAttempts      int   `toml:"max_retry_attempts"`
 }
 
 type CoreProvidersConfig struct {
@@ -136,6 +186,40 @@ func DefaultCoreConfig() CoreConfig {
 			Methods:              append([]string{}, defaultNotificationMethods...),
 			ScriptTimeoutSeconds: 10,
 			DedupeWindowSeconds:  5,
+		},
+		GuidedWorkflows: CoreGuidedWorkflowsConfig{
+			Enabled:         boolPtr(false),
+			AutoStart:       boolPtr(false),
+			CheckpointStyle: defaultGuidedWorkflowsCheckpointStyle,
+			Mode:            defaultGuidedWorkflowsMode,
+			Policy: CoreGuidedWorkflowsPolicyConfig{
+				ConfidenceThreshold:      defaultGuidedWorkflowsConfidenceThreshold,
+				PauseThreshold:           defaultGuidedWorkflowsPauseThreshold,
+				HighBlastRadiusFileCount: defaultGuidedWorkflowsHighBlastRadiusFileCount,
+				HardGates: CoreGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker:  boolPtr(true),
+					SensitiveFiles:    boolPtr(true),
+					PreCommitApproval: boolPtr(false),
+					FailingChecks:     boolPtr(true),
+				},
+				ConditionalGates: CoreGuidedWorkflowsPolicyGatesConfig{
+					AmbiguityBlocker:         boolPtr(true),
+					ConfidenceBelowThreshold: boolPtr(true),
+					HighBlastRadius:          boolPtr(true),
+					SensitiveFiles:           boolPtr(false),
+					PreCommitApproval:        boolPtr(false),
+					FailingChecks:            boolPtr(true),
+				},
+			},
+			Rollout: CoreGuidedWorkflowsRolloutConfig{
+				TelemetryEnabled:      boolPtr(defaultGuidedWorkflowsRolloutTelemetryEnabled),
+				MaxActiveRuns:         defaultGuidedWorkflowsRolloutMaxActiveRuns,
+				AutomationEnabled:     boolPtr(defaultGuidedWorkflowsRolloutAutomationEnabled),
+				AllowQualityChecks:    boolPtr(defaultGuidedWorkflowsRolloutAllowQuality),
+				AllowCommit:           boolPtr(defaultGuidedWorkflowsRolloutAllowCommit),
+				RequireCommitApproval: boolPtr(defaultGuidedWorkflowsRolloutCommitApproval),
+				MaxRetryAttempts:      defaultGuidedWorkflowsRolloutMaxRetryAttempts,
+			},
 		},
 		Providers: CoreProvidersConfig{
 			Codex: CoreCodexProviderConfig{
@@ -228,6 +312,149 @@ func (c CoreConfig) NotificationDedupeWindowSeconds() int {
 		return c.Notifications.DedupeWindowSeconds
 	}
 	return 5
+}
+
+func (c CoreConfig) GuidedWorkflowsEnabled() bool {
+	if c.GuidedWorkflows.Enabled == nil {
+		return false
+	}
+	return *c.GuidedWorkflows.Enabled
+}
+
+func (c CoreConfig) GuidedWorkflowsAutoStart() bool {
+	if c.GuidedWorkflows.AutoStart == nil {
+		return false
+	}
+	return *c.GuidedWorkflows.AutoStart
+}
+
+func (c CoreConfig) GuidedWorkflowsCheckpointStyle() string {
+	switch normalizeGuidedWorkflowsValue(c.GuidedWorkflows.CheckpointStyle) {
+	case "confidence_weighted":
+		return "confidence_weighted"
+	default:
+		return defaultGuidedWorkflowsCheckpointStyle
+	}
+}
+
+func (c CoreConfig) GuidedWorkflowsMode() string {
+	switch normalizeGuidedWorkflowsValue(c.GuidedWorkflows.Mode) {
+	case "guarded_autopilot":
+		return "guarded_autopilot"
+	default:
+		return defaultGuidedWorkflowsMode
+	}
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConfidenceThreshold() float64 {
+	value := c.GuidedWorkflows.Policy.ConfidenceThreshold
+	if value <= 0 || value > 1 {
+		return defaultGuidedWorkflowsConfidenceThreshold
+	}
+	return value
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyPauseThreshold() float64 {
+	value := c.GuidedWorkflows.Policy.PauseThreshold
+	if value <= 0 || value > 1 {
+		return defaultGuidedWorkflowsPauseThreshold
+	}
+	return value
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHighBlastRadiusFileCount() int {
+	value := c.GuidedWorkflows.Policy.HighBlastRadiusFileCount
+	if value <= 0 {
+		return defaultGuidedWorkflowsHighBlastRadiusFileCount
+	}
+	return value
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHardGateAmbiguityBlocker() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.HardGates.AmbiguityBlocker, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHardGateConfidenceBelowThreshold() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.HardGates.ConfidenceBelowThreshold, false)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHardGateHighBlastRadius() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.HardGates.HighBlastRadius, false)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHardGateSensitiveFiles() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.HardGates.SensitiveFiles, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHardGatePreCommitApproval() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.HardGates.PreCommitApproval, false)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyHardGateFailingChecks() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.HardGates.FailingChecks, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConditionalGateAmbiguityBlocker() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.ConditionalGates.AmbiguityBlocker, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConditionalGateConfidenceBelowThreshold() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.ConditionalGates.ConfidenceBelowThreshold, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConditionalGateHighBlastRadius() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.ConditionalGates.HighBlastRadius, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConditionalGateSensitiveFiles() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.ConditionalGates.SensitiveFiles, false)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConditionalGatePreCommitApproval() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.ConditionalGates.PreCommitApproval, false)
+}
+
+func (c CoreConfig) GuidedWorkflowsPolicyConditionalGateFailingChecks() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Policy.ConditionalGates.FailingChecks, true)
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutTelemetryEnabled() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.TelemetryEnabled, defaultGuidedWorkflowsRolloutTelemetryEnabled)
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutMaxActiveRuns() int {
+	value := c.GuidedWorkflows.Rollout.MaxActiveRuns
+	if value <= 0 {
+		return defaultGuidedWorkflowsRolloutMaxActiveRuns
+	}
+	return value
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutAutomationEnabled() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.AutomationEnabled, defaultGuidedWorkflowsRolloutAutomationEnabled)
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutAllowQualityChecks() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.AllowQualityChecks, defaultGuidedWorkflowsRolloutAllowQuality)
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutAllowCommit() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.AllowCommit, defaultGuidedWorkflowsRolloutAllowCommit)
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutRequireCommitApproval() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.RequireCommitApproval, defaultGuidedWorkflowsRolloutCommitApproval)
+}
+
+func (c CoreConfig) GuidedWorkflowsRolloutMaxRetryAttempts() int {
+	value := c.GuidedWorkflows.Rollout.MaxRetryAttempts
+	if value <= 0 {
+		return defaultGuidedWorkflowsRolloutMaxRetryAttempts
+	}
+	if value > maxGuidedWorkflowsRolloutRetryAttempts {
+		return maxGuidedWorkflowsRolloutRetryAttempts
+	}
+	return value
 }
 
 func (c CoreConfig) ProviderCommand(provider string) string {
@@ -507,7 +734,21 @@ func normalizedList(values []string) []string {
 	return out
 }
 
+func normalizeGuidedWorkflowsValue(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	return value
+}
+
 func boolPtr(value bool) *bool {
 	v := value
 	return &v
+}
+
+func boolFromPtrWithDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }

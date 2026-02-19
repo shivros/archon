@@ -36,12 +36,14 @@ Archon now separates core/daemon config, UI config, and UI keybindings:
 - `~/.archon/config.toml` (core daemon/client config)
 - `~/.archon/ui.toml` (UI config)
 - `~/.archon/keybindings.json` (UI hotkey overrides)
+- `~/.archon/workflow_templates.json` (guided workflow templates + per-step prompts)
 
 Configuration is file-based:
 
 - `config.toml` controls daemon/core behavior (daemon address, provider defaults, logging/debug settings).
 - `ui.toml` controls UI-level settings.
 - `keybindings.json` overrides UI hotkeys.
+- `workflow_templates.json` stores user-defined guided workflow templates and prompts.
 
 Example `config.toml`:
 
@@ -62,6 +64,42 @@ methods = ["auto"] # auto | notify-send | dunstify | bell
 script_commands = [] # shell commands fed JSON payload via stdin
 script_timeout_seconds = 10
 dedupe_window_seconds = 5
+
+[guided_workflows]
+enabled = false
+auto_start = false
+checkpoint_style = "confidence_weighted"
+mode = "guarded_autopilot"
+
+[guided_workflows.policy]
+confidence_threshold = 0.70
+pause_threshold = 0.60
+high_blast_radius_file_count = 20
+
+[guided_workflows.policy.hard_gates]
+ambiguity_blocker = true
+confidence_below_threshold = false
+high_blast_radius = false
+sensitive_files = true
+pre_commit_approval = false
+failing_checks = true
+
+[guided_workflows.policy.conditional_gates]
+ambiguity_blocker = true
+confidence_below_threshold = true
+high_blast_radius = true
+sensitive_files = false
+pre_commit_approval = false
+failing_checks = true
+
+[guided_workflows.rollout]
+telemetry_enabled = true
+max_active_runs = 3
+automation_enabled = false
+allow_quality_checks = false
+allow_commit = false
+require_commit_approval = true
+max_retry_attempts = 2
 
 [providers.codex]
 command = "codex"
@@ -118,6 +156,63 @@ Precedence is: `session override` > `worktree override` > `global defaults`.
 - `ARCHON_TURN_ID`
 - `ARCHON_CWD`
 - `ARCHON_NOTIFICATION_AT`
+
+### Guided Workflows
+
+Enable guided workflows in `~/.archon/config.toml`:
+
+- set `[guided_workflows].enabled = true`
+- keep `auto_start = false` (default) to require explicit user start from task/worktree context
+- tune `[guided_workflows.policy]` and `[guided_workflows.rollout]` guardrails as needed
+
+When enabled, daemon exposes guided workflow lifecycle endpoints:
+
+- `POST /v1/workflow-runs`
+- `POST /v1/workflow-runs/:id/start`
+- `POST /v1/workflow-runs/:id/pause`
+- `POST /v1/workflow-runs/:id/resume`
+- `POST /v1/workflow-runs/:id/decision`
+- `GET /v1/workflow-runs/:id`
+- `GET /v1/workflow-runs/:id/timeline`
+- `GET /v1/workflow-runs/metrics`
+- `POST /v1/workflow-runs/metrics/reset`
+
+Telemetry snapshots are persisted in daemon app state, so aggregate workflow metrics survive daemon restarts.
+Use `POST /v1/workflow-runs/metrics/reset` to reset aggregate counters for a fresh rollout/measurement window.
+
+Manual start flow:
+
+- from workspace/worktree/session context in the TUI, choose `Start Guided Workflow`
+- configure run setup (workflow prompt + template + policy sensitivity)
+- launch run and monitor the timeline/decision inbox surfaces
+
+Checkpoint behavior:
+
+- policy emits explicit decisions (`continue` or `pause`) with reasons/severity/tier metadata
+- pauses produce actionable decision-needed notifications (`approve_continue`, `request_revision`, `pause_run`)
+- decision payload includes `reason`, `confidence`, `risk_summary`, and `recommended_action`
+
+`POST /v1/workflow-runs/:id/decision` accepts:
+
+- `action`: `approve_continue` | `request_revision` | `pause_run`
+- `decision_id` (optional)
+- `note` (optional)
+
+When turn-completed events progress a run and policy decides `pause`, Archon emits a decision-needed notification through the existing notification pipeline (`turn.completed` trigger, `status=decision_needed`) with structured payload fields including:
+
+- `reason`
+- `confidence`
+- `risk_summary`
+- `recommended_action`
+- `actions` (available decision actions)
+
+Troubleshooting:
+
+- `guided workflows are disabled`: verify `[guided_workflows].enabled = true` and restart daemon
+- `enter a workflow prompt before starting`: provide a feature/bug prompt in Run Setup before pressing `enter`
+- `workflow active run limit exceeded`: raise `[guided_workflows.rollout].max_active_runs` or wait for active runs to finish
+- repeated pause decisions: inspect `risk_summary` and `trigger_reasons` in decision notifications, then adjust policy thresholds/gates
+- metrics not changing: confirm `[guided_workflows.rollout].telemetry_enabled = true` and query `GET /v1/workflow-runs/metrics`
 
 Example `ui.toml`:
 

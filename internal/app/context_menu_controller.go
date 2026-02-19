@@ -18,21 +18,28 @@ const (
 	ContextMenuWorkspaceOpenNotes
 	ContextMenuWorkspaceAddNote
 	ContextMenuWorkspaceAddWorktree
+	ContextMenuWorkspaceStartGuidedWorkflow
 	ContextMenuWorkspaceCopyPath
 	ContextMenuWorkspaceDelete
 	ContextMenuWorktreeAdd
 	ContextMenuWorktreeOpenNotes
 	ContextMenuWorktreeAddNote
+	ContextMenuWorktreeStartGuidedWorkflow
 	ContextMenuWorktreeCopyPath
 	ContextMenuWorktreeDelete
 	ContextMenuSessionChat
 	ContextMenuSessionRename
 	ContextMenuSessionOpenNotes
 	ContextMenuSessionAddNote
+	ContextMenuSessionStartGuidedWorkflow
 	ContextMenuSessionDismiss
 	ContextMenuSessionKill
 	ContextMenuSessionInterrupt
 	ContextMenuSessionCopyID
+	ContextMenuWorkflowOpen
+	ContextMenuWorkflowDismiss
+	ContextMenuWorkflowUndismiss
+	ContextMenuWorkflowCopyID
 )
 
 type contextMenuItem struct {
@@ -47,6 +54,7 @@ const (
 	contextTargetWorkspace
 	contextTargetWorktree
 	contextTargetSession
+	contextTargetWorkflow
 )
 
 type ContextMenuController struct {
@@ -56,6 +64,8 @@ type ContextMenuController struct {
 	workspaceID string
 	worktreeID  string
 	sessionID   string
+	workflowID  string
+	dismissed   bool
 	targetLabel string
 	items       []contextMenuItem
 	selected    int
@@ -99,6 +109,20 @@ func (c *ContextMenuController) SessionID() string {
 	return c.sessionID
 }
 
+func (c *ContextMenuController) WorkflowID() string {
+	if c == nil {
+		return ""
+	}
+	return c.workflowID
+}
+
+func (c *ContextMenuController) WorkflowDismissed() bool {
+	if c == nil {
+		return false
+	}
+	return c.dismissed
+}
+
 func (c *ContextMenuController) Close() {
 	if c == nil {
 		return
@@ -109,6 +133,8 @@ func (c *ContextMenuController) Close() {
 	c.workspaceID = ""
 	c.worktreeID = ""
 	c.sessionID = ""
+	c.workflowID = ""
+	c.dismissed = false
 	c.targetLabel = ""
 	c.items = nil
 	c.selected = 0
@@ -122,6 +148,10 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 	c.targetKind = contextTargetWorkspace
 	c.targetID = id
 	c.workspaceID = id
+	c.worktreeID = ""
+	c.sessionID = ""
+	c.workflowID = ""
+	c.dismissed = false
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Create Workspace", Action: ContextMenuWorkspaceCreate},
@@ -130,6 +160,7 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 		{Label: "Open Notes", Action: ContextMenuWorkspaceOpenNotes},
 		{Label: "Add Note", Action: ContextMenuWorkspaceAddNote},
 		{Label: "Add Worktree", Action: ContextMenuWorkspaceAddWorktree},
+		{Label: "Start Guided Workflow", Action: ContextMenuWorkspaceStartGuidedWorkflow},
 		{Label: "Copy Workspace Path", Action: ContextMenuWorkspaceCopyPath},
 		{Label: "Delete Workspace", Action: ContextMenuWorkspaceDelete},
 	}
@@ -147,11 +178,15 @@ func (c *ContextMenuController) OpenWorktree(worktreeID, workspaceID, label stri
 	c.targetID = worktreeID
 	c.worktreeID = worktreeID
 	c.workspaceID = workspaceID
+	c.sessionID = ""
+	c.workflowID = ""
+	c.dismissed = false
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Add Worktree", Action: ContextMenuWorktreeAdd},
 		{Label: "Open Notes", Action: ContextMenuWorktreeOpenNotes},
 		{Label: "Add Note", Action: ContextMenuWorktreeAddNote},
+		{Label: "Start Guided Workflow", Action: ContextMenuWorktreeStartGuidedWorkflow},
 		{Label: "Copy Worktree Path", Action: ContextMenuWorktreeCopyPath},
 		{Label: "Delete Worktree", Action: ContextMenuWorktreeDelete},
 	}
@@ -170,16 +205,46 @@ func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, 
 	c.sessionID = sessionID
 	c.workspaceID = workspaceID
 	c.worktreeID = worktreeID
+	c.workflowID = ""
+	c.dismissed = false
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Chat", Action: ContextMenuSessionChat},
 		{Label: "Rename Session", Action: ContextMenuSessionRename},
 		{Label: "Open Notes", Action: ContextMenuSessionOpenNotes},
 		{Label: "Add Note", Action: ContextMenuSessionAddNote},
+		{Label: "Start Guided Workflow", Action: ContextMenuSessionStartGuidedWorkflow},
 		{Label: "Dismiss Session", Action: ContextMenuSessionDismiss},
 		{Label: "Kill Session", Action: ContextMenuSessionKill},
 		{Label: "Interrupt Session", Action: ContextMenuSessionInterrupt},
 		{Label: "Copy Session ID", Action: ContextMenuSessionCopyID},
+	}
+	c.selected = 0
+	c.x = x
+	c.y = y
+}
+
+func (c *ContextMenuController) OpenWorkflow(workflowID, label string, dismissed bool, x, y int) {
+	if c == nil {
+		return
+	}
+	c.active = true
+	c.targetKind = contextTargetWorkflow
+	c.targetID = workflowID
+	c.workflowID = workflowID
+	c.dismissed = dismissed
+	c.workspaceID = ""
+	c.worktreeID = ""
+	c.sessionID = ""
+	c.targetLabel = strings.TrimSpace(label)
+	visibilityAction := contextMenuItem{Label: "Dismiss Workflow", Action: ContextMenuWorkflowDismiss}
+	if dismissed {
+		visibilityAction = contextMenuItem{Label: "Restore Workflow", Action: ContextMenuWorkflowUndismiss}
+	}
+	c.items = []contextMenuItem{
+		{Label: "Open Workflow", Action: ContextMenuWorkflowOpen},
+		visibilityAction,
+		{Label: "Copy Workflow ID", Action: ContextMenuWorkflowCopyID},
 	}
 	c.selected = 0
 	c.x = x
@@ -291,6 +356,8 @@ func (c *ContextMenuController) headerLabel() string {
 		return fmt.Sprintf("Worktree: %s", label)
 	case contextTargetSession:
 		return fmt.Sprintf("Session: %s", label)
+	case contextTargetWorkflow:
+		return fmt.Sprintf("Workflow: %s", label)
 	default:
 		return label
 	}

@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"control/internal/guidedworkflows"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -59,6 +60,7 @@ type sidebarItemKind int
 const (
 	sidebarWorkspace sidebarItemKind = iota
 	sidebarWorktree
+	sidebarWorkflow
 	sidebarSession
 	sidebarRecentsAll
 	sidebarRecentsReady
@@ -83,6 +85,8 @@ type sidebarItem struct {
 	kind         sidebarItemKind
 	workspace    *types.Workspace
 	worktree     *types.Worktree
+	workflow     *guidedworkflows.WorkflowRun
+	workflowID   string
 	session      *types.Session
 	meta         *types.SessionMeta
 	recents      sidebarRecentsFilter
@@ -110,6 +114,18 @@ func (s *sidebarItem) Title() string {
 			return ""
 		}
 		return s.worktree.Name
+	case sidebarWorkflow:
+		if s.workflow != nil {
+			name := strings.TrimSpace(s.workflow.TemplateName)
+			if name == "" {
+				name = "Guided Workflow"
+			}
+			return name
+		}
+		if id := strings.TrimSpace(s.workflowID); id != "" {
+			return "Guided Workflow " + id
+		}
+		return "Guided Workflow"
 	case sidebarSession:
 		return sessionTitle(s.session, s.meta)
 	default:
@@ -118,10 +134,14 @@ func (s *sidebarItem) Title() string {
 }
 
 func (s *sidebarItem) Description() string {
-	if s.kind != sidebarSession {
+	switch s.kind {
+	case sidebarSession:
+		return formatSince(sessionLastActive(s.session, s.meta))
+	case sidebarWorkflow:
+		return workflowRunStatusText(s.workflow)
+	default:
 		return ""
 	}
-	return formatSince(sessionLastActive(s.session, s.meta))
 }
 
 func (s *sidebarItem) FilterValue() string {
@@ -151,6 +171,14 @@ func (s *sidebarItem) key() string {
 			return "sess:"
 		}
 		return "sess:" + s.session.ID
+	case sidebarWorkflow:
+		if id := strings.TrimSpace(s.workflowID); id != "" {
+			return "gwf:" + id
+		}
+		if s.workflow != nil {
+			return "gwf:" + strings.TrimSpace(s.workflow.ID)
+		}
+		return "gwf:"
 	default:
 		return ""
 	}
@@ -163,6 +191,9 @@ func (s *sidebarItem) workspaceID() string {
 	if s.kind == sidebarWorktree && s.worktree != nil {
 		return s.worktree.WorkspaceID
 	}
+	if s.kind == sidebarWorkflow && s.workflow != nil {
+		return strings.TrimSpace(s.workflow.WorkspaceID)
+	}
 	if s.kind == sidebarWorkspace && s.workspace != nil {
 		return s.workspace.ID
 	}
@@ -171,6 +202,23 @@ func (s *sidebarItem) workspaceID() string {
 
 func (s *sidebarItem) isSession() bool {
 	return s.kind == sidebarSession && s.session != nil
+}
+
+func (s *sidebarItem) isWorkflow() bool {
+	return s.kind == sidebarWorkflow && strings.TrimSpace(s.workflowRunID()) != ""
+}
+
+func (s *sidebarItem) workflowRunID() string {
+	if s == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(s.workflowID); id != "" {
+		return id
+	}
+	if s.workflow != nil {
+		return strings.TrimSpace(s.workflow.ID)
+	}
+	return ""
 }
 
 func (s *sidebarItem) sessionProvider() string {
@@ -279,6 +327,33 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
 			style = worktreeActiveStyle
 		}
+		if isSelected {
+			style = selectedStyle
+		}
+		fmt.Fprint(w, style.Render(line))
+	case sidebarWorkflow:
+		label := entry.Title()
+		if entry.workflow != nil {
+			label = fmt.Sprintf("%s (%s)", label, strings.TrimSpace(entry.workflow.ID))
+		}
+		if entry.sessionCount > 0 {
+			label = fmt.Sprintf("%s • %d sessions", label, entry.sessionCount)
+		}
+		statusText := workflowRunStatusText(entry.workflow)
+		if strings.TrimSpace(statusText) != "" {
+			label = fmt.Sprintf("%s • %s", label, statusText)
+		}
+		marker := " "
+		if entry.collapsible {
+			if entry.expanded {
+				marker = "▾"
+			} else {
+				marker = "▸"
+			}
+		}
+		line := "  " + marker + " [WFL] " + label
+		line = truncateToWidth(line, maxWidth)
+		style := worktreeStyle
 		if isSelected {
 			style = selectedStyle
 		}
@@ -427,6 +502,7 @@ func normalizeProviderBadgeOverrides(overrides map[string]*types.ProviderBadgeCo
 type sidebarExpansionResolver struct {
 	workspace map[string]bool
 	worktree  map[string]bool
+	workflow  map[string]bool
 	defaultOn bool
 }
 
@@ -444,26 +520,67 @@ func (r sidebarExpansionResolver) worktreeExpanded(id string) bool {
 	return r.defaultOn
 }
 
-func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []list.Item {
-	return buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, meta, showDismissed, sidebarExpansionResolver{
+func (r sidebarExpansionResolver) workflowExpanded(id string) bool {
+	if value, ok := r.workflow[id]; ok {
+		return value
+	}
+	return r.defaultOn
+}
+
+func buildSidebarItems(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, workflows []*guidedworkflows.WorkflowRun, meta map[string]*types.SessionMeta, showDismissed bool) []list.Item {
+	return buildSidebarItemsWithExpansion(workspaces, worktrees, sessions, workflows, meta, showDismissed, sidebarExpansionResolver{
 		defaultOn: true,
 	})
 }
 
-func buildSidebarItemsWithExpansion(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool, expansion sidebarExpansionResolver) []list.Item {
-	return buildSidebarItemsWithRecents(workspaces, worktrees, sessions, meta, showDismissed, sidebarRecentsState{}, expansion)
+func buildSidebarItemsWithExpansion(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, workflows []*guidedworkflows.WorkflowRun, meta map[string]*types.SessionMeta, showDismissed bool, expansion sidebarExpansionResolver) []list.Item {
+	return buildSidebarItemsWithRecents(workspaces, worktrees, sessions, workflows, meta, showDismissed, sidebarRecentsState{}, expansion)
 }
 
 func buildSidebarItemsWithRecents(
 	workspaces []*types.Workspace,
 	worktrees map[string][]*types.Worktree,
 	sessions []*types.Session,
+	workflows []*guidedworkflows.WorkflowRun,
 	meta map[string]*types.SessionMeta,
 	showDismissed bool,
 	recents sidebarRecentsState,
 	expansion sidebarExpansionResolver,
 ) []list.Item {
 	visibleSessions := filterVisibleSessions(sessions, meta, showDismissed)
+	workflowByID := make(map[string]*guidedworkflows.WorkflowRun, len(workflows))
+	hiddenDismissedWorkflowIDs := map[string]struct{}{}
+	for _, run := range workflows {
+		if run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		if run.DismissedAt != nil && !showDismissed {
+			hiddenDismissedWorkflowIDs[runID] = struct{}{}
+			continue
+		}
+		workflowByID[runID] = run
+	}
+	workflowSessionBuckets := map[string][]*types.Session{}
+	filteredSessions := make([]*types.Session, 0, len(visibleSessions))
+	for _, session := range visibleSessions {
+		if session == nil {
+			continue
+		}
+		sessionMeta := meta[session.ID]
+		workflowID := ""
+		if sessionMeta != nil {
+			workflowID = strings.TrimSpace(sessionMeta.WorkflowRunID)
+		}
+		if workflowID == "" {
+			filteredSessions = append(filteredSessions, session)
+			continue
+		}
+		workflowSessionBuckets[workflowID] = append(workflowSessionBuckets[workflowID], session)
+	}
 	knownWorkspaces := make(map[string]struct{}, len(workspaces))
 	for _, workspace := range workspaces {
 		if workspace == nil {
@@ -482,7 +599,7 @@ func buildSidebarItemsWithRecents(
 			knownWorktrees[wt.ID] = wsID
 		}
 	}
-	for _, session := range visibleSessions {
+	for _, session := range filteredSessions {
 		workspaceID := ""
 		worktreeID := ""
 		if m := meta[session.ID]; m != nil {
@@ -504,6 +621,70 @@ func buildSidebarItemsWithRecents(
 		} else {
 			grouped[workspaceID] = append(grouped[workspaceID], session)
 		}
+	}
+	workflowByWorkspace := map[string][]*sidebarItem{}
+	workflowByWorktree := map[string][]*sidebarItem{}
+	for runID, run := range workflowByID {
+		workspaceID := strings.TrimSpace(run.WorkspaceID)
+		worktreeID := strings.TrimSpace(run.WorktreeID)
+		if workspaceID != "" {
+			if _, ok := knownWorkspaces[workspaceID]; !ok {
+				workspaceID = ""
+			}
+		}
+		if worktreeID != "" {
+			if _, ok := knownWorktrees[worktreeID]; !ok {
+				worktreeID = ""
+			}
+		}
+		workflowItem := buildWorkflowSidebarItem(runID, run, len(workflowSessionBuckets[runID]), expansion)
+		if worktreeID != "" {
+			workflowByWorktree[worktreeID] = append(workflowByWorktree[worktreeID], workflowItem)
+			continue
+		}
+		workflowByWorkspace[workspaceID] = append(workflowByWorkspace[workspaceID], workflowItem)
+	}
+	for runID, bucket := range workflowSessionBuckets {
+		if _, exists := workflowByID[runID]; exists {
+			continue
+		}
+		if _, hidden := hiddenDismissedWorkflowIDs[runID]; hidden {
+			continue
+		}
+		workspaceID := ""
+		worktreeID := ""
+		for _, session := range bucket {
+			if session == nil {
+				continue
+			}
+			if m := meta[session.ID]; m != nil {
+				if workspaceID == "" {
+					workspaceID = strings.TrimSpace(m.WorkspaceID)
+				}
+				if worktreeID == "" {
+					worktreeID = strings.TrimSpace(m.WorktreeID)
+				}
+			}
+			if workspaceID != "" || worktreeID != "" {
+				break
+			}
+		}
+		if workspaceID != "" {
+			if _, ok := knownWorkspaces[workspaceID]; !ok {
+				workspaceID = ""
+			}
+		}
+		if worktreeID != "" {
+			if _, ok := knownWorktrees[worktreeID]; !ok {
+				worktreeID = ""
+			}
+		}
+		workflowItem := buildWorkflowSidebarItem(runID, nil, len(bucket), expansion)
+		if worktreeID != "" {
+			workflowByWorktree[worktreeID] = append(workflowByWorktree[worktreeID], workflowItem)
+			continue
+		}
+		workflowByWorkspace[workspaceID] = append(workflowByWorkspace[workspaceID], workflowItem)
 	}
 
 	items := make([]list.Item, 0, len(workspaces)+3)
@@ -534,8 +715,15 @@ func buildSidebarItemsWithRecents(
 		}
 		wsID := workspace.ID
 		sessionsForWorkspace := grouped[wsID]
+		workflowItemsForWorkspace := sortWorkflowSidebarItemsDesc(workflowByWorkspace[wsID])
 		worktreesForWorkspace := worktrees[wsID]
 		totalSessions := len(sessionsForWorkspace)
+		for _, workflowItem := range workflowItemsForWorkspace {
+			if workflowItem == nil {
+				continue
+			}
+			totalSessions += workflowItem.sessionCount
+		}
 		worktreeCount := 0
 		for _, wt := range worktreesForWorkspace {
 			if wt == nil {
@@ -543,8 +731,14 @@ func buildSidebarItemsWithRecents(
 			}
 			worktreeCount++
 			totalSessions += len(groupedWorktrees[wt.ID])
+			for _, workflowItem := range workflowByWorktree[wt.ID] {
+				if workflowItem == nil {
+					continue
+				}
+				totalSessions += workflowItem.sessionCount
+			}
 		}
-		workspaceHasChildren := len(sessionsForWorkspace) > 0 || worktreeCount > 0
+		workspaceHasChildren := len(sessionsForWorkspace) > 0 || worktreeCount > 0 || len(workflowItemsForWorkspace) > 0
 		workspaceExpanded := !workspaceHasChildren || expansion.workspaceExpanded(wsID)
 		items = append(items, &sidebarItem{
 			kind:         sidebarWorkspace,
@@ -554,6 +748,21 @@ func buildSidebarItemsWithRecents(
 			expanded:     workspaceExpanded,
 		})
 		if workspaceExpanded {
+			for _, workflowItem := range workflowItemsForWorkspace {
+				if workflowItem == nil {
+					continue
+				}
+				items = append(items, workflowItem)
+				if workflowItem.expanded {
+					for _, session := range sortSessionsDesc(workflowSessionBuckets[workflowItem.workflowRunID()]) {
+						items = append(items, &sidebarItem{
+							kind:    sidebarSession,
+							session: session,
+							meta:    meta[session.ID],
+						})
+					}
+				}
+			}
 			for _, session := range sortSessionsDesc(sessionsForWorkspace) {
 				items = append(items, &sidebarItem{
 					kind:    sidebarSession,
@@ -566,7 +775,8 @@ func buildSidebarItemsWithRecents(
 					continue
 				}
 				wtSessions := groupedWorktrees[wt.ID]
-				worktreeHasChildren := len(wtSessions) > 0
+				wtWorkflowItems := sortWorkflowSidebarItemsDesc(workflowByWorktree[wt.ID])
+				worktreeHasChildren := len(wtSessions) > 0 || len(wtWorkflowItems) > 0
 				worktreeExpanded := !worktreeHasChildren || expansion.worktreeExpanded(wt.ID)
 				items = append(items, &sidebarItem{
 					kind:         sidebarWorktree,
@@ -576,6 +786,21 @@ func buildSidebarItemsWithRecents(
 					expanded:     worktreeExpanded,
 				})
 				if worktreeExpanded {
+					for _, workflowItem := range wtWorkflowItems {
+						if workflowItem == nil {
+							continue
+						}
+						items = append(items, workflowItem)
+						if workflowItem.expanded {
+							for _, session := range sortSessionsDesc(workflowSessionBuckets[workflowItem.workflowRunID()]) {
+								items = append(items, &sidebarItem{
+									kind:    sidebarSession,
+									session: session,
+									meta:    meta[session.ID],
+								})
+							}
+						}
+					}
 					for _, session := range sortSessionsDesc(wtSessions) {
 						items = append(items, &sidebarItem{
 							kind:    sidebarSession,
@@ -585,22 +810,48 @@ func buildSidebarItemsWithRecents(
 					}
 				}
 				delete(groupedWorktrees, wt.ID)
+				delete(workflowByWorktree, wt.ID)
 			}
 		}
 		delete(grouped, wsID)
+		delete(workflowByWorkspace, wsID)
 	}
 
-	if unassigned := grouped[""]; len(unassigned) > 0 {
+	unassignedWorkflows := sortWorkflowSidebarItemsDesc(workflowByWorkspace[""])
+	if unassigned := grouped[""]; len(unassigned) > 0 || len(unassignedWorkflows) > 0 {
 		ws := &types.Workspace{ID: unassignedWorkspaceID, Name: unassignedWorkspaceTag}
-		workspaceExpanded := expansion.workspaceExpanded(unassignedWorkspaceID)
+		workspaceHasChildren := len(unassigned) > 0 || len(unassignedWorkflows) > 0
+		totalSessions := len(unassigned)
+		for _, workflowItem := range unassignedWorkflows {
+			if workflowItem == nil {
+				continue
+			}
+			totalSessions += workflowItem.sessionCount
+		}
+		workspaceExpanded := !workspaceHasChildren || expansion.workspaceExpanded(unassignedWorkspaceID)
 		items = append(items, &sidebarItem{
 			kind:         sidebarWorkspace,
 			workspace:    ws,
-			sessionCount: len(unassigned),
-			collapsible:  true,
+			sessionCount: totalSessions,
+			collapsible:  workspaceHasChildren,
 			expanded:     workspaceExpanded,
 		})
 		if workspaceExpanded {
+			for _, workflowItem := range unassignedWorkflows {
+				if workflowItem == nil {
+					continue
+				}
+				items = append(items, workflowItem)
+				if workflowItem.expanded {
+					for _, session := range sortSessionsDesc(workflowSessionBuckets[workflowItem.workflowRunID()]) {
+						items = append(items, &sidebarItem{
+							kind:    sidebarSession,
+							session: session,
+							meta:    meta[session.ID],
+						})
+					}
+				}
+			}
 			for _, session := range sortSessionsDesc(unassigned) {
 				items = append(items, &sidebarItem{
 					kind:    sidebarSession,
@@ -612,6 +863,68 @@ func buildSidebarItemsWithRecents(
 	}
 
 	return items
+}
+
+func buildWorkflowSidebarItem(runID string, run *guidedworkflows.WorkflowRun, sessionCount int, expansion sidebarExpansionResolver) *sidebarItem {
+	runID = strings.TrimSpace(runID)
+	if runID == "" && run != nil {
+		runID = strings.TrimSpace(run.ID)
+	}
+	collapsible := sessionCount > 0
+	expanded := !collapsible || expansion.workflowExpanded(runID)
+	return &sidebarItem{
+		kind:         sidebarWorkflow,
+		workflow:     run,
+		workflowID:   runID,
+		sessionCount: sessionCount,
+		collapsible:  collapsible,
+		expanded:     expanded,
+	}
+}
+
+func sortWorkflowSidebarItemsDesc(items []*sidebarItem) []*sidebarItem {
+	if len(items) == 0 {
+		return nil
+	}
+	sort.Slice(items, func(i, j int) bool {
+		left := workflowSidebarSortTime(items[i])
+		right := workflowSidebarSortTime(items[j])
+		if left.Equal(right) {
+			return strings.TrimSpace(items[i].workflowRunID()) < strings.TrimSpace(items[j].workflowRunID())
+		}
+		return left.After(right)
+	})
+	return items
+}
+
+func workflowSidebarSortTime(item *sidebarItem) time.Time {
+	if item == nil || item.workflow == nil {
+		return time.Time{}
+	}
+	return workflowRunLastActivityAt(item.workflow)
+}
+
+func workflowRunLastActivityAt(run *guidedworkflows.WorkflowRun) time.Time {
+	if run == nil {
+		return time.Time{}
+	}
+	latest := run.CreatedAt
+	if run.StartedAt != nil && run.StartedAt.After(latest) {
+		latest = *run.StartedAt
+	}
+	if run.PausedAt != nil && run.PausedAt.After(latest) {
+		latest = *run.PausedAt
+	}
+	if run.CompletedAt != nil && run.CompletedAt.After(latest) {
+		latest = *run.CompletedAt
+	}
+	if n := len(run.AuditTrail); n > 0 {
+		last := run.AuditTrail[n-1].At
+		if last.After(latest) {
+			latest = last
+		}
+	}
+	return latest
 }
 
 func filterVisibleSessions(sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []*types.Session {
@@ -633,6 +946,29 @@ func filterVisibleSessions(sessions []*types.Session, meta map[string]*types.Ses
 	}
 	out = sortSessionsDesc(out)
 	return out
+}
+
+func workflowRunStatusText(run *guidedworkflows.WorkflowRun) string {
+	if run == nil {
+		return ""
+	}
+	if run.DismissedAt != nil {
+		return "dismissed"
+	}
+	switch run.Status {
+	case guidedworkflows.WorkflowRunStatusCreated:
+		return "created"
+	case guidedworkflows.WorkflowRunStatusRunning:
+		return "running"
+	case guidedworkflows.WorkflowRunStatusPaused:
+		return "paused"
+	case guidedworkflows.WorkflowRunStatusCompleted:
+		return "completed"
+	case guidedworkflows.WorkflowRunStatusFailed:
+		return "failed"
+	default:
+		return strings.TrimSpace(string(run.Status))
+	}
 }
 
 func sortSessionsDesc(sessions []*types.Session) []*types.Session {

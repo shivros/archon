@@ -6,6 +6,7 @@ type SessionMeta struct {
 	SessionID             string                     `json:"session_id"`
 	WorkspaceID           string                     `json:"workspace_id"`
 	WorktreeID            string                     `json:"worktree_id"`
+	WorkflowRunID         string                     `json:"workflow_run_id,omitempty"`
 	Title                 string                     `json:"title"`
 	TitleLocked           bool                       `json:"title_locked,omitempty"`
 	InitialInput          string                     `json:"initial_input"`

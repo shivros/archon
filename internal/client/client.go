@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"control/internal/config"
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -74,22 +75,41 @@ func (c *Client) ListSessions(ctx context.Context) ([]*types.Session, error) {
 }
 
 func (c *Client) ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return c.ListSessionsWithMetaOptions(ctx, false, false)
+}
+
+func (c *Client) ListSessionsWithMetaIncludeWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return c.ListSessionsWithMetaOptions(ctx, false, true)
+}
+
+func (c *Client) ListSessionsWithMetaOptions(ctx context.Context, includeDismissed bool, includeWorkflowOwned bool) ([]*types.Session, []*types.SessionMeta, error) {
+	query := url.Values{}
+	if includeDismissed {
+		query.Set("include_dismissed", "1")
+	}
+	if includeWorkflowOwned {
+		query.Set("include_workflow_owned", "1")
+	}
+	path := "/v1/sessions"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	var resp SessionsWithMetaResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/sessions", nil, true, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
 		return nil, nil, err
 	}
 	return resp.Sessions, resp.SessionMeta, nil
 }
 
 func (c *Client) ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
-	var resp SessionsWithMetaResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/sessions?include_dismissed=1", nil, true, &resp); err != nil {
-		return nil, nil, err
-	}
-	return resp.Sessions, resp.SessionMeta, nil
+	return c.ListSessionsWithMetaOptions(ctx, true, false)
 }
 
 func (c *Client) ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {
+	return c.ListSessionsWithMetaRefreshWithOptions(ctx, workspaceID, includeDismissed, false)
+}
+
+func (c *Client) ListSessionsWithMetaRefreshWithOptions(ctx context.Context, workspaceID string, includeDismissed bool, includeWorkflowOwned bool) ([]*types.Session, []*types.SessionMeta, error) {
 	query := url.Values{}
 	query.Set("refresh", "1")
 	if strings.TrimSpace(workspaceID) != "" {
@@ -97,6 +117,9 @@ func (c *Client) ListSessionsWithMetaRefresh(ctx context.Context, workspaceID st
 	}
 	if includeDismissed {
 		query.Set("include_dismissed", "1")
+	}
+	if includeWorkflowOwned {
+		query.Set("include_workflow_owned", "1")
 	}
 	path := "/v1/sessions?" + query.Encode()
 	var resp SessionsWithMetaResponse
@@ -368,6 +391,124 @@ func (c *Client) UpdateAppState(ctx context.Context, state *types.AppState) (*ty
 		return nil, err
 	}
 	return &resp, nil
+}
+
+func (c *Client) CreateWorkflowRun(ctx context.Context, req CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
+	var run guidedworkflows.WorkflowRun
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/workflow-runs", req, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error) {
+	return c.ListWorkflowRunsWithOptions(ctx, false)
+}
+
+func (c *Client) ListWorkflowRunsWithOptions(ctx context.Context, includeDismissed bool) ([]*guidedworkflows.WorkflowRun, error) {
+	path := "/v1/workflow-runs"
+	if includeDismissed {
+		path += "?include_dismissed=1"
+	}
+	var resp WorkflowRunsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Runs, nil
+}
+
+func (c *Client) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/start", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) DismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/dismiss", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) UndismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/undismiss", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) DecideWorkflowRun(ctx context.Context, runID string, req WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/decision", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) GetWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s", runID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var resp WorkflowRunTimelineResponse
+	path := fmt.Sprintf("/v1/workflow-runs/%s/timeline", runID)
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Timeline, nil
+}
+
+func (c *Client) GetWorkflowRunMetrics(ctx context.Context) (*guidedworkflows.RunMetricsSnapshot, error) {
+	var metrics guidedworkflows.RunMetricsSnapshot
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/workflow-runs/metrics", nil, true, &metrics); err != nil {
+		return nil, err
+	}
+	return &metrics, nil
+}
+
+func (c *Client) ResetWorkflowRunMetrics(ctx context.Context) (*guidedworkflows.RunMetricsSnapshot, error) {
+	var metrics guidedworkflows.RunMetricsSnapshot
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/workflow-runs/metrics/reset", nil, true, &metrics); err != nil {
+		return nil, err
+	}
+	return &metrics, nil
 }
 
 func (c *Client) StartSession(ctx context.Context, req StartSessionRequest) (*types.Session, error) {

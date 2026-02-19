@@ -104,15 +104,18 @@ func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, item
 		return nil, err
 	}
 
-	turnID, err := controller.startTurn(ctx, threadID, strings.Join(cfg.Args, " "), cfg.RuntimeOptions, model)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		return nil, err
-	}
+	initialInput := strings.TrimSpace(strings.Join(cfg.Args, " "))
+	if initialInput != "" {
+		turnID, err := controller.startTurn(ctx, threadID, initialInput, cfg.RuntimeOptions, model)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			return nil, err
+		}
 
-	controller.setTurn(threadID, turnID)
-	controller.onTurnCompleted = func() {
-		_ = signalTerminate(cmd.Process)
+		controller.setTurn(threadID, turnID)
+		controller.onTurnCompleted = func() {
+			_ = signalTerminate(cmd.Process)
+		}
 	}
 
 	return &providerProcess{

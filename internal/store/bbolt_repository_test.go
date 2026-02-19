@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -31,6 +32,20 @@ func TestBboltRepositoryCRUD(t *testing.T) {
 	}
 	if loadedState.ActiveWorkspaceID != "ws-1" {
 		t.Fatalf("unexpected state: %#v", loadedState)
+	}
+	template, err := repo.WorkflowTemplates().UpsertWorkflowTemplate(ctx, typesToTemplate("custom_workflow", "Custom Workflow", "Write a plan"))
+	if err != nil {
+		t.Fatalf("upsert workflow template: %v", err)
+	}
+	if template == nil || template.ID != "custom_workflow" {
+		t.Fatalf("unexpected workflow template: %#v", template)
+	}
+	templates, err := repo.WorkflowTemplates().ListWorkflowTemplates(ctx)
+	if err != nil {
+		t.Fatalf("list workflow templates: %v", err)
+	}
+	if len(templates) != 1 || templates[0].ID != "custom_workflow" {
+		t.Fatalf("unexpected workflow templates: %#v", templates)
 	}
 
 	workspace, err := repo.Workspaces().Add(ctx, &types.Workspace{
@@ -157,19 +172,23 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	paths := RepositoryPaths{
-		WorkspacesPath:   filepath.Join(base, "workspaces.json"),
-		AppStatePath:     filepath.Join(base, "state.json"),
-		SessionMetaPath:  filepath.Join(base, "sessions_meta.json"),
-		SessionIndexPath: filepath.Join(base, "sessions_index.json"),
-		ApprovalsPath:    filepath.Join(base, "approvals.json"),
-		NotesPath:        filepath.Join(base, "notes.json"),
-		DBPath:           filepath.Join(base, "storage.db"),
+		WorkspacesPath:        filepath.Join(base, "workspaces.json"),
+		WorkflowTemplatesPath: filepath.Join(base, "workflow_templates.json"),
+		AppStatePath:          filepath.Join(base, "state.json"),
+		SessionMetaPath:       filepath.Join(base, "sessions_meta.json"),
+		SessionIndexPath:      filepath.Join(base, "sessions_index.json"),
+		ApprovalsPath:         filepath.Join(base, "approvals.json"),
+		NotesPath:             filepath.Join(base, "notes.json"),
+		DBPath:                filepath.Join(base, "storage.db"),
 	}
 	src := NewFileRepository(paths)
 	defer src.Close()
 
 	if err := src.AppState().Save(ctx, &types.AppState{ActiveWorkspaceID: "seed-ws"}); err != nil {
 		t.Fatalf("seed state: %v", err)
+	}
+	if _, err := src.WorkflowTemplates().UpsertWorkflowTemplate(ctx, typesToTemplate("seed_workflow", "Seed Workflow", "Seed prompt")); err != nil {
+		t.Fatalf("seed workflow template: %v", err)
 	}
 	if _, err := src.SessionMeta().Upsert(ctx, &types.SessionMeta{SessionID: "s1", WorkspaceID: "seed-ws"}); err != nil {
 		t.Fatalf("seed meta: %v", err)
@@ -231,6 +250,13 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	if loadedState.ActiveWorkspaceID != "seed-ws" {
 		t.Fatalf("expected seeded state, got %#v", loadedState)
 	}
+	seededTemplates, err := dst.WorkflowTemplates().ListWorkflowTemplates(ctx)
+	if err != nil {
+		t.Fatalf("list seeded workflow templates: %v", err)
+	}
+	if len(seededTemplates) != 1 || seededTemplates[0].ID != "seed_workflow" {
+		t.Fatalf("expected seeded workflow template, got %#v", seededTemplates)
+	}
 	if records, err := dst.SessionIndex().ListRecords(ctx); err != nil || len(records) != 1 {
 		t.Fatalf("expected seeded record, got len=%d err=%v", len(records), err)
 	}
@@ -248,5 +274,25 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	}
 	if approvals, err := dst.Approvals().ListBySession(ctx, "s1"); err != nil || len(approvals) != 1 {
 		t.Fatalf("expected seeded approval, got len=%d err=%v", len(approvals), err)
+	}
+}
+
+func typesToTemplate(id, name, prompt string) guidedworkflows.WorkflowTemplate {
+	return guidedworkflows.WorkflowTemplate{
+		ID:   id,
+		Name: name,
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{
+						ID:     "step_1",
+						Name:   "Step 1",
+						Prompt: prompt,
+					},
+				},
+			},
+		},
 	}
 }

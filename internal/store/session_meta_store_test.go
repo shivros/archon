@@ -119,3 +119,33 @@ func TestSessionMetaStoreUpsertClearsDismissedAtWithZeroTime(t *testing.T) {
 		t.Fatalf("expected dismissed_at to clear, got %#v", loaded.DismissedAt)
 	}
 }
+
+func TestSessionMetaStoreUpsertPreservesWorkflowRunID(t *testing.T) {
+	ctx := context.Background()
+	store := NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+
+	if _, err := store.Upsert(ctx, &types.SessionMeta{
+		SessionID:     "s1",
+		WorkflowRunID: "gwf-1",
+	}); err != nil {
+		t.Fatalf("upsert workflow-owned meta: %v", err)
+	}
+
+	if _, err := store.Upsert(ctx, &types.SessionMeta{
+		SessionID:  "s1",
+		LastTurnID: "turn-1",
+	}); err != nil {
+		t.Fatalf("upsert metadata: %v", err)
+	}
+
+	loaded, ok, err := store.Get(ctx, "s1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !ok || loaded == nil {
+		t.Fatalf("expected meta")
+	}
+	if loaded.WorkflowRunID != "gwf-1" {
+		t.Fatalf("expected workflow_run_id to persist, got %q", loaded.WorkflowRunID)
+	}
+}

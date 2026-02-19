@@ -72,6 +72,39 @@ func TestWorkspaceContextActionAddWorktreeRequiresSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceContextActionStartGuidedWorkflowRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorkspaceContextMenuAction(ContextMenuWorkspaceStartGuidedWorkflow, contextMenuTarget{})
+	if !handled {
+		t.Fatalf("expected workspace action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.status != "select a workspace" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestWorkspaceContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorkspaceContextMenuAction(ContextMenuWorkspaceStartGuidedWorkflow, contextMenuTarget{id: "ws1"})
+	if !handled {
+		t.Fatalf("expected workspace action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected guided workflow launcher stage")
+	}
+}
+
 func TestWorkspaceContextActionAddNoteEntersAddNoteMode(t *testing.T) {
 	m := NewModel(nil)
 
@@ -227,6 +260,27 @@ func TestWorktreeContextActionCopyPathUnavailable(t *testing.T) {
 	}
 }
 
+func TestWorktreeContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorktreeContextMenuAction(ContextMenuWorktreeStartGuidedWorkflow, contextMenuTarget{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	if !handled {
+		t.Fatalf("expected worktree action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected guided workflow launcher stage")
+	}
+}
+
 func TestSessionContextActionKillReturnsCommand(t *testing.T) {
 	m := NewModel(nil)
 
@@ -285,6 +339,43 @@ func TestSessionContextActionRenameEntersRenameMode(t *testing.T) {
 	}
 }
 
+func TestSessionContextActionStartGuidedWorkflowRequiresContext(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleSessionContextMenuAction(ContextMenuSessionStartGuidedWorkflow, contextMenuTarget{sessionID: "s1"})
+	if !handled {
+		t.Fatalf("expected session action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.status != "session has no workspace/worktree context" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestSessionContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleSessionContextMenuAction(ContextMenuSessionStartGuidedWorkflow, contextMenuTarget{
+		sessionID:   "s1",
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	if !handled {
+		t.Fatalf("expected session action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected guided workflow launcher stage")
+	}
+}
+
 func TestSessionContextActionOpenNotesEntersNotesMode(t *testing.T) {
 	m := NewModel(nil)
 	m.sessionMeta = map[string]*types.SessionMeta{
@@ -312,6 +403,7 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 	foundOpen := false
 	foundNote := false
 	foundAdd := false
+	foundGuided := false
 	found := false
 	for _, item := range c.items {
 		if item.Action == ContextMenuWorkspaceOpenNotes {
@@ -322,6 +414,9 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 		}
 		if item.Action == ContextMenuWorkspaceAddWorktree {
 			foundAdd = true
+		}
+		if item.Action == ContextMenuWorkspaceStartGuidedWorkflow {
+			foundGuided = true
 		}
 		if item.Action == ContextMenuWorkspaceCopyPath {
 			found = true
@@ -336,8 +431,41 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 	if !foundAdd {
 		t.Fatalf("expected workspace context menu to include add worktree action")
 	}
+	if !foundGuided {
+		t.Fatalf("expected workspace context menu to include guided workflow action")
+	}
 	if !found {
 		t.Fatalf("expected workspace context menu to include copy path action")
+	}
+}
+
+func TestContextMenuControllerWorktreeIncludesStartGuidedWorkflowAction(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenWorktree("wt1", "ws1", "Worktree", 0, 0)
+	found := false
+	for _, item := range c.items {
+		if item.Action == ContextMenuWorktreeStartGuidedWorkflow {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected worktree context menu to include guided workflow action")
+	}
+}
+
+func TestContextMenuControllerSessionIncludesStartGuidedWorkflowAction(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenSession("s1", "ws1", "wt1", "Session", 0, 0)
+	found := false
+	for _, item := range c.items {
+		if item.Action == ContextMenuSessionStartGuidedWorkflow {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected session context menu to include guided workflow action")
 	}
 }
 
