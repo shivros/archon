@@ -169,6 +169,31 @@ func TestWorkflowRunEndpointsCreateWithPolicyOverrides(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsCreateUsesBaselinePolicyWithoutResolver(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+
+	expected := guidedworkflows.DefaultCheckpointPolicy(guidedworkflows.DefaultCheckpointStyle)
+	if created.Policy.ConfidenceThreshold != expected.ConfidenceThreshold {
+		t.Fatalf("expected baseline confidence threshold %v, got %v", expected.ConfidenceThreshold, created.Policy.ConfidenceThreshold)
+	}
+	if created.Policy.PauseThreshold != expected.PauseThreshold {
+		t.Fatalf("expected baseline pause threshold %v, got %v", expected.PauseThreshold, created.Policy.PauseThreshold)
+	}
+	if created.PolicyOverrides != nil {
+		t.Fatalf("expected no policy overrides when resolver and request overrides are absent, got %#v", created.PolicyOverrides)
+	}
+}
+
 func TestWorkflowRunEndpointsCreateUsesConfiguredResolutionBoundaryDefaults(t *testing.T) {
 	coreCfg := config.DefaultCoreConfig()
 	coreCfg.GuidedWorkflows.Defaults.ResolutionBoundary = "high"

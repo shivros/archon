@@ -394,6 +394,129 @@ func TestGuidedWorkflowSetupUsesConfiguredDefaultResolutionBoundary(t *testing.T
 	}
 }
 
+func TestGuidedWorkflowSetupUsesRiskWhenResolutionBoundaryIsUnset(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+	api := &guidedWorkflowAPIMock{
+		createRun: newWorkflowRunFixture("gwf-risk", guidedworkflows.WorkflowRunStatusCreated, now),
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.applyCoreConfig(config.CoreConfig{
+		GuidedWorkflows: config.CoreGuidedWorkflowsConfig{
+			Defaults: config.CoreGuidedWorkflowsDefaultsConfig{
+				Risk:               "low",
+				ResolutionBoundary: "",
+			},
+		},
+	})
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	m.guidedWorkflowPromptInput.SetValue("Use configured risk fallback")
+	m.syncGuidedWorkflowPromptInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected create workflow command")
+	}
+	if _, ok := cmd().(workflowRunCreatedMsg); !ok {
+		t.Fatalf("expected workflowRunCreatedMsg, got %T", cmd())
+	}
+	if len(api.createReqs) != 1 {
+		t.Fatalf("expected one create request, got %d", len(api.createReqs))
+	}
+	override := api.createReqs[0].PolicyOverrides
+	if override == nil {
+		t.Fatalf("expected risk fallback to set policy overrides")
+	}
+	if override.ConfidenceThreshold == nil || *override.ConfidenceThreshold != guidedworkflows.PolicyPresetLowConfidenceThreshold {
+		t.Fatalf("expected low risk confidence threshold %v, got %#v", guidedworkflows.PolicyPresetLowConfidenceThreshold, override.ConfidenceThreshold)
+	}
+	if override.PauseThreshold == nil || *override.PauseThreshold != guidedworkflows.PolicyPresetLowPauseThreshold {
+		t.Fatalf("expected low risk pause threshold %v, got %#v", guidedworkflows.PolicyPresetLowPauseThreshold, override.PauseThreshold)
+	}
+}
+
+func TestGuidedWorkflowSetupKeepsBalancedSensitivityWhenDefaultsInvalid(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+	api := &guidedWorkflowAPIMock{
+		createRun: newWorkflowRunFixture("gwf-balanced", guidedworkflows.WorkflowRunStatusCreated, now),
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.applyCoreConfig(config.CoreConfig{
+		GuidedWorkflows: config.CoreGuidedWorkflowsConfig{
+			Defaults: config.CoreGuidedWorkflowsDefaultsConfig{
+				Risk:               "not-a-preset",
+				ResolutionBoundary: "also-not-a-preset",
+			},
+		},
+	})
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	m.guidedWorkflowPromptInput.SetValue("Use balanced fallback")
+	m.syncGuidedWorkflowPromptInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected create workflow command")
+	}
+	if _, ok := cmd().(workflowRunCreatedMsg); !ok {
+		t.Fatalf("expected workflowRunCreatedMsg, got %T", cmd())
+	}
+	if len(api.createReqs) != 1 {
+		t.Fatalf("expected one create request, got %d", len(api.createReqs))
+	}
+	if api.createReqs[0].PolicyOverrides != nil {
+		t.Fatalf("expected balanced fallback to keep policy overrides unset, got %#v", api.createReqs[0].PolicyOverrides)
+	}
+}
+
+func TestGuidedPolicySensitivityFromPreset(t *testing.T) {
+	tests := []struct {
+		name   string
+		preset string
+		want   guidedPolicySensitivity
+	}{
+		{name: "low", preset: "low", want: guidedPolicySensitivityLow},
+		{name: "high", preset: "HIGH", want: guidedPolicySensitivityHigh},
+		{name: "balanced_alias", preset: "default", want: guidedPolicySensitivityBalanced},
+		{name: "balanced_alias_separated", preset: "de-fault", want: guidedPolicySensitivityBalanced},
+		{name: "empty", preset: "", want: guidedPolicySensitivityBalanced},
+		{name: "invalid", preset: "unexpected", want: guidedPolicySensitivityBalanced},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := guidedPolicySensitivityFromPreset(tt.preset); got != tt.want {
+				t.Fatalf("guidedPolicySensitivityFromPreset(%q) = %v, want %v", tt.preset, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGuidedWorkflowSetupResizesViewportOnEnterAndInputGrowth(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
