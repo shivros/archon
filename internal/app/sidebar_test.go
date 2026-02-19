@@ -288,14 +288,26 @@ func TestBuildSidebarItemsNestsWorkflowOwnedSessionsWithoutDuplication(t *testin
 	if items[0].(*sidebarItem).kind != sidebarWorkspace {
 		t.Fatalf("expected workspace row first")
 	}
+	if items[0].(*sidebarItem).depth != 0 {
+		t.Fatalf("expected workspace depth 0, got %d", items[0].(*sidebarItem).depth)
+	}
 	if items[1].(*sidebarItem).kind != sidebarWorkflow {
 		t.Fatalf("expected workflow row second")
+	}
+	if items[1].(*sidebarItem).depth != 1 {
+		t.Fatalf("expected workflow depth 1, got %d", items[1].(*sidebarItem).depth)
 	}
 	if items[2].(*sidebarItem).kind != sidebarSession || items[2].(*sidebarItem).session.ID != "s1" {
 		t.Fatalf("expected workflow-owned session nested under workflow")
 	}
+	if items[2].(*sidebarItem).depth != 2 {
+		t.Fatalf("expected workflow session depth 2, got %d", items[2].(*sidebarItem).depth)
+	}
 	if items[3].(*sidebarItem).kind != sidebarSession || items[3].(*sidebarItem).session.ID != "s2" {
 		t.Fatalf("expected regular session outside workflow")
+	}
+	if items[3].(*sidebarItem).depth != 1 {
+		t.Fatalf("expected regular workspace session depth 1, got %d", items[3].(*sidebarItem).depth)
 	}
 }
 

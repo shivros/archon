@@ -778,13 +778,18 @@ func sidebarToggleHitboxClicked(entry *sidebarItem, x int) bool {
 		return false
 	}
 	switch entry.kind {
-	case sidebarWorkspace:
-		return sidebarColumnMatches(x, 0)
-	case sidebarWorktree:
-		return sidebarColumnMatches(x, 2)
+	case sidebarWorkspace, sidebarWorktree, sidebarWorkflow:
+		return sidebarColumnMatches(x, sidebarToggleColumn(entry))
 	default:
 		return false
 	}
+}
+
+func sidebarToggleColumn(entry *sidebarItem) int {
+	if entry == nil {
+		return 0
+	}
+	return max(0, entry.depth) * 2
 }
 
 func sidebarColumnMatches(x, zeroBasedCol int) bool {

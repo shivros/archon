@@ -196,16 +196,22 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 		return true, nil
 	case "O":
 		return true, m.enterNotesForSelection()
+	case "o":
+		item := m.selectedItem()
+		if item != nil && item.kind == sidebarWorkflow {
+			return true, m.onSelectionChangedImmediate()
+		}
+		return false, nil
 	case "enter":
 		item := m.selectedItem()
-		if item != nil && (item.kind == sidebarWorkspace || item.kind == sidebarWorktree) && item.collapsible {
+		if item != nil && (item.kind == sidebarWorkspace || item.kind == sidebarWorktree || item.kind == sidebarWorkflow) && item.collapsible {
 			if m.sidebar.ToggleSelectedContainer() {
 				return true, m.syncSidebarExpansionChange()
 			}
 			return true, nil
 		}
 		if item != nil && item.kind == sidebarWorkflow {
-			return true, m.onSelectionChangedImmediate()
+			return true, nil
 		}
 		id := m.selectedSessionID()
 		if id == "" {

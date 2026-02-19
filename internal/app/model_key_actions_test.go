@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -276,6 +277,59 @@ func TestEnterTogglesWorkspaceExpansion(t *testing.T) {
 	}
 	if expanded := m.appState.SidebarWorkspaceExpanded["ws1"]; expanded {
 		t.Fatalf("expected persisted workspace expansion override ws1=false")
+	}
+}
+
+func TestEnterTogglesWorkflowExpansion(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+
+	handled, _ := m.reduceComposeAndWorkspaceEntryKeys(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter key to be handled for workflow")
+	}
+	if len(m.sidebar.Items()) != 2 {
+		t.Fatalf("expected workflow collapse to hide nested session, got %d rows", len(m.sidebar.Items()))
+	}
+	if expanded := m.appState.SidebarWorkflowExpanded["gwf-1"]; expanded {
+		t.Fatalf("expected persisted workflow expansion override gwf-1=false")
+	}
+}
+
+func TestWorkflowOpenShortcutUsesLowercaseO(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, workflows, map[string]*types.SessionMeta{}, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('o'))
+	if !handled {
+		t.Fatalf("expected workflow open shortcut to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected workflow open shortcut to return snapshot command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != "gwf-1" {
+		t.Fatalf("expected selected guided workflow run gwf-1 to be opened")
 	}
 }
 
