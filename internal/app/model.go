@@ -445,6 +445,11 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 
 func Run(client *client.Client) error {
 	model := NewModel(client)
+	coreCfg := config.DefaultCoreConfig()
+	if loadedCoreCfg, err := config.LoadCoreConfig(); err == nil {
+		coreCfg = loadedCoreCfg
+	}
+	model.applyCoreConfig(coreCfg)
 	uiConfig, err := config.LoadUIConfig()
 	if err != nil {
 		return err
@@ -715,6 +720,17 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 	if sidebarExpansionChanged || recentsVisibilityChanged {
 		m.applySidebarItems()
 	}
+}
+
+func (m *Model) applyCoreConfig(coreCfg config.CoreConfig) {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	preset := coreCfg.GuidedWorkflowsDefaultResolutionBoundary()
+	if preset == "" {
+		preset = coreCfg.GuidedWorkflowsDefaultRisk()
+	}
+	m.guidedWorkflow.SetDefaultSensitivity(guidedPolicySensitivityFromPreset(preset))
 }
 
 func (m *Model) consumeInputHeightChanges(inputs ...*TextInput) bool {

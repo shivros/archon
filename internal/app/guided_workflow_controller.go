@@ -37,6 +37,7 @@ type GuidedWorkflowUIController struct {
 	context       guidedWorkflowLaunchContext
 	templateID    string
 	templateName  string
+	defaultPreset guidedPolicySensitivity
 	sensitivity   guidedPolicySensitivity
 	userPrompt    string
 	run           *guidedworkflows.WorkflowRun
@@ -50,10 +51,11 @@ type GuidedWorkflowUIController struct {
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
 	return &GuidedWorkflowUIController{
-		stage:        guidedWorkflowStageLauncher,
-		templateID:   guidedworkflows.TemplateIDSolidPhaseDelivery,
-		templateName: "SOLID Phase Delivery",
-		sensitivity:  guidedPolicySensitivityBalanced,
+		stage:         guidedWorkflowStageLauncher,
+		templateID:    guidedworkflows.TemplateIDSolidPhaseDelivery,
+		templateName:  "SOLID Phase Delivery",
+		defaultPreset: guidedPolicySensitivityBalanced,
+		sensitivity:   guidedPolicySensitivityBalanced,
 	}
 }
 
@@ -65,7 +67,7 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.context = context
 	c.templateID = guidedworkflows.TemplateIDSolidPhaseDelivery
 	c.templateName = "SOLID Phase Delivery"
-	c.sensitivity = guidedPolicySensitivityBalanced
+	c.sensitivity = c.defaultPreset
 	c.userPrompt = ""
 	c.run = nil
 	c.timeline = nil
@@ -103,6 +105,21 @@ func (c *GuidedWorkflowUIController) OpenLauncher() {
 		return
 	}
 	c.stage = guidedWorkflowStageLauncher
+}
+
+func (c *GuidedWorkflowUIController) SetDefaultSensitivity(sensitivity guidedPolicySensitivity) {
+	if c == nil {
+		return
+	}
+	switch sensitivity {
+	case guidedPolicySensitivityLow, guidedPolicySensitivityBalanced, guidedPolicySensitivityHigh:
+		c.defaultPreset = sensitivity
+	default:
+		c.defaultPreset = guidedPolicySensitivityBalanced
+	}
+	if c.stage == guidedWorkflowStageLauncher || c.stage == guidedWorkflowStageSetup {
+		c.sensitivity = c.defaultPreset
+	}
 }
 
 func (c *GuidedWorkflowUIController) CycleSensitivity(delta int) {
@@ -856,6 +873,17 @@ func policyOverrideForSensitivity(sensitivity guidedPolicySensitivity) *guidedwo
 		}
 	default:
 		return nil
+	}
+}
+
+func guidedPolicySensitivityFromPreset(preset string) guidedPolicySensitivity {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "low":
+		return guidedPolicySensitivityLow
+	case "high":
+		return guidedPolicySensitivityHigh
+	default:
+		return guidedPolicySensitivityBalanced
 	}
 }
 

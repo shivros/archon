@@ -229,6 +229,8 @@ provider = "codex"
 model = "gpt-5.3-codex"
 access = "on_request"
 reasoning = "high"
+risk = "low"
+resolution_boundary = "high"
 
 [providers.codex]
 default_model = "gpt-5.3-codex"
@@ -303,6 +305,12 @@ network_access = false
 	}
 	if defaultsCfg["reasoning"] != "high" {
 		t.Fatalf("unexpected guided workflows defaults reasoning: %#v", defaultsCfg["reasoning"])
+	}
+	if defaultsCfg["risk"] != "low" {
+		t.Fatalf("unexpected guided workflows defaults risk: %#v", defaultsCfg["risk"])
+	}
+	if defaultsCfg["resolution_boundary"] != "high" {
+		t.Fatalf("unexpected guided workflows defaults resolution boundary: %#v", defaultsCfg["resolution_boundary"])
 	}
 	policyCfg, _ := guidedCfg["policy"].(map[string]any)
 	if policyCfg["confidence_threshold"] != 0.7 {

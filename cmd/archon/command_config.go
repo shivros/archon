@@ -100,10 +100,12 @@ type effectiveGuidedWorkflowsConfig struct {
 }
 
 type effectiveGuidedWorkflowsDefaultsConfig struct {
-	Provider  string `json:"provider,omitempty" toml:"provider,omitempty"`
-	Model     string `json:"model,omitempty" toml:"model,omitempty"`
-	Access    string `json:"access,omitempty" toml:"access,omitempty"`
-	Reasoning string `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
+	Provider           string `json:"provider,omitempty" toml:"provider,omitempty"`
+	Model              string `json:"model,omitempty" toml:"model,omitempty"`
+	Access             string `json:"access,omitempty" toml:"access,omitempty"`
+	Reasoning          string `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
+	Risk               string `json:"risk,omitempty" toml:"risk,omitempty"`
+	ResolutionBoundary string `json:"resolution_boundary,omitempty" toml:"resolution_boundary,omitempty"`
 }
 
 type effectiveGuidedWorkflowsPolicyConfig struct {
@@ -281,10 +283,12 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 			CheckpointStyle: coreCfg.GuidedWorkflowsCheckpointStyle(),
 			Mode:            coreCfg.GuidedWorkflowsMode(),
 			Defaults: effectiveGuidedWorkflowsDefaultsConfig{
-				Provider:  coreCfg.GuidedWorkflowsDefaultProvider(),
-				Model:     coreCfg.GuidedWorkflowsDefaultModel(),
-				Access:    string(coreCfg.GuidedWorkflowsDefaultAccessLevel()),
-				Reasoning: string(coreCfg.GuidedWorkflowsDefaultReasoningLevel()),
+				Provider:           coreCfg.GuidedWorkflowsDefaultProvider(),
+				Model:              coreCfg.GuidedWorkflowsDefaultModel(),
+				Access:             string(coreCfg.GuidedWorkflowsDefaultAccessLevel()),
+				Reasoning:          string(coreCfg.GuidedWorkflowsDefaultReasoningLevel()),
+				Risk:               coreCfg.GuidedWorkflowsDefaultRisk(),
+				ResolutionBoundary: coreCfg.GuidedWorkflowsDefaultResolutionBoundary(),
 			},
 			Policy: effectiveGuidedWorkflowsPolicyConfig{
 				ConfidenceThreshold:      coreCfg.GuidedWorkflowsPolicyConfidenceThreshold(),

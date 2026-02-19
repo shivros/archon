@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"control/internal/client"
+	"control/internal/config"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
@@ -336,6 +337,60 @@ func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 	}
 	if api.createReqs[0].UserPrompt != "Fix bug in request routing" {
 		t.Fatalf("expected user prompt in create request, got %q", api.createReqs[0].UserPrompt)
+	}
+}
+
+func TestGuidedWorkflowSetupUsesConfiguredDefaultResolutionBoundary(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+	api := &guidedWorkflowAPIMock{
+		createRun: newWorkflowRunFixture("gwf-boundary", guidedworkflows.WorkflowRunStatusCreated, now),
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.applyCoreConfig(config.CoreConfig{
+		GuidedWorkflows: config.CoreGuidedWorkflowsConfig{
+			Defaults: config.CoreGuidedWorkflowsDefaultsConfig{
+				Risk:               "low",
+				ResolutionBoundary: "high",
+			},
+		},
+	})
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	m.guidedWorkflowPromptInput.SetValue("Use configured boundary defaults")
+	m.syncGuidedWorkflowPromptInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected create workflow command")
+	}
+	if _, ok := cmd().(workflowRunCreatedMsg); !ok {
+		t.Fatalf("expected workflowRunCreatedMsg, got %T", cmd())
+	}
+	if len(api.createReqs) != 1 {
+		t.Fatalf("expected one create request, got %d", len(api.createReqs))
+	}
+	override := api.createReqs[0].PolicyOverrides
+	if override == nil {
+		t.Fatalf("expected default resolution boundary to set policy overrides")
+	}
+	if override.ConfidenceThreshold == nil || *override.ConfidenceThreshold != 0.75 {
+		t.Fatalf("expected high boundary confidence threshold 0.75, got %#v", override.ConfidenceThreshold)
+	}
+	if override.PauseThreshold == nil || *override.PauseThreshold != 0.45 {
+		t.Fatalf("expected high boundary pause threshold 0.45, got %#v", override.PauseThreshold)
 	}
 }
 

@@ -88,10 +88,12 @@ type CoreGuidedWorkflowsConfig struct {
 }
 
 type CoreGuidedWorkflowsDefaultsConfig struct {
-	Provider  string `toml:"provider"`
-	Model     string `toml:"model"`
-	Access    string `toml:"access"`
-	Reasoning string `toml:"reasoning"`
+	Provider           string `toml:"provider"`
+	Model              string `toml:"model"`
+	Access             string `toml:"access"`
+	Reasoning          string `toml:"reasoning"`
+	Risk               string `toml:"risk"`
+	ResolutionBoundary string `toml:"resolution_boundary"`
 }
 
 type CoreGuidedWorkflowsPolicyConfig struct {
@@ -382,6 +384,22 @@ func (c CoreConfig) GuidedWorkflowsDefaultAccessLevel() types.AccessLevel {
 
 func (c CoreConfig) GuidedWorkflowsDefaultReasoningLevel() types.ReasoningLevel {
 	level, ok := normalizeGuidedWorkflowsReasoningLevel(c.GuidedWorkflows.Defaults.Reasoning)
+	if !ok {
+		return ""
+	}
+	return level
+}
+
+func (c CoreConfig) GuidedWorkflowsDefaultRisk() string {
+	level, ok := normalizeGuidedWorkflowsSensitivityPreset(c.GuidedWorkflows.Defaults.Risk)
+	if !ok {
+		return ""
+	}
+	return level
+}
+
+func (c CoreConfig) GuidedWorkflowsDefaultResolutionBoundary() string {
+	level, ok := normalizeGuidedWorkflowsSensitivityPreset(c.GuidedWorkflows.Defaults.ResolutionBoundary)
 	if !ok {
 		return ""
 	}
@@ -810,6 +828,21 @@ func normalizeGuidedWorkflowsReasoningLevel(raw string) (types.ReasoningLevel, b
 		return types.ReasoningHigh, true
 	case "extra_high", "extrahigh":
 		return types.ReasoningExtraHigh, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeGuidedWorkflowsSensitivityPreset(raw string) (string, bool) {
+	switch normalizeGuidedWorkflowsValue(raw) {
+	case "":
+		return "", true
+	case "low":
+		return "low", true
+	case "balanced", "medium", "default":
+		return "balanced", true
+	case "high":
+		return "high", true
 	default:
 		return "", false
 	}

@@ -57,6 +57,8 @@ provider = " CoDeX "
 model = " gpt-5.3-codex "
 access = "on-request"
 reasoning = "extra-high"
+risk = "High"
+resolution_boundary = "low"
 
 [guided_workflows.policy]
 confidence_threshold = 0.75
@@ -177,6 +179,12 @@ command = "/usr/local/bin/gemini"
 	}
 	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "extra_high" {
 		t.Fatalf("unexpected guided workflows default reasoning: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultRisk(); got != "high" {
+		t.Fatalf("unexpected guided workflows default risk: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultResolutionBoundary(); got != "low" {
+		t.Fatalf("unexpected guided workflows default resolution boundary: %q", got)
 	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.75 {
 		t.Fatalf("unexpected guided workflows confidence threshold: %v", got)
@@ -364,6 +372,12 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	}
 	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "" {
 		t.Fatalf("expected guided workflows default reasoning to be unset, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultRisk(); got != "" {
+		t.Fatalf("expected guided workflows default risk to be unset, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultResolutionBoundary(); got != "" {
+		t.Fatalf("expected guided workflows default resolution boundary to be unset, got %q", got)
 	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.70 {
 		t.Fatalf("unexpected default guided workflows confidence threshold: %v", got)
@@ -577,10 +591,12 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 			CheckpointStyle: " confidence-weighted ",
 			Mode:            " guarded-autopilot ",
 			Defaults: CoreGuidedWorkflowsDefaultsConfig{
-				Provider:  " CoDeX ",
-				Model:     " gpt-5.2-codex ",
-				Access:    " full-access ",
-				Reasoning: " EXTRA-HIGH ",
+				Provider:           " CoDeX ",
+				Model:              " gpt-5.2-codex ",
+				Access:             " full-access ",
+				Reasoning:          " EXTRA-HIGH ",
+				Risk:               " DEFAULT ",
+				ResolutionBoundary: " HIGH ",
 			},
 			Policy: CoreGuidedWorkflowsPolicyConfig{
 				ConfidenceThreshold:      0.80,
@@ -752,6 +768,12 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "extra_high" {
 		t.Fatalf("unexpected guided workflows default reasoning: %q", got)
 	}
+	if got := cfg.GuidedWorkflowsDefaultRisk(); got != "balanced" {
+		t.Fatalf("unexpected guided workflows default risk: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultResolutionBoundary(); got != "high" {
+		t.Fatalf("unexpected guided workflows default resolution boundary: %q", got)
+	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.80 {
 		t.Fatalf("unexpected guided workflows confidence threshold: %v", got)
 	}
@@ -875,10 +897,12 @@ func TestGuidedWorkflowsConfigFallbacks(t *testing.T) {
 			CheckpointStyle: "risk_based",
 			Mode:            "manual",
 			Defaults: CoreGuidedWorkflowsDefaultsConfig{
-				Provider:  "not-a-provider",
-				Model:     "   ",
-				Access:    "invalid-access",
-				Reasoning: "invalid-reasoning",
+				Provider:           "not-a-provider",
+				Model:              "   ",
+				Access:             "invalid-access",
+				Reasoning:          "invalid-reasoning",
+				Risk:               "unknown",
+				ResolutionBoundary: "weird",
 			},
 			Policy: CoreGuidedWorkflowsPolicyConfig{
 				ConfidenceThreshold:      0,
@@ -925,6 +949,12 @@ func TestGuidedWorkflowsConfigFallbacks(t *testing.T) {
 	}
 	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "" {
 		t.Fatalf("expected guided workflows default reasoning fallback to empty, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultRisk(); got != "" {
+		t.Fatalf("expected guided workflows default risk fallback to empty, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultResolutionBoundary(); got != "" {
+		t.Fatalf("expected guided workflows default resolution boundary fallback to empty, got %q", got)
 	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.70 {
 		t.Fatalf("unexpected confidence threshold fallback: %v", got)

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +154,40 @@ func TestWorkflowRunEndpointsCreateWithPolicyOverrides(t *testing.T) {
 	}
 	if !created.Policy.HardGates.PreCommitApproval {
 		t.Fatalf("expected hard gate pre_commit_approval override")
+	}
+}
+
+func TestWorkflowRunEndpointsCreateUsesConfiguredResolutionBoundaryDefaults(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte(`
+[guided_workflows.defaults]
+resolution_boundary = "high"
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile config.toml: %v", err)
+	}
+
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if created.Policy.ConfidenceThreshold != guidedWorkflowBoundaryHighConfidenceThreshold {
+		t.Fatalf("expected configured high confidence threshold %v, got %v", guidedWorkflowBoundaryHighConfidenceThreshold, created.Policy.ConfidenceThreshold)
+	}
+	if created.Policy.PauseThreshold != guidedWorkflowBoundaryHighPauseThreshold {
+		t.Fatalf("expected configured high pause threshold %v, got %v", guidedWorkflowBoundaryHighPauseThreshold, created.Policy.PauseThreshold)
 	}
 }
 
