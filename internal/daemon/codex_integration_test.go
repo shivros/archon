@@ -41,27 +41,17 @@ func TestCodexAppServerIntegration(t *testing.T) {
 	}
 	defer client.Close()
 
-	model := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
-	if model == "" {
-		model = loadCoreConfigOrDefault().CodexDefaultModel()
-	}
+	model := resolveCodexIntegrationModel(ctx, t, client)
 
-	var threadResult struct {
-		Thread struct {
-			ID string `json:"id"`
-		} `json:"thread"`
-	}
-	if err := client.request(ctx, "thread/start", map[string]any{
-		"model": model,
-		"cwd":   repoDir,
-	}, &threadResult); err != nil {
+	threadID, err := client.StartThread(ctx, model, repoDir, nil)
+	if err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
-	if threadResult.Thread.ID == "" {
+	if threadID == "" {
 		t.Fatalf("thread id missing")
 	}
 
-	turnID, err := client.StartTurn(ctx, threadResult.Thread.ID, []map[string]any{
+	turnID, err := client.StartTurn(ctx, threadID, []map[string]any{
 		{"type": "text", "text": "Say \"ok\" and nothing else."},
 	}, nil, model)
 	if err != nil {
@@ -77,7 +67,8 @@ func TestCodexAppServerIntegration(t *testing.T) {
 func TestAPICodexSessionFlow(t *testing.T) {
 	requireCodexIntegration(t)
 
-	repoDir, _ := createCodexWorkspace(t)
+	repoDir, codexHome := createCodexWorkspace(t)
+	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
 
 	server, manager, _ := newCodexIntegrationServer(t)
 	defer server.Close()
@@ -88,6 +79,9 @@ func TestAPICodexSessionFlow(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: model,
+		},
 	})
 	if session.ID == "" {
 		t.Fatalf("session id missing")
@@ -113,7 +107,8 @@ func TestAPICodexSessionFlow(t *testing.T) {
 func TestCodexTailStream(t *testing.T) {
 	requireCodexIntegration(t)
 
-	repoDir, _ := createCodexWorkspace(t)
+	repoDir, codexHome := createCodexWorkspace(t)
+	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
 	server, _, _ := newCodexIntegrationServer(t)
 	defer server.Close()
 
@@ -122,6 +117,9 @@ func TestCodexTailStream(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: model,
+		},
 	})
 
 	stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/tail?follow=1&stream=combined")
@@ -144,7 +142,8 @@ func TestCodexTailStream(t *testing.T) {
 func TestCodexEventsStream(t *testing.T) {
 	requireCodexIntegration(t)
 
-	repoDir, _ := createCodexWorkspace(t)
+	repoDir, codexHome := createCodexWorkspace(t)
+	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
 	server, _, _ := newCodexIntegrationServer(t)
 	defer server.Close()
 
@@ -153,6 +152,9 @@ func TestCodexEventsStream(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: model,
+		},
 	})
 
 	stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/events?follow=1")
@@ -179,7 +181,8 @@ func TestCodexEventsStream(t *testing.T) {
 func TestCodexInterruptFlow(t *testing.T) {
 	requireCodexIntegration(t)
 
-	repoDir, _ := createCodexWorkspace(t)
+	repoDir, codexHome := createCodexWorkspace(t)
+	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
 	server, _, _ := newCodexIntegrationServer(t)
 	defer server.Close()
 
@@ -188,6 +191,9 @@ func TestCodexInterruptFlow(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: model,
+		},
 	})
 
 	stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/events?follow=1")
@@ -224,6 +230,7 @@ func TestCodexApprovalFlow(t *testing.T) {
 	repoDir, codexHome := createCodexWorkspace(t)
 	writeCodexConfig(t, codexHome, repoDir, "untrusted", "workspace-write", "untrusted")
 	requireCodexAuth(t, repoDir, codexHome)
+	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
 	server, _, _ := newCodexIntegrationServer(t)
 	defer server.Close()
 
@@ -232,6 +239,9 @@ func TestCodexApprovalFlow(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: model,
+		},
 	})
 
 	stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/events?follow=1")
@@ -311,6 +321,77 @@ func codexIntegrationTimeout() time.Duration {
 		}
 	}
 	return 2 * time.Minute
+}
+
+func resolveCodexIntegrationModelForWorkspace(t *testing.T, repoDir, codexHome string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client, err := startCodexAppServer(ctx, repoDir, codexHome, logging.New(io.Discard, logging.Info))
+	if err != nil {
+		t.Fatalf("start codex app-server for model resolution: %v", err)
+	}
+	defer client.Close()
+	return resolveCodexIntegrationModel(ctx, t, client)
+}
+
+func resolveCodexIntegrationModel(ctx context.Context, t *testing.T, client *codexAppServer) string {
+	t.Helper()
+	if client == nil {
+		t.Fatalf("codex app-server client is required for model resolution")
+	}
+	preferred := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
+	defaultModel := strings.TrimSpace(loadCoreConfigOrDefault().CodexDefaultModel())
+	models, err := client.ListModels(ctx, nil, 100)
+	if err != nil || models == nil || len(models.Data) == 0 {
+		if preferred != "" {
+			return preferred
+		}
+		return defaultModel
+	}
+	if preferred != "" {
+		if modelListContains(models.Data, preferred) {
+			return preferred
+		}
+		t.Fatalf("ARCHON_CODEX_MODEL=%q is not available in this Codex account", preferred)
+	}
+	if defaultModel != "" && modelListContains(models.Data, defaultModel) {
+		return defaultModel
+	}
+	for _, summary := range models.Data {
+		if !summary.IsDefault {
+			continue
+		}
+		if candidate := modelSummaryName(summary); candidate != "" {
+			return candidate
+		}
+	}
+	for _, summary := range models.Data {
+		if candidate := modelSummaryName(summary); candidate != "" {
+			return candidate
+		}
+	}
+	return defaultModel
+}
+
+func modelListContains(models []codexModelSummary, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, summary := range models {
+		if strings.EqualFold(strings.TrimSpace(summary.Model), target) || strings.EqualFold(strings.TrimSpace(summary.ID), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func modelSummaryName(summary codexModelSummary) string {
+	if value := strings.TrimSpace(summary.Model); value != "" {
+		return value
+	}
+	return strings.TrimSpace(summary.ID)
 }
 
 func createCodexWorkspace(t *testing.T) (string, string) {
