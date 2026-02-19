@@ -380,22 +380,14 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 	if workspaceID == "" && worktreeID == "" {
 		return "", "", "", nil
 	}
-	provider := d.preferredProviderForContext(workspaceID, worktreeID, sessions, metaBySessionID)
-	if configuredProvider := strings.TrimSpace(d.defaults.Provider); configuredProvider != "" {
-		provider = configuredProvider
-	}
-	if provider == "" {
-		provider = "codex"
-	}
-	if !guidedWorkflowProviderSupportsPromptDispatch(provider) {
-		provider = "codex"
-	}
+	provider := d.resolveWorkflowSessionProvider(workspaceID, worktreeID, sessions, metaBySessionID)
+	runtimeOptions := guidedWorkflowRuntimeOptionsForDispatch(req.DefaultAccessLevel, d.defaults)
 	session, err := starter.Start(ctx, StartSessionRequest{
 		Provider:       provider,
 		Title:          guidedWorkflowSessionTitle(req.RunID),
 		WorkspaceID:    workspaceID,
 		WorktreeID:     worktreeID,
-		RuntimeOptions: guidedWorkflowRuntimeOptionsForDispatch(req.DefaultAccessLevel, d.defaults),
+		RuntimeOptions: runtimeOptions,
 	})
 	if err != nil {
 		return "", "", "", err
@@ -403,7 +395,20 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 	if session == nil {
 		return "", "", "", nil
 	}
-	return strings.TrimSpace(session.ID), strings.TrimSpace(session.Provider), "", nil
+	return strings.TrimSpace(session.ID), strings.TrimSpace(session.Provider), guidedWorkflowDispatchModel(runtimeOptions), nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionProvider(
+	workspaceID string,
+	worktreeID string,
+	sessions []*types.Session,
+	metaBySessionID map[string]*types.SessionMeta,
+) string {
+	provider := d.preferredProviderForContext(workspaceID, worktreeID, sessions, metaBySessionID)
+	if configuredProvider := strings.TrimSpace(d.defaults.Provider); configuredProvider != "" {
+		provider = configuredProvider
+	}
+	return normalizeGuidedWorkflowDispatchProvider(provider)
 }
 
 func (d *guidedWorkflowPromptDispatcher) preferredProviderForContext(
@@ -486,6 +491,17 @@ func guidedWorkflowDispatchDefaultsFromCoreConfig(cfg config.CoreConfig) guidedW
 	return out
 }
 
+func normalizeGuidedWorkflowDispatchProvider(provider string) string {
+	normalized := providers.Normalize(provider)
+	if normalized == "" {
+		return "codex"
+	}
+	if !guidedWorkflowProviderSupportsPromptDispatch(normalized) {
+		return "codex"
+	}
+	return normalized
+}
+
 func guidedWorkflowRuntimeOptionsForDispatch(level types.AccessLevel, defaults guidedWorkflowDispatchDefaults) *types.SessionRuntimeOptions {
 	options := &types.SessionRuntimeOptions{
 		Model:     strings.TrimSpace(defaults.Model),
@@ -501,6 +517,13 @@ func guidedWorkflowRuntimeOptionsForDispatch(level types.AccessLevel, defaults g
 		return nil
 	}
 	return options
+}
+
+func guidedWorkflowDispatchModel(options *types.SessionRuntimeOptions) string {
+	if options == nil {
+		return ""
+	}
+	return strings.TrimSpace(options.Model)
 }
 
 func wrapStepDispatchError(err error) error {
