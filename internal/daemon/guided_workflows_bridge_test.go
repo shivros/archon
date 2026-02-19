@@ -530,6 +530,125 @@ func TestGuidedWorkflowPromptDispatcherFallsBackToSupportedSession(t *testing.T)
 	}
 }
 
+func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSession(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-opencode", Provider: "opencode", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-defaults",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: guidedWorkflowDispatchDefaults{
+			Provider:  "opencode",
+			Model:     "gpt-5.3-codex",
+			Access:    types.AccessOnRequest,
+			Reasoning: types.ReasoningHigh,
+		},
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-opencode" {
+		t.Fatalf("expected configured-default dispatch session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "opencode" {
+		t.Fatalf("expected configured provider on start request, got %q", gateway.startReqs[0].Provider)
+	}
+	runtime := gateway.startReqs[0].RuntimeOptions
+	if runtime == nil {
+		t.Fatalf("expected runtime options from configured defaults")
+	}
+	if runtime.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected configured model in runtime options, got %q", runtime.Model)
+	}
+	if runtime.Access != types.AccessOnRequest {
+		t.Fatalf("expected configured access in runtime options, got %q", runtime.Access)
+	}
+	if runtime.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected configured reasoning in runtime options, got %q", runtime.Reasoning)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherTemplateAccessOverridesConfiguredDefaultAccess(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-access",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: guidedWorkflowDispatchDefaults{
+			Provider: "codex",
+			Model:    "gpt-5.2-codex",
+			Access:   types.AccessFull,
+		},
+	}
+	_, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:              "gwf-1",
+		WorkspaceID:        "ws-1",
+		WorktreeID:         "wt-1",
+		DefaultAccessLevel: types.AccessReadOnly,
+		Prompt:             "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	runtime := gateway.startReqs[0].RuntimeOptions
+	if runtime == nil {
+		t.Fatalf("expected runtime options to be present")
+	}
+	if runtime.Access != types.AccessReadOnly {
+		t.Fatalf("expected template access to override configured default access, got %q", runtime.Access)
+	}
+	if runtime.Model != "gpt-5.2-codex" {
+		t.Fatalf("expected configured default model to remain set, got %q", runtime.Model)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherFallsBackToCodexWhenConfiguredProviderUnsupported(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-provider-fallback",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: guidedWorkflowDispatchDefaults{
+			Provider: "claude",
+		},
+	}
+	_, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "codex" {
+		t.Fatalf("expected codex fallback provider for unsupported configured provider, got %q", gateway.startReqs[0].Provider)
+	}
+}
+
 func TestGuidedWorkflowRunServiceDispatchCreatesSessionAndReusesItAcrossSteps(t *testing.T) {
 	template := guidedworkflows.WorkflowTemplate{
 		ID:                 "gwf_integration_simple",

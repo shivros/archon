@@ -71,6 +71,12 @@ auto_start = false
 checkpoint_style = "confidence_weighted"
 mode = "guarded_autopilot"
 
+[guided_workflows.defaults]
+provider = "codex" # codex | opencode (unsupported values fall back to codex)
+model = "gpt-5.1-codex"
+access = "on_request" # read_only | on_request | full_access
+reasoning = "medium" # low | medium | high | extra_high
+
 [guided_workflows.policy]
 confidence_threshold = 0.70
 pause_threshold = 0.60
@@ -163,7 +169,14 @@ Enable guided workflows in `~/.archon/config.toml`:
 
 - set `[guided_workflows].enabled = true`
 - keep `auto_start = false` (default) to require explicit user start from task/worktree context
+- optionally set `[guided_workflows.defaults]` to control auto-created workflow session provider/model/access/reasoning
 - tune `[guided_workflows.policy]` and `[guided_workflows.rollout]` guardrails as needed
+
+Workflow templates are partially hardcoded and partially configurable:
+
+- built-in template: `solid_phase_delivery` (used when no template id is supplied)
+- user templates: `~/.archon/workflow_templates.json`
+- merge behavior: user templates are merged with built-ins by template `id`, so you can add new templates or override built-in IDs
 
 When enabled, daemon exposes guided workflow lifecycle endpoints:
 

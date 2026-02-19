@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"control/internal/providers"
+	"control/internal/types"
+
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -75,12 +78,20 @@ type CoreNotificationsConfig struct {
 }
 
 type CoreGuidedWorkflowsConfig struct {
-	Enabled         *bool                            `toml:"enabled"`
-	AutoStart       *bool                            `toml:"auto_start"`
-	CheckpointStyle string                           `toml:"checkpoint_style"`
-	Mode            string                           `toml:"mode"`
-	Policy          CoreGuidedWorkflowsPolicyConfig  `toml:"policy"`
-	Rollout         CoreGuidedWorkflowsRolloutConfig `toml:"rollout"`
+	Enabled         *bool                             `toml:"enabled"`
+	AutoStart       *bool                             `toml:"auto_start"`
+	CheckpointStyle string                            `toml:"checkpoint_style"`
+	Mode            string                            `toml:"mode"`
+	Defaults        CoreGuidedWorkflowsDefaultsConfig `toml:"defaults"`
+	Policy          CoreGuidedWorkflowsPolicyConfig   `toml:"policy"`
+	Rollout         CoreGuidedWorkflowsRolloutConfig  `toml:"rollout"`
+}
+
+type CoreGuidedWorkflowsDefaultsConfig struct {
+	Provider  string `toml:"provider"`
+	Model     string `toml:"model"`
+	Access    string `toml:"access"`
+	Reasoning string `toml:"reasoning"`
 }
 
 type CoreGuidedWorkflowsPolicyConfig struct {
@@ -344,6 +355,37 @@ func (c CoreConfig) GuidedWorkflowsMode() string {
 	default:
 		return defaultGuidedWorkflowsMode
 	}
+}
+
+func (c CoreConfig) GuidedWorkflowsDefaultProvider() string {
+	provider := providers.Normalize(c.GuidedWorkflows.Defaults.Provider)
+	if provider == "" {
+		return ""
+	}
+	if _, ok := providers.Lookup(provider); !ok {
+		return ""
+	}
+	return provider
+}
+
+func (c CoreConfig) GuidedWorkflowsDefaultModel() string {
+	return strings.TrimSpace(c.GuidedWorkflows.Defaults.Model)
+}
+
+func (c CoreConfig) GuidedWorkflowsDefaultAccessLevel() types.AccessLevel {
+	level, ok := normalizeGuidedWorkflowsAccessLevel(c.GuidedWorkflows.Defaults.Access)
+	if !ok {
+		return ""
+	}
+	return level
+}
+
+func (c CoreConfig) GuidedWorkflowsDefaultReasoningLevel() types.ReasoningLevel {
+	level, ok := normalizeGuidedWorkflowsReasoningLevel(c.GuidedWorkflows.Defaults.Reasoning)
+	if !ok {
+		return ""
+	}
+	return level
 }
 
 func (c CoreConfig) GuidedWorkflowsPolicyConfidenceThreshold() float64 {
@@ -739,6 +781,38 @@ func normalizeGuidedWorkflowsValue(raw string) string {
 	value = strings.ReplaceAll(value, "-", "_")
 	value = strings.ReplaceAll(value, " ", "_")
 	return value
+}
+
+func normalizeGuidedWorkflowsAccessLevel(raw string) (types.AccessLevel, bool) {
+	switch normalizeGuidedWorkflowsValue(raw) {
+	case "":
+		return "", true
+	case "read_only", "readonly":
+		return types.AccessReadOnly, true
+	case "on_request", "onrequest":
+		return types.AccessOnRequest, true
+	case "full_access", "fullaccess":
+		return types.AccessFull, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeGuidedWorkflowsReasoningLevel(raw string) (types.ReasoningLevel, bool) {
+	switch normalizeGuidedWorkflowsValue(raw) {
+	case "":
+		return "", true
+	case "low":
+		return types.ReasoningLow, true
+	case "medium":
+		return types.ReasoningMedium, true
+	case "high":
+		return types.ReasoningHigh, true
+	case "extra_high", "extrahigh":
+		return types.ReasoningExtraHigh, true
+	default:
+		return "", false
+	}
 }
 
 func boolPtr(value bool) *bool {

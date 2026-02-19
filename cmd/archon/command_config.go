@@ -90,12 +90,20 @@ type effectiveNotificationsConfig struct {
 }
 
 type effectiveGuidedWorkflowsConfig struct {
-	Enabled         bool                                  `json:"enabled" toml:"enabled"`
-	AutoStart       bool                                  `json:"auto_start" toml:"auto_start"`
-	CheckpointStyle string                                `json:"checkpoint_style" toml:"checkpoint_style"`
-	Mode            string                                `json:"mode" toml:"mode"`
-	Policy          effectiveGuidedWorkflowsPolicyConfig  `json:"policy" toml:"policy"`
-	Rollout         effectiveGuidedWorkflowsRolloutConfig `json:"rollout" toml:"rollout"`
+	Enabled         bool                                   `json:"enabled" toml:"enabled"`
+	AutoStart       bool                                   `json:"auto_start" toml:"auto_start"`
+	CheckpointStyle string                                 `json:"checkpoint_style" toml:"checkpoint_style"`
+	Mode            string                                 `json:"mode" toml:"mode"`
+	Defaults        effectiveGuidedWorkflowsDefaultsConfig `json:"defaults" toml:"defaults"`
+	Policy          effectiveGuidedWorkflowsPolicyConfig   `json:"policy" toml:"policy"`
+	Rollout         effectiveGuidedWorkflowsRolloutConfig  `json:"rollout" toml:"rollout"`
+}
+
+type effectiveGuidedWorkflowsDefaultsConfig struct {
+	Provider  string `json:"provider,omitempty" toml:"provider,omitempty"`
+	Model     string `json:"model,omitempty" toml:"model,omitempty"`
+	Access    string `json:"access,omitempty" toml:"access,omitempty"`
+	Reasoning string `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
 }
 
 type effectiveGuidedWorkflowsPolicyConfig struct {
@@ -272,6 +280,12 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 			AutoStart:       coreCfg.GuidedWorkflowsAutoStart(),
 			CheckpointStyle: coreCfg.GuidedWorkflowsCheckpointStyle(),
 			Mode:            coreCfg.GuidedWorkflowsMode(),
+			Defaults: effectiveGuidedWorkflowsDefaultsConfig{
+				Provider:  coreCfg.GuidedWorkflowsDefaultProvider(),
+				Model:     coreCfg.GuidedWorkflowsDefaultModel(),
+				Access:    string(coreCfg.GuidedWorkflowsDefaultAccessLevel()),
+				Reasoning: string(coreCfg.GuidedWorkflowsDefaultReasoningLevel()),
+			},
 			Policy: effectiveGuidedWorkflowsPolicyConfig{
 				ConfidenceThreshold:      coreCfg.GuidedWorkflowsPolicyConfidenceThreshold(),
 				PauseThreshold:           coreCfg.GuidedWorkflowsPolicyPauseThreshold(),

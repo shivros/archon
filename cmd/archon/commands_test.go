@@ -224,6 +224,12 @@ level = "debug"
 [debug]
 stream_debug = true
 
+[guided_workflows.defaults]
+provider = "codex"
+model = "gpt-5.3-codex"
+access = "on_request"
+reasoning = "high"
+
 [providers.codex]
 default_model = "gpt-5.3-codex"
 models = ["gpt-5.3-codex"]
@@ -284,6 +290,19 @@ network_access = false
 	}
 	if guidedCfg["mode"] != "guarded_autopilot" {
 		t.Fatalf("unexpected guided workflows mode: %#v", guidedCfg["mode"])
+	}
+	defaultsCfg, _ := guidedCfg["defaults"].(map[string]any)
+	if defaultsCfg["provider"] != "codex" {
+		t.Fatalf("unexpected guided workflows defaults provider: %#v", defaultsCfg["provider"])
+	}
+	if defaultsCfg["model"] != "gpt-5.3-codex" {
+		t.Fatalf("unexpected guided workflows defaults model: %#v", defaultsCfg["model"])
+	}
+	if defaultsCfg["access"] != "on_request" {
+		t.Fatalf("unexpected guided workflows defaults access: %#v", defaultsCfg["access"])
+	}
+	if defaultsCfg["reasoning"] != "high" {
+		t.Fatalf("unexpected guided workflows defaults reasoning: %#v", defaultsCfg["reasoning"])
 	}
 	policyCfg, _ := guidedCfg["policy"].(map[string]any)
 	if policyCfg["confidence_threshold"] != 0.7 {

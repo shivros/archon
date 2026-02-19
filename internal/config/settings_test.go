@@ -52,6 +52,12 @@ auto_start = true
 checkpoint_style = "confidence-weighted"
 mode = "guarded_autopilot"
 
+[guided_workflows.defaults]
+provider = " CoDeX "
+model = " gpt-5.3-codex "
+access = "on-request"
+reasoning = "extra-high"
+
 [guided_workflows.policy]
 confidence_threshold = 0.75
 pause_threshold = 0.55
@@ -159,6 +165,18 @@ command = "/usr/local/bin/gemini"
 	}
 	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
 		t.Fatalf("unexpected guided workflows mode: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultProvider(); got != "codex" {
+		t.Fatalf("unexpected guided workflows default provider: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultModel(); got != "gpt-5.3-codex" {
+		t.Fatalf("unexpected guided workflows default model: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultAccessLevel(); got != "on_request" {
+		t.Fatalf("unexpected guided workflows default access: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "extra_high" {
+		t.Fatalf("unexpected guided workflows default reasoning: %q", got)
 	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.75 {
 		t.Fatalf("unexpected guided workflows confidence threshold: %v", got)
@@ -334,6 +352,18 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	}
 	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
 		t.Fatalf("unexpected default guided workflows mode: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultProvider(); got != "" {
+		t.Fatalf("expected guided workflows default provider to be unset, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultModel(); got != "" {
+		t.Fatalf("expected guided workflows default model to be unset, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultAccessLevel(); got != "" {
+		t.Fatalf("expected guided workflows default access to be unset, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "" {
+		t.Fatalf("expected guided workflows default reasoning to be unset, got %q", got)
 	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.70 {
 		t.Fatalf("unexpected default guided workflows confidence threshold: %v", got)
@@ -546,6 +576,12 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 			AutoStart:       boolPtr(true),
 			CheckpointStyle: " confidence-weighted ",
 			Mode:            " guarded-autopilot ",
+			Defaults: CoreGuidedWorkflowsDefaultsConfig{
+				Provider:  " CoDeX ",
+				Model:     " gpt-5.2-codex ",
+				Access:    " full-access ",
+				Reasoning: " EXTRA-HIGH ",
+			},
 			Policy: CoreGuidedWorkflowsPolicyConfig{
 				ConfidenceThreshold:      0.80,
 				PauseThreshold:           0.65,
@@ -704,6 +740,18 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
 		t.Fatalf("unexpected guided workflows mode: %q", got)
 	}
+	if got := cfg.GuidedWorkflowsDefaultProvider(); got != "codex" {
+		t.Fatalf("unexpected guided workflows default provider: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultModel(); got != "gpt-5.2-codex" {
+		t.Fatalf("unexpected guided workflows default model: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultAccessLevel(); got != "full_access" {
+		t.Fatalf("unexpected guided workflows default access: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "extra_high" {
+		t.Fatalf("unexpected guided workflows default reasoning: %q", got)
+	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.80 {
 		t.Fatalf("unexpected guided workflows confidence threshold: %v", got)
 	}
@@ -826,6 +874,12 @@ func TestGuidedWorkflowsConfigFallbacks(t *testing.T) {
 		GuidedWorkflows: CoreGuidedWorkflowsConfig{
 			CheckpointStyle: "risk_based",
 			Mode:            "manual",
+			Defaults: CoreGuidedWorkflowsDefaultsConfig{
+				Provider:  "not-a-provider",
+				Model:     "   ",
+				Access:    "invalid-access",
+				Reasoning: "invalid-reasoning",
+			},
 			Policy: CoreGuidedWorkflowsPolicyConfig{
 				ConfidenceThreshold:      0,
 				PauseThreshold:           10,
@@ -859,6 +913,18 @@ func TestGuidedWorkflowsConfigFallbacks(t *testing.T) {
 	}
 	if got := cfg.GuidedWorkflowsMode(); got != "guarded_autopilot" {
 		t.Fatalf("unexpected mode fallback: %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultProvider(); got != "" {
+		t.Fatalf("expected guided workflows default provider fallback to empty, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultModel(); got != "" {
+		t.Fatalf("expected guided workflows default model fallback to empty, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultAccessLevel(); got != "" {
+		t.Fatalf("expected guided workflows default access fallback to empty, got %q", got)
+	}
+	if got := cfg.GuidedWorkflowsDefaultReasoningLevel(); got != "" {
+		t.Fatalf("expected guided workflows default reasoning fallback to empty, got %q", got)
 	}
 	if got := cfg.GuidedWorkflowsPolicyConfidenceThreshold(); got != 0.70 {
 		t.Fatalf("unexpected confidence threshold fallback: %v", got)
