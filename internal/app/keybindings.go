@@ -43,6 +43,8 @@ const (
 	KeyCommandPauseFollow          = "ui.pauseFollow"
 	KeyCommandToggleReasoning      = "ui.toggleReasoning"
 	KeyCommandToggleMessageSelect  = "ui.toggleMessageSelect"
+	KeyCommandHistoryBack          = "ui.historyBack"
+	KeyCommandHistoryForward       = "ui.historyForward"
 	KeyCommandComposeClearInput    = "ui.composeClearInput"
 	KeyCommandComposeModel         = "ui.composeModel"
 	KeyCommandComposeReasoning     = "ui.composeReasoning"
@@ -94,6 +96,8 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandPauseFollow:          "p",
 	KeyCommandToggleReasoning:      "e",
 	KeyCommandToggleMessageSelect:  "v",
+	KeyCommandHistoryBack:          "alt+left",
+	KeyCommandHistoryForward:       "alt+right",
 	KeyCommandComposeClearInput:    "ctrl+c",
 	KeyCommandComposeModel:         "ctrl+1",
 	KeyCommandComposeReasoning:     "ctrl+2",

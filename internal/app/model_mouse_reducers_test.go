@@ -119,6 +119,40 @@ func TestMouseReducerBackwardAndForwardButtonsNavigateSelectionHistory(t *testin
 	}
 }
 
+func TestMouseReducerButtonTenNavigatesSelectionHistoryBack(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	_ = m.onSystemSelectionChangedImmediate()
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	_ = m.onSelectionChangedImmediate()
+
+	if handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseButton10, X: 1, Y: 1}); !handled {
+		t.Fatalf("expected mouse button10 click to be handled")
+	}
+	if got := m.selectedSessionID(); got != "s1" {
+		t.Fatalf("expected button10 navigation to select s1, got %q", got)
+	}
+
+}
+
 func TestMouseReducerBackwardButtonReleaseIsIgnored(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

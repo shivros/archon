@@ -362,6 +362,48 @@ func TestSidebarArrowLeftRightCollapseAndExpandSelection(t *testing.T) {
 	}
 }
 
+func TestSelectionHistoryHotkeysNavigateBackAndForward(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	_ = m.onSystemSelectionChangedImmediate()
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	_ = m.onSelectionChangedImmediate()
+
+	handled, _ := m.reduceSelectionKeys(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt})
+	if !handled {
+		t.Fatalf("expected alt+left to be handled")
+	}
+	if got := m.selectedSessionID(); got != "s1" {
+		t.Fatalf("expected history back hotkey to select s1, got %q", got)
+	}
+
+	handled, _ = m.reduceSelectionKeys(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt})
+	if !handled {
+		t.Fatalf("expected alt+right to be handled")
+	}
+	if got := m.selectedSessionID(); got != "s2" {
+		t.Fatalf("expected history forward hotkey to select s2, got %q", got)
+	}
+}
+
 func selectSidebarItemKind(t *testing.T, m *Model, kind sidebarItemKind) {
 	t.Helper()
 	if m == nil || m.sidebar == nil {

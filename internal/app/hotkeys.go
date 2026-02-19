@@ -70,6 +70,8 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "ctrl+f", Label: "page down", Context: HotkeySidebar, Priority: 57},
 		{Key: "pgup/pgdn", Label: "scroll", Context: HotkeySidebar, Priority: 60},
 		{Key: "e", Command: KeyCommandToggleReasoning, Label: "toggle reasoning", Context: HotkeySidebar, Priority: 65},
+		{Key: "alt+←", Command: KeyCommandHistoryBack, Label: "history back", Context: HotkeySidebar, Priority: 66},
+		{Key: "alt+→", Command: KeyCommandHistoryForward, Label: "history forward", Context: HotkeySidebar, Priority: 67},
 		{Key: "p", Command: KeyCommandPauseFollow, Label: "pause", Context: HotkeySidebar, Priority: 70},
 		{Key: "esc", Label: "cancel", Context: HotkeySearch, Priority: 10},
 		{Key: "enter", Label: "search", Context: HotkeySearch, Priority: 11},

@@ -2758,7 +2758,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	}
 
 	mouse := msg.Mouse()
-	if mouse.Button == tea.MouseLeft || mouse.Button == tea.MouseRight || mouse.Button == tea.MouseBackward || mouse.Button == tea.MouseForward {
+	if mouse.Button == tea.MouseLeft || mouse.Button == tea.MouseRight || mouse.Button == tea.MouseBackward || mouse.Button == tea.MouseForward || mouse.Button == tea.MouseButton10 {
 		if _, ok := msg.(tea.MouseClickMsg); !ok {
 			return false
 		}
@@ -2778,6 +2778,8 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return m.reduceMouseBackPress()
 	case tea.MouseForward:
 		return m.reduceMouseForwardPress()
+	case tea.MouseButton10:
+		return m.reduceMouseBackPress()
 	case tea.MouseLeft:
 	default:
 		return false

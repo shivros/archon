@@ -236,6 +236,12 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandInputRedo, ""); got != "ctrl+y" {
 		t.Fatalf("expected default input redo key ctrl+y, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandHistoryBack, ""); got != "alt+left" {
+		t.Fatalf("expected default history back key alt+left, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandHistoryForward, ""); got != "alt+right" {
+		t.Fatalf("expected default history forward key alt+right, got %q", got)
+	}
 }
 
 func TestMenuOverrideRemapsToCanonicalCtrlM(t *testing.T) {

@@ -305,6 +305,12 @@ func (m *Model) reduceViewToggleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceSelectionKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
+	if m.keyMatchesCommand(msg, KeyCommandHistoryBack, "alt+left") {
+		return true, m.navigateSelectionHistoryBack()
+	}
+	if m.keyMatchesCommand(msg, KeyCommandHistoryForward, "alt+right") {
+		return true, m.navigateSelectionHistoryForward()
+	}
 	switch m.keyString(msg) {
 	case " ", "space":
 		// Session multiselect is temporarily disabled.
