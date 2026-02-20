@@ -286,6 +286,223 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	}
 }
 
+type sessionItemsMessageContext struct {
+	source   sessionProjectionSource
+	id       string
+	key      string
+	provider string
+}
+
+func (m *Model) handleSessionItemsMessage(source sessionProjectionSource, id, key string, items []map[string]any, err error) tea.Cmd {
+	ctx, ok := m.prepareSessionItemsMessageContext(source, id, key, err)
+	if !ok {
+		return nil
+	}
+	if m.applyLiveSessionItemsSnapshot(ctx) {
+		return nil
+	}
+	return m.projectAndApplySessionItems(ctx, items)
+}
+
+func (m *Model) prepareSessionItemsMessageContext(source sessionProjectionSource, id, key string, err error) (sessionItemsMessageContext, bool) {
+	ctx := sessionItemsMessageContext{
+		source: source,
+		id:     id,
+		key:    key,
+	}
+	if err != nil {
+		m.handleSessionItemsMessageError(ctx, err)
+		return ctx, false
+	}
+	if key != "" && key != m.pendingSessionKey {
+		return ctx, false
+	}
+	if key != "" && key == m.loadingKey {
+		m.loading = false
+	}
+	ctx.provider = m.providerForSessionID(id)
+	return ctx, true
+}
+
+func (m *Model) handleSessionItemsMessageError(ctx sessionItemsMessageContext, err error) {
+	if m == nil || err == nil {
+		return
+	}
+	m.setBackgroundError(string(ctx.source) + " error: " + err.Error())
+	if ctx.key != "" && ctx.key == m.pendingSessionKey {
+		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeError)
+	}
+	if ctx.key != "" && ctx.key == m.loadingKey {
+		m.loading = false
+		m.setContentText("Error loading history.")
+	}
+}
+
+func (m *Model) applyLiveSessionItemsSnapshot(ctx sessionItemsMessageContext) bool {
+	if m == nil {
+		return false
+	}
+	if !m.shouldKeepLiveCodexSnapshot(ctx.provider, ctx.id) {
+		return false
+	}
+	if ctx.key != "" {
+		m.cacheTranscriptBlocks(ctx.key, m.activeTranscriptBlocks(ctx.provider))
+		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeOK)
+	}
+	m.setBackgroundStatus(string(ctx.source) + " refreshed")
+	return true
+}
+
+func (m *Model) projectAndApplySessionItems(ctx sessionItemsMessageContext, items []map[string]any) tea.Cmd {
+	previous := m.currentBlocks()
+	approvals := normalizeApprovalRequests(m.sessionApprovals[ctx.id])
+	resolutions := normalizeApprovalResolutions(m.sessionApprovalResolutions[ctx.id])
+	if cmd := m.asyncSessionProjectionCmd(ctx.source, ctx.id, ctx.key, ctx.provider, items, previous, approvals, resolutions); cmd != nil {
+		return cmd
+	}
+	blocks := projectSessionBlocksFromItems(ctx.provider, items, previous, approvals, resolutions)
+	blocks = m.hydrateSessionBlocksForProvider(ctx.provider, blocks)
+	m.applySessionProjection(ctx.source, ctx.id, ctx.key, blocks)
+	return nil
+}
+
+func (m *Model) applySessionProjection(source sessionProjectionSource, id, key string, blocks []ChatBlock) {
+	if m.transcriptViewportVisible() {
+		m.setSnapshotBlocks(blocks)
+		m.noteRequestVisibleUpdate(id)
+	}
+	if key != "" {
+		m.cacheTranscriptBlocks(key, blocks)
+		m.finishUILatencyAction(uiLatencyActionSwitchSession, key, uiLatencyOutcomeOK)
+	} else if id == m.selectedSessionID() {
+		m.cacheTranscriptBlocks(m.selectedKey(), blocks)
+	}
+	m.setBackgroundStatus(string(source) + " updated")
+}
+
+func (m *Model) asyncSessionProjectionCmd(
+	source sessionProjectionSource,
+	id, key, provider string,
+	items []map[string]any,
+	previous []ChatBlock,
+	approvals []*ApprovalRequest,
+	resolutions []*ApprovalResolution,
+) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	policy := m.sessionProjectionPolicyOrDefault()
+	if !policy.ShouldProjectAsync(len(items)) {
+		return nil
+	}
+	token := sessionProjectionToken(key, id)
+	seq := m.nextSessionProjectionSeq(token, policy.MaxTrackedProjectionTokens())
+	return projectSessionBlocksCmd(source, id, key, provider, items, previous, approvals, resolutions, seq)
+}
+
+func (m *Model) nextSessionProjectionSeq(token string, maxTracked int) int {
+	if m == nil || strings.TrimSpace(token) == "" {
+		return 0
+	}
+	if m.sessionProjectionLatest == nil {
+		m.sessionProjectionLatest = map[string]int{}
+	}
+	m.sessionProjectionSeq++
+	m.sessionProjectionLatest[token] = m.sessionProjectionSeq
+	m.pruneSessionProjectionTokens(maxTracked)
+	return m.sessionProjectionSeq
+}
+
+func (m *Model) pruneSessionProjectionTokens(maxTracked int) {
+	if m == nil || maxTracked <= 0 || len(m.sessionProjectionLatest) <= maxTracked {
+		return
+	}
+	excess := len(m.sessionProjectionLatest) - maxTracked
+	for excess > 0 {
+		oldestToken := ""
+		oldestSeq := 0
+		for token, seq := range m.sessionProjectionLatest {
+			if oldestToken == "" || seq < oldestSeq {
+				oldestToken = token
+				oldestSeq = seq
+			}
+		}
+		if oldestToken == "" {
+			return
+		}
+		delete(m.sessionProjectionLatest, oldestToken)
+		excess--
+	}
+}
+
+func (m *Model) isCurrentSessionProjection(key, id string, seq int) bool {
+	if m == nil || seq <= 0 {
+		return true
+	}
+	token := sessionProjectionToken(key, id)
+	if token == "" || m.sessionProjectionLatest == nil {
+		return false
+	}
+	latest, ok := m.sessionProjectionLatest[token]
+	if !ok {
+		return false
+	}
+	return seq == latest
+}
+
+func (m *Model) consumeSessionProjectionToken(key, id string, seq int) {
+	if m == nil || seq <= 0 || m.sessionProjectionLatest == nil {
+		return
+	}
+	token := sessionProjectionToken(key, id)
+	if token == "" {
+		return
+	}
+	latest, ok := m.sessionProjectionLatest[token]
+	if !ok || latest != seq {
+		return
+	}
+	delete(m.sessionProjectionLatest, token)
+}
+
+func sessionProjectionToken(key, id string) string {
+	key = strings.TrimSpace(key)
+	if key != "" {
+		return "key:" + key
+	}
+	id = strings.TrimSpace(id)
+	if id != "" {
+		return "id:" + id
+	}
+	return ""
+}
+
+func projectSessionBlocksCmd(
+	source sessionProjectionSource,
+	id, key, provider string,
+	items []map[string]any,
+	previous []ChatBlock,
+	approvals []*ApprovalRequest,
+	resolutions []*ApprovalResolution,
+	seq int,
+) tea.Cmd {
+	itemsCopy := append([]map[string]any(nil), items...)
+	previousCopy := append([]ChatBlock(nil), previous...)
+	approvalsCopy := normalizeApprovalRequests(approvals)
+	resolutionsCopy := normalizeApprovalResolutions(resolutions)
+	return func() tea.Msg {
+		blocks := projectSessionBlocksFromItems(provider, itemsCopy, previousCopy, approvalsCopy, resolutionsCopy)
+		return sessionBlocksProjectedMsg{
+			source:        source,
+			id:            id,
+			key:           key,
+			provider:      provider,
+			blocks:        blocks,
+			projectionSeq: seq,
+		}
+	}
+}
+
 func isWorkflowRunNotFoundError(err error) bool {
 	if err == nil {
 		return false
@@ -527,84 +744,16 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case tailMsg:
-		if msg.err != nil {
-			m.setBackgroundError("tail error: " + msg.err.Error())
-			if msg.key != "" && msg.key == m.pendingSessionKey {
-				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeError)
-			}
-			if msg.key != "" && msg.key == m.loadingKey {
-				m.loading = false
-				m.setContentText("Error loading history.")
-			}
-			return true, nil
-		}
-		if msg.key != "" && msg.key != m.pendingSessionKey {
-			return true, nil
-		}
-		if msg.key != "" && msg.key == m.loadingKey {
-			m.loading = false
-		}
-		provider := m.providerForSessionID(msg.id)
-		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
-			if msg.key != "" {
-				m.cacheTranscriptBlocks(msg.key, m.activeTranscriptBlocks(provider))
-				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
-			}
-			m.setBackgroundStatus("tail refreshed")
-			return true, nil
-		}
-		blocks := m.buildSessionBlocksFromItems(msg.id, provider, msg.items, m.currentBlocks())
-		if m.transcriptViewportVisible() {
-			m.setSnapshotBlocks(blocks)
-			m.noteRequestVisibleUpdate(msg.id)
-		}
-		if msg.key != "" {
-			m.cacheTranscriptBlocks(msg.key, blocks)
-			m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
-		} else if msg.id == m.selectedSessionID() {
-			m.cacheTranscriptBlocks(m.selectedKey(), blocks)
-		}
-		m.setBackgroundStatus("tail updated")
-		return true, nil
+		return true, m.handleSessionItemsMessage(sessionProjectionSourceTail, msg.id, msg.key, msg.items, msg.err)
 	case historyMsg:
-		if msg.err != nil {
-			m.setBackgroundError("history error: " + msg.err.Error())
-			if msg.key != "" && msg.key == m.pendingSessionKey {
-				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeError)
-			}
-			if msg.key != "" && msg.key == m.loadingKey {
-				m.loading = false
-				m.setContentText("Error loading history.")
-			}
+		return true, m.handleSessionItemsMessage(sessionProjectionSourceHistory, msg.id, msg.key, msg.items, msg.err)
+	case sessionBlocksProjectedMsg:
+		if !m.isCurrentSessionProjection(msg.key, msg.id, msg.projectionSeq) {
 			return true, nil
 		}
-		if msg.key != "" && msg.key != m.pendingSessionKey {
-			return true, nil
-		}
-		if msg.key != "" && msg.key == m.loadingKey {
-			m.loading = false
-		}
-		provider := m.providerForSessionID(msg.id)
-		if m.shouldKeepLiveCodexSnapshot(provider, msg.id) {
-			if msg.key != "" {
-				m.cacheTranscriptBlocks(msg.key, m.activeTranscriptBlocks(provider))
-				m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
-			}
-			m.setBackgroundStatus("history refreshed")
-			return true, nil
-		}
-		blocks := m.buildSessionBlocksFromItems(msg.id, provider, msg.items, m.currentBlocks())
-		if m.transcriptViewportVisible() {
-			m.setSnapshotBlocks(blocks)
-			m.noteRequestVisibleUpdate(msg.id)
-		}
-		if msg.key != "" {
-			m.cacheTranscriptBlocks(msg.key, blocks)
-			m.finishUILatencyAction(uiLatencyActionSwitchSession, msg.key, uiLatencyOutcomeOK)
-		} else if msg.id == m.selectedSessionID() {
-			m.cacheTranscriptBlocks(m.selectedKey(), blocks)
-		}
-		m.setBackgroundStatus("history updated")
+		blocks := m.hydrateSessionBlocksForProvider(msg.provider, msg.blocks)
+		m.applySessionProjection(msg.source, msg.id, msg.key, blocks)
+		m.consumeSessionProjectionToken(msg.key, msg.id, msg.projectionSeq)
 		return true, nil
 	case recentsPreviewMsg:
 		return true, m.handleRecentsPreview(msg)
@@ -917,14 +1066,35 @@ func (m *Model) shouldSkipSelectionReloadOnSessionsUpdate(previous, next session
 }
 
 func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []map[string]any, previous []ChatBlock) []ChatBlock {
+	blocks := projectSessionBlocksFromItems(
+		provider,
+		items,
+		previous,
+		normalizeApprovalRequests(m.sessionApprovals[sessionID]),
+		normalizeApprovalResolutions(m.sessionApprovalResolutions[sessionID]),
+	)
+	return m.hydrateSessionBlocksForProvider(provider, blocks)
+}
+
+func projectSessionBlocksFromItems(
+	provider string,
+	items []map[string]any,
+	previous []ChatBlock,
+	approvals []*ApprovalRequest,
+	resolutions []*ApprovalResolution,
+) []ChatBlock {
 	blocks := itemsToBlocks(items)
 	if provider == "codex" {
 		blocks = coalesceAdjacentReasoningBlocks(blocks)
 	}
 	if providerSupportsApprovals(provider) {
-		blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
+		blocks = mergeApprovalBlocks(blocks, approvals, resolutions)
 		blocks = preserveApprovalPositions(previous, blocks)
 	}
+	return blocks
+}
+
+func (m *Model) hydrateSessionBlocksForProvider(provider string, blocks []ChatBlock) []ChatBlock {
 	if shouldStreamItems(provider) && m.itemStream != nil {
 		m.itemStream.SetSnapshotBlocks(blocks)
 		blocks = m.itemStream.Blocks()

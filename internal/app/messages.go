@@ -147,6 +147,22 @@ type historyMsg struct {
 	key   string
 }
 
+type sessionProjectionSource string
+
+const (
+	sessionProjectionSourceHistory sessionProjectionSource = "history"
+	sessionProjectionSourceTail    sessionProjectionSource = "tail"
+)
+
+type sessionBlocksProjectedMsg struct {
+	source        sessionProjectionSource
+	id            string
+	key           string
+	provider      string
+	blocks        []ChatBlock
+	projectionSeq int
+}
+
 type recentsPreviewMsg struct {
 	id       string
 	revision string

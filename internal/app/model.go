@@ -180,6 +180,8 @@ type Model struct {
 	sectionVersion                      int
 	transcriptCache                     map[string][]ChatBlock
 	pendingSessionKey                   string
+	sessionProjectionSeq                int
+	sessionProjectionLatest             map[string]int
 	loading                             bool
 	loadingKey                          string
 	loader                              spinner.Model
@@ -237,6 +239,8 @@ type Model struct {
 	selectionLoadPolicy                 SessionSelectionLoadPolicy
 	historyLoadPolicy                   SessionHistoryLoadPolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
+	sidebarUpdatePolicy                 SidebarUpdatePolicy
+	sessionProjectionPolicy             SessionProjectionPolicy
 	sidebarProjectionBuilder            SidebarProjectionBuilder
 	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
 	sidebarProjectionRevision           uint64
@@ -397,6 +401,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		renderedForRelativeBucket:           -1,
 		sectionVersion:                      -1,
 		transcriptCache:                     map[string][]ChatBlock{},
+		sessionProjectionLatest:             map[string]int{},
 		reasoningExpanded:                   map[string]bool{},
 		sessionApprovals:                    map[string][]*ApprovalRequest{},
 		sessionApprovalResolutions:          map[string][]*ApprovalResolution{},
@@ -423,6 +428,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		selectionLoadPolicy:                 defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
+		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
+		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
 		sidebarProjectionBuilder:            NewDefaultSidebarProjectionBuilder(),
 		sidebarProjectionInvalidationPolicy: NewDefaultSidebarProjectionInvalidationPolicy(),
 		sidebarProjectionRevision:           1,
@@ -640,11 +647,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	prevKey := m.selectedKey()
 	var cmd tea.Cmd
-	cmd = m.sidebar.Update(msg)
-	if key := m.selectedKey(); key != prevKey {
-		return m, tea.Batch(cmd, m.onSelectionChanged())
+	if m.sidebar != nil && m.sidebarUpdatePolicyOrDefault().ShouldUpdateSidebar(msg) {
+		prevKey := m.selectedKey()
+		cmd = m.sidebar.Update(msg)
+		if key := m.selectedKey(); key != prevKey {
+			return m, tea.Batch(cmd, m.onSelectionChanged())
+		}
 	}
 
 	if handled, nextCmd := m.reduceStateMessages(msg); handled {
@@ -670,8 +679,15 @@ func (m *Model) View() tea.View {
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeAllMotion
+	v.MouseMode = resolveMouseMode(m.sidebarDragging)
 	return v
+}
+
+func resolveMouseMode(sidebarDragging bool) tea.MouseMode {
+	if sidebarDragging {
+		return tea.MouseModeAllMotion
+	}
+	return tea.MouseModeCellMotion
 }
 
 func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
