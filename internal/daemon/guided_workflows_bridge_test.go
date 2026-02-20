@@ -738,6 +738,132 @@ func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSessi
 	}
 }
 
+func TestGuidedWorkflowPromptDispatcherAppliesPartialDefaultsModelOnly(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-model-only",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: guidedWorkflowDispatchDefaults{
+			Model: "gpt-5.3-codex",
+		},
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-model-only",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-codex" {
+		t.Fatalf("expected dispatch on auto-created session, got %#v", result)
+	}
+	if result.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected result model from defaults, got %q", result.Model)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "codex" {
+		t.Fatalf("expected provider fallback to codex when default provider unset, got %q", gateway.startReqs[0].Provider)
+	}
+	runtime := gateway.startReqs[0].RuntimeOptions
+	if runtime == nil {
+		t.Fatalf("expected runtime options for model-only defaults")
+	}
+	if runtime.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected model-only runtime options, got %q", runtime.Model)
+	}
+	if runtime.Access != "" || runtime.Reasoning != "" {
+		t.Fatalf("expected only model in runtime options, got %+v", runtime)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherAppliesPartialDefaultsAccessOnly(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-access-only",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: guidedWorkflowDispatchDefaults{
+			Access: types.AccessFull,
+		},
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-access-only",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-codex" {
+		t.Fatalf("expected dispatch on auto-created session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	runtime := gateway.startReqs[0].RuntimeOptions
+	if runtime == nil {
+		t.Fatalf("expected runtime options for access-only defaults")
+	}
+	if runtime.Access != types.AccessFull {
+		t.Fatalf("expected access-only runtime options, got %q", runtime.Access)
+	}
+	if runtime.Model != "" || runtime.Reasoning != "" {
+		t.Fatalf("expected only access in runtime options, got %+v", runtime)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherAppliesPartialDefaultsReasoningOnly(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-reasoning-only",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: guidedWorkflowDispatchDefaults{
+			Reasoning: types.ReasoningExtraHigh,
+		},
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-reasoning-only",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-codex" {
+		t.Fatalf("expected dispatch on auto-created session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	runtime := gateway.startReqs[0].RuntimeOptions
+	if runtime == nil {
+		t.Fatalf("expected runtime options for reasoning-only defaults")
+	}
+	if runtime.Reasoning != types.ReasoningExtraHigh {
+		t.Fatalf("expected reasoning-only runtime options, got %q", runtime.Reasoning)
+	}
+	if runtime.Model != "" || runtime.Access != "" {
+		t.Fatalf("expected only reasoning in runtime options, got %+v", runtime)
+	}
+}
+
 func TestGuidedWorkflowEffectiveDispatchSettingsUsesCodexFallback(t *testing.T) {
 	settings := guidedWorkflowEffectiveDispatchSettings("", guidedWorkflowDispatchDefaults{
 		Provider: "claude",
@@ -750,6 +876,68 @@ func TestGuidedWorkflowEffectiveDispatchSettingsUsesCodexFallback(t *testing.T) 
 	}
 	if settings.RuntimeOptions != nil {
 		t.Fatalf("expected nil runtime options without defaults, got %+v", settings.RuntimeOptions)
+	}
+}
+
+func TestGuidedWorkflowDispatchDefaultsFromCoreConfigInvalidValuesFallbackGracefully(t *testing.T) {
+	cfg := config.DefaultCoreConfig()
+	cfg.GuidedWorkflows.Defaults.Provider = "claude"
+	cfg.GuidedWorkflows.Defaults.Model = "   "
+	cfg.GuidedWorkflows.Defaults.Access = "invalid_access"
+	cfg.GuidedWorkflows.Defaults.Reasoning = "invalid_reasoning"
+	defaults := guidedWorkflowDispatchDefaultsFromCoreConfig(cfg)
+	if defaults.Provider != "" {
+		t.Fatalf("expected unsupported provider to normalize to empty, got %q", defaults.Provider)
+	}
+	if defaults.Model != "" {
+		t.Fatalf("expected blank model to normalize to empty, got %q", defaults.Model)
+	}
+	if defaults.Access != "" {
+		t.Fatalf("expected invalid access to normalize to empty, got %q", defaults.Access)
+	}
+	if defaults.Reasoning != "" {
+		t.Fatalf("expected invalid reasoning to normalize to empty, got %q", defaults.Reasoning)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherFallsBackGracefullyWhenDefaultsInvalid(t *testing.T) {
+	cfg := config.DefaultCoreConfig()
+	cfg.GuidedWorkflows.Defaults.Provider = "claude"
+	cfg.GuidedWorkflows.Defaults.Model = "   "
+	cfg.GuidedWorkflows.Defaults.Access = "invalid_access"
+	cfg.GuidedWorkflows.Defaults.Reasoning = "invalid_reasoning"
+	defaults := guidedWorkflowDispatchDefaultsFromCoreConfig(cfg)
+
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-invalid-defaults",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		defaults: defaults,
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-invalid-defaults",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-codex" {
+		t.Fatalf("expected dispatch to fallback codex session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	}
+	if gateway.startReqs[0].Provider != "codex" {
+		t.Fatalf("expected invalid provider default to fallback to codex, got %q", gateway.startReqs[0].Provider)
+	}
+	if gateway.startReqs[0].RuntimeOptions != nil {
+		t.Fatalf("expected invalid defaults to produce nil runtime options, got %+v", gateway.startReqs[0].RuntimeOptions)
 	}
 }
 
