@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,6 +10,8 @@ import (
 
 	"control/internal/app"
 	"control/internal/config"
+	"control/internal/guidedworkflows"
+	"control/internal/store"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -25,20 +28,23 @@ const (
 	configScopeCore        = "core"
 	configScopeUI          = "ui"
 	configScopeKeybindings = "keybindings"
+	configScopeWorkflows   = "workflow_templates"
 )
 
 type configOutput struct {
-	CoreConfigPath  string                          `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
-	UIConfigPath    string                          `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
-	KeybindingsPath string                          `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
-	Chat            *uiChatConfigOutput             `json:"chat,omitempty" toml:"chat,omitempty"`
-	Daemon          *effectiveDaemonConfig          `json:"daemon,omitempty" toml:"daemon,omitempty"`
-	Logging         *effectiveLoggingConfig         `json:"logging,omitempty" toml:"logging,omitempty"`
-	Debug           *effectiveDebugConfig           `json:"debug,omitempty" toml:"debug,omitempty"`
-	Notifications   *effectiveNotificationsConfig   `json:"notifications,omitempty" toml:"notifications,omitempty"`
-	GuidedWorkflows *effectiveGuidedWorkflowsConfig `json:"guided_workflows,omitempty" toml:"guided_workflows,omitempty"`
-	Providers       *effectiveProvidersConfig       `json:"providers,omitempty" toml:"providers,omitempty"`
-	Keybindings     map[string]string               `json:"keybindings,omitempty" toml:"keybindings,omitempty"`
+	CoreConfigPath        string                          `json:"core_config_path,omitempty" toml:"core_config_path,omitempty"`
+	UIConfigPath          string                          `json:"ui_config_path,omitempty" toml:"ui_config_path,omitempty"`
+	KeybindingsPath       string                          `json:"keybindings_path,omitempty" toml:"keybindings_path,omitempty"`
+	WorkflowTemplatesPath string                          `json:"workflow_templates_path,omitempty" toml:"workflow_templates_path,omitempty"`
+	Chat                  *uiChatConfigOutput             `json:"chat,omitempty" toml:"chat,omitempty"`
+	Daemon                *effectiveDaemonConfig          `json:"daemon,omitempty" toml:"daemon,omitempty"`
+	Logging               *effectiveLoggingConfig         `json:"logging,omitempty" toml:"logging,omitempty"`
+	Debug                 *effectiveDebugConfig           `json:"debug,omitempty" toml:"debug,omitempty"`
+	Notifications         *effectiveNotificationsConfig   `json:"notifications,omitempty" toml:"notifications,omitempty"`
+	GuidedWorkflows       *effectiveGuidedWorkflowsConfig `json:"guided_workflows,omitempty" toml:"guided_workflows,omitempty"`
+	WorkflowTemplates     *workflowTemplatesConfigOutput  `json:"workflow_templates,omitempty" toml:"workflow_templates,omitempty"`
+	Providers             *effectiveProvidersConfig       `json:"providers,omitempty" toml:"providers,omitempty"`
+	Keybindings           map[string]string               `json:"keybindings,omitempty" toml:"keybindings,omitempty"`
 }
 
 type coreConfigOutput struct {
@@ -65,6 +71,10 @@ type uiKeybindingsConfigOutput struct {
 
 type uiChatConfigOutput struct {
 	TimestampMode string `json:"timestamp_mode" toml:"timestamp_mode"`
+}
+
+type workflowTemplatesConfigOutput struct {
+	Templates []guidedworkflows.WorkflowTemplate `json:"templates" toml:"templates"`
 }
 
 type effectiveDaemonConfig struct {
@@ -104,7 +114,6 @@ type effectiveGuidedWorkflowsDefaultsConfig struct {
 	Model              string `json:"model,omitempty" toml:"model,omitempty"`
 	Access             string `json:"access,omitempty" toml:"access,omitempty"`
 	Reasoning          string `json:"reasoning,omitempty" toml:"reasoning,omitempty"`
-	Risk               string `json:"risk,omitempty" toml:"risk,omitempty"`
 	ResolutionBoundary string `json:"resolution_boundary,omitempty" toml:"resolution_boundary,omitempty"`
 }
 
@@ -185,7 +194,7 @@ func (c *ConfigCommand) Run(args []string) error {
 	defaults := fs.Bool("default", false, "print default config values")
 	format := fs.String("format", configFormatJSON, "output format: json|toml")
 	var scopes stringList
-	fs.Var(&scopes, "scope", "scope to print: core|ui|keybindings|all (repeatable)")
+	fs.Var(&scopes, "scope", "scope to print: core|ui|keybindings|workflow_templates|all (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -211,6 +220,7 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 	includeCore := scopeSelected(scopes, configScopeCore)
 	includeUI := scopeSelected(scopes, configScopeUI)
 	includeKeybindings := scopeSelected(scopes, configScopeKeybindings)
+	includeWorkflows := scopeSelected(scopes, configScopeWorkflows)
 
 	var uiCfg config.UIConfig
 	var keybindingsPath string
@@ -287,7 +297,6 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 				Model:              coreCfg.GuidedWorkflowsDefaultModel(),
 				Access:             string(coreCfg.GuidedWorkflowsDefaultAccessLevel()),
 				Reasoning:          string(coreCfg.GuidedWorkflowsDefaultReasoningLevel()),
-				Risk:               coreCfg.GuidedWorkflowsDefaultRisk(),
 				ResolutionBoundary: coreCfg.GuidedWorkflowsDefaultResolutionBoundary(),
 			},
 			Policy: effectiveGuidedWorkflowsPolicyConfig{
@@ -358,6 +367,24 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 		}
 	}
 
+	if includeWorkflows {
+		workflowTemplatesPath, err := config.WorkflowTemplatesPath()
+		if err != nil {
+			return configOutput{}, err
+		}
+		templates := []guidedworkflows.WorkflowTemplate{}
+		if !defaults {
+			templates, err = store.NewFileWorkflowTemplateStore(workflowTemplatesPath).ListWorkflowTemplates(context.Background())
+			if err != nil {
+				return configOutput{}, err
+			}
+		}
+		out.WorkflowTemplatesPath = workflowTemplatesPath
+		out.WorkflowTemplates = &workflowTemplatesConfigOutput{
+			Templates: templates,
+		}
+	}
+
 	if includeKeybindings {
 		var bindings *app.Keybindings
 		var err error
@@ -405,6 +432,14 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 			return map[string]string{}
 		}
 		return payload.Keybindings
+	}
+	if scopeSelected(scopes, configScopeWorkflows) {
+		if payload.WorkflowTemplates == nil {
+			return workflowTemplatesConfigOutput{
+				Templates: []guidedworkflows.WorkflowTemplate{},
+			}
+		}
+		return *payload.WorkflowTemplates
 	}
 	if scopeSelected(scopes, configScopeUI) {
 		chat := uiChatConfigOutput{TimestampMode: "relative"}
@@ -502,6 +537,7 @@ func resolveConfigScopes(values []string) (map[string]struct{}, error) {
 			configScopeCore:        {},
 			configScopeUI:          {},
 			configScopeKeybindings: {},
+			configScopeWorkflows:   {},
 		}, nil
 	}
 	out := map[string]struct{}{}
@@ -517,6 +553,7 @@ func resolveConfigScopes(values []string) (map[string]struct{}, error) {
 					configScopeCore:        {},
 					configScopeUI:          {},
 					configScopeKeybindings: {},
+					configScopeWorkflows:   {},
 				}, nil
 			}
 			out[scope] = struct{}{}
@@ -535,8 +572,10 @@ func normalizeConfigScope(raw string) (string, error) {
 		return configScopeUI, nil
 	case configScopeKeybindings, "keys":
 		return configScopeKeybindings, nil
+	case configScopeWorkflows, "workflows", "workflow-templates":
+		return configScopeWorkflows, nil
 	default:
-		return "", errors.New("invalid scope: must be core, ui, keybindings, or all")
+		return "", errors.New("invalid scope: must be core, ui, keybindings, workflow_templates, or all")
 	}
 }
 

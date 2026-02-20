@@ -76,7 +76,6 @@ provider = "codex" # codex | opencode (unsupported values fall back to codex)
 model = "gpt-5.1-codex"
 access = "on_request" # read_only | on_request | full_access
 reasoning = "medium" # low | medium | high | extra_high
-risk = "balanced" # low | balanced | high
 resolution_boundary = "balanced" # low | balanced | high
 
 [guided_workflows.policy]
@@ -172,7 +171,7 @@ Enable guided workflows in `~/.archon/config.toml`:
 - set `[guided_workflows].enabled = true`
 - keep `auto_start = false` (default) to require explicit user start from task/worktree context
 - optionally set `[guided_workflows.defaults]` to control auto-created workflow session provider/model/access/reasoning
-- optionally set `[guided_workflows.defaults].risk` / `resolution_boundary` to tune default checkpoint strictness for new runs
+- optionally set `[guided_workflows.defaults].resolution_boundary` to tune default checkpoint strictness for new runs
 - tune `[guided_workflows.policy]` and `[guided_workflows.rollout]` guardrails as needed
 
 Exact precedence for guided workflow defaults:
@@ -192,7 +191,6 @@ Exact precedence for guided workflow defaults:
 4. Run policy default precedence (`POST /v1/workflow-runs`):
    - explicit `policy_overrides` in request body
    - `[guided_workflows.defaults].resolution_boundary`
-   - `[guided_workflows.defaults].risk`
    - built-in policy baseline (no override)
 
 Workflow templates are partially hardcoded and partially configurable:
@@ -284,7 +282,7 @@ Useful options:
 
 - `--default`: print built-in defaults (ignores local config files)
 - `--format json|toml`: output format (default: `json`)
-- `--scope core|ui|keybindings|all`: print one scope or multiple scopes (repeatable)
+- `--scope core|ui|keybindings|workflow_templates|all`: print one scope or multiple scopes (repeatable)
 
 Examples:
 
@@ -292,6 +290,7 @@ Examples:
 archon config --scope core
 archon config --scope ui --format toml
 archon config --scope keybindings --default
+archon config --scope workflow_templates
 archon config --scope core --scope keybindings --format json
 ```
 

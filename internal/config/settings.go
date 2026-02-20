@@ -93,7 +93,7 @@ type CoreGuidedWorkflowsDefaultsConfig struct {
 	Model              string `toml:"model"`
 	Access             string `toml:"access"`
 	Reasoning          string `toml:"reasoning"`
-	Risk               string `toml:"risk"`
+	Risk               string `toml:"risk"` // deprecated; ignored
 	ResolutionBoundary string `toml:"resolution_boundary"`
 }
 
@@ -385,14 +385,6 @@ func (c CoreConfig) GuidedWorkflowsDefaultAccessLevel() types.AccessLevel {
 
 func (c CoreConfig) GuidedWorkflowsDefaultReasoningLevel() types.ReasoningLevel {
 	level, ok := normalizeGuidedWorkflowsReasoningLevel(c.GuidedWorkflows.Defaults.Reasoning)
-	if !ok {
-		return ""
-	}
-	return level
-}
-
-func (c CoreConfig) GuidedWorkflowsDefaultRisk() string {
-	level, ok := normalizeGuidedWorkflowsSensitivityPreset(c.GuidedWorkflows.Defaults.Risk)
 	if !ok {
 		return ""
 	}

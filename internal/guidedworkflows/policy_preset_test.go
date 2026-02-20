@@ -27,15 +27,6 @@ func TestNormalizePolicyPreset(t *testing.T) {
 	}
 }
 
-func TestResolvePolicyPreset(t *testing.T) {
-	if got := ResolvePolicyPreset(PolicyPresetHigh, PolicyPresetLow); got != PolicyPresetHigh {
-		t.Fatalf("expected boundary to win, got %q", got)
-	}
-	if got := ResolvePolicyPreset("", PolicyPresetLow); got != PolicyPresetLow {
-		t.Fatalf("expected risk fallback, got %q", got)
-	}
-}
-
 func TestPolicyOverrideForPreset(t *testing.T) {
 	low := PolicyOverrideForPreset(PolicyPresetLow)
 	if low == nil || low.ConfidenceThreshold == nil || *low.ConfidenceThreshold != PolicyPresetLowConfidenceThreshold {

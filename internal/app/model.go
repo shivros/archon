@@ -727,9 +727,6 @@ func (m *Model) applyCoreConfig(coreCfg config.CoreConfig) {
 		return
 	}
 	preset := coreCfg.GuidedWorkflowsDefaultResolutionBoundary()
-	if preset == "" {
-		preset = coreCfg.GuidedWorkflowsDefaultRisk()
-	}
 	m.guidedWorkflow.SetDefaultSensitivity(guidedPolicySensitivityFromPreset(preset))
 }
 

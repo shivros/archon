@@ -11,15 +11,11 @@ func TestGuidedWorkflowPolicyDefaultsFromCoreConfig(t *testing.T) {
 	cfg := config.CoreConfig{
 		GuidedWorkflows: config.CoreGuidedWorkflowsConfig{
 			Defaults: config.CoreGuidedWorkflowsDefaultsConfig{
-				Risk:               "high",
 				ResolutionBoundary: "low",
 			},
 		},
 	}
 	defaults := guidedWorkflowPolicyDefaultsFromCoreConfig(cfg)
-	if defaults.Risk != guidedworkflows.PolicyPresetHigh {
-		t.Fatalf("expected risk default high, got %q", defaults.Risk)
-	}
 	if defaults.ResolutionBoundary != guidedworkflows.PolicyPresetLow {
 		t.Fatalf("expected resolution boundary low, got %q", defaults.ResolutionBoundary)
 	}
@@ -34,7 +30,6 @@ func TestResolveGuidedWorkflowPolicyOverridesPrefersExplicitOverride(t *testing.
 	}
 
 	got := resolveGuidedWorkflowPolicyOverrides(explicit, guidedWorkflowPolicyDefaults{
-		Risk:               guidedworkflows.PolicyPresetLow,
 		ResolutionBoundary: guidedworkflows.PolicyPresetHigh,
 	})
 	if got == nil {
@@ -51,9 +46,8 @@ func TestResolveGuidedWorkflowPolicyOverridesPrefersExplicitOverride(t *testing.
 	}
 }
 
-func TestResolveGuidedWorkflowPolicyOverridesUsesBoundaryBeforeRisk(t *testing.T) {
+func TestResolveGuidedWorkflowPolicyOverridesUsesResolutionBoundary(t *testing.T) {
 	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{
-		Risk:               guidedworkflows.PolicyPresetLow,
 		ResolutionBoundary: guidedworkflows.PolicyPresetHigh,
 	})
 	if got == nil {
@@ -67,18 +61,10 @@ func TestResolveGuidedWorkflowPolicyOverridesUsesBoundaryBeforeRisk(t *testing.T
 	}
 }
 
-func TestResolveGuidedWorkflowPolicyOverridesUsesRiskWhenBoundaryUnset(t *testing.T) {
-	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{
-		Risk: guidedworkflows.PolicyPresetLow,
-	})
-	if got == nil {
-		t.Fatalf("expected low risk defaults when boundary is unset")
-	}
-	if got.ConfidenceThreshold == nil || *got.ConfidenceThreshold != guidedworkflows.PolicyPresetLowConfidenceThreshold {
-		t.Fatalf("unexpected confidence threshold for low risk: %#v", got.ConfidenceThreshold)
-	}
-	if got.PauseThreshold == nil || *got.PauseThreshold != guidedworkflows.PolicyPresetLowPauseThreshold {
-		t.Fatalf("unexpected pause threshold for low risk: %#v", got.PauseThreshold)
+func TestResolveGuidedWorkflowPolicyOverridesReturnsNilWhenBoundaryUnset(t *testing.T) {
+	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{})
+	if got != nil {
+		t.Fatalf("expected nil override when boundary is unset, got %#v", got)
 	}
 }
 

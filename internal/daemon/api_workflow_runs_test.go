@@ -527,7 +527,6 @@ func TestWorkflowRunEndpointsIntegrationUsesConfiguredDefaultsEndToEnd(t *testin
 	coreCfg.GuidedWorkflows.Defaults.Model = "gpt-5.3-codex"
 	coreCfg.GuidedWorkflows.Defaults.Access = "full_access"
 	coreCfg.GuidedWorkflows.Defaults.Reasoning = "extra_high"
-	coreCfg.GuidedWorkflows.Defaults.Risk = "low"
 	coreCfg.GuidedWorkflows.Defaults.ResolutionBoundary = "high"
 
 	template := guidedworkflows.WorkflowTemplate{

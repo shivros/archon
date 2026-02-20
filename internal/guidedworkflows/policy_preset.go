@@ -35,13 +35,6 @@ func NormalizePolicyPreset(raw string) (PolicyPreset, bool) {
 	}
 }
 
-func ResolvePolicyPreset(resolutionBoundary PolicyPreset, risk PolicyPreset) PolicyPreset {
-	if resolutionBoundary != "" {
-		return resolutionBoundary
-	}
-	return risk
-}
-
 func PolicyOverrideForPreset(preset PolicyPreset) *CheckpointPolicyOverride {
 	switch preset {
 	case PolicyPresetLow:

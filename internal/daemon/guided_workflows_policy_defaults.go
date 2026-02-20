@@ -6,7 +6,6 @@ import (
 )
 
 type guidedWorkflowPolicyDefaults struct {
-	Risk               guidedworkflows.PolicyPreset
 	ResolutionBoundary guidedworkflows.PolicyPreset
 }
 
@@ -23,10 +22,8 @@ func newGuidedWorkflowPolicyResolver(cfg config.CoreConfig) GuidedWorkflowPolicy
 }
 
 func guidedWorkflowPolicyDefaultsFromCoreConfig(cfg config.CoreConfig) guidedWorkflowPolicyDefaults {
-	risk, _ := guidedworkflows.NormalizePolicyPreset(cfg.GuidedWorkflowsDefaultRisk())
 	boundary, _ := guidedworkflows.NormalizePolicyPreset(cfg.GuidedWorkflowsDefaultResolutionBoundary())
 	return guidedWorkflowPolicyDefaults{
-		Risk:               risk,
 		ResolutionBoundary: boundary,
 	}
 }
@@ -46,6 +43,6 @@ func resolveGuidedWorkflowPolicyOverrides(
 	if explicit != nil {
 		return guidedworkflows.CloneCheckpointPolicyOverride(explicit)
 	}
-	preset := guidedworkflows.ResolvePolicyPreset(defaults.ResolutionBoundary, defaults.Risk)
+	preset := defaults.ResolutionBoundary
 	return guidedworkflows.PolicyOverrideForPreset(preset)
 }

@@ -153,6 +153,11 @@ command = "` + os.Args[0] + `"
 }
 
 func TestResolveProviderCommandNameRequiresCandidates(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	def := providers.Definition{Name: "x", Runtime: providers.RuntimeExec}
 	if _, err := resolveProviderCommandName(def, ""); err == nil || !strings.Contains(strings.ToLower(err.Error()), "not configured") {
 		t.Fatalf("expected missing command error, got %v", err)
@@ -160,6 +165,11 @@ func TestResolveProviderCommandNameRequiresCandidates(t *testing.T) {
 }
 
 func TestResolveProviderCommandNameReportsAllCandidates(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	def := providers.Definition{
 		Name:              "x",
 		Runtime:           providers.RuntimeExec,

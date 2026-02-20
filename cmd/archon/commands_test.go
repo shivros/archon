@@ -229,7 +229,6 @@ provider = "codex"
 model = "gpt-5.3-codex"
 access = "on_request"
 reasoning = "high"
-risk = "low"
 resolution_boundary = "high"
 
 [providers.codex]
@@ -249,6 +248,33 @@ network_access = false
 	keybindings := []byte(`{"ui.toggleSidebar":"alt+b","ui.refresh":"F5"}`)
 	if err := os.WriteFile(filepath.Join(dataDir, "custom-keybindings.json"), keybindings, 0o600); err != nil {
 		t.Fatalf("WriteFile keybindings: %v", err)
+	}
+	workflowTemplates := []byte(`{
+  "version": 1,
+  "templates": [
+    {
+      "id": "custom_delivery",
+      "name": "Custom Delivery",
+      "description": "A custom guided workflow",
+      "default_access_level": "on_request",
+      "phases": [
+        {
+          "id": "phase_1",
+          "name": "Plan",
+          "steps": [
+            {
+              "id": "step_1",
+              "name": "Draft plan",
+              "prompt": "Draft a plan."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`)
+	if err := os.WriteFile(filepath.Join(dataDir, "workflow_templates.json"), workflowTemplates, 0o600); err != nil {
+		t.Fatalf("WriteFile workflow_templates.json: %v", err)
 	}
 
 	stdout := &bytes.Buffer{}
@@ -306,9 +332,6 @@ network_access = false
 	if defaultsCfg["reasoning"] != "high" {
 		t.Fatalf("unexpected guided workflows defaults reasoning: %#v", defaultsCfg["reasoning"])
 	}
-	if defaultsCfg["risk"] != "low" {
-		t.Fatalf("unexpected guided workflows defaults risk: %#v", defaultsCfg["risk"])
-	}
 	if defaultsCfg["resolution_boundary"] != "high" {
 		t.Fatalf("unexpected guided workflows defaults resolution boundary: %#v", defaultsCfg["resolution_boundary"])
 	}
@@ -359,6 +382,18 @@ network_access = false
 	keymap, _ := payload["keybindings"].(map[string]any)
 	if keymap["ui.toggleSidebar"] != "alt+b" {
 		t.Fatalf("unexpected keybinding override: %#v", keymap["ui.toggleSidebar"])
+	}
+	if got := payload["workflow_templates_path"]; got != filepath.Join(dataDir, "workflow_templates.json") {
+		t.Fatalf("unexpected workflow_templates_path: %#v", got)
+	}
+	workflowCfg, _ := payload["workflow_templates"].(map[string]any)
+	templates, _ := workflowCfg["templates"].([]any)
+	if len(templates) != 1 {
+		t.Fatalf("expected one workflow template, got %#v", workflowCfg["templates"])
+	}
+	template, _ := templates[0].(map[string]any)
+	if template["id"] != "custom_delivery" {
+		t.Fatalf("unexpected workflow template id: %#v", template["id"])
 	}
 }
 
@@ -449,6 +484,9 @@ func TestConfigCommandDefaultIgnoresInvalidUserFiles(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), []byte("[keybindings\npath='bad'"), 0o600); err != nil {
 		t.Fatalf("WriteFile ui.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "workflow_templates.json"), []byte("{bad"), 0o600); err != nil {
+		t.Fatalf("WriteFile workflow_templates.json: %v", err)
 	}
 
 	stdout := &bytes.Buffer{}
@@ -551,6 +589,60 @@ func TestConfigCommandScopeKeybindingsDefault(t *testing.T) {
 	}
 	if _, ok := payload["keybindings_path"]; ok {
 		t.Fatalf("did not expect keybindings_path metadata in keybindings-only output")
+	}
+}
+
+func TestConfigCommandScopeWorkflowTemplatesOnly(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	workflowTemplates := []byte(`{
+  "version": 1,
+  "templates": [
+    {
+      "id": "custom_delivery",
+      "name": "Custom Delivery",
+      "phases": [
+        {
+          "id": "phase_1",
+          "name": "Plan",
+          "steps": [
+            {
+              "id": "step_1",
+              "name": "Draft plan",
+              "prompt": "Draft a plan."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`)
+	if err := os.WriteFile(filepath.Join(dataDir, "workflow_templates.json"), workflowTemplates, 0o600); err != nil {
+		t.Fatalf("WriteFile workflow_templates.json: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--scope", "workflow_templates"}); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	templates, _ := payload["templates"].([]any)
+	if len(templates) != 1 {
+		t.Fatalf("expected top-level templates array, got %#v", payload["templates"])
+	}
+	if _, ok := payload["workflow_templates"]; ok {
+		t.Fatalf("did not expect nested workflow_templates object in workflow_templates-only output")
+	}
+	if _, ok := payload["workflow_templates_path"]; ok {
+		t.Fatalf("did not expect workflow_templates_path metadata in workflow_templates-only output")
 	}
 }
 
