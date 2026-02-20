@@ -28,6 +28,7 @@ type Stores struct {
 	Worktrees         WorktreeStore
 	Groups            WorkspaceGroupStore
 	WorkflowTemplates WorkflowTemplateStore
+	WorkflowRuns      WorkflowRunStore
 	AppState          AppStateStore
 	SessionMeta       SessionMetaStore
 	Sessions          SessionIndexStore
@@ -65,6 +66,11 @@ type AppStateStore interface {
 
 type WorkflowTemplateStore interface {
 	ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error)
+}
+
+type WorkflowRunStore interface {
+	ListWorkflowRuns(ctx context.Context) ([]guidedworkflows.RunStatusSnapshot, error)
+	UpsertWorkflowRun(ctx context.Context, snapshot guidedworkflows.RunStatusSnapshot) error
 }
 
 type ProviderRegistry interface {
@@ -135,6 +141,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer notifier.Close()
 	liveCodex := NewCodexLiveManager(d.stores, d.logger)
 	guided := newGuidedWorkflowOrchestrator(coreCfg)
+	reconcileResult, reconcileErr := reconcileGuidedWorkflowRunSnapshots(
+		context.Background(),
+		guidedWorkflowRunSnapshotReconciliationInputFromStores(d.stores),
+	)
+	logGuidedWorkflowRunReconciliationOutcome(d.logger, reconcileResult, reconcileErr)
 	workflowRuns := newGuidedWorkflowRunService(coreCfg, d.stores, d.manager, liveCodex, d.logger)
 	var turnProcessor guidedworkflows.TurnEventProcessor
 	if processor, ok := any(workflowRuns).(guidedworkflows.TurnEventProcessor); ok {
@@ -194,4 +205,28 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		return err
 	}
+}
+
+func logGuidedWorkflowRunReconciliationOutcome(
+	logger logging.Logger,
+	result guidedWorkflowRunSnapshotReconciliationResult,
+	err error,
+) {
+	if logger == nil {
+		return
+	}
+	if err != nil {
+		logger.Warn("guided_workflow_runs_reconcile_failed", logging.F("error", err))
+		return
+	}
+	if result.CreatedSnapshots <= 0 && result.FailedWrites <= 0 {
+		return
+	}
+	logger.Info("guided_workflow_runs_reconciled_from_session_meta",
+		logging.F("created_runs", result.CreatedSnapshots),
+		logging.F("failed_writes", result.FailedWrites),
+		logging.F("skipped_existing", result.SkippedExisting),
+		logging.F("skipped_empty_run_id", result.SkippedEmptyRunID),
+		logging.F("skipped_by_policy", result.SkippedByPolicy),
+	)
 }

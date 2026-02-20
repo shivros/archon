@@ -51,6 +51,11 @@ type RunMetricsStore interface {
 	SaveRunMetrics(ctx context.Context, snapshot RunMetricsSnapshot) error
 }
 
+type RunSnapshotStore interface {
+	ListWorkflowRuns(ctx context.Context) ([]RunStatusSnapshot, error)
+	UpsertWorkflowRun(ctx context.Context, snapshot RunStatusSnapshot) error
+}
+
 // TurnEventProcessor allows daemon adapters to advance active runs from turn completion events.
 type TurnEventProcessor interface {
 	OnTurnCompleted(ctx context.Context, signal TurnSignal) ([]*WorkflowRun, error)
@@ -81,6 +86,7 @@ type InMemoryRunService struct {
 	telemetryEnabled bool
 	metrics          runServiceMetrics
 	metricsStore     RunMetricsStore
+	runStore         RunSnapshotStore
 }
 
 type runServiceMetrics struct {
@@ -193,6 +199,15 @@ func WithRunMetricsStore(store RunMetricsStore) RunServiceOption {
 	}
 }
 
+func WithRunSnapshotStore(store RunSnapshotStore) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || store == nil {
+			return
+		}
+		s.runStore = store
+	}
+}
+
 func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	service := &InMemoryRunService{
 		cfg:              NormalizeConfig(cfg),
@@ -213,6 +228,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		}
 	}
 	service.restoreMetrics(context.Background())
+	service.restoreRuns(context.Background())
 	return service
 }
 
@@ -290,6 +306,7 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		RunID:   runID,
 		Message: "workflow run created",
 	})
+	s.persistRunSnapshotLocked(ctx, runID)
 	return cloneWorkflowRun(run), nil
 }
 
@@ -399,6 +416,7 @@ func (s *InMemoryRunService) PauseRun(ctx context.Context, runID string) (*Workf
 		return nil, invalidTransitionError("pause", run.Status)
 	}
 	s.setRunPausedLocked(run, "run_paused", "manual pause")
+	s.persistRunSnapshotLocked(ctx, run.ID)
 	return cloneWorkflowRun(run), nil
 }
 
@@ -422,6 +440,7 @@ func (s *InMemoryRunService) AdvanceRun(ctx context.Context, runID string) (*Wor
 	if err := s.advanceOnceLocked(ctx, run); err != nil {
 		return nil, err
 	}
+	s.persistRunSnapshotLocked(ctx, run.ID)
 	return cloneWorkflowRun(run), nil
 }
 
@@ -491,6 +510,7 @@ func (s *InMemoryRunService) HandleDecision(ctx context.Context, runID string, r
 		Detail:  strings.TrimSpace(req.Note),
 	})
 	s.actions[key] = struct{}{}
+	s.persistRunSnapshotLocked(ctx, run.ID)
 	return cloneWorkflowRun(run), nil
 }
 
@@ -498,6 +518,12 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 	s.mu.Lock()
 	defer s.persistMetrics(ctx)
 	defer s.mu.Unlock()
+	changedRunIDs := map[string]struct{}{}
+	defer func() {
+		for runID := range changedRunIDs {
+			s.persistRunSnapshotLocked(ctx, runID)
+		}
+	}()
 	normalized := normalizeTurnSignal(signal)
 	if normalized.SessionID == "" && normalized.WorkspaceID == "" && normalized.WorktreeID == "" {
 		return nil, nil
@@ -519,16 +545,20 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 		}
 		beforeStatus := run.Status
 		if _, err := s.completeAwaitingTurnStepLocked(run, normalized); err != nil {
+			changedRunIDs[run.ID] = struct{}{}
 			return nil, err
 		}
 		if run.Status != WorkflowRunStatusRunning {
 			s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+			changedRunIDs[run.ID] = struct{}{}
 			updated = append(updated, cloneWorkflowRun(run))
 			continue
 		}
 		if err := s.advanceOnceLocked(ctx, run); err != nil {
+			changedRunIDs[run.ID] = struct{}{}
 			return nil, err
 		}
+		changedRunIDs[run.ID] = struct{}{}
 		updated = append(updated, cloneWorkflowRun(run))
 	}
 	return updated, nil
@@ -569,7 +599,7 @@ func (s *InMemoryRunService) listRuns(includeDismissed bool) ([]*WorkflowRun, er
 	return out, nil
 }
 
-func (s *InMemoryRunService) DismissRun(_ context.Context, runID string) (*WorkflowRun, error) {
+func (s *InMemoryRunService) DismissRun(ctx context.Context, runID string) (*WorkflowRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, err := s.mustRunLocked(runID)
@@ -594,10 +624,11 @@ func (s *InMemoryRunService) DismissRun(_ context.Context, runID string) (*Workf
 		RunID:   run.ID,
 		Message: "workflow run dismissed",
 	})
+	s.persistRunSnapshotLocked(ctx, run.ID)
 	return cloneWorkflowRun(run), nil
 }
 
-func (s *InMemoryRunService) UndismissRun(_ context.Context, runID string) (*WorkflowRun, error) {
+func (s *InMemoryRunService) UndismissRun(ctx context.Context, runID string) (*WorkflowRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, err := s.mustRunLocked(runID)
@@ -622,6 +653,7 @@ func (s *InMemoryRunService) UndismissRun(_ context.Context, runID string) (*Wor
 		RunID:   run.ID,
 		Message: "workflow run restored",
 	})
+	s.persistRunSnapshotLocked(ctx, run.ID)
 	return cloneWorkflowRun(run), nil
 }
 
@@ -739,6 +771,7 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 	if err != nil {
 		return nil, err
 	}
+	defer s.persistRunSnapshotLocked(ctx, run.ID)
 	now := s.engine.now()
 	switch action {
 	case "start":
@@ -1761,6 +1794,87 @@ func (s *InMemoryRunService) restoreMetrics(ctx context.Context) {
 		}
 		s.metrics.interventionCauses[cause] = sanitizeCounter(count)
 	}
+}
+
+func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
+	if s == nil || s.runStore == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	snapshots, err := s.runStore.ListWorkflowRuns(ctx)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, snapshot := range snapshots {
+		if snapshot.Run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(snapshot.Run.ID)
+		if runID == "" {
+			continue
+		}
+		run := cloneWorkflowRun(snapshot.Run)
+		if run == nil {
+			continue
+		}
+		run.ID = runID
+		timeline := append([]RunTimelineEvent(nil), snapshot.Timeline...)
+		for i := range timeline {
+			timeline[i].RunID = strings.TrimSpace(timeline[i].RunID)
+			if timeline[i].RunID == "" {
+				timeline[i].RunID = runID
+			}
+		}
+		s.runs[runID] = run
+		s.timelines[runID] = timeline
+		s.hydrateTurnReceiptsLocked(run)
+	}
+}
+
+func (s *InMemoryRunService) hydrateTurnReceiptsLocked(run *WorkflowRun) {
+	if s == nil || run == nil {
+		return
+	}
+	runID := strings.TrimSpace(run.ID)
+	if runID == "" {
+		return
+	}
+	for _, phase := range run.Phases {
+		for _, step := range phase.Steps {
+			turnID := strings.TrimSpace(step.TurnID)
+			if turnID == "" {
+				continue
+			}
+			s.turnSeen[turnReceiptKey(runID, turnID)] = struct{}{}
+		}
+	}
+}
+
+// persistRunSnapshotLocked snapshots a run and timeline while service state is locked.
+func (s *InMemoryRunService) persistRunSnapshotLocked(ctx context.Context, runID string) {
+	if s == nil || s.runStore == nil {
+		return
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return
+	}
+	run, ok := s.runs[runID]
+	if !ok || run == nil {
+		return
+	}
+	snapshot := RunStatusSnapshot{
+		Run:      cloneWorkflowRun(run),
+		Timeline: append([]RunTimelineEvent(nil), s.timelines[runID]...),
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = s.runStore.UpsertWorkflowRun(ctx, snapshot)
 }
 
 func sanitizeCounter(value int) int {

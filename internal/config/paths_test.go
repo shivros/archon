@@ -49,6 +49,14 @@ func TestPaths(t *testing.T) {
 		t.Fatalf("unexpected workflow templates path: %s", workflowTemplatesPath)
 	}
 
+	workflowRunsPath, err := WorkflowRunsPath()
+	if err != nil {
+		t.Fatalf("WorkflowRunsPath: %v", err)
+	}
+	if !strings.HasSuffix(workflowRunsPath, filepath.Join(".archon", "workflow_runs.json")) {
+		t.Fatalf("unexpected workflow runs path: %s", workflowRunsPath)
+	}
+
 	statePath, err := StatePath()
 	if err != nil {
 		t.Fatalf("StatePath: %v", err)

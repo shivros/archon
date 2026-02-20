@@ -38,6 +38,7 @@ type bboltRepository struct {
 	worktrees         WorktreeStore
 	groups            WorkspaceGroupStore
 	workflowTemplates WorkflowTemplateStore
+	workflowRuns      WorkflowRunStore
 	appState          AppStateStore
 	meta              SessionMetaStore
 	sessions          SessionIndexStore
@@ -67,6 +68,7 @@ func NewBboltRepository(path string) (Repository, error) {
 	repo.worktrees = workspaceStore
 	repo.groups = workspaceStore
 	repo.workflowTemplates = &bboltWorkflowTemplateStore{db: db}
+	repo.workflowRuns = &bboltWorkflowRunStore{db: db}
 	repo.appState = &bboltAppStateStore{db: db}
 	repo.meta = &bboltSessionMetaStore{db: db}
 	repo.sessions = &bboltSessionIndexStore{db: db}
@@ -89,6 +91,10 @@ func (r *bboltRepository) Groups() WorkspaceGroupStore {
 
 func (r *bboltRepository) WorkflowTemplates() WorkflowTemplateStore {
 	return r.workflowTemplates
+}
+
+func (r *bboltRepository) WorkflowRuns() WorkflowRunStore {
+	return r.workflowRuns
 }
 
 func (r *bboltRepository) AppState() AppStateStore {

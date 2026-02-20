@@ -37,8 +37,36 @@ type stubGuidedWorkflowSessionGateway struct {
 }
 
 type stubGuidedWorkflowSessionMetaStore struct {
-	entries map[string]*types.SessionMeta
+	entries   map[string]*types.SessionMeta
+	listErr   error
+	listCalls int
 }
+
+type stubGuidedWorkflowSessionMetaLister struct {
+	entries   []*types.SessionMeta
+	listErr   error
+	listCalls int
+}
+
+type stubGuidedWorkflowRunStore struct {
+	snapshots   map[string]guidedworkflows.RunStatusSnapshot
+	listErr     error
+	upsertErr   error
+	listCalls   int
+	upsertCalls int
+}
+
+type stubMissingRunSnapshotPolicy struct {
+	calls    int
+	snapshot guidedworkflows.RunStatusSnapshot
+	ok       bool
+}
+
+type guidedWorkflowMissingRunSnapshotPolicyFunc func(
+	meta *types.SessionMeta,
+	runID string,
+	now time.Time,
+) (guidedworkflows.RunStatusSnapshot, bool)
 
 func setStableWorkflowTemplatesHome(t *testing.T) string {
 	t.Helper()
@@ -109,6 +137,10 @@ func (s *stubGuidedWorkflowSessionGateway) Start(_ context.Context, req StartSes
 }
 
 func (s *stubGuidedWorkflowSessionMetaStore) List(context.Context) ([]*types.SessionMeta, error) {
+	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	out := make([]*types.SessionMeta, 0, len(s.entries))
 	for _, entry := range s.entries {
 		copy := *entry
@@ -141,6 +173,67 @@ func (s *stubGuidedWorkflowSessionMetaStore) Upsert(_ context.Context, meta *typ
 func (s *stubGuidedWorkflowSessionMetaStore) Delete(_ context.Context, sessionID string) error {
 	delete(s.entries, sessionID)
 	return nil
+}
+
+func (s *stubGuidedWorkflowSessionMetaLister) List(context.Context) ([]*types.SessionMeta, error) {
+	if s == nil {
+		return nil, nil
+	}
+	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return append([]*types.SessionMeta(nil), s.entries...), nil
+}
+
+func (s *stubGuidedWorkflowRunStore) ListWorkflowRuns(context.Context) ([]guidedworkflows.RunStatusSnapshot, error) {
+	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	out := make([]guidedworkflows.RunStatusSnapshot, 0, len(s.snapshots))
+	for _, snapshot := range s.snapshots {
+		out = append(out, snapshot)
+	}
+	return out, nil
+}
+
+func (s *stubGuidedWorkflowRunStore) UpsertWorkflowRun(_ context.Context, snapshot guidedworkflows.RunStatusSnapshot) error {
+	s.upsertCalls++
+	if s.upsertErr != nil {
+		return s.upsertErr
+	}
+	if s.snapshots == nil {
+		s.snapshots = map[string]guidedworkflows.RunStatusSnapshot{}
+	}
+	if snapshot.Run == nil || strings.TrimSpace(snapshot.Run.ID) == "" {
+		return nil
+	}
+	s.snapshots[strings.TrimSpace(snapshot.Run.ID)] = snapshot
+	return nil
+}
+
+func (s *stubMissingRunSnapshotPolicy) BuildMissingRunSnapshot(
+	_ *types.SessionMeta,
+	_ string,
+	_ time.Time,
+) (guidedworkflows.RunStatusSnapshot, bool) {
+	if s == nil {
+		return guidedworkflows.RunStatusSnapshot{}, false
+	}
+	s.calls++
+	return s.snapshot, s.ok
+}
+
+func (f guidedWorkflowMissingRunSnapshotPolicyFunc) BuildMissingRunSnapshot(
+	meta *types.SessionMeta,
+	runID string,
+	now time.Time,
+) (guidedworkflows.RunStatusSnapshot, bool) {
+	if f == nil {
+		return guidedworkflows.RunStatusSnapshot{}, false
+	}
+	return f(meta, runID, now)
 }
 
 func TestGuidedWorkflowsConfigFromCoreConfigDefaults(t *testing.T) {
@@ -260,6 +353,229 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 	}
 	if metrics.Enabled {
 		t.Fatalf("expected rollout telemetry_enabled=false to disable telemetry")
+	}
+}
+
+func TestNewGuidedWorkflowRunServiceDoesNotPerformReconciliationSideEffects(t *testing.T) {
+	cfg := config.DefaultCoreConfig()
+	cfg.GuidedWorkflows.Enabled = boolPtr(true)
+
+	metaStore := &stubGuidedWorkflowSessionMetaStore{
+		entries: map[string]*types.SessionMeta{
+			"sess-1": {SessionID: "sess-1", WorkflowRunID: "gwf-missing"},
+		},
+	}
+	runStore := &stubGuidedWorkflowRunStore{snapshots: map[string]guidedworkflows.RunStatusSnapshot{}}
+	_ = newGuidedWorkflowRunService(cfg, &Stores{
+		SessionMeta:  metaStore,
+		WorkflowRuns: runStore,
+	}, nil, nil, nil)
+	if runStore.upsertCalls != 0 {
+		t.Fatalf("expected no run-store writes during service construction, got %d", runStore.upsertCalls)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsBackfillsMissingRunFromSessionMeta(t *testing.T) {
+	metaStore := &stubGuidedWorkflowSessionMetaStore{
+		entries: map[string]*types.SessionMeta{
+			"sess-1": {
+				SessionID:     "sess-1",
+				WorkspaceID:   "ws-1",
+				WorktreeID:    "wt-1",
+				WorkflowRunID: "gwf-missing",
+			},
+		},
+	}
+	runStore := &stubGuidedWorkflowRunStore{
+		snapshots: map[string]guidedworkflows.RunStatusSnapshot{},
+	}
+	result, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{
+		SessionMeta: metaStore,
+		RunStore:    runStore,
+		Clock: func() time.Time {
+			return time.Date(2026, 2, 20, 10, 0, 0, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatalf("reconcile guided workflow runs: %v", err)
+	}
+	if result.CreatedSnapshots != 1 {
+		t.Fatalf("expected one created snapshot, got %#v", result)
+	}
+
+	snapshot, ok := runStore.snapshots["gwf-missing"]
+	if !ok {
+		t.Fatalf("expected missing workflow run snapshot to be backfilled")
+	}
+	if snapshot.Run == nil {
+		t.Fatalf("expected backfilled run payload")
+	}
+	if snapshot.Run.WorkspaceID != "ws-1" || snapshot.Run.WorktreeID != "wt-1" || snapshot.Run.SessionID != "sess-1" {
+		t.Fatalf("expected backfilled context fields, got %#v", snapshot.Run)
+	}
+	if snapshot.Run.Status != guidedworkflows.WorkflowRunStatusCompleted {
+		t.Fatalf("expected backfilled run to be completed, got %q", snapshot.Run.Status)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsUsesCustomPolicy(t *testing.T) {
+	metaStore := &stubGuidedWorkflowSessionMetaStore{
+		entries: map[string]*types.SessionMeta{
+			"sess-1": {SessionID: "sess-1", WorkflowRunID: "gwf-custom"},
+		},
+	}
+	runStore := &stubGuidedWorkflowRunStore{snapshots: map[string]guidedworkflows.RunStatusSnapshot{}}
+	policy := &stubMissingRunSnapshotPolicy{
+		ok: true,
+		snapshot: guidedworkflows.RunStatusSnapshot{
+			Run: &guidedworkflows.WorkflowRun{
+				ID:     "gwf-custom",
+				Status: guidedworkflows.WorkflowRunStatusFailed,
+			},
+		},
+	}
+
+	result, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{
+		SessionMeta: metaStore,
+		RunStore:    runStore,
+		Policy:      policy,
+	})
+	if err != nil {
+		t.Fatalf("reconcile guided workflow runs: %v", err)
+	}
+	if result.CreatedSnapshots != 1 || policy.calls != 1 {
+		t.Fatalf("expected custom policy to create one run; result=%#v calls=%d", result, policy.calls)
+	}
+	run, ok := runStore.snapshots["gwf-custom"]
+	if !ok || run.Run == nil || run.Run.Status != guidedworkflows.WorkflowRunStatusFailed {
+		t.Fatalf("expected custom policy snapshot to be persisted, got %#v", run)
+	}
+}
+
+func TestGuidedWorkflowRunSnapshotReconciliationInputFromStores(t *testing.T) {
+	if got := guidedWorkflowRunSnapshotReconciliationInputFromStores(nil); got.RunStore != nil || got.SessionMeta != nil {
+		t.Fatalf("expected nil stores to produce empty reconciliation input, got %#v", got)
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	runStore := &stubGuidedWorkflowRunStore{}
+	got := guidedWorkflowRunSnapshotReconciliationInputFromStores(&Stores{
+		SessionMeta:  metaStore,
+		WorkflowRuns: runStore,
+	})
+	if got.RunStore == nil || got.SessionMeta == nil {
+		t.Fatalf("expected stores to be forwarded, got %#v", got)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsNoDepsNoop(t *testing.T) {
+	result, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{})
+	if err != nil {
+		t.Fatalf("expected no error for noop reconciliation, got %v", err)
+	}
+	if result != (guidedWorkflowRunSnapshotReconciliationResult{}) {
+		t.Fatalf("expected zero-value noop result, got %#v", result)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsReturnsRunStoreListError(t *testing.T) {
+	boom := errors.New("run store unavailable")
+	runStore := &stubGuidedWorkflowRunStore{listErr: boom}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	_, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{
+		RunStore:    runStore,
+		SessionMeta: metaStore,
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected run-store list error, got %v", err)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsReturnsSessionMetaListError(t *testing.T) {
+	boom := errors.New("session meta unavailable")
+	runStore := &stubGuidedWorkflowRunStore{snapshots: map[string]guidedworkflows.RunStatusSnapshot{}}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{listErr: boom}
+	result, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{
+		RunStore:    runStore,
+		SessionMeta: metaStore,
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected session-meta list error, got %v", err)
+	}
+	if result.ExistingSnapshots != 0 {
+		t.Fatalf("expected no existing snapshots on error, got %#v", result)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsTracksSkipAndFailureCounters(t *testing.T) {
+	existingRun := guidedworkflows.RunStatusSnapshot{
+		Run: &guidedworkflows.WorkflowRun{ID: "gwf-existing"},
+	}
+	runStore := &stubGuidedWorkflowRunStore{
+		snapshots: map[string]guidedworkflows.RunStatusSnapshot{
+			"gwf-existing": existingRun,
+		},
+		upsertErr: errors.New("write failed"),
+	}
+	metaLister := &stubGuidedWorkflowSessionMetaLister{
+		entries: []*types.SessionMeta{
+			nil, // counts as empty run id through normalization path
+			{SessionID: "s-existing", WorkflowRunID: "gwf-existing"},
+			{SessionID: "s-policy-skip", WorkflowRunID: "gwf-policy-skip"},
+			{SessionID: "s-write-fail", WorkflowRunID: "gwf-write-fail"},
+		},
+	}
+	policyCalls := 0
+	policy := guidedWorkflowMissingRunSnapshotPolicyFunc(func(meta *types.SessionMeta, runID string, now time.Time) (guidedworkflows.RunStatusSnapshot, bool) {
+		policyCalls++
+		if strings.TrimSpace(runID) == "gwf-policy-skip" {
+			return guidedworkflows.RunStatusSnapshot{}, false
+		}
+		return guidedworkflows.RunStatusSnapshot{
+			Run: &guidedworkflows.WorkflowRun{
+				ID:        runID,
+				SessionID: strings.TrimSpace(meta.SessionID),
+				CreatedAt: now,
+				Status:    guidedworkflows.WorkflowRunStatusCompleted,
+			},
+		}, true
+	})
+	result, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{
+		RunStore:    runStore,
+		SessionMeta: metaLister,
+		Policy:      policy,
+		Clock: func() time.Time {
+			return time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected reconcile error: %v", err)
+	}
+	if result.ExistingSnapshots != 1 || result.SkippedEmptyRunID != 1 || result.SkippedExisting != 1 || result.SkippedByPolicy != 1 || result.FailedWrites != 1 || result.CreatedSnapshots != 0 {
+		t.Fatalf("unexpected reconciliation counters: %#v", result)
+	}
+	if policyCalls != 2 {
+		t.Fatalf("expected policy to be called for two missing IDs, got %d", policyCalls)
+	}
+}
+
+func TestDefaultGuidedWorkflowMissingRunSnapshotPolicy(t *testing.T) {
+	policy := defaultGuidedWorkflowMissingRunSnapshotPolicy{}
+	if _, ok := policy.BuildMissingRunSnapshot(nil, "   ", time.Now().UTC()); ok {
+		t.Fatalf("expected empty run id to be rejected")
+	}
+	lastActive := time.Date(2026, 2, 19, 17, 30, 0, 0, time.UTC)
+	snapshot, ok := policy.BuildMissingRunSnapshot(&types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws-1",
+		WorktreeID:    "wt-1",
+		WorkflowRunID: "gwf-a",
+		LastActiveAt:  &lastActive,
+	}, "gwf-a", time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC))
+	if !ok || snapshot.Run == nil {
+		t.Fatalf("expected valid snapshot from default policy, got %#v ok=%v", snapshot, ok)
+	}
+	if snapshot.Run.CompletedAt == nil || !snapshot.Run.CompletedAt.Equal(lastActive) {
+		t.Fatalf("expected default policy to prefer last_active timestamp, got %#v", snapshot.Run.CompletedAt)
 	}
 }
 

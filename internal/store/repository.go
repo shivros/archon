@@ -18,6 +18,7 @@ type Repository interface {
 	Worktrees() WorktreeStore
 	Groups() WorkspaceGroupStore
 	WorkflowTemplates() WorkflowTemplateStore
+	WorkflowRuns() WorkflowRunStore
 	AppState() AppStateStore
 	SessionMeta() SessionMetaStore
 	SessionIndex() SessionIndexStore
@@ -30,6 +31,7 @@ type Repository interface {
 type RepositoryPaths struct {
 	WorkspacesPath        string
 	WorkflowTemplatesPath string
+	WorkflowRunsPath      string
 	AppStatePath          string
 	SessionMetaPath       string
 	SessionIndexPath      string
@@ -43,6 +45,7 @@ type fileRepository struct {
 	worktrees         WorktreeStore
 	groups            WorkspaceGroupStore
 	workflowTemplates WorkflowTemplateStore
+	workflowRuns      WorkflowRunStore
 	appState          AppStateStore
 	meta              SessionMetaStore
 	sessions          SessionIndexStore
@@ -57,6 +60,7 @@ func NewFileRepository(paths RepositoryPaths) Repository {
 		worktrees:         workspaces,
 		groups:            workspaces,
 		workflowTemplates: NewFileWorkflowTemplateStore(paths.WorkflowTemplatesPath),
+		workflowRuns:      NewFileWorkflowRunStore(paths.WorkflowRunsPath),
 		appState:          NewFileAppStateStore(paths.AppStatePath),
 		meta:              NewFileSessionMetaStore(paths.SessionMetaPath),
 		sessions:          NewFileSessionIndexStore(paths.SessionIndexPath),
@@ -79,6 +83,10 @@ func (r *fileRepository) Groups() WorkspaceGroupStore {
 
 func (r *fileRepository) WorkflowTemplates() WorkflowTemplateStore {
 	return r.workflowTemplates
+}
+
+func (r *fileRepository) WorkflowRuns() WorkflowRunStore {
+	return r.workflowRuns
 }
 
 func (r *fileRepository) AppState() AppStateStore {
@@ -139,6 +147,9 @@ func SeedRepositoryFromFiles(ctx context.Context, dst Repository, paths Reposito
 	if err := seedWorkflowTemplates(ctx, dst.WorkflowTemplates(), src.WorkflowTemplates()); err != nil {
 		return err
 	}
+	if err := seedWorkflowRuns(ctx, dst.WorkflowRuns(), src.WorkflowRuns()); err != nil {
+		return err
+	}
 	if err := seedSessionMeta(ctx, dst.SessionMeta(), src.SessionMeta()); err != nil {
 		return err
 	}
@@ -183,6 +194,29 @@ func seedWorkflowTemplates(ctx context.Context, dst WorkflowTemplateStore, src W
 	}
 	for _, item := range legacy {
 		if _, err := dst.UpsertWorkflowTemplate(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedWorkflowRuns(ctx context.Context, dst WorkflowRunStore, src WorkflowRunStore) error {
+	if dst == nil || src == nil {
+		return nil
+	}
+	current, err := dst.ListWorkflowRuns(ctx)
+	if err != nil {
+		return err
+	}
+	if len(current) > 0 {
+		return nil
+	}
+	legacy, err := src.ListWorkflowRuns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, snapshot := range legacy {
+		if err := dst.UpsertWorkflowRun(ctx, snapshot); err != nil {
 			return err
 		}
 	}

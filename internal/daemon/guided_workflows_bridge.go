@@ -74,6 +74,9 @@ func newGuidedWorkflowRunService(
 	if metricsStore := newGuidedWorkflowMetricsStore(stores); metricsStore != nil {
 		opts = append(opts, guidedworkflows.WithRunMetricsStore(metricsStore))
 	}
+	if stores != nil && stores.WorkflowRuns != nil {
+		opts = append(opts, guidedworkflows.WithRunSnapshotStore(stores.WorkflowRuns))
+	}
 	if promptDispatcher := newGuidedWorkflowPromptDispatcher(coreCfg, manager, stores, live, logger); promptDispatcher != nil {
 		opts = append(opts, guidedworkflows.WithStepPromptDispatcher(promptDispatcher))
 	}
@@ -81,6 +84,156 @@ func newGuidedWorkflowRunService(
 		opts = append(opts, guidedworkflows.WithRunExecutionControls(controls))
 	}
 	return guidedworkflows.NewRunService(guidedWorkflowsConfigFromCoreConfig(coreCfg), opts...)
+}
+
+type guidedWorkflowRunSnapshotStore interface {
+	ListWorkflowRuns(ctx context.Context) ([]guidedworkflows.RunStatusSnapshot, error)
+	UpsertWorkflowRun(ctx context.Context, snapshot guidedworkflows.RunStatusSnapshot) error
+}
+
+type guidedWorkflowSessionMetaLister interface {
+	List(ctx context.Context) ([]*types.SessionMeta, error)
+}
+
+type guidedWorkflowMissingRunSnapshotPolicy interface {
+	BuildMissingRunSnapshot(meta *types.SessionMeta, runID string, now time.Time) (guidedworkflows.RunStatusSnapshot, bool)
+}
+
+type guidedWorkflowRunSnapshotReconciliationInput struct {
+	RunStore    guidedWorkflowRunSnapshotStore
+	SessionMeta guidedWorkflowSessionMetaLister
+	Policy      guidedWorkflowMissingRunSnapshotPolicy
+	Clock       func() time.Time
+}
+
+type guidedWorkflowRunSnapshotReconciliationResult struct {
+	ExistingSnapshots int
+	CreatedSnapshots  int
+	SkippedEmptyRunID int
+	SkippedExisting   int
+	SkippedByPolicy   int
+	FailedWrites      int
+}
+
+type defaultGuidedWorkflowMissingRunSnapshotPolicy struct{}
+
+func (defaultGuidedWorkflowMissingRunSnapshotPolicy) BuildMissingRunSnapshot(
+	meta *types.SessionMeta,
+	runID string,
+	now time.Time,
+) (guidedworkflows.RunStatusSnapshot, bool) {
+	meta = normalizeGuidedWorkflowSessionMeta(meta)
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return guidedworkflows.RunStatusSnapshot{}, false
+	}
+	completedAt := now
+	if meta.LastActiveAt != nil && !meta.LastActiveAt.IsZero() {
+		completedAt = meta.LastActiveAt.UTC()
+	}
+	return guidedworkflows.RunStatusSnapshot{
+		Run: &guidedworkflows.WorkflowRun{
+			ID:           runID,
+			TemplateName: "Historical Guided Workflow",
+			WorkspaceID:  strings.TrimSpace(meta.WorkspaceID),
+			WorktreeID:   strings.TrimSpace(meta.WorktreeID),
+			SessionID:    strings.TrimSpace(meta.SessionID),
+			Status:       guidedworkflows.WorkflowRunStatusCompleted,
+			CreatedAt:    completedAt,
+			CompletedAt:  &completedAt,
+			LastError:    "workflow history restored from session metadata",
+		},
+		Timeline: []guidedworkflows.RunTimelineEvent{
+			{
+				At:      completedAt,
+				Type:    "run_restored_from_session_meta",
+				RunID:   runID,
+				Message: "workflow history restored from session metadata",
+			},
+		},
+	}, true
+}
+
+func guidedWorkflowRunSnapshotReconciliationInputFromStores(stores *Stores) guidedWorkflowRunSnapshotReconciliationInput {
+	if stores == nil {
+		return guidedWorkflowRunSnapshotReconciliationInput{}
+	}
+	return guidedWorkflowRunSnapshotReconciliationInput{
+		RunStore:    stores.WorkflowRuns,
+		SessionMeta: stores.SessionMeta,
+	}
+}
+
+func reconcileGuidedWorkflowRunSnapshots(
+	ctx context.Context,
+	input guidedWorkflowRunSnapshotReconciliationInput,
+) (guidedWorkflowRunSnapshotReconciliationResult, error) {
+	result := guidedWorkflowRunSnapshotReconciliationResult{}
+	if input.RunStore == nil || input.SessionMeta == nil {
+		return result, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	clock := input.Clock
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	policy := input.Policy
+	if policy == nil {
+		policy = defaultGuidedWorkflowMissingRunSnapshotPolicy{}
+	}
+	snapshots, err := input.RunStore.ListWorkflowRuns(ctx)
+	if err != nil {
+		return result, err
+	}
+	existing := make(map[string]struct{}, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.Run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(snapshot.Run.ID)
+		if runID == "" {
+			continue
+		}
+		existing[runID] = struct{}{}
+	}
+	result.ExistingSnapshots = len(existing)
+	meta, err := input.SessionMeta.List(ctx)
+	if err != nil {
+		return result, err
+	}
+	for _, item := range meta {
+		item = normalizeGuidedWorkflowSessionMeta(item)
+		runID := strings.TrimSpace(item.WorkflowRunID)
+		if runID == "" {
+			result.SkippedEmptyRunID++
+			continue
+		}
+		if _, ok := existing[runID]; ok {
+			result.SkippedExisting++
+			continue
+		}
+		snapshot, ok := policy.BuildMissingRunSnapshot(item, runID, clock())
+		if !ok {
+			result.SkippedByPolicy++
+			continue
+		}
+		if err := input.RunStore.UpsertWorkflowRun(ctx, snapshot); err != nil {
+			result.FailedWrites++
+			continue
+		}
+		existing[runID] = struct{}{}
+		result.CreatedSnapshots++
+	}
+	return result, nil
+}
+
+func normalizeGuidedWorkflowSessionMeta(meta *types.SessionMeta) *types.SessionMeta {
+	if meta != nil {
+		return meta
+	}
+	return &types.SessionMeta{}
 }
 
 type guidedWorkflowTemplateProvider struct {

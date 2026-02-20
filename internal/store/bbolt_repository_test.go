@@ -148,6 +148,25 @@ func TestBboltRepositoryCRUD(t *testing.T) {
 		t.Fatalf("unexpected notes: %#v", notes)
 	}
 
+	runSnapshot := guidedworkflows.RunStatusSnapshot{
+		Run: &guidedworkflows.WorkflowRun{
+			ID:         "gwf-1",
+			TemplateID: guidedworkflows.TemplateIDSolidPhaseDelivery,
+			Status:     guidedworkflows.WorkflowRunStatusRunning,
+			CreatedAt:  time.Now().UTC(),
+		},
+	}
+	if err := repo.WorkflowRuns().UpsertWorkflowRun(ctx, runSnapshot); err != nil {
+		t.Fatalf("upsert workflow run: %v", err)
+	}
+	runSnapshots, err := repo.WorkflowRuns().ListWorkflowRuns(ctx)
+	if err != nil {
+		t.Fatalf("list workflow runs: %v", err)
+	}
+	if len(runSnapshots) != 1 || runSnapshots[0].Run == nil || runSnapshots[0].Run.ID != "gwf-1" {
+		t.Fatalf("unexpected workflow runs: %#v", runSnapshots)
+	}
+
 	approval, err := repo.Approvals().Upsert(ctx, &types.Approval{
 		SessionID: "s1",
 		RequestID: 7,
@@ -174,6 +193,7 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	paths := RepositoryPaths{
 		WorkspacesPath:        filepath.Join(base, "workspaces.json"),
 		WorkflowTemplatesPath: filepath.Join(base, "workflow_templates.json"),
+		WorkflowRunsPath:      filepath.Join(base, "workflow_runs.json"),
 		AppStatePath:          filepath.Join(base, "state.json"),
 		SessionMetaPath:       filepath.Join(base, "sessions_meta.json"),
 		SessionIndexPath:      filepath.Join(base, "sessions_index.json"),
@@ -233,6 +253,19 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed approval: %v", err)
 	}
+	if err := src.WorkflowRuns().UpsertWorkflowRun(ctx, guidedworkflows.RunStatusSnapshot{
+		Run: &guidedworkflows.WorkflowRun{
+			ID:         "gwf-seed",
+			TemplateID: guidedworkflows.TemplateIDSolidPhaseDelivery,
+			Status:     guidedworkflows.WorkflowRunStatusPaused,
+			CreatedAt:  time.Now().UTC(),
+		},
+		Timeline: []guidedworkflows.RunTimelineEvent{
+			{At: time.Now().UTC(), Type: "run_created", RunID: "gwf-seed"},
+		},
+	}); err != nil {
+		t.Fatalf("seed workflow run: %v", err)
+	}
 
 	dst, err := OpenRepository(paths, RepositoryBackendBbolt)
 	if err != nil {
@@ -274,6 +307,13 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	}
 	if approvals, err := dst.Approvals().ListBySession(ctx, "s1"); err != nil || len(approvals) != 1 {
 		t.Fatalf("expected seeded approval, got len=%d err=%v", len(approvals), err)
+	}
+	seededRuns, err := dst.WorkflowRuns().ListWorkflowRuns(ctx)
+	if err != nil {
+		t.Fatalf("list seeded workflow runs: %v", err)
+	}
+	if len(seededRuns) != 1 || seededRuns[0].Run == nil || seededRuns[0].Run.ID != "gwf-seed" {
+		t.Fatalf("expected seeded workflow run, got %#v", seededRuns)
 	}
 }
 

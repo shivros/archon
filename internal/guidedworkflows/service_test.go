@@ -16,6 +16,12 @@ type stubRunMetricsStore struct {
 	saved        []RunMetricsSnapshot
 }
 
+type stubRunSnapshotStore struct {
+	loadSnapshots []RunStatusSnapshot
+	loadErr       error
+	savedByRunID  map[string]RunStatusSnapshot
+}
+
 type stubTemplateProvider struct {
 	templates         []WorkflowTemplate
 	err               error
@@ -89,6 +95,47 @@ func (s *stubRunMetricsStore) SaveRunMetrics(_ context.Context, snapshot RunMetr
 	}
 	s.saved = append(s.saved, snapshot)
 	return nil
+}
+
+func (s *stubRunSnapshotStore) ListWorkflowRuns(context.Context) ([]RunStatusSnapshot, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
+	if len(s.savedByRunID) == 0 {
+		out := make([]RunStatusSnapshot, len(s.loadSnapshots))
+		for i := range s.loadSnapshots {
+			out[i] = cloneRunSnapshotForTest(s.loadSnapshots[i])
+		}
+		return out, nil
+	}
+	out := make([]RunStatusSnapshot, 0, len(s.savedByRunID))
+	for _, snapshot := range s.savedByRunID {
+		out = append(out, cloneRunSnapshotForTest(snapshot))
+	}
+	return out, nil
+}
+
+func (s *stubRunSnapshotStore) UpsertWorkflowRun(_ context.Context, snapshot RunStatusSnapshot) error {
+	if s == nil || snapshot.Run == nil || strings.TrimSpace(snapshot.Run.ID) == "" {
+		return nil
+	}
+	if s.savedByRunID == nil {
+		s.savedByRunID = map[string]RunStatusSnapshot{}
+	}
+	runID := strings.TrimSpace(snapshot.Run.ID)
+	snapshot.Run.ID = runID
+	s.savedByRunID[runID] = cloneRunSnapshotForTest(snapshot)
+	return nil
+}
+
+func cloneRunSnapshotForTest(in RunStatusSnapshot) RunStatusSnapshot {
+	return RunStatusSnapshot{
+		Run:      cloneWorkflowRun(in.Run),
+		Timeline: append([]RunTimelineEvent(nil), in.Timeline...),
+	}
 }
 
 func TestRunLifecycleNoopEndToEnd(t *testing.T) {
@@ -1675,5 +1722,41 @@ func TestRunLifecycleDismissAndUndismissRun(t *testing.T) {
 	}
 	if undismissed.DismissedAt != nil {
 		t.Fatalf("expected dismissed_at to clear after undismiss")
+	}
+}
+
+func TestRunLifecyclePersistsSnapshotsAcrossServiceRestart(t *testing.T) {
+	snapshotStore := &stubRunSnapshotStore{}
+	service := NewRunService(Config{Enabled: true}, WithRunSnapshotStore(snapshotStore))
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		UserPrompt:  "persist this run",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if len(snapshotStore.savedByRunID) == 0 {
+		t.Fatalf("expected run snapshots to be persisted")
+	}
+
+	restarted := NewRunService(Config{Enabled: true}, WithRunSnapshotStore(snapshotStore))
+	loaded, err := restarted.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun after restart: %v", err)
+	}
+	if loaded == nil || loaded.ID != run.ID {
+		t.Fatalf("expected persisted run %q after restart, got %#v", run.ID, loaded)
+	}
+	timeline, err := restarted.GetRunTimeline(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline after restart: %v", err)
+	}
+	if len(timeline) == 0 {
+		t.Fatalf("expected persisted timeline after restart")
 	}
 }

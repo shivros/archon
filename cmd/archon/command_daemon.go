@@ -93,6 +93,10 @@ func runDaemonProcess(background bool) error {
 	if err != nil {
 		return err
 	}
+	workflowRunsPath, err := config.WorkflowRunsPath()
+	if err != nil {
+		return err
+	}
 	statePath, err := config.StatePath()
 	if err != nil {
 		return err
@@ -120,6 +124,7 @@ func runDaemonProcess(background bool) error {
 	repositoryPaths := store.RepositoryPaths{
 		WorkspacesPath:        workspacesPath,
 		WorkflowTemplatesPath: workflowTemplatesPath,
+		WorkflowRunsPath:      workflowRunsPath,
 		AppStatePath:          statePath,
 		SessionMetaPath:       sessionsMetaPath,
 		SessionIndexPath:      sessionsIndexPath,
@@ -140,6 +145,7 @@ func runDaemonProcess(background bool) error {
 		Worktrees:         repository.Worktrees(),
 		Groups:            repository.Groups(),
 		WorkflowTemplates: repository.WorkflowTemplates(),
+		WorkflowRuns:      repository.WorkflowRuns(),
 		AppState:          repository.AppState(),
 		SessionMeta:       repository.SessionMeta(),
 		Sessions:          repository.SessionIndex(),

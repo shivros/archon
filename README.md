@@ -256,6 +256,7 @@ When enabled, daemon exposes guided workflow lifecycle endpoints:
 - `POST /v1/workflow-runs/metrics/reset`
 
 Telemetry snapshots are persisted in daemon app state, so aggregate workflow metrics survive daemon restarts.
+Workflow run snapshots are persisted in daemon storage, so run details/timelines and dismissed visibility survive daemon restarts.
 Use `POST /v1/workflow-runs/metrics/reset` to reset aggregate counters for a fresh rollout/measurement window.
 
 Manual start flow:
