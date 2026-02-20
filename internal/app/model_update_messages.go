@@ -517,6 +517,27 @@ func isWorkflowRunNotFoundError(err error) bool {
 
 func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case workflowTemplatesMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if m.mode != uiModeGuidedWorkflow {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetTemplateLoadError(msg.err)
+			m.setStatusError("guided workflow template load error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.guidedWorkflow.SetTemplates(msg.templates)
+		if len(msg.templates) == 0 {
+			m.setStatusWarning("no workflow templates available")
+		} else {
+			m.setStatusInfo(fmt.Sprintf("loaded %d workflow template(s)", len(msg.templates)))
+		}
+		m.renderGuidedWorkflowContent()
+		return true, nil
 	case workflowRunsMsg:
 		if msg.err != nil {
 			m.setBackgroundError("guided workflow runs error: " + msg.err.Error())

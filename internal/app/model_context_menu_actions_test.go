@@ -94,8 +94,11 @@ func TestWorkspaceContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T)
 	if !handled {
 		t.Fatalf("expected workspace action to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no command")
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
 	}
 	if m.mode != uiModeGuidedWorkflow {
 		t.Fatalf("expected guided workflow mode, got %v", m.mode)
@@ -270,8 +273,11 @@ func TestWorktreeContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) 
 	if !handled {
 		t.Fatalf("expected worktree action to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no command")
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
 	}
 	if m.mode != uiModeGuidedWorkflow {
 		t.Fatalf("expected guided workflow mode, got %v", m.mode)
@@ -365,8 +371,11 @@ func TestSessionContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected session action to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no command")
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
 	}
 	if m.mode != uiModeGuidedWorkflow {
 		t.Fatalf("expected guided workflow mode, got %v", m.mode)

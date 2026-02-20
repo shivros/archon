@@ -17,6 +17,10 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-templates":
+			seen["templates"] = true
+			_, _ = w.Write([]byte(`{"templates":[{"id":"solid_phase_delivery","name":"SOLID Phase Delivery","description":"default"}]}`))
+			return
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs":
 			seen["list"] = true
 			_, _ = w.Write([]byte(`{"runs":[{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}]}`))
@@ -112,6 +116,14 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected runs list: %#v", runs)
 	}
 
+	templates, err := c.ListWorkflowTemplates(ctx)
+	if err != nil {
+		t.Fatalf("ListWorkflowTemplates error: %v", err)
+	}
+	if len(templates) != 1 || strings.TrimSpace(templates[0].ID) != guidedworkflows.TemplateIDSolidPhaseDelivery {
+		t.Fatalf("unexpected workflow template list: %#v", templates)
+	}
+
 	started, err := c.StartWorkflowRun(ctx, "gwf-1")
 	if err != nil {
 		t.Fatalf("StartWorkflowRun error: %v", err)
@@ -179,9 +191,38 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected metrics reset response: %#v", reset)
 	}
 
-	for _, key := range []string{"list", "create", "start", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
+	for _, key := range []string{"templates", "list", "create", "start", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
 		if !seen[key] {
 			t.Fatalf("expected request %q to be executed", key)
 		}
+	}
+}
+
+func TestListWorkflowTemplatesReturnsErrorForNonOKResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/workflow-templates" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"guided workflow request failed"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{
+		baseURL: server.URL,
+		token:   "token",
+		http: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	}
+
+	templates, err := c.ListWorkflowTemplates(context.Background())
+	if err == nil {
+		t.Fatalf("expected error when template endpoint is unavailable")
+	}
+	if templates != nil {
+		t.Fatalf("expected nil templates on error, got %#v", templates)
 	}
 }

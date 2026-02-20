@@ -82,7 +82,8 @@ const (
 type Model struct {
 	workspaceAPI                        WorkspaceAPI
 	sessionAPI                          SessionAPI
-	guidedWorkflowAPI                   GuidedWorkflowAPI
+	guidedWorkflowAPI                   GuidedWorkflowRunAPI
+	guidedWorkflowTemplateAPI           GuidedWorkflowTemplateAPI
 	sessionSelectionAPI                 SessionSelectionAPI
 	sessionHistoryAPI                   SessionHistoryAPI
 	notesAPI                            NotesAPI
@@ -353,6 +354,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		workspaceAPI:                        api,
 		sessionAPI:                          api,
 		guidedWorkflowAPI:                   api,
+		guidedWorkflowTemplateAPI:           api,
 		sessionSelectionAPI:                 api,
 		sessionHistoryAPI:                   api,
 		notesAPI:                            api,

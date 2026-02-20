@@ -71,7 +71,7 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
 			workspaceID: target.id,
 		})
-		return true, nil
+		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 	case ContextMenuWorkspaceCopyPath:
 		if target.id == "" || target.id == unassignedWorkspaceID {
 			m.setValidationStatus("select a workspace")
@@ -139,7 +139,7 @@ func (m *Model) handleWorktreeContextMenuAction(action ContextMenuAction, target
 			workspaceID: target.workspaceID,
 			worktreeID:  target.worktreeID,
 		})
-		return true, nil
+		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 	case ContextMenuWorktreeCopyPath:
 		if target.worktreeID == "" {
 			m.setValidationStatus("select a worktree")
@@ -211,7 +211,7 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			worktreeID:  target.worktreeID,
 			sessionID:   target.sessionID,
 		})
-		return true, nil
+		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 	case ContextMenuSessionDismiss:
 		if target.sessionID == "" {
 			m.setValidationStatus("select a session")

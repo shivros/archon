@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,8 @@ import (
 
 type guidedWorkflowAPIMock struct {
 	listRuns          []*guidedworkflows.WorkflowRun
+	listTemplates     []guidedworkflows.WorkflowTemplate
+	listTemplatesErr  error
 	createReqs        []client.CreateWorkflowRunRequest
 	startRunIDs       []string
 	decisionReqs      []client.WorkflowRunDecisionRequest
@@ -32,6 +35,17 @@ func (m *guidedWorkflowAPIMock) ListWorkflowRuns(_ context.Context) ([]*guidedwo
 	out := make([]*guidedworkflows.WorkflowRun, 0, len(m.listRuns))
 	for _, run := range m.listRuns {
 		out = append(out, cloneWorkflowRun(run))
+	}
+	return out, nil
+}
+
+func (m *guidedWorkflowAPIMock) ListWorkflowTemplates(_ context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	if m.listTemplatesErr != nil {
+		return nil, m.listTemplatesErr
+	}
+	out := make([]guidedworkflows.WorkflowTemplate, 0, len(m.listTemplates))
+	for _, tpl := range m.listTemplates {
+		out = append(out, tpl)
 	}
 	return out, nil
 }
@@ -101,6 +115,29 @@ func (m *guidedWorkflowAPIMock) GetWorkflowRunTimeline(_ context.Context, _ stri
 	return cloneRunTimeline(m.snapshotTimelines[idx]), nil
 }
 
+func enterGuidedWorkflowForTest(m *Model, context guidedWorkflowLaunchContext) {
+	if m == nil {
+		return
+	}
+	m.enterGuidedWorkflow(context)
+	if m.guidedWorkflow == nil {
+		return
+	}
+	m.guidedWorkflow.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{
+			ID:          guidedworkflows.TemplateIDSolidPhaseDelivery,
+			Name:        "SOLID Phase Delivery",
+			Description: "Default guided workflow template.",
+		},
+		{
+			ID:          "custom_triage",
+			Name:        "Bug Triage",
+			Description: "Fast triage template.",
+		},
+	})
+	m.renderGuidedWorkflowContent()
+}
+
 func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
 	api := &guidedWorkflowAPIMock{
@@ -120,7 +157,7 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 
 	m := newPhase0ModelWithSession("codex")
 	m.guidedWorkflowAPI = api
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -194,7 +231,7 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 
 func TestGuidedWorkflowSetupRequiresUserPrompt(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -216,9 +253,75 @@ func TestGuidedWorkflowSetupRequiresUserPrompt(t *testing.T) {
 	}
 }
 
-func TestGuidedWorkflowSetupCapturesPromptFromKeys(t *testing.T) {
+func TestGuidedWorkflowLauncherBlocksSetupUntilTemplatesLoaded(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no command while templates are loading")
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected launcher stage while templates are loading")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "loading") {
+		t.Fatalf("expected loading validation status, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowSetupUsesSelectedTemplate(t *testing.T) {
+	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+	api := &guidedWorkflowAPIMock{
+		createRun: newWorkflowRunFixture("gwf-template-select", guidedworkflows.WorkflowRunStatusCreated, now),
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = asModel(t, updated)
+	if !strings.Contains(m.contentRaw, "Bug Triage") {
+		t.Fatalf("expected launcher to show alternate template option")
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+
+	m.guidedWorkflowPromptInput.SetValue("Triage flaky parser test")
+	m.syncGuidedWorkflowPromptInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected create workflow command")
+	}
+	if _, ok := cmd().(workflowRunCreatedMsg); !ok {
+		t.Fatalf("expected workflowRunCreatedMsg, got %T", cmd())
+	}
+	if len(api.createReqs) != 1 {
+		t.Fatalf("expected one create request, got %d", len(api.createReqs))
+	}
+	if api.createReqs[0].TemplateID != guidedworkflows.TemplateIDSolidPhaseDelivery {
+		t.Fatalf("expected selected template id %q, got %q", guidedworkflows.TemplateIDSolidPhaseDelivery, api.createReqs[0].TemplateID)
+	}
+}
+
+func TestGuidedWorkflowSetupCapturesPromptFromKeys(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -248,7 +351,7 @@ func TestGuidedWorkflowSetupCapturesPromptFromKeys(t *testing.T) {
 
 func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -273,7 +376,7 @@ func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 
 func TestGuidedWorkflowSetupTypingQDoesNotQuit(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -309,7 +412,7 @@ func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 		KeyCommandInputSubmit:  "f6",
 		KeyCommandComposeModel: "f6",
 	}))
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -355,7 +458,7 @@ func TestGuidedWorkflowSetupUsesConfiguredDefaultResolutionBoundary(t *testing.T
 			},
 		},
 	})
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -408,7 +511,7 @@ func TestGuidedWorkflowSetupKeepsBalancedSensitivityWhenDefaultsInvalid(t *testi
 			},
 		},
 	})
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -463,7 +566,7 @@ func TestGuidedPolicySensitivityFromPreset(t *testing.T) {
 
 func TestGuidedWorkflowSetupResizesViewportOnEnterAndInputGrowth(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 		sessionID:   "s1",
@@ -519,7 +622,7 @@ func TestGuidedWorkflowSetupContentNotOverwrittenBySidebarRefresh(t *testing.T) 
 	}
 	m.sidebar.Select(workspaceRow)
 
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 	})
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -646,7 +749,7 @@ func TestWorkflowDismissNotFoundSurvivesAppStateRestore(t *testing.T) {
 func TestGuidedWorkflowTimelineSnapshotUpdatesArtifacts(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 30, 0, 0, time.UTC)
 	m := NewModel(nil)
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
@@ -706,7 +809,7 @@ func TestGuidedWorkflowTimelineShowsStepSessionTraceability(t *testing.T) {
 	run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
 
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
@@ -742,7 +845,7 @@ func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
 	run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
 
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
@@ -801,7 +904,7 @@ func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 
 	m := NewModel(nil)
 	m.guidedWorkflowAPI = api
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1"})
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1"})
 	updated, _ := m.Update(workflowRunSnapshotMsg{
 		run: paused,
 		timeline: []guidedworkflows.RunTimelineEvent{
@@ -958,6 +1061,225 @@ func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 	}
 	if !strings.Contains(content, "- Completed steps: 2/2  \n- Decisions requested: 0") {
 		t.Fatalf("expected decision count on a separate line, got %q", content)
+	}
+}
+
+func TestGuidedWorkflowLauncherTemplateLoadErrorAndRetry(t *testing.T) {
+	api := &guidedWorkflowAPIMock{
+		listTemplatesErr: errors.New("template backend unavailable"),
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.guidedWorkflowTemplateAPI = api
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)())
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if m.guidedWorkflow.TemplateLoadError() == "" {
+		t.Fatalf("expected template load error")
+	}
+	if !strings.Contains(m.contentRaw, "Template load failed") {
+		t.Fatalf("expected launcher error content, got %q", m.contentRaw)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no command while template load has failed")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "failed to load") {
+		t.Fatalf("expected load-failed status, got %q", m.status)
+	}
+
+	api.listTemplatesErr = nil
+	api.listTemplates = []guidedworkflows.WorkflowTemplate{
+		{ID: guidedworkflows.TemplateIDSolidPhaseDelivery, Name: "SOLID Phase Delivery"},
+	}
+
+	updated, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected template refresh command")
+	}
+	msg, ok := cmd().(workflowTemplatesMsg)
+	if !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+
+	updated, _ = m.Update(msg)
+	m = asModel(t, updated)
+	if m.guidedWorkflow.TemplateLoadError() != "" {
+		t.Fatalf("expected template load error to clear after retry")
+	}
+	if !m.guidedWorkflow.HasTemplateSelection() {
+		t.Fatalf("expected template selection after successful retry")
+	}
+}
+
+func TestGuidedWorkflowLauncherBlocksSetupWhenNoTemplatesAvailable(t *testing.T) {
+	api := &guidedWorkflowAPIMock{}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.guidedWorkflowTemplateAPI = api
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)())
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if m.guidedWorkflow.HasTemplateSelection() {
+		t.Fatalf("expected no template selection when list is empty")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "no workflow templates available") {
+		t.Fatalf("expected no-template status, got %q", m.status)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no command without a selected template")
+	}
+	if m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected launcher stage when templates are unavailable")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "select a workflow template") {
+		t.Fatalf("expected select-template status, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowSetupEscReturnsToLauncher(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+	if m.guidedWorkflowPromptInput == nil || !m.guidedWorkflowPromptInput.Focused() {
+		t.Fatalf("expected focused setup prompt input")
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no command when returning to launcher")
+	}
+	if m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected launcher stage after esc")
+	}
+	if m.guidedWorkflowPromptInput.Focused() {
+		t.Fatalf("expected setup prompt input to blur when returning to launcher")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "guided workflow launcher") {
+		t.Fatalf("expected launcher status, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowControllerTemplateAndRefreshGuards(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+
+	controller.SetTemplateLoadError(errors.New("no templates"))
+	if controller.TemplateLoadError() == "" {
+		t.Fatalf("expected template load error text")
+	}
+	if controller.TemplatesLoading() {
+		t.Fatalf("expected loading=false after template load error")
+	}
+	if controller.HasTemplateSelection() {
+		t.Fatalf("expected no template selection before templates are set")
+	}
+
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: guidedworkflows.TemplateIDSolidPhaseDelivery, Name: "SOLID Phase Delivery"},
+	})
+	if !controller.HasTemplateSelection() {
+		t.Fatalf("expected template selection after templates are set")
+	}
+	if !controller.OpenSetup() {
+		t.Fatalf("expected launcher to open setup when template is selected")
+	}
+	controller.OpenLauncher()
+	if controller.Stage() != guidedWorkflowStageLauncher {
+		t.Fatalf("expected launcher stage after OpenLauncher")
+	}
+
+	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+	controller.SetRun(newWorkflowRunFixture("gwf-refresh", guidedworkflows.WorkflowRunStatusRunning, now))
+	if !controller.CanRefresh(now, time.Second) {
+		t.Fatalf("expected refresh to be allowed for active run")
+	}
+	controller.MarkRefreshQueued(now)
+	if controller.CanRefresh(now, time.Second) {
+		t.Fatalf("expected queued refresh to block additional refreshes")
+	}
+
+	// Exercise interval and terminal-state guards.
+	controller.refreshQueued = false
+	controller.lastRefreshAt = now
+	if controller.CanRefresh(now, 2*time.Second) {
+		t.Fatalf("expected refresh interval guard to block immediate refresh")
+	}
+	controller.lastRefreshAt = now.Add(-3 * time.Second)
+	if !controller.CanRefresh(now, 2*time.Second) {
+		t.Fatalf("expected refresh interval guard to allow elapsed interval")
+	}
+	controller.SetRun(newWorkflowRunFixture("gwf-refresh", guidedworkflows.WorkflowRunStatusCompleted, now))
+	if controller.CanRefresh(now, time.Second) {
+		t.Fatalf("expected completed run to disable refresh")
+	}
+}
+
+func TestGuidedWorkflowRefreshNowValidatesRunID(t *testing.T) {
+	now := time.Date(2026, 2, 20, 12, 30, 0, 0, time.UTC)
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{
+			newWorkflowRunFixture("gwf-refresh-now", guidedworkflows.WorkflowRunStatusRunning, now),
+		},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{{At: now, Type: "run_started", RunID: "gwf-refresh-now"}},
+		},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+
+	cmd := m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
+	if cmd != nil {
+		t.Fatalf("expected no command without an active run id")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "no guided run to refresh") {
+		t.Fatalf("expected missing-run status, got %q", m.status)
+	}
+
+	m.guidedWorkflow.SetRun(newWorkflowRunFixture("gwf-refresh-now", guidedworkflows.WorkflowRunStatusRunning, now))
+	m.clockNow = now
+	cmd = m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
+	if cmd == nil {
+		t.Fatalf("expected refresh command when run id is present")
+	}
+	if _, ok := cmd().(workflowRunSnapshotMsg); !ok {
+		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
 	}
 }
 

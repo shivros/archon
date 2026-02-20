@@ -110,7 +110,7 @@ func TestWithInputFramePolicyInjectsGuidedSetupFrame(t *testing.T) {
 			InputFrameTargetGuidedWorkflowSetup: custom,
 		},
 	}))
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
 
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	next := asModel(t, updated)

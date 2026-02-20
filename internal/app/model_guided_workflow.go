@@ -18,11 +18,12 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 	}
 	m.mode = uiModeGuidedWorkflow
 	m.guidedWorkflow.Enter(context)
+	m.guidedWorkflow.BeginTemplateLoad()
 	m.resetGuidedWorkflowPromptInput()
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
-	m.setStatusMessage("guided workflow launcher")
+	m.setStatusMessage("loading workflow templates")
 	m.renderGuidedWorkflowContent()
 }
 
@@ -139,6 +140,11 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		case "down":
 			if m.guidedWorkflow != nil {
 				switch m.guidedWorkflow.Stage() {
+				case guidedWorkflowStageLauncher:
+					if m.guidedWorkflow.MoveTemplateSelection(1) {
+						m.renderGuidedWorkflowContent()
+					}
+					return true, nil
 				case guidedWorkflowStageSetup:
 					m.guidedWorkflow.CycleSensitivity(1)
 					m.renderGuidedWorkflowContent()
@@ -152,6 +158,11 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		case "up":
 			if m.guidedWorkflow != nil {
 				switch m.guidedWorkflow.Stage() {
+				case guidedWorkflowStageLauncher:
+					if m.guidedWorkflow.MoveTemplateSelection(-1) {
+						m.renderGuidedWorkflowContent()
+					}
+					return true, nil
 				case guidedWorkflowStageSetup:
 					m.guidedWorkflow.CycleSensitivity(-1)
 					m.renderGuidedWorkflowContent()
@@ -175,8 +186,16 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				return true, nil
 			}
 		case "r":
-			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
-				return true, m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
+			if m.guidedWorkflow != nil {
+				switch m.guidedWorkflow.Stage() {
+				case guidedWorkflowStageLauncher:
+					m.guidedWorkflow.BeginTemplateLoad()
+					m.setStatusMessage("loading workflow templates")
+					m.renderGuidedWorkflowContent()
+					return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
+				case guidedWorkflowStageLive, guidedWorkflowStageSummary:
+					return true, m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
+				}
 			}
 		case "a":
 			if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
@@ -211,7 +230,21 @@ func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {
 	}
 	switch m.guidedWorkflow.Stage() {
 	case guidedWorkflowStageLauncher:
-		m.guidedWorkflow.OpenSetup()
+		if m.guidedWorkflow.TemplatesLoading() {
+			m.setValidationStatus("workflow templates are still loading")
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
+		if loadErr := m.guidedWorkflow.TemplateLoadError(); loadErr != "" {
+			m.setValidationStatus("workflow templates failed to load; press r to retry")
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
+		if !m.guidedWorkflow.OpenSetup() {
+			m.setValidationStatus("select a workflow template to continue")
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
 		if m.guidedWorkflowPromptInput != nil {
 			m.guidedWorkflowPromptInput.Focus()
 		}

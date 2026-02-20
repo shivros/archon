@@ -15,6 +15,11 @@ import (
 )
 
 type RunService interface {
+	RunLifecycleService
+	TemplateCatalog
+}
+
+type RunLifecycleService interface {
 	CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error)
 	ListRuns(ctx context.Context) ([]*WorkflowRun, error)
 	ListRunsIncludingDismissed(ctx context.Context) ([]*WorkflowRun, error)
@@ -27,6 +32,10 @@ type RunService interface {
 	HandleDecision(ctx context.Context, runID string, req DecisionActionRequest) (*WorkflowRun, error)
 	GetRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	GetRunTimeline(ctx context.Context, runID string) ([]RunTimelineEvent, error)
+}
+
+type TemplateCatalog interface {
+	ListTemplates(ctx context.Context) ([]WorkflowTemplate, error)
 }
 
 type RunMetricsProvider interface {
@@ -217,11 +226,12 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 	if strings.TrimSpace(req.WorkspaceID) == "" && strings.TrimSpace(req.WorktreeID) == "" {
 		return nil, ErrMissingContext
 	}
+	templates := s.resolveTemplates(ctx)
 	templateID := strings.TrimSpace(req.TemplateID)
 	if templateID == "" {
-		templateID = TemplateIDSolidPhaseDelivery
+		templateID = defaultTemplateID(templates)
 	}
-	template, ok := s.resolveTemplates(ctx)[templateID]
+	template, ok := templates[templateID]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrTemplateNotFound, templateID)
 	}
@@ -281,6 +291,50 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		Message: "workflow run created",
 	})
 	return cloneWorkflowRun(run), nil
+}
+
+func (s *InMemoryRunService) ListTemplates(ctx context.Context) ([]WorkflowTemplate, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
+	}
+	resolved := s.resolveTemplates(ctx)
+	out := make([]WorkflowTemplate, 0, len(resolved))
+	for _, tpl := range resolved {
+		out = append(out, cloneTemplate(tpl))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		leftName := strings.ToLower(strings.TrimSpace(out[i].Name))
+		rightName := strings.ToLower(strings.TrimSpace(out[j].Name))
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		leftID := strings.ToLower(strings.TrimSpace(out[i].ID))
+		rightID := strings.ToLower(strings.TrimSpace(out[j].ID))
+		return leftID < rightID
+	})
+	return out, nil
+}
+
+func defaultTemplateID(templates map[string]WorkflowTemplate) string {
+	if len(templates) == 0 {
+		return ""
+	}
+	if _, ok := templates[TemplateIDSolidPhaseDelivery]; ok {
+		return TemplateIDSolidPhaseDelivery
+	}
+	ids := make([]string, 0, len(templates))
+	for id := range templates {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	sort.Strings(ids)
+	return ids[0]
 }
 
 func (s *InMemoryRunService) resolveTemplates(ctx context.Context) map[string]WorkflowTemplate {

@@ -32,30 +32,38 @@ type guidedWorkflowLaunchContext struct {
 	sessionID   string
 }
 
+type guidedWorkflowTemplateOption struct {
+	id          string
+	name        string
+	description string
+}
+
 type GuidedWorkflowUIController struct {
-	stage         guidedWorkflowStage
-	context       guidedWorkflowLaunchContext
-	templateID    string
-	templateName  string
-	defaultPreset guidedPolicySensitivity
-	sensitivity   guidedPolicySensitivity
-	userPrompt    string
-	run           *guidedworkflows.WorkflowRun
-	timeline      []guidedworkflows.RunTimelineEvent
-	lastError     string
-	refreshQueued bool
-	lastRefreshAt time.Time
-	selectedPhase int
-	selectedStep  int
+	stage          guidedWorkflowStage
+	context        guidedWorkflowLaunchContext
+	templateID     string
+	templateName   string
+	templatePicker guidedWorkflowTemplatePicker
+	defaultPreset  guidedPolicySensitivity
+	sensitivity    guidedPolicySensitivity
+	userPrompt     string
+	run            *guidedworkflows.WorkflowRun
+	timeline       []guidedworkflows.RunTimelineEvent
+	lastError      string
+	refreshQueued  bool
+	lastRefreshAt  time.Time
+	selectedPhase  int
+	selectedStep   int
 }
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
 	return &GuidedWorkflowUIController{
-		stage:         guidedWorkflowStageLauncher,
-		templateID:    guidedworkflows.TemplateIDSolidPhaseDelivery,
-		templateName:  "SOLID Phase Delivery",
-		defaultPreset: guidedPolicySensitivityBalanced,
-		sensitivity:   guidedPolicySensitivityBalanced,
+		stage:          guidedWorkflowStageLauncher,
+		templateID:     "",
+		templateName:   "",
+		templatePicker: newGuidedWorkflowTemplatePicker(),
+		defaultPreset:  guidedPolicySensitivityBalanced,
+		sensitivity:    guidedPolicySensitivityBalanced,
 	}
 }
 
@@ -65,8 +73,9 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	}
 	c.stage = guidedWorkflowStageLauncher
 	c.context = context
-	c.templateID = guidedworkflows.TemplateIDSolidPhaseDelivery
-	c.templateName = "SOLID Phase Delivery"
+	c.templateID = ""
+	c.templateName = ""
+	c.templatePicker.Reset()
 	c.sensitivity = c.defaultPreset
 	c.userPrompt = ""
 	c.run = nil
@@ -92,12 +101,16 @@ func (c *GuidedWorkflowUIController) Stage() guidedWorkflowStage {
 	return c.stage
 }
 
-func (c *GuidedWorkflowUIController) OpenSetup() {
-	if c == nil {
-		return
+func (c *GuidedWorkflowUIController) OpenSetup() bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return false
+	}
+	if c.templatePicker.Loading() || strings.TrimSpace(c.templateID) == "" {
+		return false
 	}
 	c.stage = guidedWorkflowStageSetup
 	c.lastError = ""
+	return true
 }
 
 func (c *GuidedWorkflowUIController) OpenLauncher() {
@@ -105,6 +118,60 @@ func (c *GuidedWorkflowUIController) OpenLauncher() {
 		return
 	}
 	c.stage = guidedWorkflowStageLauncher
+}
+
+func (c *GuidedWorkflowUIController) BeginTemplateLoad() {
+	if c == nil {
+		return
+	}
+	c.templatePicker.BeginLoad()
+}
+
+func (c *GuidedWorkflowUIController) SetTemplateLoadError(err error) {
+	if c == nil {
+		return
+	}
+	c.templatePicker.SetError(err)
+}
+
+func (c *GuidedWorkflowUIController) SetTemplates(raw []guidedworkflows.WorkflowTemplate) {
+	if c == nil {
+		return
+	}
+	c.templatePicker.SetTemplates(raw, c.templateID)
+	c.syncTemplateSelection()
+}
+
+func (c *GuidedWorkflowUIController) MoveTemplateSelection(delta int) bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher || delta == 0 {
+		return false
+	}
+	if !c.templatePicker.Move(delta) {
+		return false
+	}
+	c.syncTemplateSelection()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) TemplatesLoading() bool {
+	if c == nil {
+		return false
+	}
+	return c.templatePicker.Loading()
+}
+
+func (c *GuidedWorkflowUIController) TemplateLoadError() string {
+	if c == nil {
+		return ""
+	}
+	return c.templatePicker.Error()
+}
+
+func (c *GuidedWorkflowUIController) HasTemplateSelection() bool {
+	if c == nil {
+		return false
+	}
+	return c.templatePicker.HasSelection()
 }
 
 func (c *GuidedWorkflowUIController) SetDefaultSensitivity(sensitivity guidedPolicySensitivity) {
@@ -389,10 +456,37 @@ func (c *GuidedWorkflowUIController) renderLauncher() string {
 		fmt.Sprintf("- Worktree: %s", valueOrFallback(c.context.worktreeID, "(not set)")),
 		fmt.Sprintf("- Task/Session: %s", valueOrFallback(c.context.sessionID, "(not set)")),
 		"",
-		"Controls",
-		"- enter: continue to run setup",
-		"- esc: close launcher",
+		"Template Picker",
 	}
+	options := c.templatePicker.Options()
+	selectedIndex := c.templatePicker.SelectedIndex()
+	switch {
+	case c.templatePicker.Loading():
+		lines = append(lines, "- Loading workflow templates...")
+	case c.templatePicker.Error() != "":
+		lines = append(lines, "- Template load failed: "+c.templatePicker.Error())
+	case len(options) == 0:
+		lines = append(lines, "- No templates available.")
+	default:
+		for idx, option := range options {
+			prefix := " "
+			if idx == selectedIndex {
+				prefix = ">"
+			}
+			lines = append(lines, fmt.Sprintf("%s %s (%s)", prefix, valueOrFallback(option.name, option.id), option.id))
+			if text := strings.TrimSpace(option.description); text != "" {
+				lines = append(lines, "   "+text)
+			}
+		}
+	}
+	lines = append(lines,
+		"",
+		"Controls",
+		"- up/down: choose template",
+		"- enter: continue to run setup",
+		"- r: reload templates",
+		"- esc: close launcher",
+	)
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
@@ -405,7 +499,7 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 	lines := []string{
 		"Run Setup",
 		"",
-		fmt.Sprintf("Template: %s (%s)", valueOrFallback(c.templateName, "SOLID Phase Delivery"), valueOrFallback(c.templateID, guidedworkflows.TemplateIDSolidPhaseDelivery)),
+		fmt.Sprintf("Template: %s (%s)", valueOrFallback(c.templateName, "(none selected)"), valueOrFallback(c.templateID, "(not selected)")),
 		fmt.Sprintf("Policy sensitivity: %s", sensitivity),
 		"",
 		"Workflow prompt (required)",
@@ -757,6 +851,20 @@ func (c *GuidedWorkflowUIController) selectedStepRef() (*guidedworkflows.PhaseRu
 		return nil, nil, false
 	}
 	return phase, &phase.Steps[c.selectedStep], true
+}
+
+func (c *GuidedWorkflowUIController) syncTemplateSelection() {
+	if c == nil {
+		return
+	}
+	selection, ok := c.templatePicker.Selected()
+	if !ok {
+		c.templateID = ""
+		c.templateName = ""
+		return
+	}
+	c.templateID = strings.TrimSpace(selection.id)
+	c.templateName = strings.TrimSpace(selection.name)
 }
 
 func (c *GuidedWorkflowUIController) sensitivityLabel() string {

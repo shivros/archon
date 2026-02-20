@@ -405,6 +405,14 @@ func (c *Client) ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.Workf
 	return c.ListWorkflowRunsWithOptions(ctx, false)
 }
 
+func (c *Client) ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	var resp WorkflowTemplatesResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/workflow-templates", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Templates, nil
+}
+
 func (c *Client) ListWorkflowRunsWithOptions(ctx context.Context, includeDismissed bool) ([]*guidedworkflows.WorkflowRun, error) {
 	path := "/v1/workflow-runs"
 	if includeDismissed {

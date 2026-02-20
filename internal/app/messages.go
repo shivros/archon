@@ -315,6 +315,11 @@ type workflowRunsMsg struct {
 	err  error
 }
 
+type workflowTemplatesMsg struct {
+	templates []guidedworkflows.WorkflowTemplate
+	err       error
+}
+
 type workflowRunStartedMsg struct {
 	run *guidedworkflows.WorkflowRun
 	err error

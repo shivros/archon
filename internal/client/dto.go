@@ -139,3 +139,7 @@ type WorkflowRunTimelineResponse struct {
 type WorkflowRunsResponse struct {
 	Runs []*guidedworkflows.WorkflowRun `json:"runs"`
 }
+
+type WorkflowTemplatesResponse struct {
+	Templates []guidedworkflows.WorkflowTemplate `json:"templates"`
+}

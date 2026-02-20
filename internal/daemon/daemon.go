@@ -147,6 +147,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.Notifier = eventPublisher
 	api.GuidedWorkflows = guided
 	api.WorkflowRuns = workflowRuns
+	api.WorkflowTemplates = workflowRuns
 	api.WorkflowPolicy = newGuidedWorkflowPolicyResolver(coreCfg)
 	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg)
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)

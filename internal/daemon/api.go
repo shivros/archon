@@ -22,6 +22,7 @@ type API struct {
 	Notifier                 NotificationPublisher
 	GuidedWorkflows          guidedworkflows.Orchestrator
 	WorkflowRuns             GuidedWorkflowRunService
+	WorkflowTemplates        GuidedWorkflowTemplateService
 	WorkflowPolicy           GuidedWorkflowPolicyResolver
 	WorkflowDispatchDefaults guidedWorkflowDispatchDefaults
 	Logger                   logging.Logger
@@ -99,6 +100,10 @@ type GuidedWorkflowRunService interface {
 	GetRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)
 }
 
+type GuidedWorkflowTemplateService interface {
+	ListTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error)
+}
+
 type GuidedWorkflowPolicyResolver interface {
 	ResolvePolicyOverrides(explicit *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride
 }
@@ -146,6 +151,21 @@ func (a *API) workflowRunService() GuidedWorkflowRunService {
 		return nil
 	}
 	return a.WorkflowRuns
+}
+
+func (a *API) workflowTemplateService() GuidedWorkflowTemplateService {
+	if a == nil {
+		return nil
+	}
+	if a.WorkflowTemplates != nil {
+		return a.WorkflowTemplates
+	}
+	if a.WorkflowRuns != nil {
+		if provider, ok := any(a.WorkflowRuns).(GuidedWorkflowTemplateService); ok {
+			return provider
+		}
+	}
+	return nil
 }
 
 func (a *API) workflowPolicyResolver() GuidedWorkflowPolicyResolver {

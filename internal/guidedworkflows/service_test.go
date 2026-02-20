@@ -277,6 +277,232 @@ func TestRunLifecycleTemplateProviderAllowsExplicitEmptyConfig(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleListTemplatesUsesResolvedCatalog(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			templates: []WorkflowTemplate{
+				{
+					ID:          "custom_release",
+					Name:        "Release Delivery",
+					Description: "release flow",
+					Phases: []WorkflowTemplatePhase{
+						{
+							ID:   "phase_release",
+							Name: "Release",
+							Steps: []WorkflowTemplateStep{
+								{ID: "step_release", Name: "release step", Prompt: "release prompt"},
+							},
+						},
+					},
+				},
+				{
+					ID:   "custom_bugfix",
+					Name: "Bugfix Delivery",
+					Phases: []WorkflowTemplatePhase{
+						{
+							ID:   "phase_bugfix",
+							Name: "Bugfix",
+							Steps: []WorkflowTemplateStep{
+								{ID: "step_bugfix", Name: "bugfix step", Prompt: "bugfix prompt"},
+							},
+						},
+					},
+				},
+			},
+			explicitConfig: true,
+		}),
+	)
+
+	templates, err := service.ListTemplates(context.Background())
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	if len(templates) != 2 {
+		t.Fatalf("expected 2 templates, got %d", len(templates))
+	}
+	if templates[0].ID != "custom_bugfix" || templates[1].ID != "custom_release" {
+		t.Fatalf("expected templates sorted by name, got %#v", templates)
+	}
+}
+
+func TestRunLifecycleCreateRunWithoutTemplateUsesFirstResolvedTemplate(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			templates: []WorkflowTemplate{
+				{
+					ID:   "z_custom",
+					Name: "Zulu",
+					Phases: []WorkflowTemplatePhase{
+						{
+							ID:   "phase_zulu",
+							Name: "Zulu",
+							Steps: []WorkflowTemplateStep{
+								{ID: "step_zulu", Name: "step zulu", Prompt: "zulu prompt"},
+							},
+						},
+					},
+				},
+				{
+					ID:   "a_custom",
+					Name: "Alpha",
+					Phases: []WorkflowTemplatePhase{
+						{
+							ID:   "phase_alpha",
+							Name: "Alpha",
+							Steps: []WorkflowTemplateStep{
+								{ID: "step_alpha", Name: "step alpha", Prompt: "alpha prompt"},
+							},
+						},
+					},
+				},
+			},
+			explicitConfig: true,
+		}),
+	)
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if run.TemplateID != "a_custom" {
+		t.Fatalf("expected first lexicographic template id fallback, got %q", run.TemplateID)
+	}
+	if run.TemplateName != "Alpha" {
+		t.Fatalf("expected fallback template name Alpha, got %q", run.TemplateName)
+	}
+}
+
+func TestRunLifecycleListTemplatesFallsBackToDefaultsWhenProviderErrors(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{err: errors.New("template provider down")}),
+	)
+
+	templates, err := service.ListTemplates(context.Background())
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	if len(templates) == 0 {
+		t.Fatalf("expected built-in templates fallback when provider fails")
+	}
+	foundDefault := false
+	for _, template := range templates {
+		if template.ID == TemplateIDSolidPhaseDelivery {
+			foundDefault = true
+			break
+		}
+	}
+	if !foundDefault {
+		t.Fatalf("expected fallback list to include %q, got %#v", TemplateIDSolidPhaseDelivery, templates)
+	}
+}
+
+func TestRunLifecycleTemplateProviderPresenceProbeErrorFallsBackToDefaults(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			templates: []WorkflowTemplate{
+				{ID: "invalid_no_steps", Name: "Invalid"},
+			},
+			explicitConfigErr: errors.New("config probe failed"),
+		}),
+	)
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun with fallback defaults: %v", err)
+	}
+	if run.TemplateID != TemplateIDSolidPhaseDelivery {
+		t.Fatalf("expected fallback default template id %q, got %q", TemplateIDSolidPhaseDelivery, run.TemplateID)
+	}
+}
+
+func TestRunLifecycleListTemplatesFiltersInvalidProviderTemplates(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			explicitConfig: true,
+			templates: []WorkflowTemplate{
+				{
+					ID:   "",
+					Name: "Missing ID",
+					Phases: []WorkflowTemplatePhase{
+						{
+							ID:    "phase",
+							Name:  "phase",
+							Steps: []WorkflowTemplateStep{{ID: "step", Name: "step", Prompt: "prompt"}},
+						},
+					},
+				},
+				{
+					ID:   "invalid_no_steps",
+					Name: "No Steps",
+					Phases: []WorkflowTemplatePhase{
+						{ID: "phase", Name: "phase", Steps: nil},
+					},
+				},
+				{
+					ID:   "valid_template",
+					Name: "Valid",
+					Phases: []WorkflowTemplatePhase{
+						{
+							ID:    "phase",
+							Name:  "phase",
+							Steps: []WorkflowTemplateStep{{ID: "step", Name: "step", Prompt: "prompt"}},
+						},
+					},
+				},
+			},
+		}),
+	)
+
+	templates, err := service.ListTemplates(context.Background())
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	if len(templates) != 1 || templates[0].ID != "valid_template" {
+		t.Fatalf("expected only valid provider template to remain, got %#v", templates)
+	}
+}
+
+func TestRunLifecycleListTemplatesNilService(t *testing.T) {
+	var service *InMemoryRunService
+	if _, err := service.ListTemplates(context.Background()); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected ErrInvalidTransition for nil service, got %v", err)
+	}
+}
+
+func TestDefaultTemplateIDSelectionRules(t *testing.T) {
+	if got := defaultTemplateID(nil); got != "" {
+		t.Fatalf("expected empty default template id for nil map, got %q", got)
+	}
+	if got := defaultTemplateID(map[string]WorkflowTemplate{
+		"  ": {ID: "  ", Name: "blank"},
+	}); got != "" {
+		t.Fatalf("expected empty default template id when no non-blank ids exist, got %q", got)
+	}
+	if got := defaultTemplateID(map[string]WorkflowTemplate{
+		"b_custom": {ID: "b_custom"},
+		"a_custom": {ID: "a_custom"},
+	}); got != "a_custom" {
+		t.Fatalf("expected lexical fallback a_custom, got %q", got)
+	}
+	if got := defaultTemplateID(map[string]WorkflowTemplate{
+		TemplateIDSolidPhaseDelivery: {ID: TemplateIDSolidPhaseDelivery},
+		"a_custom":                   {ID: "a_custom"},
+	}); got != TemplateIDSolidPhaseDelivery {
+		t.Fatalf("expected built-in default %q, got %q", TemplateIDSolidPhaseDelivery, got)
+	}
+}
+
 func TestRunLifecyclePauseResumeTransitions(t *testing.T) {
 	service := NewRunService(Config{Enabled: true})
 

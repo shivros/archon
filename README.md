@@ -244,6 +244,7 @@ If you still want to use `solid_phase_delivery` when providing a custom file, in
 
 When enabled, daemon exposes guided workflow lifecycle endpoints:
 
+- `GET /v1/workflow-templates`
 - `POST /v1/workflow-runs`
 - `POST /v1/workflow-runs/:id/start`
 - `POST /v1/workflow-runs/:id/pause`
@@ -260,7 +261,8 @@ Use `POST /v1/workflow-runs/metrics/reset` to reset aggregate counters for a fre
 Manual start flow:
 
 - from workspace/worktree/session context in the TUI, choose `Start Guided Workflow`
-- configure run setup (workflow prompt + template + policy sensitivity)
+- choose a workflow template in the launcher
+- configure run setup (workflow prompt + policy sensitivity)
 - launch run and monitor the timeline/decision inbox surfaces
 
 Checkpoint behavior:

@@ -237,7 +237,11 @@ type StateAPI interface {
 	AppStateUpdateAPI
 }
 
-type GuidedWorkflowAPI interface {
+type GuidedWorkflowTemplateAPI interface {
+	ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error)
+}
+
+type GuidedWorkflowRunAPI interface {
 	ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
 	ListWorkflowRunsWithOptions(ctx context.Context, includeDismissed bool) ([]*guidedworkflows.WorkflowRun, error)
 	CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error)
@@ -247,6 +251,11 @@ type GuidedWorkflowAPI interface {
 	DecideWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunDecisionRequest) (*guidedworkflows.WorkflowRun, error)
 	GetWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)
+}
+
+type GuidedWorkflowAPI interface {
+	GuidedWorkflowTemplateAPI
+	GuidedWorkflowRunAPI
 }
 
 type ClientAPI struct {
@@ -427,6 +436,13 @@ func (a *ClientAPI) UpdateAppState(ctx context.Context, state *types.AppState) (
 
 func (a *ClientAPI) CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error) {
 	return a.client.CreateWorkflowRun(ctx, req)
+}
+
+func (a *ClientAPI) ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	if a == nil || a.client == nil {
+		return nil, errors.New("client is unavailable")
+	}
+	return a.client.ListWorkflowTemplates(ctx)
 }
 
 func (a *ClientAPI) ListWorkflowRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error) {

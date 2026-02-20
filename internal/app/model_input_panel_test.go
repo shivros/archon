@@ -48,7 +48,7 @@ func TestModeInputPanelAddNoteUsesGuidedWorkflowFrame(t *testing.T) {
 
 func TestModeInputPanelGuidedSetupUsesSharedFramePath(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
-	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
 
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = asModel(t, updated)

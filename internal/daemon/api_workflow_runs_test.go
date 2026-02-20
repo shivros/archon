@@ -87,6 +87,11 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	if runs[0].ID != created.ID {
 		t.Fatalf("expected most-recent run first in list, got %q", runs[0].ID)
 	}
+
+	templates := getWorkflowTemplates(t, server, http.StatusOK)
+	if len(templates) == 0 {
+		t.Fatalf("expected template list to be non-empty")
+	}
 }
 
 func TestWorkflowRunEndpointsDismissAndUndismiss(t *testing.T) {
@@ -404,6 +409,98 @@ func TestWorkflowRunEndpointsDisabled(t *testing.T) {
 	if resp.StatusCode != http.StatusInternalServerError {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+}
+
+func TestWorkflowTemplateEndpointMethodNotAllowed(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workflow-templates", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("workflow template request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 405, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+}
+
+func TestWorkflowTemplateEndpointServiceUnavailable(t *testing.T) {
+	api := &API{Version: "test"}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workflow-templates", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("workflow template request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+}
+
+func TestWorkflowTemplateEndpointReturnsMappedServiceError(t *testing.T) {
+	api := &API{
+		Version:           "test",
+		WorkflowTemplates: stubWorkflowTemplateService{err: errors.New("boom")},
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workflow-templates", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("workflow template request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+}
+
+func TestWorkflowTemplateEndpointPrefersExplicitTemplateService(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		WorkflowTemplates: stubWorkflowTemplateService{templates: []guidedworkflows.WorkflowTemplate{
+			{
+				ID:   "explicit_template",
+				Name: "Explicit Template",
+				Phases: []guidedworkflows.WorkflowTemplatePhase{
+					{
+						ID:   "phase",
+						Name: "Phase",
+						Steps: []guidedworkflows.WorkflowTemplateStep{
+							{ID: "step", Name: "Step", Prompt: "Prompt"},
+						},
+					},
+				},
+			},
+		}},
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	templates := getWorkflowTemplates(t, server, http.StatusOK)
+	if len(templates) != 1 {
+		t.Fatalf("expected explicit template service payload, got %#v", templates)
+	}
+	if templates[0].ID != "explicit_template" {
+		t.Fatalf("expected explicit template id, got %#v", templates)
 	}
 }
 
@@ -758,6 +855,7 @@ func newWorkflowRunTestServer(t *testing.T, api *API) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/workflow-runs", api.WorkflowRunsEndpoint)
+	mux.HandleFunc("/v1/workflow-templates", api.WorkflowTemplatesEndpoint)
 	mux.HandleFunc("/v1/workflow-runs/metrics", api.WorkflowRunMetricsEndpoint)
 	mux.HandleFunc("/v1/workflow-runs/metrics/reset", api.WorkflowRunMetricsResetEndpoint)
 	mux.HandleFunc("/v1/workflow-runs/", api.WorkflowRunByID)
@@ -904,6 +1002,28 @@ func getWorkflowRunsWithPath(t *testing.T, server *httptest.Server, path string,
 	return payload.Runs
 }
 
+func getWorkflowTemplates(t *testing.T, server *httptest.Server, wantStatus int) []guidedworkflows.WorkflowTemplate {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workflow-templates", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get workflow templates request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != wantStatus {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("unexpected template list status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
+	}
+	var payload struct {
+		Templates []guidedworkflows.WorkflowTemplate `json:"templates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode workflow templates: %v", err)
+	}
+	return payload.Templates
+}
+
 func getWorkflowRunMetrics(t *testing.T, server *httptest.Server, wantStatus int) guidedworkflows.RunMetricsSnapshot {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/workflow-runs/metrics", nil)
@@ -946,4 +1066,19 @@ func postWorkflowRunMetricsReset(t *testing.T, server *httptest.Server, wantStat
 
 func TestWorkflowRunServiceInterfaceCompatibility(t *testing.T) {
 	var _ GuidedWorkflowRunService = guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
+	var _ GuidedWorkflowTemplateService = guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
+}
+
+type stubWorkflowTemplateService struct {
+	templates []guidedworkflows.WorkflowTemplate
+	err       error
+}
+
+func (s stubWorkflowTemplateService) ListTemplates(context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make([]guidedworkflows.WorkflowTemplate, len(s.templates))
+	copy(out, s.templates)
+	return out, nil
 }

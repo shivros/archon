@@ -298,7 +298,7 @@ func updateSessionRuntimeCmd(api SessionUpdateAPI, id string, runtimeOptions *ty
 	}
 }
 
-func createWorkflowRunCmd(api GuidedWorkflowAPI, req client.CreateWorkflowRunRequest) tea.Cmd {
+func createWorkflowRunCmd(api GuidedWorkflowRunAPI, req client.CreateWorkflowRunRequest) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {
 			return workflowRunCreatedMsg{err: errors.New("guided workflow api is unavailable")}
@@ -310,7 +310,19 @@ func createWorkflowRunCmd(api GuidedWorkflowAPI, req client.CreateWorkflowRunReq
 	}
 }
 
-func fetchWorkflowRunsCmd(api GuidedWorkflowAPI, includeDismissed bool) tea.Cmd {
+func fetchWorkflowTemplatesCmd(api GuidedWorkflowTemplateAPI) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowTemplatesMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		templates, err := api.ListWorkflowTemplates(ctx)
+		return workflowTemplatesMsg{templates: templates, err: err}
+	}
+}
+
+func fetchWorkflowRunsCmd(api GuidedWorkflowRunAPI, includeDismissed bool) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {
 			return workflowRunsMsg{err: errors.New("guided workflow api is unavailable")}
@@ -322,7 +334,7 @@ func fetchWorkflowRunsCmd(api GuidedWorkflowAPI, includeDismissed bool) tea.Cmd 
 	}
 }
 
-func startWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+func startWorkflowRunCmd(api GuidedWorkflowRunAPI, runID string) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {
 			return workflowRunStartedMsg{err: errors.New("guided workflow api is unavailable")}
@@ -334,7 +346,7 @@ func startWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
 	}
 }
 
-func fetchWorkflowRunSnapshotCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+func fetchWorkflowRunSnapshotCmd(api GuidedWorkflowRunAPI, runID string) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {
 			return workflowRunSnapshotMsg{err: errors.New("guided workflow api is unavailable")}
@@ -350,7 +362,7 @@ func fetchWorkflowRunSnapshotCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
 	}
 }
 
-func decideWorkflowRunCmd(api GuidedWorkflowAPI, runID string, req client.WorkflowRunDecisionRequest) tea.Cmd {
+func decideWorkflowRunCmd(api GuidedWorkflowRunAPI, runID string, req client.WorkflowRunDecisionRequest) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {
 			return workflowRunDecisionMsg{err: errors.New("guided workflow api is unavailable")}
@@ -362,7 +374,7 @@ func decideWorkflowRunCmd(api GuidedWorkflowAPI, runID string, req client.Workfl
 	}
 }
 
-func dismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+func dismissWorkflowRunCmd(api GuidedWorkflowRunAPI, runID string) tea.Cmd {
 	runID = strings.TrimSpace(runID)
 	return func() tea.Msg {
 		if api == nil {
@@ -375,7 +387,7 @@ func dismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
 	}
 }
 
-func undismissWorkflowRunCmd(api GuidedWorkflowAPI, runID string) tea.Cmd {
+func undismissWorkflowRunCmd(api GuidedWorkflowRunAPI, runID string) tea.Cmd {
 	runID = strings.TrimSpace(runID)
 	return func() tea.Msg {
 		if api == nil {
