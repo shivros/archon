@@ -76,6 +76,8 @@ func TestGuidedWorkflowMetricsStoreRoundTrip(t *testing.T) {
 }
 
 func TestNewGuidedWorkflowRunServiceRestoresPersistedMetrics(t *testing.T) {
+	setStableWorkflowTemplatesHome(t)
+
 	appStateStore := &memoryAppStateStore{
 		state: &types.AppState{
 			GuidedWorkflowTelemetry: &types.GuidedWorkflowTelemetryState{

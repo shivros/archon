@@ -40,6 +40,17 @@ type stubGuidedWorkflowSessionMetaStore struct {
 	entries map[string]*types.SessionMeta
 }
 
+func setStableWorkflowTemplatesHome(t *testing.T) string {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	return home
+}
+
 func (s *stubWorkflowTemplateStore) ListWorkflowTemplates(context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
 	out := make([]guidedworkflows.WorkflowTemplate, len(s.templates))
 	copy(out, s.templates)
@@ -216,6 +227,8 @@ func TestNewGuidedWorkflowRunServiceBuildsService(t *testing.T) {
 }
 
 func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
+	setStableWorkflowTemplatesHome(t)
+
 	cfg := config.DefaultCoreConfig()
 	cfg.GuidedWorkflows.Enabled = boolPtr(true)
 	cfg.GuidedWorkflows.Rollout.TelemetryEnabled = boolPtr(false)
@@ -253,12 +266,8 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 func TestNewGuidedWorkflowRunServiceLoadsTemplatesFromFileConfig(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
 	cfg.GuidedWorkflows.Enabled = boolPtr(true)
-	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	home := setStableWorkflowTemplatesHome(t)
 	dataDir := filepath.Join(home, ".archon")
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(dataDir, "workflow_templates.json"), []byte(`{
   "version": 1,
   "templates": [
