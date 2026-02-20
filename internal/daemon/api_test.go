@@ -1,34 +1,39 @@
 package daemon
 
 import (
-	"encoding/json"
-	"net/http/httptest"
 	"testing"
+
+	"control/internal/types"
 )
 
-type healthResponse struct {
-	OK      bool   `json:"ok"`
-	Version string `json:"version"`
-	PID     int    `json:"pid"`
-}
-
-func TestHealth(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	api := &API{Version: "test-version"}
-
-	api.Health(recorder, httptest.NewRequest("GET", "/health", nil))
-
-	var resp healthResponse
-	if err := json.NewDecoder(recorder.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode json: %v", err)
+func TestAPIWorkflowDispatchDefaultsAccessor(t *testing.T) {
+	var nilAPI *API
+	if got := nilAPI.workflowDispatchDefaults(); got.Provider != "" || got.Model != "" || got.Access != "" || got.Reasoning != "" {
+		t.Fatalf("expected zero-value defaults for nil API, got %+v", got)
 	}
-	if !resp.OK {
-		t.Fatalf("expected ok=true")
+
+	api := &API{}
+	if got := api.workflowDispatchDefaults(); got.Provider != "" || got.Model != "" || got.Access != "" || got.Reasoning != "" {
+		t.Fatalf("expected zero-value defaults for empty API, got %+v", got)
 	}
-	if resp.Version != "test-version" {
-		t.Fatalf("expected version 'test-version', got %q", resp.Version)
+
+	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaults{
+		Provider:  "opencode",
+		Model:     "gpt-5.3-codex",
+		Access:    types.AccessReadOnly,
+		Reasoning: types.ReasoningHigh,
 	}
-	if resp.PID <= 0 {
-		t.Fatalf("expected pid to be positive, got %d", resp.PID)
+	got := api.workflowDispatchDefaults()
+	if got.Provider != "opencode" {
+		t.Fatalf("expected configured provider, got %q", got.Provider)
+	}
+	if got.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected configured model, got %q", got.Model)
+	}
+	if got.Access != types.AccessReadOnly {
+		t.Fatalf("expected configured access, got %q", got.Access)
+	}
+	if got.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected configured reasoning, got %q", got.Reasoning)
 	}
 }

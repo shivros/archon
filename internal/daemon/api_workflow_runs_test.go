@@ -15,6 +15,7 @@ import (
 
 	"control/internal/config"
 	"control/internal/guidedworkflows"
+	"control/internal/logging"
 	"control/internal/types"
 )
 
@@ -246,6 +247,46 @@ func TestWorkflowRunEndpointsCreateUsesInjectedPolicyResolver(t *testing.T) {
 	}
 	if created.Policy.PauseThreshold != 0.77 {
 		t.Fatalf("expected resolver pause threshold override, got %v", created.Policy.PauseThreshold)
+	}
+}
+
+func TestWorkflowRunEndpointsCreateLogsEffectiveDispatchDefaults(t *testing.T) {
+	var logOut bytes.Buffer
+	coreCfg := config.DefaultCoreConfig()
+	coreCfg.GuidedWorkflows.Defaults.Provider = "opencode"
+	coreCfg.GuidedWorkflows.Defaults.Model = "gpt-5.3-codex"
+	coreCfg.GuidedWorkflows.Defaults.Access = "full_access"
+	coreCfg.GuidedWorkflows.Defaults.Reasoning = "high"
+
+	api := &API{
+		Version:                  "test",
+		WorkflowRuns:             guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		WorkflowDispatchDefaults: guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
+		Logger:                   logging.New(&logOut, logging.Info),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	_ = createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=guided_workflow_run_created") {
+		t.Fatalf("expected guided_workflow_run_created log, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_provider=opencode") {
+		t.Fatalf("expected effective provider in run creation log, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_model=gpt-5.3-codex") {
+		t.Fatalf("expected effective model in run creation log, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_reasoning=high") {
+		t.Fatalf("expected effective reasoning in run creation log, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_access=on_request") {
+		t.Fatalf("expected template access precedence in run creation log, got %q", logs)
 	}
 }
 

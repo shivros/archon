@@ -148,6 +148,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.GuidedWorkflows = guided
 	api.WorkflowRuns = workflowRuns
 	api.WorkflowPolicy = newGuidedWorkflowPolicyResolver(coreCfg)
+	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg)
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)

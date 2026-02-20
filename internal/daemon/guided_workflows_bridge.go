@@ -109,6 +109,7 @@ type guidedWorkflowPromptDispatcher struct {
 	sessions    guidedWorkflowSessionGateway
 	sessionMeta SessionMetaStore
 	defaults    guidedWorkflowDispatchDefaults
+	logger      logging.Logger
 }
 
 type guidedWorkflowDispatchDefaults struct {
@@ -132,6 +133,7 @@ func newGuidedWorkflowPromptDispatcher(
 		sessions:    NewSessionService(manager, stores, live, logger),
 		sessionMeta: stores.SessionMeta,
 		defaults:    guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
+		logger:      logger,
 	}
 }
 
@@ -380,14 +382,14 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 	if workspaceID == "" && worktreeID == "" {
 		return "", "", "", nil
 	}
-	provider := d.resolveWorkflowSessionProvider(workspaceID, worktreeID, sessions, metaBySessionID)
-	runtimeOptions := guidedWorkflowRuntimeOptionsForDispatch(req.DefaultAccessLevel, d.defaults)
+	settings := d.resolveWorkflowSessionStartSettings(req, sessions, metaBySessionID)
+	d.logWorkflowSessionStartRequested(req, settings)
 	session, err := starter.Start(ctx, StartSessionRequest{
-		Provider:       provider,
+		Provider:       settings.Provider,
 		Title:          guidedWorkflowSessionTitle(req.RunID),
 		WorkspaceID:    workspaceID,
 		WorktreeID:     worktreeID,
-		RuntimeOptions: runtimeOptions,
+		RuntimeOptions: settings.RuntimeOptions,
 	})
 	if err != nil {
 		return "", "", "", err
@@ -395,7 +397,10 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 	if session == nil {
 		return "", "", "", nil
 	}
-	return strings.TrimSpace(session.ID), strings.TrimSpace(session.Provider), guidedWorkflowDispatchModel(runtimeOptions), nil
+	sessionID := strings.TrimSpace(session.ID)
+	sessionProvider := strings.TrimSpace(session.Provider)
+	d.logWorkflowSessionStarted(req, sessionID, sessionProvider, settings)
+	return sessionID, sessionProvider, settings.Model, nil
 }
 
 func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionProvider(
@@ -409,6 +414,68 @@ func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionProvider(
 		provider = configuredProvider
 	}
 	return normalizeGuidedWorkflowDispatchProvider(provider)
+}
+
+type guidedWorkflowSessionStartSettings struct {
+	Provider       string
+	Model          string
+	Access         types.AccessLevel
+	Reasoning      types.ReasoningLevel
+	RuntimeOptions *types.SessionRuntimeOptions
+}
+
+func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionStartSettings(
+	req guidedworkflows.StepPromptDispatchRequest,
+	sessions []*types.Session,
+	metaBySessionID map[string]*types.SessionMeta,
+) guidedWorkflowSessionStartSettings {
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	worktreeID := strings.TrimSpace(req.WorktreeID)
+	provider := d.resolveWorkflowSessionProvider(workspaceID, worktreeID, sessions, metaBySessionID)
+	settings := guidedWorkflowEffectiveDispatchSettings(req.DefaultAccessLevel, d.defaults)
+	settings.Provider = provider
+	return settings
+}
+
+func (d *guidedWorkflowPromptDispatcher) logWorkflowSessionStartRequested(
+	req guidedworkflows.StepPromptDispatchRequest,
+	settings guidedWorkflowSessionStartSettings,
+) {
+	if d == nil || d.logger == nil {
+		return
+	}
+	d.logger.Info("guided_workflow_session_start_requested",
+		logging.F("run_id", strings.TrimSpace(req.RunID)),
+		logging.F("template_id", strings.TrimSpace(req.TemplateID)),
+		logging.F("workspace_id", strings.TrimSpace(req.WorkspaceID)),
+		logging.F("worktree_id", strings.TrimSpace(req.WorktreeID)),
+		logging.F("effective_provider", settings.Provider),
+		logging.F("effective_model", settings.Model),
+		logging.F("effective_access", settings.Access),
+		logging.F("effective_reasoning", settings.Reasoning),
+	)
+}
+
+func (d *guidedWorkflowPromptDispatcher) logWorkflowSessionStarted(
+	req guidedworkflows.StepPromptDispatchRequest,
+	sessionID string,
+	sessionProvider string,
+	settings guidedWorkflowSessionStartSettings,
+) {
+	if d == nil || d.logger == nil {
+		return
+	}
+	d.logger.Info("guided_workflow_session_started",
+		logging.F("run_id", strings.TrimSpace(req.RunID)),
+		logging.F("template_id", strings.TrimSpace(req.TemplateID)),
+		logging.F("workspace_id", strings.TrimSpace(req.WorkspaceID)),
+		logging.F("worktree_id", strings.TrimSpace(req.WorktreeID)),
+		logging.F("session_id", strings.TrimSpace(sessionID)),
+		logging.F("effective_provider", strings.TrimSpace(sessionProvider)),
+		logging.F("effective_model", settings.Model),
+		logging.F("effective_access", settings.Access),
+		logging.F("effective_reasoning", settings.Reasoning),
+	)
 }
 
 func (d *guidedWorkflowPromptDispatcher) preferredProviderForContext(
@@ -500,6 +567,21 @@ func normalizeGuidedWorkflowDispatchProvider(provider string) string {
 		return "codex"
 	}
 	return normalized
+}
+
+func guidedWorkflowEffectiveDispatchSettings(level types.AccessLevel, defaults guidedWorkflowDispatchDefaults) guidedWorkflowSessionStartSettings {
+	runtimeOptions := guidedWorkflowRuntimeOptionsForDispatch(level, defaults)
+	settings := guidedWorkflowSessionStartSettings{
+		Provider:       normalizeGuidedWorkflowDispatchProvider(defaults.Provider),
+		Model:          guidedWorkflowDispatchModel(runtimeOptions),
+		RuntimeOptions: runtimeOptions,
+	}
+	if runtimeOptions == nil {
+		return settings
+	}
+	settings.Access = runtimeOptions.Access
+	settings.Reasoning = runtimeOptions.Reasoning
+	return settings
 }
 
 func guidedWorkflowRuntimeOptionsForDispatch(level types.AccessLevel, defaults guidedWorkflowDispatchDefaults) *types.SessionRuntimeOptions {

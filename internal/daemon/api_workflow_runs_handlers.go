@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"control/internal/guidedworkflows"
+	"control/internal/logging"
 )
 
 type guidedWorkflowRunMetricsProvider interface {
@@ -60,6 +61,20 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
 			return
+		}
+		if a.Logger != nil {
+			settings := guidedWorkflowEffectiveDispatchSettings(run.DefaultAccessLevel, a.workflowDispatchDefaults())
+			a.Logger.Info("guided_workflow_run_created",
+				logging.F("run_id", strings.TrimSpace(run.ID)),
+				logging.F("template_id", strings.TrimSpace(run.TemplateID)),
+				logging.F("workspace_id", strings.TrimSpace(run.WorkspaceID)),
+				logging.F("worktree_id", strings.TrimSpace(run.WorktreeID)),
+				logging.F("requested_session_id", strings.TrimSpace(req.SessionID)),
+				logging.F("effective_provider", settings.Provider),
+				logging.F("effective_model", settings.Model),
+				logging.F("effective_access", settings.Access),
+				logging.F("effective_reasoning", settings.Reasoning),
+			)
 		}
 		writeJSON(w, http.StatusCreated, run)
 		return

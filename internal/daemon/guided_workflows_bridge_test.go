@@ -1,14 +1,17 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"control/internal/config"
 	"control/internal/guidedworkflows"
+	"control/internal/logging"
 	"control/internal/types"
 )
 
@@ -663,6 +666,7 @@ func TestGuidedWorkflowPromptDispatcherDoesNotStartSessionWithoutContext(t *test
 }
 
 func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSession(t *testing.T) {
+	var logOut bytes.Buffer
 	gateway := &stubGuidedWorkflowSessionGateway{
 		started: []*types.Session{
 			{ID: "sess-opencode", Provider: "opencode", Status: types.SessionStatusRunning},
@@ -677,6 +681,7 @@ func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSessi
 			Access:    types.AccessOnRequest,
 			Reasoning: types.ReasoningHigh,
 		},
+		logger: logging.New(&logOut, logging.Info),
 	}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
 		RunID:       "gwf-1",
@@ -711,6 +716,40 @@ func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSessi
 	}
 	if runtime.Reasoning != types.ReasoningHigh {
 		t.Fatalf("expected configured reasoning in runtime options, got %q", runtime.Reasoning)
+	}
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=guided_workflow_session_start_requested") {
+		t.Fatalf("expected guided_workflow_session_start_requested log, got %q", logs)
+	}
+	if !strings.Contains(logs, "msg=guided_workflow_session_started") {
+		t.Fatalf("expected guided_workflow_session_started log, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_provider=opencode") {
+		t.Fatalf("expected effective provider in session creation logs, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_model=gpt-5.3-codex") {
+		t.Fatalf("expected effective model in session creation logs, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_access=on_request") {
+		t.Fatalf("expected effective access in session creation logs, got %q", logs)
+	}
+	if !strings.Contains(logs, "effective_reasoning=high") {
+		t.Fatalf("expected effective reasoning in session creation logs, got %q", logs)
+	}
+}
+
+func TestGuidedWorkflowEffectiveDispatchSettingsUsesCodexFallback(t *testing.T) {
+	settings := guidedWorkflowEffectiveDispatchSettings("", guidedWorkflowDispatchDefaults{
+		Provider: "claude",
+	})
+	if settings.Provider != "codex" {
+		t.Fatalf("expected provider fallback to codex, got %q", settings.Provider)
+	}
+	if settings.Model != "" || settings.Access != "" || settings.Reasoning != "" {
+		t.Fatalf("expected empty runtime details without defaults, got %+v", settings)
+	}
+	if settings.RuntimeOptions != nil {
+		t.Fatalf("expected nil runtime options without defaults, got %+v", settings.RuntimeOptions)
 	}
 }
 

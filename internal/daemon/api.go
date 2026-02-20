@@ -12,18 +12,19 @@ import (
 )
 
 type API struct {
-	Version          string
-	Manager          *SessionManager
-	Stores           *Stores
-	Shutdown         func(context.Context) error
-	Syncer           SessionSyncer
-	LiveCodex        *CodexLiveManager
-	CodexHistoryPool CodexHistoryPool
-	Notifier         NotificationPublisher
-	GuidedWorkflows  guidedworkflows.Orchestrator
-	WorkflowRuns     GuidedWorkflowRunService
-	WorkflowPolicy   GuidedWorkflowPolicyResolver
-	Logger           logging.Logger
+	Version                  string
+	Manager                  *SessionManager
+	Stores                   *Stores
+	Shutdown                 func(context.Context) error
+	Syncer                   SessionSyncer
+	LiveCodex                *CodexLiveManager
+	CodexHistoryPool         CodexHistoryPool
+	Notifier                 NotificationPublisher
+	GuidedWorkflows          guidedworkflows.Orchestrator
+	WorkflowRuns             GuidedWorkflowRunService
+	WorkflowPolicy           GuidedWorkflowPolicyResolver
+	WorkflowDispatchDefaults guidedWorkflowDispatchDefaults
+	Logger                   logging.Logger
 }
 
 type StartSessionRequest struct {
@@ -152,4 +153,11 @@ func (a *API) workflowPolicyResolver() GuidedWorkflowPolicyResolver {
 		return guidedWorkflowNoopPolicyResolver{}
 	}
 	return a.WorkflowPolicy
+}
+
+func (a *API) workflowDispatchDefaults() guidedWorkflowDispatchDefaults {
+	if a == nil {
+		return guidedWorkflowDispatchDefaults{}
+	}
+	return a.WorkflowDispatchDefaults
 }
