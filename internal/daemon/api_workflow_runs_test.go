@@ -521,6 +521,107 @@ func TestWorkflowRunEndpointsTwoStepWorkflowDispatchIntegration(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsIntegrationUsesConfiguredDefaultsEndToEnd(t *testing.T) {
+	coreCfg := config.DefaultCoreConfig()
+	coreCfg.GuidedWorkflows.Defaults.Provider = "opencode"
+	coreCfg.GuidedWorkflows.Defaults.Model = "gpt-5.3-codex"
+	coreCfg.GuidedWorkflows.Defaults.Access = "full_access"
+	coreCfg.GuidedWorkflows.Defaults.Reasoning = "extra_high"
+	coreCfg.GuidedWorkflows.Defaults.Risk = "low"
+	coreCfg.GuidedWorkflows.Defaults.ResolutionBoundary = "high"
+
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "gwf_defaults_e2e",
+		Name: "Defaults E2E",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "implement fixes"},
+				},
+			},
+		},
+	}
+	gateway := &stubGuidedWorkflowSessionGateway{
+		turnID: "turn-defaults-e2e",
+		started: []*types.Session{
+			{
+				ID:        "sess-defaults-e2e",
+				Provider:  "opencode",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: time.Now().UTC(),
+			},
+		},
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:    gateway,
+		sessionMeta: metaStore,
+		defaults:    guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
+	}
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithTemplate(template),
+		guidedworkflows.WithStepPromptDispatcher(dispatcher),
+	)
+	api := &API{
+		Version:                  "test",
+		WorkflowRuns:             runService,
+		WorkflowPolicy:           newGuidedWorkflowPolicyResolver(coreCfg),
+		WorkflowDispatchDefaults: guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:  "gwf_defaults_e2e",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		UserPrompt:  "Fix parser bug",
+	})
+	if created.Policy.ConfidenceThreshold != guidedworkflows.PolicyPresetHighConfidenceThreshold {
+		t.Fatalf("expected resolution_boundary=high confidence threshold %v, got %v", guidedworkflows.PolicyPresetHighConfidenceThreshold, created.Policy.ConfidenceThreshold)
+	}
+	if created.Policy.PauseThreshold != guidedworkflows.PolicyPresetHighPauseThreshold {
+		t.Fatalf("expected resolution_boundary=high pause threshold %v, got %v", guidedworkflows.PolicyPresetHighPauseThreshold, created.Policy.PauseThreshold)
+	}
+
+	started := postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+	if started.Status != guidedworkflows.WorkflowRunStatusRunning {
+		t.Fatalf("expected running start status, got %q", started.Status)
+	}
+	if started.SessionID != "sess-defaults-e2e" {
+		t.Fatalf("expected workflow run to bind created session, got %q", started.SessionID)
+	}
+	if len(gateway.startReqs) != 1 {
+		t.Fatalf("expected one workflow session start request, got %d", len(gateway.startReqs))
+	}
+	startReq := gateway.startReqs[0]
+	if startReq.Provider != "opencode" {
+		t.Fatalf("expected configured provider opencode, got %q", startReq.Provider)
+	}
+	if startReq.RuntimeOptions == nil {
+		t.Fatalf("expected runtime options from configured defaults")
+	}
+	if startReq.RuntimeOptions.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected configured model in runtime options, got %q", startReq.RuntimeOptions.Model)
+	}
+	if startReq.RuntimeOptions.Access != types.AccessFull {
+		t.Fatalf("expected configured access in runtime options, got %q", startReq.RuntimeOptions.Access)
+	}
+	if startReq.RuntimeOptions.Reasoning != types.ReasoningExtraHigh {
+		t.Fatalf("expected configured reasoning in runtime options, got %q", startReq.RuntimeOptions.Reasoning)
+	}
+	if len(gateway.sendCalls) != 1 {
+		t.Fatalf("expected one step prompt dispatch, got %d", len(gateway.sendCalls))
+	}
+	firstText, _ := gateway.sendCalls[0].input[0]["text"].(string)
+	if firstText != "Fix parser bug\n\nimplement fixes" {
+		t.Fatalf("unexpected step prompt payload: %q", firstText)
+	}
+}
+
 func TestWorkflowRunEndpointsStartWrapsSessionResolutionErrors(t *testing.T) {
 	template := guidedworkflows.WorkflowTemplate{
 		ID:   "gwf_step_dispatch_error",

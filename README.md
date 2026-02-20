@@ -175,6 +175,26 @@ Enable guided workflows in `~/.archon/config.toml`:
 - optionally set `[guided_workflows.defaults].risk` / `resolution_boundary` to tune default checkpoint strictness for new runs
 - tune `[guided_workflows.policy]` and `[guided_workflows.rollout]` guardrails as needed
 
+Exact precedence for guided workflow defaults:
+
+1. Session reuse precedence (step dispatch):
+   - explicit `session_id` on the run/step request (if provider is dispatchable)
+   - existing workflow-owned session already linked to the same run
+   - otherwise, auto-create a workflow session
+2. Auto-created workflow session provider precedence:
+   - `[guided_workflows.defaults].provider` (only `codex`/`opencode`; unsupported values are ignored)
+   - most-recent dispatchable provider in the same worktree/workspace context
+   - fallback to `codex`
+3. Auto-created workflow runtime options precedence:
+   - `access`: template `default_access_level` (if valid), else `[guided_workflows.defaults].access`
+   - `model`: `[guided_workflows.defaults].model` (blank/invalid ignored)
+   - `reasoning`: `[guided_workflows.defaults].reasoning` (blank/invalid ignored)
+4. Run policy default precedence (`POST /v1/workflow-runs`):
+   - explicit `policy_overrides` in request body
+   - `[guided_workflows.defaults].resolution_boundary`
+   - `[guided_workflows.defaults].risk`
+   - built-in policy baseline (no override)
+
 Workflow templates are partially hardcoded and partially configurable:
 
 - built-in template: `solid_phase_delivery` (used when no template id is supplied)
