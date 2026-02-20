@@ -373,7 +373,9 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 			return configOutput{}, err
 		}
 		templates := []guidedworkflows.WorkflowTemplate{}
-		if !defaults {
+		if defaults {
+			templates = guidedworkflows.DefaultWorkflowTemplates()
+		} else {
 			templates, err = store.NewFileWorkflowTemplateStore(workflowTemplatesPath).ListWorkflowTemplates(context.Background())
 			if err != nil {
 				return configOutput{}, err

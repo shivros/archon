@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"control/internal/guidedworkflows"
 	"control/internal/logging"
 	"control/internal/providers"
+	"control/internal/store"
 	"control/internal/types"
 )
 
@@ -62,7 +64,11 @@ func newGuidedWorkflowRunService(
 		guidedworkflows.WithMaxActiveRuns(coreCfg.GuidedWorkflowsRolloutMaxActiveRuns()),
 		guidedworkflows.WithTelemetryEnabled(coreCfg.GuidedWorkflowsRolloutTelemetryEnabled()),
 	}
-	if templateProvider := newGuidedWorkflowTemplateProvider(stores); templateProvider != nil {
+	workflowTemplatesPath, pathErr := config.WorkflowTemplatesPath()
+	if pathErr != nil {
+		workflowTemplatesPath = ""
+	}
+	if templateProvider := newGuidedWorkflowTemplateProvider(workflowTemplatesPath); templateProvider != nil {
 		opts = append(opts, guidedworkflows.WithTemplateProvider(templateProvider))
 	}
 	if metricsStore := newGuidedWorkflowMetricsStore(stores); metricsStore != nil {
@@ -78,21 +84,35 @@ func newGuidedWorkflowRunService(
 }
 
 type guidedWorkflowTemplateProvider struct {
-	store WorkflowTemplateStore
+	path string
 }
 
-func newGuidedWorkflowTemplateProvider(stores *Stores) guidedworkflows.TemplateProvider {
-	if stores == nil || stores.WorkflowTemplates == nil {
+func newGuidedWorkflowTemplateProvider(path string) guidedworkflows.TemplateProvider {
+	if strings.TrimSpace(path) == "" {
 		return nil
 	}
-	return &guidedWorkflowTemplateProvider{store: stores.WorkflowTemplates}
+	return &guidedWorkflowTemplateProvider{path: strings.TrimSpace(path)}
 }
 
 func (p *guidedWorkflowTemplateProvider) ListWorkflowTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
-	if p == nil || p.store == nil {
+	if p == nil || strings.TrimSpace(p.path) == "" {
 		return nil, nil
 	}
-	return p.store.ListWorkflowTemplates(ctx)
+	return store.NewFileWorkflowTemplateStore(strings.TrimSpace(p.path)).ListWorkflowTemplates(ctx)
+}
+
+func (p *guidedWorkflowTemplateProvider) HasWorkflowTemplateConfig(context.Context) (bool, error) {
+	if p == nil || strings.TrimSpace(p.path) == "" {
+		return false, nil
+	}
+	_, err := os.Stat(strings.TrimSpace(p.path))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 type guidedWorkflowSessionGateway interface {

@@ -51,6 +51,10 @@ type TemplateProvider interface {
 	ListWorkflowTemplates(ctx context.Context) ([]WorkflowTemplate, error)
 }
 
+type TemplateConfigPresenceProvider interface {
+	HasWorkflowTemplateConfig(ctx context.Context) (bool, error)
+}
+
 type InMemoryRunService struct {
 	cfg              Config
 	engine           *Engine
@@ -280,17 +284,18 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 }
 
 func (s *InMemoryRunService) resolveTemplates(ctx context.Context) map[string]WorkflowTemplate {
-	out := make(map[string]WorkflowTemplate, len(s.templates))
+	defaults := make(map[string]WorkflowTemplate, len(s.templates))
 	for id, tpl := range s.templates {
-		out[id] = cloneTemplate(tpl)
+		defaults[id] = cloneTemplate(tpl)
 	}
 	if s.templateProvider == nil {
-		return out
+		return defaults
 	}
 	templates, err := s.templateProvider.ListWorkflowTemplates(ctx)
 	if err != nil {
-		return out
+		return defaults
 	}
+	resolved := map[string]WorkflowTemplate{}
 	for _, tpl := range templates {
 		id := strings.TrimSpace(tpl.ID)
 		if id == "" {
@@ -299,9 +304,18 @@ func (s *InMemoryRunService) resolveTemplates(ctx context.Context) map[string]Wo
 		if !templateHasSteps(tpl) {
 			continue
 		}
-		out[id] = cloneTemplate(tpl)
+		resolved[id] = cloneTemplate(tpl)
 	}
-	return out
+	hasExplicitConfig := len(resolved) > 0
+	if awareProvider, ok := s.templateProvider.(TemplateConfigPresenceProvider); ok {
+		if configured, cfgErr := awareProvider.HasWorkflowTemplateConfig(ctx); cfgErr == nil {
+			hasExplicitConfig = configured || len(resolved) > 0
+		}
+	}
+	if hasExplicitConfig {
+		return resolved
+	}
+	return defaults
 }
 
 func templateHasSteps(template WorkflowTemplate) bool {

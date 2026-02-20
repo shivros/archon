@@ -29,7 +29,7 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 10. Turn-completed notifications are also consumed by the guided workflow bridge to advance matching runs and publish actionable decision-needed notifications when policy pauses are triggered.
 11. Guided workflow rollout guardrails are read from core config (`guided_workflows.rollout`) and translated by daemon bridge adapters into run-service options (max active runs, automation controls, retries, commit approval requirements).
 12. Guided workflow telemetry lives inside `internal/guidedworkflows` as a snapshot API (`GetRunMetrics`), is persisted through daemon adapters into app state, and is exposed at `GET /v1/workflow-runs/metrics` with operational reset support at `POST /v1/workflow-runs/metrics/reset`.
-13. Guided workflow templates are persisted in a dedicated template store (`workflow_templates`) and merged into run-service template resolution, enabling user-defined workflows and per-step prompts without replacing built-in defaults.
+13. Guided workflow templates are sourced from `~/.archon/workflow_templates.json`; when present, that file fully replaces built-in defaults (no merge). Built-in defaults are defined in `internal/guidedworkflows/default_workflow_templates.json` and are used only when no user template file exists.
 14. Guided workflow step execution supports prompt dispatch through an injected `StepPromptDispatcher`; when dispatched, steps move to `awaiting_turn` and are only completed by turn-completed events, preserving turn-driven progression.
 
 ## Streaming and Persistence

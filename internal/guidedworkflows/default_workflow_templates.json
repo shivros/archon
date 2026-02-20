@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "solid_phase_delivery",
+      "name": "SOLID Phase Delivery",
+      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+      "default_access_level": "on_request",
+      "phases": [
+        {
+          "id": "phase_delivery",
+          "name": "Delivery Phase",
+          "steps": [
+            {
+              "id": "phase_plan",
+              "name": "phase plan",
+              "prompt": "Please write up an end-to-end, SOLID-compliant plan for this work; a plan I can give to my AI CLI LLM agent locally to implement? I want to be able to paste it in phases - 1 at a time so I can review the work incrementally. And make the instructions somewhat flexible, since the local agent has a lot more context and may need to make pragmatic adjustments."
+            },
+            {
+              "id": "implementation",
+              "name": "implementation",
+              "prompt": "Sounds good. Please proceed with implementation."
+            },
+            {
+              "id": "solid_audit",
+              "name": "SOLID audit",
+              "prompt": "Please audit your work for compliance with SOLID principles."
+            },
+            {
+              "id": "mitigation_plan",
+              "name": "mitigation plan",
+              "prompt": "Please write a SOLID-compliant plan for addressing the issues you called out"
+            },
+            {
+              "id": "mitigation_implementation",
+              "name": "mitigation implementation",
+              "prompt": "Sounds good. Please proceed with implementation."
+            },
+            {
+              "id": "test_gap_audit",
+              "name": "test gap audit",
+              "prompt": "Please audit your work for gaps in test coverage. If no coverage tooling is available, check manually."
+            },
+            {
+              "id": "test_implementation",
+              "name": "test implementation",
+              "prompt": "Sounds good. Please proceed with implementation."
+            },
+            {
+              "id": "quality_checks",
+              "name": "quality checks",
+              "prompt": "Please run all relevant tests and quality checks. Run them iteratively, attempt to fix any issues that are fixable, then run the commands again to verify they are fixed. If you face any issues that are not reasonably fixable, document them and let me know."
+            },
+            {
+              "id": "commit",
+              "name": "commit",
+              "prompt": "Please commit your work. Please keep your commits compliant with Conventional Commit structure (https://www.conventionalcommits.org/en/v1.0.0/)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

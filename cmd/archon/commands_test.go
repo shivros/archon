@@ -646,6 +646,30 @@ func TestConfigCommandScopeWorkflowTemplatesOnly(t *testing.T) {
 	}
 }
 
+func TestConfigCommandScopeWorkflowTemplatesDefaultUsesRepoDefaults(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+
+	stdout := &bytes.Buffer{}
+	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
+	if err := cmd.Run([]string{"--scope", "workflow_templates", "--default"}); err != nil {
+		t.Fatalf("config command failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v raw=%q", err, stdout.String())
+	}
+	templates, _ := payload["templates"].([]any)
+	if len(templates) == 0 {
+		t.Fatalf("expected repo defaults in workflow_templates --default output")
+	}
+	first, _ := templates[0].(map[string]any)
+	if first["id"] != "solid_phase_delivery" {
+		t.Fatalf("unexpected default workflow template id: %#v", first["id"])
+	}
+}
+
 func TestConfigCommandRejectsInvalidScope(t *testing.T) {
 	cmd := NewConfigCommand(&bytes.Buffer{}, &bytes.Buffer{})
 	if err := cmd.Run([]string{"--scope", "notes"}); err == nil {

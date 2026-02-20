@@ -44,3 +44,20 @@ func TestBuiltinTemplateSolidPhaseDeliverySequence(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultWorkflowTemplatesContainsSolidPhaseDelivery(t *testing.T) {
+	templates := DefaultWorkflowTemplates()
+	if len(templates) == 0 {
+		t.Fatalf("expected default workflow templates")
+	}
+	found := false
+	for _, tpl := range templates {
+		if tpl.ID == TemplateIDSolidPhaseDelivery {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %q template in defaults", TemplateIDSolidPhaseDelivery)
+	}
+}

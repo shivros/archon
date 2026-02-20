@@ -193,11 +193,54 @@ Exact precedence for guided workflow defaults:
    - `[guided_workflows.defaults].resolution_boundary`
    - built-in policy baseline (no override)
 
-Workflow templates are partially hardcoded and partially configurable:
+Workflow templates are configurable via JSON with full replacement semantics:
 
-- built-in template: `solid_phase_delivery` (used when no template id is supplied)
-- user templates: `~/.archon/workflow_templates.json`
-- merge behavior: user templates are merged with built-ins by template `id`, so you can add new templates or override built-in IDs
+- built-in defaults are defined in-repo (`internal/guidedworkflows/default_workflow_templates.json`)
+- user templates live at `~/.archon/workflow_templates.json`
+- if `~/.archon/workflow_templates.json` exists, it fully replaces built-in defaults (no merge)
+- built-in defaults are used only when no user template file exists
+
+Example `workflow_templates.json` (custom replacement file):
+
+```json
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "repo_hardening_delivery",
+      "name": "Repo Hardening Delivery",
+      "description": "Plan and implement security/reliability hardening in phases.",
+      "default_access_level": "on_request",
+      "phases": [
+        {
+          "id": "phase_1_discovery",
+          "name": "Discovery",
+          "steps": [
+            {
+              "id": "step_1_inventory",
+              "name": "Inventory",
+              "prompt": "Audit current risk areas and produce a prioritized hardening plan."
+            }
+          ]
+        },
+        {
+          "id": "phase_2_execution",
+          "name": "Execution",
+          "steps": [
+            {
+              "id": "step_2_harden",
+              "name": "Implement hardening",
+              "prompt": "Implement the approved hardening items with tests and clear commit messages."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+If you still want to use `solid_phase_delivery` when providing a custom file, include a template with that same `id` in your file.
 
 When enabled, daemon exposes guided workflow lifecycle endpoints:
 
@@ -293,6 +336,8 @@ archon config --scope keybindings --default
 archon config --scope workflow_templates
 archon config --scope core --scope keybindings --format json
 ```
+
+`archon config --scope workflow_templates --default` returns the repo-defined default workflow templates (the contents of `internal/guidedworkflows/default_workflow_templates.json`).
 
 Clipboard copy always tries the system clipboard first, then OSC52 as fallback.
 

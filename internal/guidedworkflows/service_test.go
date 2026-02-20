@@ -17,8 +17,10 @@ type stubRunMetricsStore struct {
 }
 
 type stubTemplateProvider struct {
-	templates []WorkflowTemplate
-	err       error
+	templates         []WorkflowTemplate
+	err               error
+	explicitConfig    bool
+	explicitConfigErr error
 }
 
 type stubStepPromptDispatcher struct {
@@ -39,6 +41,16 @@ func (s *stubTemplateProvider) ListWorkflowTemplates(context.Context) ([]Workflo
 		out[i] = cloneTemplate(s.templates[i])
 	}
 	return out, nil
+}
+
+func (s *stubTemplateProvider) HasWorkflowTemplateConfig(context.Context) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	if s.explicitConfigErr != nil {
+		return false, s.explicitConfigErr
+	}
+	return s.explicitConfig, nil
 }
 
 func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req StepPromptDispatchRequest) (StepPromptDispatchResult, error) {
@@ -181,6 +193,87 @@ func TestRunLifecycleTemplateProviderOverridesBuiltinTemplate(t *testing.T) {
 	}
 	if run.Phases[0].Steps[0].Prompt != "custom phase plan prompt" {
 		t.Fatalf("expected custom step prompt, got %q", run.Phases[0].Steps[0].Prompt)
+	}
+}
+
+func TestRunLifecycleTemplateProviderReplacesDefaultTemplatesWhenConfigured(t *testing.T) {
+	custom := WorkflowTemplate{
+		ID:   "custom_only",
+		Name: "Custom Only",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_custom",
+				Name: "Custom",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_custom", Name: "step custom", Prompt: "custom prompt"},
+				},
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			templates:      []WorkflowTemplate{custom},
+			explicitConfig: true,
+		}),
+	)
+
+	if _, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	}); !errors.Is(err, ErrTemplateNotFound) {
+		t.Fatalf("expected built-in template to be unavailable when explicit config exists, got %v", err)
+	}
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "custom_only",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun custom_only: %v", err)
+	}
+	if run.TemplateID != "custom_only" {
+		t.Fatalf("expected custom template id, got %q", run.TemplateID)
+	}
+}
+
+func TestRunLifecycleTemplateProviderFallsBackToDefaultsWhenNoExplicitConfig(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			templates:      []WorkflowTemplate{},
+			explicitConfig: false,
+		}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun with default template fallback: %v", err)
+	}
+	if run.TemplateID != TemplateIDSolidPhaseDelivery {
+		t.Fatalf("expected built-in template id, got %q", run.TemplateID)
+	}
+}
+
+func TestRunLifecycleTemplateProviderAllowsExplicitEmptyConfig(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			templates:      []WorkflowTemplate{},
+			explicitConfig: true,
+		}),
+	)
+	if _, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	}); !errors.Is(err, ErrTemplateNotFound) {
+		t.Fatalf("expected template not found for explicit empty template config, got %v", err)
 	}
 }
 

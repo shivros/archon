@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -248,31 +250,40 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 	}
 }
 
-func TestNewGuidedWorkflowRunServiceLoadsTemplatesFromStore(t *testing.T) {
+func TestNewGuidedWorkflowRunServiceLoadsTemplatesFromFileConfig(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
 	cfg.GuidedWorkflows.Enabled = boolPtr(true)
-	custom := guidedworkflows.WorkflowTemplate{
-		ID:   "custom_flow",
-		Name: "Custom Flow",
-		Phases: []guidedworkflows.WorkflowTemplatePhase{
-			{
-				ID:   "phase_1",
-				Name: "Phase 1",
-				Steps: []guidedworkflows.WorkflowTemplateStep{
-					{
-						ID:     "step_1",
-						Name:   "Step 1",
-						Prompt: "custom prompt",
-					},
-				},
-			},
-		},
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
 	}
-	stores := &Stores{
-		WorkflowTemplates: &stubWorkflowTemplateStore{templates: []guidedworkflows.WorkflowTemplate{custom}},
+	if err := os.WriteFile(filepath.Join(dataDir, "workflow_templates.json"), []byte(`{
+  "version": 1,
+  "templates": [
+    {
+      "id": "custom_flow",
+      "name": "Custom Flow",
+      "phases": [
+        {
+          "id": "phase_1",
+          "name": "Phase 1",
+          "steps": [
+            {
+              "id": "step_1",
+              "name": "Step 1",
+              "prompt": "custom prompt"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile workflow_templates.json: %v", err)
 	}
-
-	service := newGuidedWorkflowRunService(cfg, stores, nil, nil, nil)
+	service := newGuidedWorkflowRunService(cfg, nil, nil, nil, nil)
 	run, err := service.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
 		TemplateID:  "custom_flow",
 		WorkspaceID: "ws-1",
@@ -286,6 +297,13 @@ func TestNewGuidedWorkflowRunServiceLoadsTemplatesFromStore(t *testing.T) {
 	}
 	if len(run.Phases) != 1 || len(run.Phases[0].Steps) != 1 || run.Phases[0].Steps[0].Prompt != "custom prompt" {
 		t.Fatalf("expected custom prompt to be snapshotted, got %#v", run.Phases)
+	}
+	if _, err := service.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		TemplateID:  guidedworkflows.TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	}); !errors.Is(err, guidedworkflows.ErrTemplateNotFound) {
+		t.Fatalf("expected built-in template to be unavailable with explicit file config, got %v", err)
 	}
 }
 
