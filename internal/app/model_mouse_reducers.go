@@ -37,13 +37,17 @@ func (m *Model) resolveMouseLayout() mouseLayout {
 }
 
 func (m *Model) mouseOverInput(y int) bool {
-	input := m.activeInput()
-	if input != nil {
-		start := m.viewport.Height() + 2
-		end := start + input.Height() - 1
-		return y >= start && y <= end
+	layout, ok := m.activeInputPanelLayout()
+	if !ok {
+		return false
 	}
-	return false
+	lines := layout.InputLineCount()
+	if lines <= 0 {
+		return false
+	}
+	start := m.viewport.Height() + 2
+	end := start + lines - 1
+	return y >= start && y <= end
 }
 
 func (m *Model) mouseOverComposeControls(y int) bool {

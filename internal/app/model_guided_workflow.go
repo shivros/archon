@@ -408,27 +408,22 @@ func (m *Model) syncGuidedWorkflowPromptInput() {
 	m.guidedWorkflow.SetUserPrompt(m.guidedWorkflowPromptInput.Value())
 }
 
-func (m *Model) guidedWorkflowSetupInputView() (line string, scrollable bool) {
+func (m *Model) guidedWorkflowSetupInputPanel() (InputPanel, bool) {
 	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowPromptInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		return "", false
+		return InputPanel{}, false
 	}
-	panel, scrollable := (InputPanel{Input: m.guidedWorkflowPromptInput}).View()
-	if panel == "" {
-		return "", scrollable
-	}
-	return guidedWorkflowPromptFrameStyle.Render(panel), scrollable
+	return InputPanel{
+		Input: m.guidedWorkflowPromptInput,
+		Frame: m.inputFrame(InputFrameTargetGuidedWorkflowSetup),
+	}, true
 }
 
 func (m *Model) guidedWorkflowSetupInputLineCount() int {
-	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+	panel, ok := m.guidedWorkflowSetupInputPanel()
+	if !ok {
 		return 0
 	}
-	inputLines := 1
-	if m.guidedWorkflowPromptInput != nil {
-		inputLines = max(1, m.guidedWorkflowPromptInput.Height())
-	}
-	const frameLines = 2
-	return inputLines + frameLines
+	return BuildInputPanelLayout(panel).LineCount()
 }
 
 func (m *Model) openGuidedWorkflowLauncherFromSetup() {

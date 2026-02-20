@@ -238,6 +238,7 @@ type Model struct {
 	uiLatency                           *uiLatencyTracker
 	selectionLoadPolicy                 SessionSelectionLoadPolicy
 	historyLoadPolicy                   SessionHistoryLoadPolicy
+	inputFramePolicy                    InputFramePolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
 	sessionProjectionPolicy             SessionProjectionPolicy
@@ -427,6 +428,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		uiLatency:                           newUILatencyTracker(nil),
 		selectionLoadPolicy:                 defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
+		inputFramePolicy:                    NewDefaultInputFramePolicy(),
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
@@ -778,36 +780,8 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		m.sidebar.SetSize(layout.sidebarWidth, contentHeight)
 	}
 	extraLines := 0
-	if m.mode == uiModeCompose {
-		if m.chatInput != nil {
-			extraLines = m.chatInput.Height() + 2
-		} else {
-			extraLines = 3
-		}
-	} else if m.mode == uiModeApprovalResponse {
-		if m.approvalInput != nil {
-			extraLines = m.approvalInput.Height() + 2
-		} else {
-			extraLines = 3
-		}
-	} else if m.mode == uiModeAddNote {
-		if m.noteInput != nil {
-			extraLines = m.noteInput.Height() + 1
-		} else {
-			extraLines = 2
-		}
-	} else if m.mode == uiModeSearch {
-		extraLines = 2
-	} else if m.mode == uiModeRecents && strings.TrimSpace(m.recentsReplySessionID) != "" {
-		if m.recentsReplyInput != nil {
-			extraLines = m.recentsReplyInput.Height() + 2
-		} else {
-			extraLines = 3
-		}
-	} else if m.mode == uiModeGuidedWorkflow {
-		if inputLines := m.guidedWorkflowSetupInputLineCount(); inputLines > 0 {
-			extraLines = inputLines + 1
-		}
+	if inputLines := m.modeInputLineCount(); inputLines > 0 {
+		extraLines = inputLines + 1
 	}
 	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.SetWidth(contentWidth)

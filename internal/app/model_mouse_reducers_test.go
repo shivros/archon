@@ -418,6 +418,48 @@ func TestMouseReducerLeftPressInputFocusesAddNoteInput(t *testing.T) {
 	}
 }
 
+func TestMouseOverComposeControlsUsesComputedControlsRow(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	m.resize(120, 40)
+
+	row := m.composeControlsRow()
+	if !m.mouseOverComposeControls(row) {
+		t.Fatalf("expected compose controls hitbox at computed row")
+	}
+	if m.mouseOverComposeControls(row - 1) {
+		t.Fatalf("did not expect compose controls hitbox above computed row")
+	}
+	m.mode = uiModeNormal
+	if m.mouseOverComposeControls(row) {
+		t.Fatalf("did not expect compose controls hitbox outside compose mode")
+	}
+}
+
+func TestMouseReducerComposeControlsClickUsesComputedRow(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	m.resize(120, 40)
+
+	if line := m.composeControlsLine(); line == "" {
+		t.Fatalf("expected compose controls line")
+	}
+	spans := m.composeControlSpans()
+	if len(spans) == 0 {
+		t.Fatalf("expected compose control spans")
+	}
+	layout := m.resolveMouseLayout()
+	y := m.composeControlsRow()
+	x := layout.rightStart + spans[0].start
+
+	handled := m.reduceComposeControlsLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected compose controls click to be handled at computed row")
+	}
+}
+
 func TestMouseReducerWheelDownKeepsFollowEnabled(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

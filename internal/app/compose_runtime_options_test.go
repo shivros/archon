@@ -199,3 +199,67 @@ func TestComposeOptionPickerTypeAheadFiltersModelOptions(t *testing.T) {
 		t.Fatalf("expected selected model to be applied, got %#v", m.newSession.runtimeOptions)
 	}
 }
+
+func TestComposeControlsRowUsesFooterStartRowWhenFooterVisible(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	m.resize(120, 40)
+
+	layout, ok := m.activeInputPanelLayout()
+	if !ok {
+		t.Fatalf("expected compose input layout")
+	}
+	footerStart, ok := layout.FooterStartRow()
+	if !ok {
+		t.Fatalf("expected compose footer row")
+	}
+	want := m.viewport.Height() + 2 + footerStart
+	if got := m.composeControlsRow(); got != want {
+		t.Fatalf("expected compose controls row %d, got %d", want, got)
+	}
+}
+
+func TestComposeControlsRowFallsBackToInputBottomWhenFooterHidden(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.resize(120, 40)
+	if line := m.composeControlsLine(); line != "" {
+		t.Fatalf("expected compose controls line to be hidden without provider context, got %q", line)
+	}
+
+	layout, ok := m.activeInputPanelLayout()
+	if !ok {
+		t.Fatalf("expected compose input layout")
+	}
+	if _, ok := layout.FooterStartRow(); ok {
+		t.Fatalf("did not expect compose footer row when controls are hidden")
+	}
+	want := m.viewport.Height() + 2 + layout.InputLineCount()
+	if got := m.composeControlsRow(); got != want {
+		t.Fatalf("expected compose controls row fallback %d, got %d", want, got)
+	}
+}
+
+func TestComposeControlsRowReturnsStartOutsideComposeMode(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeNormal
+
+	want := m.viewport.Height() + 2
+	if got := m.composeControlsRow(); got != want {
+		t.Fatalf("expected compose controls row start %d outside compose mode, got %d", want, got)
+	}
+}
+
+func TestComposeControlsRowReturnsStartWhenComposeInputMissing(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.chatInput = nil
+	m.resize(120, 40)
+
+	want := m.viewport.Height() + 2
+	if got := m.composeControlsRow(); got != want {
+		t.Fatalf("expected compose controls row start %d when input missing, got %d", want, got)
+	}
+}

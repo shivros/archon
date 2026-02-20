@@ -217,10 +217,18 @@ func (m *Model) normalizeComposeRuntimeOptionsForModel(provider string, options 
 }
 
 func (m *Model) composeControlsRow() int {
-	if m.chatInput == nil {
-		return m.viewport.Height() + 2
+	start := m.viewport.Height() + 2
+	if m == nil || m.mode != uiModeCompose {
+		return start
 	}
-	return m.viewport.Height() + 2 + m.chatInput.Height()
+	layout, ok := m.activeInputPanelLayout()
+	if !ok {
+		return start
+	}
+	if row, ok := layout.FooterStartRow(); ok {
+		return start + row
+	}
+	return start + layout.InputLineCount()
 }
 
 func (m *Model) openComposeOptionPicker(target composeOptionKind) bool {

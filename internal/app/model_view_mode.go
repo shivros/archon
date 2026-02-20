@@ -99,15 +99,35 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 }
 
 func (m *Model) modeInputView() (line string, scrollable bool) {
-	if ctx, ok := m.activeInputContext(); ok {
-		return InputPanel{
-			Input:  ctx.input,
-			Footer: ctx.footer,
-		}.View()
+	layout, ok := m.modeInputPanelLayout()
+	if !ok {
+		return "", false
 	}
-	switch m.mode {
-	case uiModeGuidedWorkflow:
-		return m.guidedWorkflowSetupInputView()
+	return layout.View()
+}
+
+func (m *Model) modeInputLineCount() int {
+	layout, ok := m.modeInputPanelLayout()
+	if !ok {
+		return 0
 	}
-	return "", false
+	return layout.LineCount()
+}
+
+func (m *Model) modeInputPanel() (InputPanel, bool) {
+	if panel, ok := m.activeInputPanel(); ok {
+		return panel, true
+	}
+	if panel, ok := m.guidedWorkflowSetupInputPanel(); ok {
+		return panel, true
+	}
+	return InputPanel{}, false
+}
+
+func (m *Model) modeInputPanelLayout() (InputPanelLayout, bool) {
+	panel, ok := m.modeInputPanel()
+	if !ok {
+		return InputPanelLayout{}, false
+	}
+	return BuildInputPanelLayout(panel), true
 }

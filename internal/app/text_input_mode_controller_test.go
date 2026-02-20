@@ -146,17 +146,60 @@ func TestInputPanelComposesFooterWithBaseInput(t *testing.T) {
 	input := NewTextInput(40, TextInputConfig{Height: 1})
 	input.SetValue("hello")
 
-	line, _ := InputPanel{
+	layout := BuildInputPanelLayout(InputPanel{
 		Input: input,
 		Footer: InputFooterFunc(func() string {
 			return "Model: gpt-5"
 		}),
-	}.View()
+	})
+	line, _ := layout.View()
 	if !strings.Contains(line, "hello") {
 		t.Fatalf("expected base input line in view, got %q", line)
 	}
 	if !strings.Contains(line, "Model: gpt-5") {
 		t.Fatalf("expected composed footer in view, got %q", line)
+	}
+}
+
+func TestInputPanelFrameAppliesOnlyToInputSegment(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 2})
+	input.SetValue("hello")
+
+	panel := InputPanel{
+		Input: input,
+		Footer: InputFooterFunc(func() string {
+			return "Model: gpt-5"
+		}),
+		Frame: LipglossInputPanelFrame{Style: guidedWorkflowPromptFrameStyle},
+	}
+
+	layout := BuildInputPanelLayout(panel)
+	line, _ := layout.View()
+	lines := strings.Split(line, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected framed input plus footer, got %q", line)
+	}
+	footerLine := lines[len(lines)-1]
+	if !strings.Contains(footerLine, "Model: gpt-5") {
+		t.Fatalf("expected footer line to remain visible, got %q", footerLine)
+	}
+	if strings.Contains(footerLine, "│") || strings.Contains(footerLine, "╰") || strings.Contains(footerLine, "╯") {
+		t.Fatalf("expected footer to render outside the frame, got %q", footerLine)
+	}
+	inputLines := layout.InputLineCount()
+	wantInputLines := input.Height() + guidedWorkflowPromptFrameStyle.GetVerticalFrameSize()
+	if inputLines != wantInputLines {
+		t.Fatalf("expected framed input line count %d, got %d", wantInputLines, inputLines)
+	}
+	footerRow, ok := layout.FooterStartRow()
+	if !ok {
+		t.Fatalf("expected footer row for framed panel")
+	}
+	if footerRow != inputLines {
+		t.Fatalf("expected footer row %d, got %d", inputLines, footerRow)
+	}
+	if got, want := layout.LineCount(), inputLines+1; got != want {
+		t.Fatalf("expected total line count %d, got %d", want, got)
 	}
 }
 

@@ -1,6 +1,10 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
 
 type InputFooterProvider interface {
 	InputFooter() string
@@ -18,17 +22,22 @@ func (f InputFooterFunc) InputFooter() string {
 type InputPanel struct {
 	Input  *TextInput
 	Footer InputFooterProvider
+	Frame  InputPanelFrame
 }
 
-func (p InputPanel) View() (line string, scrollable bool) {
-	if p.Input == nil {
-		return "", false
-	}
-	line = p.Input.View()
-	if p.Footer != nil {
-		if footer := p.Footer.InputFooter(); footer != "" {
-			line += "\n" + footer
-		}
-	}
-	return line, p.Input.CanScroll()
+type InputPanelFrame interface {
+	Render(content string) string
+	VerticalInsetLines() int
+}
+
+type LipglossInputPanelFrame struct {
+	Style lipgloss.Style
+}
+
+func (f LipglossInputPanelFrame) Render(content string) string {
+	return f.Style.Render(content)
+}
+
+func (f LipglossInputPanelFrame) VerticalInsetLines() int {
+	return f.Style.GetVerticalFrameSize()
 }
