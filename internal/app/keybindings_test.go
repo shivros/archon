@@ -85,6 +85,44 @@ func TestLoadKeybindingsMapOverride(t *testing.T) {
 	}
 }
 
+func TestLoadKeybindingsLegacyDismissAliasMapsToSelectionCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	data := []byte(`{"ui.dismissSession":"alt+d"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	bindings, err := LoadKeybindings(path)
+	if err != nil {
+		t.Fatalf("LoadKeybindings: %v", err)
+	}
+	if got := bindings.KeyFor(KeyCommandDismissSelection, ""); got != "alt+d" {
+		t.Fatalf("unexpected dismiss selection binding: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandDismissSession, ""); got != "alt+d" {
+		t.Fatalf("unexpected dismiss legacy alias binding: %q", got)
+	}
+	if got := bindings.Remap("alt+d"); got != "d" {
+		t.Fatalf("expected alias override remap to canonical d, got %q", got)
+	}
+}
+
+func TestLoadKeybindingsLegacyDismissAliasArrayFormat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	data := []byte(`[
+  {"command":"ui.dismissSession","key":"ctrl+d"}
+]`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	bindings, err := LoadKeybindings(path)
+	if err != nil {
+		t.Fatalf("LoadKeybindings: %v", err)
+	}
+	if got := bindings.KeyFor(KeyCommandDismissSelection, ""); got != "ctrl+d" {
+		t.Fatalf("unexpected dismiss selection binding: %q", got)
+	}
+}
+
 func TestResolveHotkeysUsesBindings(t *testing.T) {
 	bindings := NewKeybindings(map[string]string{
 		KeyCommandToggleSidebar: "alt+b",

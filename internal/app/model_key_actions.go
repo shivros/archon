@@ -226,6 +226,10 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 }
 
 func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
+	if m.keyMatchesCommand(msg, KeyCommandDismissSelection, "d") {
+		m.enterDismissOrDeleteForSelection()
+		return true, nil
+	}
 	switch m.keyString(msg) {
 	case "r":
 		m.setStatusMessage("refreshing")
@@ -246,9 +250,6 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		m.setStatusMessage("interrupting " + id)
 		return true, interruptSessionCmd(m.sessionAPI, id)
-	case "d":
-		m.enterDismissOrDeleteForSelection()
-		return true, nil
 	case "u":
 		id := m.selectedSessionID()
 		if id == "" {

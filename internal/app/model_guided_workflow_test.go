@@ -1009,6 +1009,81 @@ func TestSelectingWorkflowSidebarNodeOpensGuidedWorkflowView(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowModeDismissHotkeyTargetsSelectedWorkflow(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 32, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-dismiss-hotkey", guidedworkflows.WorkflowRunStatusRunning, now)
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{run},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row to be selectable")
+	}
+	cmd := m.onSelectionChangedImmediate()
+	if cmd == nil {
+		t.Fatalf("expected workflow snapshot command")
+	}
+	msg, ok := cmd().(workflowRunSnapshotMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
+	}
+	updated, _ := m.Update(msg)
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+
+	updated, cmd = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no async command before confirm choice")
+	}
+	action, ok := m.pendingSelectionAction.(dismissWorkflowSelectionAction)
+	if !ok {
+		t.Fatalf("expected workflow dismiss selection action, got %T", m.pendingSelectionAction)
+	}
+	if action.runID != run.ID {
+		t.Fatalf("expected workflow run id %q, got %q", run.ID, action.runID)
+	}
+}
+
+func TestConfirmDismissWorkflowReturnsVisibilityCommand(t *testing.T) {
+	now := time.Date(2026, 2, 17, 14, 0, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-confirm-dismiss", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := NewModel(nil)
+	m.guidedWorkflowAPI = &guidedWorkflowAPIMock{
+		startRun: run,
+	}
+
+	m.confirmDismissWorkflow(run.ID)
+	if m.confirm == nil || !m.confirm.IsOpen() {
+		t.Fatalf("expected confirm modal to be open")
+	}
+	cmd := m.handleConfirmChoice(confirmChoiceConfirm)
+	if cmd == nil {
+		t.Fatalf("expected dismiss command")
+	}
+	msg, ok := cmd().(workflowRunVisibilityMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunVisibilityMsg, got %T", cmd())
+	}
+	if !msg.dismissed {
+		t.Fatalf("expected dismissed visibility message")
+	}
+	if msg.runID != run.ID {
+		t.Fatalf("expected run id %q, got %q", run.ID, msg.runID)
+	}
+}
+
 func TestSelectingWorkflowChildSessionLoadsChat(t *testing.T) {
 	now := time.Date(2026, 2, 17, 13, 35, 0, 0, time.UTC)
 	run := newWorkflowRunFixture("gwf-child", guidedworkflows.WorkflowRunStatusRunning, now)

@@ -33,7 +33,8 @@ const (
 	KeyCommandRefresh              = "ui.refresh"
 	KeyCommandKillSession          = "ui.killSession"
 	KeyCommandInterruptSession     = "ui.interruptSession"
-	KeyCommandDismissSession       = "ui.dismissSession"
+	KeyCommandDismissSelection     = "ui.dismissSelection"
+	KeyCommandDismissSession       = "ui.dismissSession" // legacy alias; normalized to ui.dismissSelection
 	KeyCommandUndismissSession     = "ui.undismissSession"
 	KeyCommandToggleDismissed      = "ui.toggleDismissed"
 	KeyCommandToggleNotesWorkspace = "ui.toggleNotesWorkspace"
@@ -86,7 +87,7 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandRefresh:              "r",
 	KeyCommandKillSession:          "x",
 	KeyCommandInterruptSession:     "i",
-	KeyCommandDismissSession:       "d",
+	KeyCommandDismissSelection:     "d",
 	KeyCommandUndismissSession:     "u",
 	KeyCommandToggleDismissed:      "D",
 	KeyCommandToggleNotesWorkspace: "1",
@@ -135,7 +136,7 @@ func NewKeybindings(overrides map[string]string) *Keybindings {
 	for command, key := range defaultKeybindingByCommand {
 		byCommand[command] = key
 	}
-	for command, key := range overrides {
+	for command, key := range normalizeKeybindingOverrides(overrides) {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue
@@ -197,7 +198,7 @@ func LoadKeybindings(path string) (*Keybindings, error) {
 }
 
 func (k *Keybindings) KeyFor(command, fallback string) string {
-	command = strings.TrimSpace(command)
+	command = normalizeKeybindingCommand(command)
 	if command == "" {
 		return fallback
 	}
@@ -290,7 +291,7 @@ func parseKeybindingOverrides(data []byte) (map[string]string, error) {
 		}
 		out := map[string]string{}
 		for _, entry := range entries {
-			command := strings.TrimSpace(entry.Command)
+			command := normalizeKeybindingCommand(entry.Command)
 			if command == "" {
 				continue
 			}
@@ -311,7 +312,7 @@ func parseKeybindingOverrides(data []byte) (map[string]string, error) {
 	}
 	out := map[string]string{}
 	for command, key := range raw {
-		command = strings.TrimSpace(command)
+		command = normalizeKeybindingCommand(command)
 		if command == "" {
 			continue
 		}
@@ -325,6 +326,31 @@ func parseKeybindingOverrides(data []byte) (map[string]string, error) {
 		out[command] = key
 	}
 	return out, nil
+}
+
+func normalizeKeybindingCommand(command string) string {
+	command = strings.TrimSpace(command)
+	switch command {
+	case KeyCommandDismissSession:
+		return KeyCommandDismissSelection
+	default:
+		return command
+	}
+}
+
+func normalizeKeybindingOverrides(overrides map[string]string) map[string]string {
+	if len(overrides) == 0 {
+		return nil
+	}
+	normalized := make(map[string]string, len(overrides))
+	for command, key := range overrides {
+		command = normalizeKeybindingCommand(command)
+		if command == "" {
+			continue
+		}
+		normalized[command] = key
+	}
+	return normalized
 }
 
 func KnownKeybindingCommands() []string {

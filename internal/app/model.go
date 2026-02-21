@@ -218,6 +218,7 @@ type Model struct {
 	requestActivity                     requestActivity
 	tickFn                              func() tea.Cmd
 	pendingConfirm                      confirmAction
+	pendingSelectionAction              selectionAction
 	scrollOnLoad                        bool
 	notes                               []*types.Note
 	notesByScope                        map[types.NoteScope][]*types.Note
@@ -533,6 +534,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !m.confirm.Contains(mouse.X, mouse.Y, m.width, m.height-1) {
 					m.confirm.Close()
 					m.pendingConfirm = confirmAction{}
+					m.pendingSelectionAction = nil
 				}
 				return m, nil
 			}
@@ -1632,6 +1634,23 @@ func (m *Model) handleConfirmChoice(choice confirmChoice) tea.Cmd {
 		return nil
 	}
 	defer m.confirm.Close()
+	selectionAction := m.pendingSelectionAction
+	m.pendingSelectionAction = nil
+	if selectionAction != nil {
+		switch choice {
+		case confirmChoiceConfirm:
+			if err := selectionAction.Validate(m); err != nil {
+				m.setValidationStatus(err.Error())
+				return nil
+			}
+			return selectionAction.Execute(m)
+		case confirmChoiceCancel:
+			m.setStatusMessage("canceled")
+			return nil
+		default:
+			return nil
+		}
+	}
 	action := m.pendingConfirm
 	m.pendingConfirm = confirmAction{}
 	switch choice {
@@ -1703,6 +1722,7 @@ func (m *Model) confirmDeleteWorkspace(id string) {
 		kind:        confirmDeleteWorkspace,
 		workspaceID: id,
 	}
+	m.pendingSelectionAction = nil
 	if m.menu != nil {
 		m.menu.CloseAll()
 	}
@@ -1725,6 +1745,7 @@ func (m *Model) confirmDismissSessions(ids []string) {
 		kind:       confirmDismissSessions,
 		sessionIDs: append([]string{}, ids...),
 	}
+	m.pendingSelectionAction = nil
 	if m.menu != nil {
 		m.menu.CloseAll()
 	}
@@ -1732,6 +1753,10 @@ func (m *Model) confirmDismissSessions(ids []string) {
 		m.contextMenu.Close()
 	}
 	m.confirm.Open("Dismiss Sessions", message, "Dismiss", "Cancel")
+}
+
+func (m *Model) confirmDismissWorkflow(runID string) {
+	m.openSelectionActionConfirm(dismissWorkflowSelectionAction{runID: runID})
 }
 
 func (m *Model) confirmDeleteWorkspaceGroup(id string) {
@@ -1753,6 +1778,7 @@ func (m *Model) confirmDeleteWorkspaceGroup(id string) {
 		kind:    confirmDeleteWorkspaceGroup,
 		groupID: id,
 	}
+	m.pendingSelectionAction = nil
 	if m.menu != nil {
 		m.menu.CloseAll()
 	}
@@ -1779,6 +1805,7 @@ func (m *Model) confirmDeleteWorktree(workspaceID, worktreeID string) {
 		workspaceID: workspaceID,
 		worktreeID:  worktreeID,
 	}
+	m.pendingSelectionAction = nil
 	if m.menu != nil {
 		m.menu.CloseAll()
 	}
@@ -1805,6 +1832,7 @@ func (m *Model) confirmDeleteNote(noteID string) {
 		kind:   confirmDeleteNote,
 		noteID: noteID,
 	}
+	m.pendingSelectionAction = nil
 	if m.menu != nil {
 		m.menu.CloseAll()
 	}
@@ -3440,33 +3468,12 @@ func (m *Model) enterRenameForSelection() {
 }
 
 func (m *Model) enterDismissOrDeleteForSelection() {
-	item := m.selectedItem()
-	if item == nil {
-		m.setValidationStatus("select an item to dismiss or delete")
+	action, err := resolveDismissOrDeleteSelectionAction(m.selectedItem())
+	if err != nil {
+		m.setValidationStatus(err.Error())
 		return
 	}
-	switch item.kind {
-	case sidebarWorkspace:
-		if item.workspace == nil || item.workspace.ID == "" || item.workspace.ID == unassignedWorkspaceID {
-			m.setValidationStatus("select a workspace to delete")
-			return
-		}
-		m.confirmDeleteWorkspace(item.workspace.ID)
-	case sidebarWorktree:
-		if item.worktree == nil || item.worktree.ID == "" || item.worktree.WorkspaceID == "" {
-			m.setValidationStatus("select a worktree to delete")
-			return
-		}
-		m.confirmDeleteWorktree(item.worktree.WorkspaceID, item.worktree.ID)
-	case sidebarSession:
-		if item.session == nil || item.session.ID == "" {
-			m.setValidationStatus("select a session to dismiss")
-			return
-		}
-		m.confirmDismissSessions([]string{item.session.ID})
-	default:
-		m.setValidationStatus("select an item to dismiss or delete")
-	}
+	m.openSelectionActionConfirm(action)
 }
 
 func (m *Model) enterRenameWorkspace(id string) {

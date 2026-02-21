@@ -126,6 +126,9 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				m.menu.Toggle()
 			}
 			return true, nil
+		case m.keyMatchesCommand(keyMsg, KeyCommandDismissSelection, "d"):
+			m.enterDismissOrDeleteForSelection()
+			return true, nil
 		}
 		switch key {
 		case "esc":

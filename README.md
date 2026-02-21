@@ -368,7 +368,7 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.refresh`
 - `ui.killSession`
 - `ui.interruptSession`
-- `ui.dismissSession`
+- `ui.dismissSelection`
 - `ui.undismissSession`
 - `ui.toggleDismissed`
 - `ui.toggleNotesWorkspace`
@@ -394,3 +394,5 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.approve`
 - `ui.decline`
 - `ui.notesNew`
+
+`ui.dismissSession` is still accepted as a legacy alias for `ui.dismissSelection`.

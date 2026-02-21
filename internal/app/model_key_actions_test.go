@@ -95,11 +95,12 @@ func TestDeleteHotkeyRoutesWorkspaceSelection(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no async command for delete confirmation")
 	}
-	if m.pendingConfirm.kind != confirmDeleteWorkspace {
-		t.Fatalf("expected workspace delete confirmation, got %v", m.pendingConfirm.kind)
+	action, ok := m.pendingSelectionAction.(deleteWorkspaceSelectionAction)
+	if !ok {
+		t.Fatalf("expected workspace delete selection action, got %T", m.pendingSelectionAction)
 	}
-	if m.pendingConfirm.workspaceID != "ws1" {
-		t.Fatalf("expected workspace id ws1, got %q", m.pendingConfirm.workspaceID)
+	if action.workspaceID != "ws1" {
+		t.Fatalf("expected workspace id ws1, got %q", action.workspaceID)
 	}
 }
 
@@ -121,11 +122,12 @@ func TestDeleteHotkeyRoutesWorktreeSelection(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no async command for delete confirmation")
 	}
-	if m.pendingConfirm.kind != confirmDeleteWorktree {
-		t.Fatalf("expected worktree delete confirmation, got %v", m.pendingConfirm.kind)
+	action, ok := m.pendingSelectionAction.(deleteWorktreeSelectionAction)
+	if !ok {
+		t.Fatalf("expected worktree delete selection action, got %T", m.pendingSelectionAction)
 	}
-	if m.pendingConfirm.workspaceID != "ws1" || m.pendingConfirm.worktreeID != "wt1" {
-		t.Fatalf("expected worktree target ws1/wt1, got %q/%q", m.pendingConfirm.workspaceID, m.pendingConfirm.worktreeID)
+	if action.workspaceID != "ws1" || action.worktreeID != "wt1" {
+		t.Fatalf("expected worktree target ws1/wt1, got %q/%q", action.workspaceID, action.worktreeID)
 	}
 }
 
@@ -147,11 +149,38 @@ func TestDeleteHotkeyRoutesSessionSelection(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no async command for dismiss confirmation")
 	}
-	if m.pendingConfirm.kind != confirmDismissSessions {
-		t.Fatalf("expected dismiss confirmation, got %v", m.pendingConfirm.kind)
+	action, ok := m.pendingSelectionAction.(dismissSessionSelectionAction)
+	if !ok {
+		t.Fatalf("expected session dismiss selection action, got %T", m.pendingSelectionAction)
 	}
-	if len(m.pendingConfirm.sessionIDs) != 1 || m.pendingConfirm.sessionIDs[0] != "s1" {
-		t.Fatalf("expected session target s1, got %#v", m.pendingConfirm.sessionIDs)
+	if action.sessionID != "s1" {
+		t.Fatalf("expected session target s1, got %q", action.sessionID)
+	}
+}
+
+func TestDeleteHotkeyRoutesWorkflowSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, workflows, map[string]*types.SessionMeta{}, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('d'))
+	if !handled {
+		t.Fatalf("expected delete hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for dismiss confirmation")
+	}
+	action, ok := m.pendingSelectionAction.(dismissWorkflowSelectionAction)
+	if !ok {
+		t.Fatalf("expected workflow dismiss selection action, got %T", m.pendingSelectionAction)
+	}
+	if action.runID != "gwf-1" {
+		t.Fatalf("expected workflow run id gwf-1, got %q", action.runID)
 	}
 }
 
