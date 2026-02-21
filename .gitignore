@@ -1,2 +1,6 @@
 # Local data directory (if created inside repo during dev)
 .archon/
+
+# Coverage artifacts
+coverage.out
+*.cover
