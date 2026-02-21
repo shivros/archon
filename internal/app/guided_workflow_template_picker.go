@@ -8,14 +8,17 @@ import (
 )
 
 type guidedWorkflowTemplatePicker struct {
+	picker  *SelectPicker
 	options []guidedWorkflowTemplateOption
-	index   int
 	loading bool
 	err     string
 }
 
 func newGuidedWorkflowTemplatePicker() guidedWorkflowTemplatePicker {
-	return guidedWorkflowTemplatePicker{loading: true}
+	return guidedWorkflowTemplatePicker{
+		picker:  NewSelectPicker(minViewportWidth, 8),
+		loading: true,
+	}
 }
 
 func (p *guidedWorkflowTemplatePicker) Reset() {
@@ -23,9 +26,14 @@ func (p *guidedWorkflowTemplatePicker) Reset() {
 		return
 	}
 	p.options = nil
-	p.index = 0
 	p.loading = true
 	p.err = ""
+	picker := p.ensurePicker()
+	if picker == nil {
+		return
+	}
+	picker.SetQuery("")
+	picker.SetOptions(nil)
 }
 
 func (p *guidedWorkflowTemplatePicker) BeginLoad() {
@@ -34,6 +42,23 @@ func (p *guidedWorkflowTemplatePicker) BeginLoad() {
 	}
 	p.loading = true
 	p.err = ""
+}
+
+func (p *guidedWorkflowTemplatePicker) SetSize(width, height int) {
+	if p == nil {
+		return
+	}
+	picker := p.ensurePicker()
+	if picker == nil {
+		return
+	}
+	if width <= 0 {
+		width = minViewportWidth
+	}
+	if height <= 0 {
+		height = 8
+	}
+	picker.SetSize(width, height)
 }
 
 func (p *guidedWorkflowTemplatePicker) SetError(err error) {
@@ -49,52 +74,72 @@ func (p *guidedWorkflowTemplatePicker) SetTemplates(raw []guidedworkflows.Workfl
 		return
 	}
 	p.options = normalizeGuidedWorkflowTemplateOptions(raw)
-	p.index = 0
 	p.loading = false
 	p.err = ""
+	picker := p.ensurePicker()
+	if picker == nil {
+		return
+	}
+	items := make([]selectOption, 0, len(p.options))
+	for _, option := range p.options {
+		label := guidedWorkflowTemplateLabel(option)
+		items = append(items, selectOption{
+			id:     option.id,
+			label:  label,
+			search: strings.Join([]string{label, option.id, option.name, option.description}, " "),
+		})
+	}
+	picker.SetOptions(items)
 	if len(p.options) == 0 {
 		return
 	}
 	previousID = strings.TrimSpace(previousID)
-	for idx, option := range p.options {
-		if strings.EqualFold(strings.TrimSpace(option.id), previousID) {
-			p.index = idx
-			break
-		}
+	if previousID != "" && picker.SelectID(previousID) {
+		return
 	}
-	p.clampIndex()
+	picker.SelectID(p.options[0].id)
 }
 
 func (p *guidedWorkflowTemplatePicker) Move(delta int) bool {
-	if p == nil || p.loading || len(p.options) == 0 || delta == 0 {
+	if p == nil || p.loading || len(p.options) == 0 || delta == 0 || p.picker == nil {
 		return false
 	}
-	next := (p.index + delta + len(p.options)) % len(p.options)
-	if next == p.index {
-		return false
-	}
-	p.index = next
-	p.clampIndex()
-	return true
+	return p.picker.Move(delta)
 }
 
 func (p *guidedWorkflowTemplatePicker) Selected() (guidedWorkflowTemplateOption, bool) {
 	if p == nil || len(p.options) == 0 {
 		return guidedWorkflowTemplateOption{}, false
 	}
-	p.clampIndex()
-	if p.index < 0 || p.index >= len(p.options) {
+	if p.picker == nil {
 		return guidedWorkflowTemplateOption{}, false
 	}
-	return p.options[p.index], true
+	id := strings.TrimSpace(p.picker.SelectedID())
+	if id == "" {
+		return guidedWorkflowTemplateOption{}, false
+	}
+	for _, option := range p.options {
+		if strings.EqualFold(strings.TrimSpace(option.id), id) {
+			return option, true
+		}
+	}
+	return guidedWorkflowTemplateOption{}, false
 }
 
 func (p *guidedWorkflowTemplatePicker) SelectedIndex() int {
 	if p == nil || len(p.options) == 0 {
 		return -1
 	}
-	p.clampIndex()
-	return p.index
+	selected, ok := p.Selected()
+	if !ok {
+		return -1
+	}
+	for idx, option := range p.options {
+		if strings.EqualFold(strings.TrimSpace(option.id), strings.TrimSpace(selected.id)) {
+			return idx
+		}
+	}
+	return -1
 }
 
 func (p *guidedWorkflowTemplatePicker) Options() []guidedWorkflowTemplateOption {
@@ -123,19 +168,70 @@ func (p *guidedWorkflowTemplatePicker) HasSelection() bool {
 	return ok
 }
 
-func (p *guidedWorkflowTemplatePicker) clampIndex() {
+func (p *guidedWorkflowTemplatePicker) Query() string {
+	if p == nil || p.picker == nil {
+		return ""
+	}
+	return p.picker.Query()
+}
+
+func (p *guidedWorkflowTemplatePicker) AppendQuery(text string) bool {
+	if p == nil || p.loading || p.picker == nil {
+		return false
+	}
+	return p.picker.AppendQuery(text)
+}
+
+func (p *guidedWorkflowTemplatePicker) BackspaceQuery() bool {
+	if p == nil || p.loading || p.picker == nil {
+		return false
+	}
+	return p.picker.BackspaceQuery()
+}
+
+func (p *guidedWorkflowTemplatePicker) ClearQuery() bool {
+	if p == nil || p.loading || p.picker == nil {
+		return false
+	}
+	return p.picker.ClearQuery()
+}
+
+func (p *guidedWorkflowTemplatePicker) HandleClick(row int) bool {
+	if p == nil || p.loading || p.picker == nil {
+		return false
+	}
+	return p.picker.HandleClick(row)
+}
+
+func (p *guidedWorkflowTemplatePicker) View() string {
+	if p == nil || p.picker == nil {
+		return ""
+	}
+	return p.picker.View()
+}
+
+func (p *guidedWorkflowTemplatePicker) ensurePicker() *SelectPicker {
 	if p == nil {
-		return
+		return nil
 	}
-	if len(p.options) == 0 {
-		p.index = 0
-		return
+	if p.picker == nil {
+		p.picker = NewSelectPicker(minViewportWidth, 8)
 	}
-	if p.index < 0 {
-		p.index = 0
-	}
-	if p.index >= len(p.options) {
-		p.index = len(p.options) - 1
+	return p.picker
+}
+
+func guidedWorkflowTemplateLabel(option guidedWorkflowTemplateOption) string {
+	name := strings.TrimSpace(option.name)
+	id := strings.TrimSpace(option.id)
+	switch {
+	case name == "" && id == "":
+		return ""
+	case name == "":
+		return id
+	case id == "" || strings.EqualFold(name, id):
+		return name
+	default:
+		return name + " (" + id + ")"
 	}
 }
 

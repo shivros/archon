@@ -578,3 +578,92 @@ func TestHandleContextMenuActionClosesMenuAndRoutesSessionRename(t *testing.T) {
 		t.Fatalf("expected context menu to be closed")
 	}
 }
+
+func TestHandleContextMenuActionWorkspaceGuidedWorkflowUsesTargetLabel(t *testing.T) {
+	m := NewModel(nil)
+	if m.contextMenu == nil {
+		t.Fatalf("expected context menu controller")
+	}
+	m.contextMenu.OpenWorkspace("ws1", "  Payments Workspace  ", 1, 1)
+
+	cmd := m.handleContextMenuAction(ContextMenuWorkspaceStartGuidedWorkflow)
+	if cmd == nil {
+		t.Fatalf("expected template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if m.guidedWorkflow.context.workspaceName != "Payments Workspace" {
+		t.Fatalf("expected trimmed workspace target label, got %q", m.guidedWorkflow.context.workspaceName)
+	}
+	if m.guidedWorkflow.context.workspaceID != "ws1" {
+		t.Fatalf("expected workspace id ws1, got %q", m.guidedWorkflow.context.workspaceID)
+	}
+}
+
+func TestHandleContextMenuActionWorktreeGuidedWorkflowResolvesWorkspaceName(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Payments Workspace"},
+	}
+	if m.contextMenu == nil {
+		t.Fatalf("expected context menu controller")
+	}
+	m.contextMenu.OpenWorktree("wt1", "ws1", "feature/retry-cleanup", 1, 1)
+
+	cmd := m.handleContextMenuAction(ContextMenuWorktreeStartGuidedWorkflow)
+	if cmd == nil {
+		t.Fatalf("expected template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if m.guidedWorkflow.context.worktreeName != "feature/retry-cleanup" {
+		t.Fatalf("expected worktree target label, got %q", m.guidedWorkflow.context.worktreeName)
+	}
+	if m.guidedWorkflow.context.workspaceName != "Payments Workspace" {
+		t.Fatalf("expected resolved workspace name, got %q", m.guidedWorkflow.context.workspaceName)
+	}
+}
+
+func TestHandleContextMenuActionSessionGuidedWorkflowUsesSessionTargetLabel(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Payments Workspace"},
+	}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "feature/retry-cleanup"},
+		},
+	}
+	if m.contextMenu == nil {
+		t.Fatalf("expected context menu controller")
+	}
+	m.contextMenu.OpenSession("s1", "ws1", "wt1", "  Retry policy cleanup  ", 1, 1)
+
+	cmd := m.handleContextMenuAction(ContextMenuSessionStartGuidedWorkflow)
+	if cmd == nil {
+		t.Fatalf("expected template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if m.guidedWorkflow.context.sessionName != "Retry policy cleanup" {
+		t.Fatalf("expected trimmed session target label, got %q", m.guidedWorkflow.context.sessionName)
+	}
+	if m.guidedWorkflow.context.workspaceName != "Payments Workspace" {
+		t.Fatalf("expected resolved workspace name, got %q", m.guidedWorkflow.context.workspaceName)
+	}
+	if m.guidedWorkflow.context.worktreeName != "feature/retry-cleanup" {
+		t.Fatalf("expected resolved worktree name, got %q", m.guidedWorkflow.context.worktreeName)
+	}
+}

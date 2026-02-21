@@ -638,6 +638,96 @@ func TestMouseReducerPickProviderLeftReleaseIgnored(t *testing.T) {
 	}
 }
 
+func TestMouseReducerGuidedWorkflowLauncherTemplateClickSelects(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
+		t.Fatalf("expected default template selection before click, got %q", m.contentRaw)
+	}
+
+	layout := m.resolveMouseLayout()
+	pickerLayout, ok := m.guidedWorkflow.LauncherTemplatePickerLayout()
+	if !ok {
+		t.Fatalf("expected launcher picker layout metadata")
+	}
+	start := m.guidedWorkflowLauncherPickerStartRow(pickerLayout)
+	if start < 0 {
+		t.Fatalf("expected launcher picker start row")
+	}
+	row := start - m.viewport.YOffset() + 1 + 2 // query row + second option
+	handled := m.reduceGuidedWorkflowLauncherLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected guided workflow picker click to be handled")
+	}
+	if !strings.Contains(m.contentRaw, "- Name: SOLID Phase Delivery") {
+		t.Fatalf("expected click to select second template, got %q", m.contentRaw)
+	}
+}
+
+func TestMouseReducerGuidedWorkflowLauncherIgnoresClicksOutsideTemplatePicker(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	layout := m.resolveMouseLayout()
+	pickerLayout, ok := m.guidedWorkflow.LauncherTemplatePickerLayout()
+	if !ok {
+		t.Fatalf("expected launcher picker layout metadata")
+	}
+	start := m.guidedWorkflowLauncherPickerStartRow(pickerLayout)
+	if start < 0 {
+		t.Fatalf("expected launcher picker start row")
+	}
+	queryRow := start - m.viewport.YOffset() + 1
+	rowOutside := queryRow - 1
+	if rowOutside < 1 {
+		rowOutside = queryRow + pickerLayout.height
+	}
+	handled := m.reduceGuidedWorkflowLauncherLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: rowOutside}, layout)
+	if handled {
+		t.Fatalf("expected click outside picker block to be ignored")
+	}
+	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
+		t.Fatalf("expected selection to remain unchanged, got %q", m.contentRaw)
+	}
+}
+
+func TestGuidedWorkflowLauncherPickerStartRowFallbackStripsANSI(t *testing.T) {
+	var nilModel *Model
+	if got := nilModel.guidedWorkflowLauncherPickerStartRow(guidedWorkflowLauncherTemplatePickerLayout{queryLine: "/"}); got != -1 {
+		t.Fatalf("expected nil model to return -1, got %d", got)
+	}
+
+	m := NewModel(nil)
+	m.renderedPlain = nil
+	m.renderedText = "\x1b[38;5;45mTemplate Picker\x1b[0m\n\x1b[38;5;118m/\x1b[0m\n option"
+	start := m.guidedWorkflowLauncherPickerStartRow(guidedWorkflowLauncherTemplatePickerLayout{
+		queryLine: "/",
+		height:    3,
+	})
+	if start != 1 {
+		t.Fatalf("expected query line start row 1 from ANSI-rendered text, got %d", start)
+	}
+
+	if got := m.guidedWorkflowLauncherPickerStartRow(guidedWorkflowLauncherTemplatePickerLayout{}); got != -1 {
+		t.Fatalf("expected empty query line layout to return -1, got %d", got)
+	}
+}
+
 func TestMouseReducerTranscriptCopyClickHandlesPerMessage(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

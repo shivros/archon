@@ -1849,6 +1849,7 @@ func (m *Model) handleContextMenuAction(action ContextMenuAction) tea.Cmd {
 	}
 	target := contextMenuTarget{
 		id:                m.contextMenu.TargetID(),
+		targetLabel:       m.contextMenu.TargetLabel(),
 		workspaceID:       m.contextMenu.WorkspaceID(),
 		worktreeID:        m.contextMenu.WorktreeID(),
 		sessionID:         m.contextMenu.SessionID(),
@@ -3084,6 +3085,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 	if m.reduceRecentsControlsLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceGuidedWorkflowLauncherLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {

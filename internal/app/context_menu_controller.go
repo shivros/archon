@@ -123,6 +123,13 @@ func (c *ContextMenuController) WorkflowDismissed() bool {
 	return c.dismissed
 }
 
+func (c *ContextMenuController) TargetLabel() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.targetLabel)
+}
+
 func (c *ContextMenuController) Close() {
 	if c == nil {
 		return

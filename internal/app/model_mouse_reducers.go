@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 type mouseLayout struct {
@@ -639,6 +640,71 @@ func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mo
 		return false
 	}
 	return m.selectMessageByViewportPoint(mouse.X-layout.rightStart, mouse.Y-1)
+}
+
+func (m *Model) reduceGuidedWorkflowLauncherLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
+	if m.mode != uiModeGuidedWorkflow || m.guidedWorkflow == nil {
+		return false
+	}
+	pickerLayout, ok := m.guidedWorkflow.LauncherTemplatePickerLayout()
+	if !ok || pickerLayout.height <= 0 {
+		return false
+	}
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart || mouse.Y < 1 || mouse.Y > m.viewport.Height() {
+		return false
+	}
+	start := m.guidedWorkflowLauncherPickerStartRow(pickerLayout)
+	if start < 0 {
+		return false
+	}
+	absolute := m.viewport.YOffset() + mouse.Y - 1
+	row := absolute - start
+	if row < 0 || row >= pickerLayout.height {
+		return false
+	}
+	if m.guidedWorkflow.SelectTemplateByRow(row) {
+		m.renderGuidedWorkflowContent()
+	}
+	return true
+}
+
+func (m *Model) guidedWorkflowLauncherPickerStartRow(layout guidedWorkflowLauncherTemplatePickerLayout) int {
+	if m == nil {
+		return -1
+	}
+	rendered := m.renderedPlain
+	if len(rendered) == 0 && m.renderedText != "" {
+		rendered = strings.Split(xansi.Strip(m.renderedText), "\n")
+	}
+	if len(rendered) == 0 {
+		return -1
+	}
+	target := strings.ToLower(strings.TrimSpace(layout.queryLine))
+	if target == "" {
+		return -1
+	}
+	start := 0
+	for i, line := range rendered {
+		if strings.EqualFold(strings.TrimSpace(line), "template picker") {
+			start = i + 1
+			break
+		}
+	}
+	for i := start; i < len(rendered); i++ {
+		if strings.ToLower(strings.TrimSpace(rendered[i])) == target {
+			return i
+		}
+	}
+	for i, line := range rendered {
+		if strings.ToLower(strings.TrimSpace(line)) == target {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {

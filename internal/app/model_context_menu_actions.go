@@ -10,6 +10,7 @@ import (
 
 type contextMenuTarget struct {
 	id                string
+	targetLabel       string
 	workspaceID       string
 	worktreeID        string
 	sessionID         string
@@ -69,7 +70,8 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 			return true, nil
 		}
 		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
-			workspaceID: target.id,
+			workspaceID:   target.id,
+			workspaceName: target.targetLabel,
 		})
 		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 	case ContextMenuWorkspaceCopyPath:
@@ -136,8 +138,10 @@ func (m *Model) handleWorktreeContextMenuAction(action ContextMenuAction, target
 			return true, nil
 		}
 		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
-			workspaceID: target.workspaceID,
-			worktreeID:  target.worktreeID,
+			workspaceID:   target.workspaceID,
+			worktreeID:    target.worktreeID,
+			worktreeName:  target.targetLabel,
+			workspaceName: strings.TrimSpace(m.workspaceNameByID(target.workspaceID)),
 		})
 		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 	case ContextMenuWorktreeCopyPath:
@@ -207,9 +211,12 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			return true, nil
 		}
 		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
-			workspaceID: target.workspaceID,
-			worktreeID:  target.worktreeID,
-			sessionID:   target.sessionID,
+			workspaceID:   target.workspaceID,
+			worktreeID:    target.worktreeID,
+			sessionID:     target.sessionID,
+			sessionName:   target.targetLabel,
+			workspaceName: strings.TrimSpace(m.workspaceNameByID(target.workspaceID)),
+			worktreeName:  strings.TrimSpace(m.worktreeNameByID(target.worktreeID)),
 		})
 		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 	case ContextMenuSessionDismiss:

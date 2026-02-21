@@ -13,6 +13,7 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 	if m == nil {
 		return
 	}
+	context = m.resolveGuidedWorkflowLaunchContext(context)
 	if m.guidedWorkflow == nil {
 		m.guidedWorkflow = NewGuidedWorkflowUIController()
 	}
@@ -87,6 +88,9 @@ func (m *Model) renderGuidedWorkflowContent() {
 	if m.guidedWorkflow == nil {
 		m.guidedWorkflow = NewGuidedWorkflowUIController()
 	}
+	pickerWidth := max(minViewportWidth, m.viewport.Width())
+	pickerHeight := clamp(m.viewport.Height()/2, 6, 10)
+	m.guidedWorkflow.SetTemplatePickerSize(pickerWidth, pickerHeight)
 	if m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
 		m.syncGuidedWorkflowPromptInput()
 	}
@@ -115,6 +119,14 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	}
 	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
 		return true, cmd
+	}
+	if pasteMsg, ok := msg.(tea.PasteMsg); ok {
+		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher {
+			if m.applyPickerPaste(pasteMsg, m.guidedWorkflow) {
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			}
+		}
 	}
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if ok {
@@ -149,6 +161,11 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		case "esc":
 			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
 				m.openGuidedWorkflowLauncherFromSetup()
+				return true, nil
+			}
+			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher && m.guidedWorkflow.ClearQuery() {
+				m.setStatusMessage("template filter cleared")
+				m.renderGuidedWorkflowContent()
 				return true, nil
 			}
 			m.exitGuidedWorkflow("guided workflow closed")
@@ -238,8 +255,44 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				return true, m.openGuidedWorkflowSelectedSession()
 			}
 		}
+		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher && m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
 	}
 	return false, nil
+}
+
+func (m *Model) resolveGuidedWorkflowLaunchContext(context guidedWorkflowLaunchContext) guidedWorkflowLaunchContext {
+	if m == nil {
+		return context
+	}
+	context.workspaceID = strings.TrimSpace(context.workspaceID)
+	context.workspaceName = strings.TrimSpace(context.workspaceName)
+	context.worktreeID = strings.TrimSpace(context.worktreeID)
+	context.worktreeName = strings.TrimSpace(context.worktreeName)
+	context.sessionID = strings.TrimSpace(context.sessionID)
+	context.sessionName = strings.TrimSpace(context.sessionName)
+
+	if context.worktreeID != "" {
+		if wt := m.worktreeByID(context.worktreeID); wt != nil {
+			if context.worktreeName == "" {
+				context.worktreeName = strings.TrimSpace(wt.Name)
+			}
+			if context.workspaceID == "" {
+				context.workspaceID = strings.TrimSpace(wt.WorkspaceID)
+			}
+		}
+	}
+	if context.workspaceID != "" && context.workspaceName == "" {
+		if ws := m.workspaceByID(context.workspaceID); ws != nil {
+			context.workspaceName = strings.TrimSpace(ws.Name)
+		}
+	}
+	if context.sessionID != "" && context.sessionName == "" {
+		context.sessionName = strings.TrimSpace(m.sessionDisplayName(context.sessionID))
+	}
+	return context
 }
 
 func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {

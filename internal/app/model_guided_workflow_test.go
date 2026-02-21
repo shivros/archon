@@ -344,6 +344,102 @@ func TestGuidedWorkflowSetupUsesSelectedTemplate(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowLauncherDisplaysContextNames(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Payments Workspace"},
+	}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "feature/retry-cleanup"},
+		},
+	}
+	m.sessions = []*types.Session{
+		{
+			ID:       "s1",
+			Provider: "codex",
+			Title:    "Stabilize retry policy",
+		},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {
+			SessionID:   "s1",
+			WorkspaceID: "ws1",
+			WorktreeID:  "wt1",
+			Title:       "Retry policy cleanup",
+		},
+	}
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	if !strings.Contains(m.contentRaw, "- Workspace: Payments Workspace") {
+		t.Fatalf("expected workspace name in launcher context, got %q", m.contentRaw)
+	}
+	if !strings.Contains(m.contentRaw, "- Worktree: feature/retry-cleanup") {
+		t.Fatalf("expected worktree name in launcher context, got %q", m.contentRaw)
+	}
+	if !strings.Contains(m.contentRaw, "- Task/Session: Retry policy cleanup") {
+		t.Fatalf("expected session name in launcher context, got %q", m.contentRaw)
+	}
+	if strings.Contains(m.contentRaw, "- Workspace: ws1") {
+		t.Fatalf("expected launcher context to avoid raw workspace id when name is available, got %q", m.contentRaw)
+	}
+}
+
+func TestGuidedWorkflowLauncherTemplatePickerSupportsTypeAhead(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	m = asModel(t, updated)
+	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
+		t.Fatalf("expected filtered template selection, got %q", m.contentRaw)
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected first esc to clear query but keep launcher open, got mode=%v", m.mode)
+	}
+	if !strings.Contains(strings.ToLower(m.status), "filter cleared") {
+		t.Fatalf("expected filter cleared status, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowLauncherTemplatePickerLayoutMetadata(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	layout, ok := m.guidedWorkflow.LauncherTemplatePickerLayout()
+	if !ok {
+		t.Fatalf("expected launcher picker layout metadata")
+	}
+	if layout.height < 2 {
+		t.Fatalf("expected picker layout height >= 2, got %d", layout.height)
+	}
+	if strings.TrimSpace(layout.queryLine) != "/" {
+		t.Fatalf("expected query-line anchor '/', got %q", layout.queryLine)
+	}
+	if start := m.guidedWorkflowLauncherPickerStartRow(layout); start < 0 {
+		t.Fatalf("expected picker start row from rendered content")
+	}
+}
+
 func TestGuidedWorkflowSetupCapturesPromptFromKeys(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{

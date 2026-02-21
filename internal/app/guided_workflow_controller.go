@@ -27,15 +27,23 @@ const (
 )
 
 type guidedWorkflowLaunchContext struct {
-	workspaceID string
-	worktreeID  string
-	sessionID   string
+	workspaceID   string
+	workspaceName string
+	worktreeID    string
+	worktreeName  string
+	sessionID     string
+	sessionName   string
 }
 
 type guidedWorkflowTemplateOption struct {
 	id          string
 	name        string
 	description string
+}
+
+type guidedWorkflowLauncherTemplatePickerLayout struct {
+	queryLine string
+	height    int
 }
 
 type GuidedWorkflowUIController struct {
@@ -151,6 +159,82 @@ func (c *GuidedWorkflowUIController) MoveTemplateSelection(delta int) bool {
 	}
 	c.syncTemplateSelection()
 	return true
+}
+
+func (c *GuidedWorkflowUIController) SetTemplatePickerSize(width, height int) {
+	if c == nil {
+		return
+	}
+	c.templatePicker.SetSize(width, height)
+}
+
+func (c *GuidedWorkflowUIController) Query() string {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return ""
+	}
+	return c.templatePicker.Query()
+}
+
+func (c *GuidedWorkflowUIController) AppendQuery(text string) bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return false
+	}
+	if !c.templatePicker.AppendQuery(text) {
+		return false
+	}
+	c.syncTemplateSelection()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) BackspaceQuery() bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return false
+	}
+	if !c.templatePicker.BackspaceQuery() {
+		return false
+	}
+	c.syncTemplateSelection()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) ClearQuery() bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return false
+	}
+	if !c.templatePicker.ClearQuery() {
+		return false
+	}
+	c.syncTemplateSelection()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) SelectTemplateByRow(row int) bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return false
+	}
+	if !c.templatePicker.HandleClick(row) {
+		return false
+	}
+	c.syncTemplateSelection()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) LauncherTemplatePickerLayout() (guidedWorkflowLauncherTemplatePickerLayout, bool) {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return guidedWorkflowLauncherTemplatePickerLayout{}, false
+	}
+	if c.templatePicker.Loading() || c.templatePicker.Error() != "" || len(c.templatePicker.Options()) == 0 {
+		return guidedWorkflowLauncherTemplatePickerLayout{}, false
+	}
+	view := strings.TrimSpace(c.templatePicker.View())
+	if view == "" {
+		return guidedWorkflowLauncherTemplatePickerLayout{}, false
+	}
+	lines := strings.Split(view, "\n")
+	return guidedWorkflowLauncherTemplatePickerLayout{
+		queryLine: strings.TrimSpace(renderPickerQueryLine(c.templatePicker.Query())),
+		height:    len(lines),
+	}, true
 }
 
 func (c *GuidedWorkflowUIController) TemplatesLoading() bool {
@@ -447,19 +531,19 @@ func (c *GuidedWorkflowUIController) Render() string {
 
 func (c *GuidedWorkflowUIController) renderLauncher() string {
 	lines := []string{
-		"Workflow Launcher",
+		"# Workflow Launcher",
 		"",
-		"Start a guided workflow run manually from the selected context.",
+		"Launch a guided workflow from the selected context.",
 		"",
-		"Context",
-		fmt.Sprintf("- Workspace: %s", valueOrFallback(c.context.workspaceID, "(not set)")),
-		fmt.Sprintf("- Worktree: %s", valueOrFallback(c.context.worktreeID, "(not set)")),
-		fmt.Sprintf("- Task/Session: %s", valueOrFallback(c.context.sessionID, "(not set)")),
+		"### Launch Context",
+		fmt.Sprintf("- Workspace: %s", c.context.workspaceDisplay()),
+		fmt.Sprintf("- Worktree: %s", c.context.worktreeDisplay()),
+		fmt.Sprintf("- Task/Session: %s", c.context.sessionDisplay()),
 		"",
-		"Template Picker",
+		"### Template Picker",
+		"- Type to filter templates. Use up/down to select.",
 	}
 	options := c.templatePicker.Options()
-	selectedIndex := c.templatePicker.SelectedIndex()
 	switch {
 	case c.templatePicker.Loading():
 		lines = append(lines, "- Loading workflow templates...")
@@ -468,21 +552,27 @@ func (c *GuidedWorkflowUIController) renderLauncher() string {
 	case len(options) == 0:
 		lines = append(lines, "- No templates available.")
 	default:
-		for idx, option := range options {
-			prefix := " "
-			if idx == selectedIndex {
-				prefix = ">"
-			}
-			lines = append(lines, fmt.Sprintf("%s %s (%s)", prefix, valueOrFallback(option.name, option.id), option.id))
-			if text := strings.TrimSpace(option.description); text != "" {
-				lines = append(lines, "   "+text)
+		if pickerView := strings.TrimSpace(c.templatePicker.View()); pickerView != "" {
+			lines = append(lines, "")
+			lines = append(lines, strings.Split(pickerView, "\n")...)
+		}
+		if selected, ok := c.templatePicker.Selected(); ok {
+			lines = append(lines,
+				"",
+				"### Selected Template",
+				fmt.Sprintf("- Name: %s", valueOrFallback(selected.name, selected.id)),
+				fmt.Sprintf("- ID: %s", valueOrFallback(selected.id, "(not set)")),
+			)
+			if text := strings.TrimSpace(selected.description); text != "" {
+				lines = append(lines, fmt.Sprintf("- Description: %s", text))
 			}
 		}
 	}
 	lines = append(lines,
 		"",
-		"Controls",
+		"### Controls",
 		"- up/down: choose template",
+		"- type/backspace/ctrl+u: filter templates",
 		"- enter: continue to run setup",
 		"- r: reload templates",
 		"- esc: close launcher",
@@ -497,24 +587,26 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 	sensitivity := c.sensitivityLabel()
 	chars, linesCount := promptStats(c.userPrompt)
 	lines := []string{
-		"Run Setup",
+		"# Run Setup",
 		"",
-		fmt.Sprintf("Template: %s (%s)", valueOrFallback(c.templateName, "(none selected)"), valueOrFallback(c.templateID, "(not selected)")),
-		fmt.Sprintf("Policy sensitivity: %s", sensitivity),
+		"### Selected Template",
+		fmt.Sprintf("- Name: %s", valueOrFallback(c.templateName, "(none selected)")),
+		fmt.Sprintf("- ID: %s", valueOrFallback(c.templateID, "(not selected)")),
+		fmt.Sprintf("- Policy sensitivity: %s", sensitivity),
 		"",
-		"Workflow prompt (required)",
+		"### Workflow Prompt (Required)",
 		"- Input focus: active in the framed task description panel below",
 		fmt.Sprintf("- Prompt stats: %d chars across %d lines", chars, linesCount),
 		"- Paste support: uses the same editor behavior as chat/notes input",
 	}
 	lines = append(lines,
 		"",
-		"Sensitivity presets",
+		"### Sensitivity Presets",
 		"- low: fewer pauses, higher continue tolerance",
 		"- balanced: default confidence-weighted policy",
 		"- high: stricter checkpointing and earlier pauses",
 		"",
-		"Controls",
+		"### Controls",
 		"- type/paste: edit workflow prompt",
 		"- up/down: change sensitivity",
 		"- enter: create and start run",
@@ -529,12 +621,12 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 func (c *GuidedWorkflowUIController) renderLive() string {
 	run := c.run
 	if run == nil {
-		return "Live Timeline\n\nWaiting for run state..."
+		return "# Live Timeline\n\nWaiting for run state..."
 	}
 	lines := []string{
-		"Live Timeline",
+		"# Live Timeline",
 		"",
-		"Run Overview",
+		"### Run Overview",
 		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(pending)")),
 		fmt.Sprintf("- Status: %s", runStatusText(run.Status)),
 		fmt.Sprintf("- Template: %s", valueOrFallback(run.TemplateName, run.TemplateID)),
@@ -544,20 +636,20 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 	if explain := c.decisionExplanation(); explain != "" {
 		lines = append(lines, fmt.Sprintf("- Decision explanation: %s", explain))
 	}
-	lines = append(lines, "", "Phase Progress")
+	lines = append(lines, "", "### Phase Progress")
 	lines = append(lines, c.renderPhaseProgress()...)
-	lines = append(lines, "", "Execution Details")
+	lines = append(lines, "", "### Execution Details")
 	lines = append(lines, c.renderExecutionDetails()...)
-	lines = append(lines, "", "Artifacts / Timeline")
+	lines = append(lines, "", "### Artifacts / Timeline")
 	lines = append(lines, c.renderTimeline()...)
-	lines = append(lines, "", "Controls")
+	lines = append(lines, "", "### Controls")
 	lines = append(lines, "- j/down: next step details")
 	lines = append(lines, "- k/up: previous step details")
 	lines = append(lines, "- o: open selected step session")
 	lines = append(lines, "- r: refresh timeline")
 	lines = append(lines, "- esc: close guided workflow view")
 	if c.NeedsDecision() {
-		lines = append(lines, "", "Decision Inbox")
+		lines = append(lines, "", "### Decision Inbox")
 		lines = append(lines, c.renderDecisionInbox()...)
 	}
 	if text := strings.TrimSpace(c.lastError); text != "" {
@@ -569,7 +661,7 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 func (c *GuidedWorkflowUIController) renderSummary() string {
 	run := c.run
 	if run == nil {
-		return "Post-run Summary\n\nNo run data."
+		return "# Post-run Summary\n\nNo run data."
 	}
 	completedSteps := 0
 	totalSteps := 0
@@ -582,9 +674,9 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 		}
 	}
 	lines := []string{
-		"Post-run Summary",
+		"# Post-run Summary",
 		"",
-		"Outcome",
+		"### Outcome",
 		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(unknown)")),
 		fmt.Sprintf("- Final status: %s", runStatusText(run.Status)),
 		fmt.Sprintf("- Completed steps: %d/%d", completedSteps, totalSteps),
@@ -601,7 +693,7 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 	if explain := c.decisionExplanation(); explain != "" {
 		lines = append(lines, fmt.Sprintf("- Final decision explanation: %s", explain))
 	}
-	lines = append(lines, "", "Controls", "- enter: close summary", "- esc: close summary")
+	lines = append(lines, "", "### Controls", "- enter: close summary", "- esc: close summary")
 	return joinGuidedWorkflowLines(lines)
 }
 
@@ -905,6 +997,30 @@ func (c *GuidedWorkflowUIController) decisionExplanation() string {
 	default:
 		return base
 	}
+}
+
+func (c guidedWorkflowLaunchContext) workspaceDisplay() string {
+	return guidedContextDisplay(c.workspaceName, c.workspaceID)
+}
+
+func (c guidedWorkflowLaunchContext) worktreeDisplay() string {
+	return guidedContextDisplay(c.worktreeName, c.worktreeID)
+}
+
+func (c guidedWorkflowLaunchContext) sessionDisplay() string {
+	return guidedContextDisplay(c.sessionName, c.sessionID)
+}
+
+func guidedContextDisplay(name, id string) string {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		return name
+	}
+	id = strings.TrimSpace(id)
+	if id != "" {
+		return id
+	}
+	return "(not set)"
 }
 
 func runStatusText(status guidedworkflows.WorkflowRunStatus) string {
