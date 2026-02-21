@@ -56,6 +56,25 @@ type RunSnapshotStore interface {
 	UpsertWorkflowRun(ctx context.Context, snapshot RunStatusSnapshot) error
 }
 
+type MissingRunDismissalContext struct {
+	WorkspaceID string
+	WorktreeID  string
+	SessionID   string
+}
+
+type MissingRunContextResolver interface {
+	ResolveMissingRunContext(ctx context.Context, runID string) (MissingRunDismissalContext, bool, error)
+}
+
+type MissingRunTombstoneFactory interface {
+	BuildMissingRunTombstone(
+		runID string,
+		dismissalContext MissingRunDismissalContext,
+		contextResolved bool,
+		now time.Time,
+	) *WorkflowRun
+}
+
 // TurnEventProcessor allows daemon adapters to advance active runs from turn completion events.
 type TurnEventProcessor interface {
 	OnTurnCompleted(ctx context.Context, signal TurnSignal) ([]*WorkflowRun, error)
@@ -87,6 +106,8 @@ type InMemoryRunService struct {
 	metrics          runServiceMetrics
 	metricsStore     RunMetricsStore
 	runStore         RunSnapshotStore
+	contextResolver  MissingRunContextResolver
+	tombstoneFactory MissingRunTombstoneFactory
 }
 
 type runServiceMetrics struct {
@@ -208,6 +229,24 @@ func WithRunSnapshotStore(store RunSnapshotStore) RunServiceOption {
 	}
 }
 
+func WithMissingRunContextResolver(resolver MissingRunContextResolver) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || resolver == nil {
+			return
+		}
+		s.contextResolver = resolver
+	}
+}
+
+func WithMissingRunTombstoneFactory(factory MissingRunTombstoneFactory) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || factory == nil {
+			return
+		}
+		s.tombstoneFactory = factory
+	}
+}
+
 func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	service := &InMemoryRunService{
 		cfg:              NormalizeConfig(cfg),
@@ -218,6 +257,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		turnSeen:         map[string]struct{}{},
 		actions:          map[string]struct{}{},
 		telemetryEnabled: true,
+		tombstoneFactory: defaultMissingRunTombstoneFactory{},
 		metrics: runServiceMetrics{
 			interventionCauses: map[string]int{},
 		},
@@ -600,9 +640,21 @@ func (s *InMemoryRunService) listRuns(includeDismissed bool) ([]*WorkflowRun, er
 }
 
 func (s *InMemoryRunService) DismissRun(ctx context.Context, runID string) (*WorkflowRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
+	}
+	normalizedRunID := strings.TrimSpace(runID)
+	if normalizedRunID == "" {
+		return nil, fmt.Errorf("%w: run id is required", ErrInvalidTransition)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolvedContext, resolved := s.resolveMissingRunDismissalContext(ctx, normalizedRunID)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	run, err := s.mustRunLocked(runID)
+	run, err := s.prepareRunForDismissalLocked(normalizedRunID, resolvedContext, resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -610,6 +662,106 @@ func (s *InMemoryRunService) DismissRun(ctx context.Context, runID string) (*Wor
 		return cloneWorkflowRun(run), nil
 	}
 	now := s.engine.now()
+	s.applyDismissedStateLocked(run, now)
+	s.persistRunSnapshotLocked(ctx, run.ID)
+	return cloneWorkflowRun(run), nil
+}
+
+func (s *InMemoryRunService) resolveMissingRunDismissalContext(
+	ctx context.Context,
+	runID string,
+) (MissingRunDismissalContext, bool) {
+	if s == nil || s.contextResolver == nil {
+		return MissingRunDismissalContext{}, false
+	}
+	resolvedContext, ok, err := s.contextResolver.ResolveMissingRunContext(ctx, runID)
+	if err != nil || !ok {
+		return MissingRunDismissalContext{}, false
+	}
+	return normalizeMissingRunDismissalContext(resolvedContext), true
+}
+
+func (s *InMemoryRunService) prepareRunForDismissalLocked(
+	runID string,
+	resolvedContext MissingRunDismissalContext,
+	contextResolved bool,
+) (*WorkflowRun, error) {
+	run, err := s.mustRunLocked(runID)
+	if err == nil {
+		return run, nil
+	}
+	if !errors.Is(err, ErrRunNotFound) {
+		return nil, err
+	}
+	tombstone := s.buildMissingRunTombstone(runID, resolvedContext, contextResolved, s.engine.now())
+	s.runs[runID] = tombstone
+	s.ensureRunTimelineLocked(runID)
+	return tombstone, nil
+}
+
+func (s *InMemoryRunService) buildMissingRunTombstone(
+	runID string,
+	resolvedContext MissingRunDismissalContext,
+	contextResolved bool,
+	now time.Time,
+) *WorkflowRun {
+	normalizedRunID := strings.TrimSpace(runID)
+	normalizedContext := normalizeMissingRunDismissalContext(resolvedContext)
+	factory := s.tombstoneFactory
+	if factory == nil {
+		factory = defaultMissingRunTombstoneFactory{}
+	}
+	tombstone := factory.BuildMissingRunTombstone(normalizedRunID, normalizedContext, contextResolved, now)
+	if tombstone == nil {
+		tombstone = defaultMissingRunTombstoneFactory{}.BuildMissingRunTombstone(normalizedRunID, normalizedContext, contextResolved, now)
+	}
+	tombstone = cloneWorkflowRun(tombstone)
+	if tombstone == nil {
+		tombstone = &WorkflowRun{}
+	}
+	tombstone.ID = normalizedRunID
+	tombstone.TemplateName = strings.TrimSpace(tombstone.TemplateName)
+	if tombstone.TemplateName == "" {
+		tombstone.TemplateName = "Historical Guided Workflow"
+	}
+	tombstone.WorkspaceID = strings.TrimSpace(tombstone.WorkspaceID)
+	if tombstone.WorkspaceID == "" {
+		tombstone.WorkspaceID = normalizedContext.WorkspaceID
+	}
+	tombstone.WorktreeID = strings.TrimSpace(tombstone.WorktreeID)
+	if tombstone.WorktreeID == "" {
+		tombstone.WorktreeID = normalizedContext.WorktreeID
+	}
+	tombstone.SessionID = strings.TrimSpace(tombstone.SessionID)
+	if tombstone.SessionID == "" {
+		tombstone.SessionID = normalizedContext.SessionID
+	}
+	if tombstone.Status == "" {
+		tombstone.Status = WorkflowRunStatusFailed
+	}
+	if tombstone.CreatedAt.IsZero() {
+		tombstone.CreatedAt = now
+	}
+	if strings.TrimSpace(tombstone.LastError) == "" {
+		tombstone.LastError = defaultMissingRunTombstoneError(contextResolved)
+	}
+	return tombstone
+}
+
+func (s *InMemoryRunService) ensureRunTimelineLocked(runID string) {
+	if s == nil {
+		return
+	}
+	if _, exists := s.timelines[runID]; exists {
+		return
+	}
+	s.timelines[runID] = []RunTimelineEvent{}
+}
+
+func (s *InMemoryRunService) applyDismissedStateLocked(run *WorkflowRun, now time.Time) {
+	if s == nil || run == nil {
+		return
+	}
 	run.DismissedAt = &now
 	appendRunAudit(run, RunAuditEntry{
 		At:      now,
@@ -624,8 +776,6 @@ func (s *InMemoryRunService) DismissRun(ctx context.Context, runID string) (*Wor
 		RunID:   run.ID,
 		Message: "workflow run dismissed",
 	})
-	s.persistRunSnapshotLocked(ctx, run.ID)
-	return cloneWorkflowRun(run), nil
 }
 
 func (s *InMemoryRunService) UndismissRun(ctx context.Context, runID string) (*WorkflowRun, error) {
@@ -1882,6 +2032,42 @@ func sanitizeCounter(value int) int {
 		return 0
 	}
 	return value
+}
+
+func normalizeMissingRunDismissalContext(in MissingRunDismissalContext) MissingRunDismissalContext {
+	return MissingRunDismissalContext{
+		WorkspaceID: strings.TrimSpace(in.WorkspaceID),
+		WorktreeID:  strings.TrimSpace(in.WorktreeID),
+		SessionID:   strings.TrimSpace(in.SessionID),
+	}
+}
+
+type defaultMissingRunTombstoneFactory struct{}
+
+func (defaultMissingRunTombstoneFactory) BuildMissingRunTombstone(
+	runID string,
+	dismissalContext MissingRunDismissalContext,
+	contextResolved bool,
+	now time.Time,
+) *WorkflowRun {
+	normalizedContext := normalizeMissingRunDismissalContext(dismissalContext)
+	return &WorkflowRun{
+		ID:           strings.TrimSpace(runID),
+		TemplateName: "Historical Guided Workflow",
+		WorkspaceID:  normalizedContext.WorkspaceID,
+		WorktreeID:   normalizedContext.WorktreeID,
+		SessionID:    normalizedContext.SessionID,
+		Status:       WorkflowRunStatusFailed,
+		CreatedAt:    now,
+		LastError:    defaultMissingRunTombstoneError(contextResolved),
+	}
+}
+
+func defaultMissingRunTombstoneError(contextResolved bool) string {
+	if contextResolved {
+		return "workflow run missing; visibility state restored from dismissal"
+	}
+	return "workflow run missing; dismissed tombstone created"
 }
 
 func sanitizeInt64Counter(value int64) int64 {

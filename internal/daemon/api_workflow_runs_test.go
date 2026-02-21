@@ -127,6 +127,33 @@ func TestWorkflowRunEndpointsDismissAndUndismiss(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsDismissMissingRunCreatesDismissedTombstone(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	dismissed := postWorkflowRunAction(t, server, "gwf-missing", "dismiss", http.StatusOK)
+	if dismissed.ID != "gwf-missing" {
+		t.Fatalf("expected missing run id to be preserved, got %q", dismissed.ID)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set for missing run tombstone")
+	}
+
+	runs := getWorkflowRuns(t, server, http.StatusOK)
+	if len(runs) != 0 {
+		t.Fatalf("expected default workflow list to exclude dismissed missing run, got %#v", runs)
+	}
+
+	included := getWorkflowRunsWithPath(t, server, "/v1/workflow-runs?include_dismissed=1", http.StatusOK)
+	if len(included) != 1 || included[0].ID != "gwf-missing" || included[0].DismissedAt == nil {
+		t.Fatalf("expected include_dismissed to include missing dismissed run, got %#v", included)
+	}
+}
+
 func TestWorkflowRunEndpointsInvalidTransition(t *testing.T) {
 	api := &API{
 		Version:      "test",

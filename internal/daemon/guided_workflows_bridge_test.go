@@ -375,6 +375,52 @@ func TestNewGuidedWorkflowRunServiceDoesNotPerformReconciliationSideEffects(t *t
 	}
 }
 
+func TestNewGuidedWorkflowRunServiceWiresMissingRunContextResolverFromStores(t *testing.T) {
+	setStableWorkflowTemplatesHome(t)
+
+	cfg := config.DefaultCoreConfig()
+	cfg.GuidedWorkflows.Enabled = boolPtr(true)
+
+	metaStore := &stubGuidedWorkflowSessionMetaStore{
+		entries: map[string]*types.SessionMeta{
+			"sess-1": {
+				SessionID:     "sess-1",
+				WorkspaceID:   "ws-1",
+				WorktreeID:    "wt-1",
+				WorkflowRunID: "gwf-missing",
+			},
+		},
+	}
+	runStore := &stubGuidedWorkflowRunStore{
+		snapshots: map[string]guidedworkflows.RunStatusSnapshot{},
+	}
+	service := newGuidedWorkflowRunService(cfg, &Stores{
+		SessionMeta:  metaStore,
+		WorkflowRuns: runStore,
+	}, nil, nil, nil)
+
+	dismissed, err := service.DismissRun(context.Background(), "gwf-missing")
+	if err != nil {
+		t.Fatalf("DismissRun missing: %v", err)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+	if dismissed.WorkspaceID != "ws-1" || dismissed.WorktreeID != "wt-1" || dismissed.SessionID != "sess-1" {
+		t.Fatalf("expected context restored from session metadata, got %#v", dismissed)
+	}
+	if metaStore.listCalls == 0 {
+		t.Fatalf("expected session metadata lookup for missing run context")
+	}
+	if runStore.upsertCalls == 0 {
+		t.Fatalf("expected dismissed missing run tombstone to be persisted")
+	}
+	snapshot := runStore.snapshots["gwf-missing"]
+	if snapshot.Run == nil || snapshot.Run.DismissedAt == nil {
+		t.Fatalf("expected persisted snapshot to include dismissed missing run tombstone, got %#v", snapshot.Run)
+	}
+}
+
 func TestReconcileGuidedWorkflowRunSnapshotsBackfillsMissingRunFromSessionMeta(t *testing.T) {
 	metaStore := &stubGuidedWorkflowSessionMetaStore{
 		entries: map[string]*types.SessionMeta{
@@ -576,6 +622,175 @@ func TestDefaultGuidedWorkflowMissingRunSnapshotPolicy(t *testing.T) {
 	}
 	if snapshot.Run.CompletedAt == nil || !snapshot.Run.CompletedAt.Equal(lastActive) {
 		t.Fatalf("expected default policy to prefer last_active timestamp, got %#v", snapshot.Run.CompletedAt)
+	}
+}
+
+func TestGuidedWorkflowMissingRunContextResolverSelectsBestSessionMetaMatch(t *testing.T) {
+	lister := &stubGuidedWorkflowSessionMetaLister{
+		entries: []*types.SessionMeta{
+			{SessionID: "sess-min", WorkflowRunID: "gwf-ctx"},
+			{
+				SessionID:     "sess-best",
+				WorkspaceID:   "ws-1",
+				WorktreeID:    "wt-1",
+				WorkflowRunID: "gwf-ctx",
+			},
+		},
+	}
+	resolver := newGuidedWorkflowMissingRunContextResolver(lister)
+	if resolver == nil {
+		t.Fatalf("expected non-nil resolver")
+	}
+
+	ctx, ok, err := resolver.ResolveMissingRunContext(context.Background(), "gwf-ctx")
+	if err != nil {
+		t.Fatalf("ResolveMissingRunContext: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected resolver to find context")
+	}
+	if ctx.WorkspaceID != "ws-1" || ctx.WorktreeID != "wt-1" || ctx.SessionID != "sess-best" {
+		t.Fatalf("unexpected resolved context: %#v", ctx)
+	}
+}
+
+func TestNewGuidedWorkflowMissingRunContextResolverNilSessionMeta(t *testing.T) {
+	resolver := newGuidedWorkflowMissingRunContextResolver(nil)
+	if resolver != nil {
+		t.Fatalf("expected nil resolver when session metadata lister is nil")
+	}
+}
+
+func TestGuidedWorkflowMissingRunContextResolverNilReceiver(t *testing.T) {
+	var resolver *guidedWorkflowMissingRunContextResolver
+
+	ctx, ok, err := resolver.ResolveMissingRunContext(context.Background(), "gwf-any")
+	if err != nil {
+		t.Fatalf("ResolveMissingRunContext: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected nil receiver to resolve no context, got %#v", ctx)
+	}
+}
+
+func TestGuidedWorkflowMissingRunContextResolverSkipsBlankRunID(t *testing.T) {
+	lister := &stubGuidedWorkflowSessionMetaLister{
+		entries: []*types.SessionMeta{
+			{SessionID: "sess-1", WorkflowRunID: "gwf-1"},
+		},
+	}
+	resolver := newGuidedWorkflowMissingRunContextResolver(lister)
+
+	ctx, ok, err := resolver.ResolveMissingRunContext(context.Background(), "   ")
+	if err != nil {
+		t.Fatalf("ResolveMissingRunContext: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected blank run id to resolve no context, got %#v", ctx)
+	}
+	if lister.listCalls != 0 {
+		t.Fatalf("expected blank run id to short-circuit before store lookup, got %d list calls", lister.listCalls)
+	}
+}
+
+func TestGuidedWorkflowMissingRunContextResolverAllowsNilContext(t *testing.T) {
+	lister := &stubGuidedWorkflowSessionMetaLister{
+		entries: []*types.SessionMeta{
+			{
+				SessionID:     "sess-ctx",
+				WorkspaceID:   "ws-ctx",
+				WorktreeID:    "wt-ctx",
+				WorkflowRunID: "gwf-ctx",
+			},
+		},
+	}
+	resolver := newGuidedWorkflowMissingRunContextResolver(lister)
+
+	ctx, ok, err := resolver.ResolveMissingRunContext(nil, "gwf-ctx")
+	if err != nil {
+		t.Fatalf("ResolveMissingRunContext: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected resolver to find context with nil ctx")
+	}
+	if ctx.WorkspaceID != "ws-ctx" || ctx.WorktreeID != "wt-ctx" || ctx.SessionID != "sess-ctx" {
+		t.Fatalf("unexpected resolved context: %#v", ctx)
+	}
+	if lister.listCalls != 1 {
+		t.Fatalf("expected one session metadata lookup, got %d", lister.listCalls)
+	}
+}
+
+func TestGuidedWorkflowMissingRunContextResolverPropagatesListError(t *testing.T) {
+	boom := errors.New("session metadata unavailable")
+	lister := &stubGuidedWorkflowSessionMetaLister{
+		listErr: boom,
+	}
+	resolver := newGuidedWorkflowMissingRunContextResolver(lister)
+
+	ctx, ok, err := resolver.ResolveMissingRunContext(context.Background(), "gwf-ctx")
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected list error %v, got %v", boom, err)
+	}
+	if ok {
+		t.Fatalf("expected resolver failure to return ok=false, got context %#v", ctx)
+	}
+}
+
+func TestGuidedWorkflowMissingRunContextResolverReturnsFalseWhenMissing(t *testing.T) {
+	lister := &stubGuidedWorkflowSessionMetaLister{
+		entries: []*types.SessionMeta{
+			{SessionID: "sess-a", WorkflowRunID: "gwf-a"},
+		},
+	}
+	resolver := newGuidedWorkflowMissingRunContextResolver(lister)
+
+	ctx, ok, err := resolver.ResolveMissingRunContext(context.Background(), "gwf-missing")
+	if err != nil {
+		t.Fatalf("ResolveMissingRunContext: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected no context, got %#v", ctx)
+	}
+}
+
+func TestReconcileGuidedWorkflowRunSnapshotsKeepsExistingDismissedSnapshot(t *testing.T) {
+	dismissedAt := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+	runStore := &stubGuidedWorkflowRunStore{
+		snapshots: map[string]guidedworkflows.RunStatusSnapshot{
+			"gwf-dismissed": {
+				Run: &guidedworkflows.WorkflowRun{
+					ID:          "gwf-dismissed",
+					Status:      guidedworkflows.WorkflowRunStatusCompleted,
+					DismissedAt: &dismissedAt,
+				},
+			},
+		},
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaLister{
+		entries: []*types.SessionMeta{
+			{
+				SessionID:     "sess-1",
+				WorkspaceID:   "ws-1",
+				WorktreeID:    "wt-1",
+				WorkflowRunID: "gwf-dismissed",
+			},
+		},
+	}
+
+	result, err := reconcileGuidedWorkflowRunSnapshots(context.Background(), guidedWorkflowRunSnapshotReconciliationInput{
+		RunStore:    runStore,
+		SessionMeta: metaStore,
+	})
+	if err != nil {
+		t.Fatalf("reconcile guided workflow runs: %v", err)
+	}
+	if result.CreatedSnapshots != 0 || result.SkippedExisting != 1 {
+		t.Fatalf("expected existing dismissed snapshot to be preserved, got %#v", result)
+	}
+	snapshot := runStore.snapshots["gwf-dismissed"]
+	if snapshot.Run == nil || snapshot.Run.DismissedAt == nil {
+		t.Fatalf("expected dismissed snapshot to remain dismissed, got %#v", snapshot.Run)
 	}
 }
 

@@ -77,6 +77,11 @@ func newGuidedWorkflowRunService(
 	if stores != nil && stores.WorkflowRuns != nil {
 		opts = append(opts, guidedworkflows.WithRunSnapshotStore(stores.WorkflowRuns))
 	}
+	if stores != nil && stores.SessionMeta != nil {
+		if resolver := newGuidedWorkflowMissingRunContextResolver(stores.SessionMeta); resolver != nil {
+			opts = append(opts, guidedworkflows.WithMissingRunContextResolver(resolver))
+		}
+	}
 	if promptDispatcher := newGuidedWorkflowPromptDispatcher(coreCfg, manager, stores, live, logger); promptDispatcher != nil {
 		opts = append(opts, guidedworkflows.WithStepPromptDispatcher(promptDispatcher))
 	}
@@ -97,6 +102,70 @@ type guidedWorkflowSessionMetaLister interface {
 
 type guidedWorkflowMissingRunSnapshotPolicy interface {
 	BuildMissingRunSnapshot(meta *types.SessionMeta, runID string, now time.Time) (guidedworkflows.RunStatusSnapshot, bool)
+}
+
+type guidedWorkflowMissingRunContextResolver struct {
+	sessionMeta guidedWorkflowSessionMetaLister
+}
+
+func newGuidedWorkflowMissingRunContextResolver(sessionMeta guidedWorkflowSessionMetaLister) guidedworkflows.MissingRunContextResolver {
+	if sessionMeta == nil {
+		return nil
+	}
+	return &guidedWorkflowMissingRunContextResolver{sessionMeta: sessionMeta}
+}
+
+func (r *guidedWorkflowMissingRunContextResolver) ResolveMissingRunContext(
+	ctx context.Context,
+	runID string,
+) (guidedworkflows.MissingRunDismissalContext, bool, error) {
+	if r == nil || r.sessionMeta == nil {
+		return guidedworkflows.MissingRunDismissalContext{}, false, nil
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return guidedworkflows.MissingRunDismissalContext{}, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	meta, err := r.sessionMeta.List(ctx)
+	if err != nil {
+		return guidedworkflows.MissingRunDismissalContext{}, false, err
+	}
+	best := guidedworkflows.MissingRunDismissalContext{}
+	bestScore := -1
+	found := false
+	for _, item := range meta {
+		item = normalizeGuidedWorkflowSessionMeta(item)
+		if strings.TrimSpace(item.WorkflowRunID) != runID {
+			continue
+		}
+		candidate := guidedworkflows.MissingRunDismissalContext{
+			WorkspaceID: strings.TrimSpace(item.WorkspaceID),
+			WorktreeID:  strings.TrimSpace(item.WorktreeID),
+			SessionID:   strings.TrimSpace(item.SessionID),
+		}
+		score := 0
+		if candidate.WorkspaceID != "" {
+			score++
+		}
+		if candidate.WorktreeID != "" {
+			score++
+		}
+		if candidate.SessionID != "" {
+			score++
+		}
+		if !found || score > bestScore {
+			best = candidate
+			bestScore = score
+			found = true
+		}
+	}
+	if !found {
+		return guidedworkflows.MissingRunDismissalContext{}, false, nil
+	}
+	return best, true, nil
 }
 
 type guidedWorkflowRunSnapshotReconciliationInput struct {

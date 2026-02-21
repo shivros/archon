@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"control/internal/types"
 )
@@ -33,6 +34,22 @@ type stubStepPromptDispatcher struct {
 	calls     []StepPromptDispatchRequest
 	responses []StepPromptDispatchResult
 	err       error
+}
+
+type stubMissingRunContextResolver struct {
+	contextByRunID map[string]MissingRunDismissalContext
+	err            error
+}
+
+type missingRunTombstoneFactoryCall struct {
+	runID           string
+	contextResolved bool
+	context         MissingRunDismissalContext
+}
+
+type stubMissingRunTombstoneFactory struct {
+	runByID map[string]*WorkflowRun
+	calls   []missingRunTombstoneFactoryCall
 }
 
 func (s *stubTemplateProvider) ListWorkflowTemplates(context.Context) ([]WorkflowTemplate, error) {
@@ -77,6 +94,49 @@ func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req Ste
 		s.responses = s.responses[1:]
 	}
 	return result, nil
+}
+
+func (s *stubMissingRunContextResolver) ResolveMissingRunContext(_ context.Context, runID string) (MissingRunDismissalContext, bool, error) {
+	if s == nil {
+		return MissingRunDismissalContext{}, false, nil
+	}
+	if s.err != nil {
+		return MissingRunDismissalContext{}, false, s.err
+	}
+	ctx, ok := s.contextByRunID[strings.TrimSpace(runID)]
+	if !ok {
+		return MissingRunDismissalContext{}, false, nil
+	}
+	return ctx, true, nil
+}
+
+func (s *stubMissingRunTombstoneFactory) BuildMissingRunTombstone(
+	runID string,
+	dismissalContext MissingRunDismissalContext,
+	contextResolved bool,
+	now time.Time,
+) *WorkflowRun {
+	if s == nil {
+		return nil
+	}
+	normalizedRunID := strings.TrimSpace(runID)
+	s.calls = append(s.calls, missingRunTombstoneFactoryCall{
+		runID:           normalizedRunID,
+		contextResolved: contextResolved,
+		context:         normalizeMissingRunDismissalContext(dismissalContext),
+	})
+	if s.runByID == nil {
+		return nil
+	}
+	run, ok := s.runByID[normalizedRunID]
+	if !ok {
+		return nil
+	}
+	out := cloneWorkflowRun(run)
+	if out != nil && out.CreatedAt.IsZero() {
+		out.CreatedAt = now
+	}
+	return out
 }
 
 func (s *stubRunMetricsStore) LoadRunMetrics(context.Context) (RunMetricsSnapshot, error) {
@@ -1722,6 +1782,261 @@ func TestRunLifecycleDismissAndUndismissRun(t *testing.T) {
 	}
 	if undismissed.DismissedAt != nil {
 		t.Fatalf("expected dismissed_at to clear after undismiss")
+	}
+}
+
+func TestRunLifecycleDismissRunValidation(t *testing.T) {
+	var nilService *InMemoryRunService
+	if _, err := nilService.DismissRun(context.Background(), "gwf-any"); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected ErrInvalidTransition for nil service, got %v", err)
+	}
+
+	service := NewRunService(Config{Enabled: true})
+	if _, err := service.DismissRun(context.Background(), "   "); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected ErrInvalidTransition for blank run id, got %v", err)
+	}
+}
+
+func TestRunLifecycleDismissMissingRunCreatesTombstone(t *testing.T) {
+	snapshotStore := &stubRunSnapshotStore{}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithRunSnapshotStore(snapshotStore),
+		WithMissingRunContextResolver(&stubMissingRunContextResolver{
+			contextByRunID: map[string]MissingRunDismissalContext{
+				"gwf-missing": {
+					WorkspaceID: "ws-1",
+					WorktreeID:  "wt-1",
+					SessionID:   "sess-1",
+				},
+			},
+		}),
+	)
+
+	dismissed, err := service.DismissRun(context.Background(), "gwf-missing")
+	if err != nil {
+		t.Fatalf("DismissRun missing: %v", err)
+	}
+	if dismissed.ID != "gwf-missing" {
+		t.Fatalf("expected run id gwf-missing, got %q", dismissed.ID)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+	if dismissed.WorkspaceID != "ws-1" || dismissed.WorktreeID != "wt-1" || dismissed.SessionID != "sess-1" {
+		t.Fatalf("expected resolver context to be applied, got %#v", dismissed)
+	}
+	if len(snapshotStore.savedByRunID) != 1 {
+		t.Fatalf("expected dismissed tombstone to be persisted, got %d", len(snapshotStore.savedByRunID))
+	}
+	saved := snapshotStore.savedByRunID["gwf-missing"]
+	if saved.Run == nil || saved.Run.DismissedAt == nil {
+		t.Fatalf("expected persisted tombstone with dismissed_at, got %#v", saved.Run)
+	}
+
+	visible, err := service.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(visible) != 0 {
+		t.Fatalf("expected missing dismissed run hidden from default list, got %#v", visible)
+	}
+
+	restarted := NewRunService(Config{Enabled: true}, WithRunSnapshotStore(snapshotStore))
+	afterRestartVisible, err := restarted.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns after restart: %v", err)
+	}
+	if len(afterRestartVisible) != 0 {
+		t.Fatalf("expected dismissed tombstone to stay hidden after restart, got %#v", afterRestartVisible)
+	}
+	includingDismissed, err := restarted.ListRunsIncludingDismissed(context.Background())
+	if err != nil {
+		t.Fatalf("ListRunsIncludingDismissed after restart: %v", err)
+	}
+	if len(includingDismissed) != 1 || includingDismissed[0].ID != "gwf-missing" || includingDismissed[0].DismissedAt == nil {
+		t.Fatalf("expected dismissed tombstone after restart, got %#v", includingDismissed)
+	}
+
+	undismissed, err := restarted.UndismissRun(context.Background(), "gwf-missing")
+	if err != nil {
+		t.Fatalf("UndismissRun missing tombstone: %v", err)
+	}
+	if undismissed.DismissedAt != nil {
+		t.Fatalf("expected dismissed_at to clear after explicit undismiss")
+	}
+	afterUndismiss, err := restarted.ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("ListRuns after undismiss: %v", err)
+	}
+	if len(afterUndismiss) != 1 || afterUndismiss[0].ID != "gwf-missing" {
+		t.Fatalf("expected undismissed tombstone to become visible, got %#v", afterUndismiss)
+	}
+}
+
+func TestRunLifecycleDismissMissingRunResolverErrorFallsBackToDefaultTombstone(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithMissingRunContextResolver(&stubMissingRunContextResolver{
+			err: errors.New("resolver unavailable"),
+		}),
+	)
+
+	dismissed, err := service.DismissRun(context.Background(), "gwf-resolver-fallback")
+	if err != nil {
+		t.Fatalf("DismissRun missing with resolver error: %v", err)
+	}
+	if dismissed.ID != "gwf-resolver-fallback" {
+		t.Fatalf("expected run id to be preserved, got %q", dismissed.ID)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+	if dismissed.WorkspaceID != "" || dismissed.WorktreeID != "" || dismissed.SessionID != "" {
+		t.Fatalf("expected unresolved context to remain empty, got %#v", dismissed)
+	}
+	if dismissed.LastError != "workflow run missing; dismissed tombstone created" {
+		t.Fatalf("expected fallback missing-run error message, got %q", dismissed.LastError)
+	}
+}
+
+func TestRunLifecycleDismissMissingRunCustomFactoryNilFallsBackToDefault(t *testing.T) {
+	factory := &stubMissingRunTombstoneFactory{}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithMissingRunTombstoneFactory(factory),
+		WithMissingRunContextResolver(&stubMissingRunContextResolver{
+			contextByRunID: map[string]MissingRunDismissalContext{
+				"gwf-custom-fallback": {
+					WorkspaceID: "ws-fallback",
+					WorktreeID:  "wt-fallback",
+					SessionID:   "sess-fallback",
+				},
+			},
+		}),
+	)
+
+	dismissed, err := service.DismissRun(context.Background(), "gwf-custom-fallback")
+	if err != nil {
+		t.Fatalf("DismissRun missing with nil custom tombstone: %v", err)
+	}
+	if dismissed.TemplateName != "Historical Guided Workflow" {
+		t.Fatalf("expected default template name fallback, got %q", dismissed.TemplateName)
+	}
+	if dismissed.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed fallback status, got %q", dismissed.Status)
+	}
+	if dismissed.LastError != "workflow run missing; visibility state restored from dismissal" {
+		t.Fatalf("expected resolved-context fallback message, got %q", dismissed.LastError)
+	}
+	if dismissed.WorkspaceID != "ws-fallback" || dismissed.WorktreeID != "wt-fallback" || dismissed.SessionID != "sess-fallback" {
+		t.Fatalf("expected resolver context to be backfilled, got %#v", dismissed)
+	}
+	if len(factory.calls) != 1 {
+		t.Fatalf("expected custom factory call before fallback, got %d", len(factory.calls))
+	}
+}
+
+func TestRunLifecycleDismissMissingRunCustomFactoryOutputIsNormalized(t *testing.T) {
+	factory := &stubMissingRunTombstoneFactory{
+		runByID: map[string]*WorkflowRun{
+			"gwf-normalized": {
+				TemplateName: "   ",
+				WorkspaceID:  " ",
+				WorktreeID:   "",
+				SessionID:    " ",
+				LastError:    " ",
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithMissingRunTombstoneFactory(factory),
+		WithMissingRunContextResolver(&stubMissingRunContextResolver{
+			contextByRunID: map[string]MissingRunDismissalContext{
+				"gwf-normalized": {
+					WorkspaceID: "ws-1",
+					WorktreeID:  "wt-1",
+					SessionID:   "sess-1",
+				},
+			},
+		}),
+	)
+
+	dismissed, err := service.DismissRun(context.Background(), "  gwf-normalized  ")
+	if err != nil {
+		t.Fatalf("DismissRun missing with sparse custom tombstone: %v", err)
+	}
+	if dismissed.ID != "gwf-normalized" {
+		t.Fatalf("expected normalized run id, got %q", dismissed.ID)
+	}
+	if dismissed.TemplateName != "Historical Guided Workflow" {
+		t.Fatalf("expected normalized default template name, got %q", dismissed.TemplateName)
+	}
+	if dismissed.WorkspaceID != "ws-1" || dismissed.WorktreeID != "wt-1" || dismissed.SessionID != "sess-1" {
+		t.Fatalf("expected normalized context backfill, got %#v", dismissed)
+	}
+	if dismissed.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected normalized fallback status, got %q", dismissed.Status)
+	}
+	if dismissed.CreatedAt.IsZero() {
+		t.Fatalf("expected created_at to be backfilled")
+	}
+	if dismissed.LastError != "workflow run missing; visibility state restored from dismissal" {
+		t.Fatalf("expected normalized fallback error, got %q", dismissed.LastError)
+	}
+}
+
+func TestRunLifecycleDismissMissingRunUsesCustomTombstoneFactory(t *testing.T) {
+	factory := &stubMissingRunTombstoneFactory{
+		runByID: map[string]*WorkflowRun{
+			"gwf-custom": {
+				TemplateName: "Custom Tombstone",
+				LastError:    "custom fallback message",
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithMissingRunTombstoneFactory(factory),
+		WithMissingRunContextResolver(&stubMissingRunContextResolver{
+			contextByRunID: map[string]MissingRunDismissalContext{
+				"gwf-custom": {
+					WorkspaceID: "ws-custom",
+					WorktreeID:  "wt-custom",
+					SessionID:   "sess-custom",
+				},
+			},
+		}),
+	)
+
+	dismissed, err := service.DismissRun(context.Background(), "gwf-custom")
+	if err != nil {
+		t.Fatalf("DismissRun missing with custom factory: %v", err)
+	}
+	if dismissed.ID != "gwf-custom" {
+		t.Fatalf("expected run id gwf-custom, got %q", dismissed.ID)
+	}
+	if dismissed.TemplateName != "Custom Tombstone" {
+		t.Fatalf("expected custom template name, got %q", dismissed.TemplateName)
+	}
+	if dismissed.LastError != "custom fallback message" {
+		t.Fatalf("expected custom missing-run message, got %q", dismissed.LastError)
+	}
+	if dismissed.WorkspaceID != "ws-custom" || dismissed.WorktreeID != "wt-custom" || dismissed.SessionID != "sess-custom" {
+		t.Fatalf("expected resolver context to backfill custom tombstone, got %#v", dismissed)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+	if len(factory.calls) != 1 {
+		t.Fatalf("expected custom factory to be called exactly once, got %d", len(factory.calls))
+	}
+	if factory.calls[0].runID != "gwf-custom" || !factory.calls[0].contextResolved {
+		t.Fatalf("unexpected custom factory call metadata: %#v", factory.calls[0])
+	}
+	if factory.calls[0].context.WorkspaceID != "ws-custom" || factory.calls[0].context.WorktreeID != "wt-custom" || factory.calls[0].context.SessionID != "sess-custom" {
+		t.Fatalf("unexpected custom factory context: %#v", factory.calls[0].context)
 	}
 }
 
