@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"control/internal/types"
+	"control/internal/workspacepaths"
 )
 
 var ErrWorkspaceNotFound = errors.New("workspace not found")
@@ -496,17 +497,22 @@ func normalizeWorkspace(workspace *types.Workspace) (*types.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionSubpath, err := workspacepaths.NormalizeSubpath(workspace.SessionSubpath)
+	if err != nil {
+		return nil, err
+	}
 	name := strings.TrimSpace(workspace.Name)
 	if name == "" {
 		name = defaultName(path)
 	}
 	ws := &types.Workspace{
-		ID:        workspace.ID,
-		Name:      name,
-		RepoPath:  path,
-		GroupIDs:  normalizeGroupIDs(workspace.GroupIDs),
-		CreatedAt: workspace.CreatedAt,
-		UpdatedAt: workspace.UpdatedAt,
+		ID:             workspace.ID,
+		Name:           name,
+		RepoPath:       path,
+		SessionSubpath: sessionSubpath,
+		GroupIDs:       normalizeGroupIDs(workspace.GroupIDs),
+		CreatedAt:      workspace.CreatedAt,
+		UpdatedAt:      workspace.UpdatedAt,
 	}
 	if ws.ID == "" {
 		id, err := newID()

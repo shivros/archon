@@ -75,6 +75,7 @@ type CodexSyncer struct {
 	worktrees  WorktreeStore
 	sessions   syncSessionRecordStore
 	meta       syncSessionMetaStore
+	paths      WorkspacePathResolver
 	snapshots  SyncSnapshotLoader
 	policy     ThreadSyncPolicy
 	metrics    SyncMetricsSink
@@ -112,11 +113,16 @@ type logSyncMetricsSink struct {
 }
 
 func NewCodexSyncer(stores *Stores, logger logging.Logger) *CodexSyncer {
+	return NewCodexSyncerWithPathResolver(stores, logger, nil)
+}
+
+func NewCodexSyncerWithPathResolver(stores *Stores, logger logging.Logger, paths WorkspacePathResolver) *CodexSyncer {
 	if logger == nil {
 		logger = logging.Nop()
 	}
 	syncer := &CodexSyncer{
 		logger:  logger,
+		paths:   workspacePathResolverOrDefault(paths),
 		policy:  &defaultThreadSyncPolicy{},
 		metrics: &logSyncMetricsSink{logger: logger},
 	}
@@ -169,6 +175,11 @@ func (s *CodexSyncer) SyncWorkspace(ctx context.Context, workspaceID string) err
 	if !ok {
 		return store.ErrWorkspaceNotFound
 	}
+	resolver := workspacePathResolverOrDefault(s.paths)
+	workspaceSessionPath, err := resolver.ResolveWorkspaceSessionPath(ws)
+	if err != nil {
+		return err
+	}
 	worktrees := []*types.Worktree{}
 	if s.worktrees != nil {
 		entries, err := s.worktrees.ListWorktrees(ctx, ws.ID)
@@ -178,22 +189,40 @@ func (s *CodexSyncer) SyncWorkspace(ctx context.Context, workspaceID string) err
 		worktrees = entries
 	}
 
+	type syncWorktreePath struct {
+		worktreeID string
+		path       string
+	}
 	worktreePaths := make([]string, 0, len(worktrees))
+	worktreeSessionPaths := make([]syncWorktreePath, 0, len(worktrees))
 	for _, wt := range worktrees {
 		if wt == nil {
 			continue
 		}
-		worktreePaths = append(worktreePaths, wt.Path)
+		path, err := resolver.ResolveWorktreeSessionPath(ws, wt)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("codex_sync_worktree_session_path_skipped",
+					logging.F("workspace_id", strings.TrimSpace(ws.ID)),
+					logging.F("worktree_id", strings.TrimSpace(wt.ID)),
+					logging.F("worktree_path", strings.TrimSpace(wt.Path)),
+					logging.F("error", err),
+				)
+			}
+			continue
+		}
+		worktreePaths = append(worktreePaths, path)
+		worktreeSessionPaths = append(worktreeSessionPaths, syncWorktreePath{
+			worktreeID: wt.ID,
+			path:       path,
+		})
 	}
 
-	if err := s.syncCodexPath(ctx, ws.RepoPath, ws.RepoPath, ws.ID, "", worktreePaths, snapshot); err != nil {
+	if err := s.syncCodexPath(ctx, workspaceSessionPath, ws.RepoPath, ws.ID, "", worktreePaths, snapshot); err != nil {
 		return err
 	}
-	for _, wt := range worktrees {
-		if wt == nil {
-			continue
-		}
-		if err := s.syncCodexPath(ctx, wt.Path, ws.RepoPath, ws.ID, wt.ID, nil, snapshot); err != nil {
+	for _, worktreePath := range worktreeSessionPaths {
+		if err := s.syncCodexPath(ctx, worktreePath.path, ws.RepoPath, ws.ID, worktreePath.worktreeID, nil, snapshot); err != nil {
 			return err
 		}
 	}

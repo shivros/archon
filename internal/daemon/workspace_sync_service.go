@@ -31,7 +31,7 @@ func (s *WorkspaceSyncService) Create(ctx context.Context, req *types.Workspace)
 	return ws, nil
 }
 
-func (s *WorkspaceSyncService) Update(ctx context.Context, id string, req *types.Workspace) (*types.Workspace, error) {
+func (s *WorkspaceSyncService) Update(ctx context.Context, id string, req *WorkspaceUpdateRequest) (*types.Workspace, error) {
 	return s.base.Update(ctx, id, req)
 }
 

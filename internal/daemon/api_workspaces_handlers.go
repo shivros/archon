@@ -52,7 +52,7 @@ func (a *API) WorkspaceByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 1 {
 		switch r.Method {
 		case http.MethodPatch:
-			var req types.Workspace
+			var req WorkspaceUpdateRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
 				return

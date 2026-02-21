@@ -8,7 +8,7 @@ import (
 )
 
 type addWorkspaceHost interface {
-	createWorkspaceCmd(path, name string) tea.Cmd
+	createWorkspaceCmd(path, sessionSubpath, name string) tea.Cmd
 	exitAddWorkspace(status string)
 	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
 	keyString(msg tea.KeyMsg) string
@@ -19,6 +19,7 @@ type AddWorkspaceController struct {
 	input *TextInput
 	step  int
 	path  string
+	sub   string
 	name  string
 }
 
@@ -37,6 +38,7 @@ func (c *AddWorkspaceController) Resize(width int) {
 func (c *AddWorkspaceController) Enter() {
 	c.step = 0
 	c.path = ""
+	c.sub = ""
 	c.name = ""
 	c.prepareInput()
 	if c.input != nil {
@@ -47,6 +49,7 @@ func (c *AddWorkspaceController) Enter() {
 func (c *AddWorkspaceController) Exit() {
 	c.step = 0
 	c.path = ""
+	c.sub = ""
 	c.name = ""
 	if c.input != nil {
 		c.input.SetValue("")
@@ -84,7 +87,8 @@ func (c *AddWorkspaceController) Update(msg tea.Msg, host addWorkspaceHost) (boo
 func (c *AddWorkspaceController) View() string {
 	lines := []string{
 		renderAddField(c.input, c.step, "Path", c.path, 0),
-		renderAddField(c.input, c.step, "Name", c.name, 1),
+		renderAddField(c.input, c.step, "Session Subpath", c.sub, 1),
+		renderAddField(c.input, c.step, "Name", c.name, 2),
 		"",
 		"Enter to continue • Esc to cancel",
 	}
@@ -102,12 +106,18 @@ func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 		c.path = path
 		c.step = 1
 		c.prepareInput()
-		host.setStatus("add workspace: name (optional)")
+		host.setStatus("add workspace: session subpath (optional)")
 		return nil
 	case 1:
+		c.sub = strings.TrimSpace(c.value())
+		c.step = 2
+		c.prepareInput()
+		host.setStatus("add workspace: name (optional)")
+		return nil
+	case 2:
 		c.name = strings.TrimSpace(c.value())
 		host.setStatus("creating workspace")
-		return host.createWorkspaceCmd(c.path, c.name)
+		return host.createWorkspaceCmd(c.path, c.sub, c.name)
 	default:
 		return nil
 	}
@@ -122,6 +132,9 @@ func (c *AddWorkspaceController) prepareInput() {
 		c.input.SetPlaceholder("/path/to/repo")
 		c.input.SetValue(c.path)
 	case 1:
+		c.input.SetPlaceholder("packages/pennies (optional)")
+		c.input.SetValue(c.sub)
+	case 2:
 		c.input.SetPlaceholder("optional name")
 		c.input.SetValue(c.name)
 	}

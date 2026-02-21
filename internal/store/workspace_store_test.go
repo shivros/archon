@@ -23,8 +23,9 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 	}
 
 	ws, err := store.Add(ctx, &types.Workspace{
-		RepoPath: repoDir,
-		GroupIDs: []string{"group-1", " group-1 ", "ungrouped", ""},
+		RepoPath:       repoDir,
+		SessionSubpath: "packages/pennies/",
+		GroupIDs:       []string{"group-1", " group-1 ", "ungrouped", ""},
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -37,6 +38,9 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 	}
 	if ws.RepoPath != repoDir {
 		t.Fatalf("expected repo path %q, got %q", repoDir, ws.RepoPath)
+	}
+	if ws.SessionSubpath != filepath.Join("packages", "pennies") {
+		t.Fatalf("expected normalized session subpath, got %q", ws.SessionSubpath)
 	}
 	if len(ws.GroupIDs) != 1 || ws.GroupIDs[0] != "group-1" {
 		t.Fatalf("expected normalized group ids")
@@ -254,5 +258,26 @@ func TestDefaultNameFallback(t *testing.T) {
 	name := defaultName(string(filepath.Separator))
 	if strings.TrimSpace(name) == "" {
 		t.Fatalf("expected fallback name")
+	}
+}
+
+func TestWorkspaceStoreRejectsInvalidSessionSubpath(t *testing.T) {
+	ctx := context.Background()
+	store := NewFileWorkspaceStore(filepath.Join(t.TempDir(), "workspaces.json"))
+
+	repoDir := t.TempDir()
+	tests := []string{
+		filepath.Join(string(filepath.Separator), "tmp", "abs"),
+		"..",
+		filepath.Join("..", "outside"),
+	}
+	for _, subpath := range tests {
+		_, err := store.Add(ctx, &types.Workspace{
+			RepoPath:       repoDir,
+			SessionSubpath: subpath,
+		})
+		if err == nil {
+			t.Fatalf("expected invalid session subpath error for %q", subpath)
+		}
 	}
 }

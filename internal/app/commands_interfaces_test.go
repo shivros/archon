@@ -70,6 +70,23 @@ func TestCommandsCompileWithNarrowMocks(t *testing.T) {
 	if _, ok := moveCmd().(noteMovedMsg); !ok {
 		t.Fatalf("expected noteMovedMsg result")
 	}
+
+	createAPI := &workspaceCreateMock{}
+	createCmd := createWorkspaceCmd(createAPI, "/tmp/repo", "packages/pennies", "Repo")
+	if createCmd == nil {
+		t.Fatalf("expected create workspace command")
+	}
+	createResult, ok := createCmd().(createWorkspaceMsg)
+	if !ok {
+		t.Fatalf("expected createWorkspaceMsg result")
+	}
+	if createResult.workspace == nil {
+		t.Fatalf("expected created workspace")
+	}
+	if createAPI.lastWorkspace == nil || createAPI.lastWorkspace.SessionSubpath != "packages/pennies" {
+		t.Fatalf("expected session_subpath to be forwarded, got %#v", createAPI.lastWorkspace)
+	}
+
 }
 
 type workspaceListMock struct{}
@@ -118,5 +135,19 @@ func (m *noteUpdateMock) UpdateNote(_ context.Context, id string, note *types.No
 	}
 	clone := *note
 	clone.ID = strings.TrimSpace(id)
+	return &clone, nil
+}
+
+type workspaceCreateMock struct {
+	lastWorkspace *types.Workspace
+}
+
+func (m *workspaceCreateMock) CreateWorkspace(_ context.Context, workspace *types.Workspace) (*types.Workspace, error) {
+	m.lastWorkspace = workspace
+	if workspace == nil {
+		return nil, nil
+	}
+	clone := *workspace
+	clone.ID = "ws-created"
 	return &clone, nil
 }

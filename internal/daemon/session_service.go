@@ -19,6 +19,7 @@ type SessionService struct {
 	stores       *Stores
 	live         *CodexLiveManager
 	logger       logging.Logger
+	paths        WorkspacePathResolver
 	notifier     NotificationPublisher
 	adapters     *conversationAdapterRegistry
 	history      *conversationHistoryStrategyRegistry
@@ -66,6 +67,15 @@ func WithGuidedWorkflowOrchestrator(orchestrator guidedworkflows.Orchestrator) S
 	}
 }
 
+func WithWorkspacePathResolver(resolver WorkspacePathResolver) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || resolver == nil {
+			return
+		}
+		s.paths = resolver
+	}
+}
+
 func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
@@ -78,6 +88,7 @@ func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveM
 		stores:       stores,
 		live:         live,
 		logger:       logger,
+		paths:        NewWorkspacePathResolver(),
 		adapters:     newConversationAdapterRegistry(),
 		history:      newConversationHistoryStrategyRegistry(),
 		codexPool:    NewCodexHistoryPool(logger),
@@ -1145,8 +1156,13 @@ func (s *SessionService) resolveWorktreePath(ctx context.Context, workspaceID, w
 	if !ok {
 		return "", "", notFoundError("workspace not found", store.ErrWorkspaceNotFound)
 	}
+	resolver := workspacePathResolverOrDefault(s.paths)
+	workspaceSessionPath, err := resolver.ResolveWorkspaceSessionPath(ws)
+	if err != nil {
+		return "", "", invalidError(err.Error(), err)
+	}
 	if strings.TrimSpace(worktreeID) == "" {
-		return ws.RepoPath, ws.RepoPath, nil
+		return workspaceSessionPath, ws.RepoPath, nil
 	}
 	entries, err := s.stores.Worktrees.ListWorktrees(ctx, workspaceID)
 	if err != nil {
@@ -1157,7 +1173,11 @@ func (s *SessionService) resolveWorktreePath(ctx context.Context, workspaceID, w
 	}
 	for _, wt := range entries {
 		if wt.ID == worktreeID {
-			return wt.Path, ws.RepoPath, nil
+			worktreeSessionPath, err := resolver.ResolveWorktreeSessionPath(ws, wt)
+			if err != nil {
+				return "", "", invalidError(err.Error(), err)
+			}
+			return worktreeSessionPath, ws.RepoPath, nil
 		}
 	}
 	return "", ws.RepoPath, notFoundError("worktree not found", store.ErrWorktreeNotFound)

@@ -29,6 +29,18 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	if controller.step != 1 {
 		t.Fatalf("expected second step after first submit, got %d", controller.step)
 	}
+	controller.input.SetValue("packages/pennies")
+
+	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
+	if !handled {
+		t.Fatalf("expected remapped submit key to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command after second step")
+	}
+	if controller.step != 2 {
+		t.Fatalf("expected name step after second submit, got %d", controller.step)
+	}
 	controller.input.SetValue("Repo Name")
 
 	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
@@ -38,8 +50,8 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no async command from stub host")
 	}
-	if host.createPath != "/tmp/repo" || host.createName != "Repo Name" {
-		t.Fatalf("unexpected create payload: path=%q name=%q", host.createPath, host.createName)
+	if host.createPath != "/tmp/repo" || host.createSub != "packages/pennies" || host.createName != "Repo Name" {
+		t.Fatalf("unexpected create payload: path=%q sub=%q name=%q", host.createPath, host.createSub, host.createName)
 	}
 }
 
@@ -205,11 +217,13 @@ type stubAddWorkspaceHost struct {
 	clearKey   string
 	status     string
 	createPath string
+	createSub  string
 	createName string
 }
 
-func (h *stubAddWorkspaceHost) createWorkspaceCmd(path, name string) tea.Cmd {
+func (h *stubAddWorkspaceHost) createWorkspaceCmd(path, sessionSubpath, name string) tea.Cmd {
 	h.createPath = path
+	h.createSub = sessionSubpath
 	h.createName = name
 	return nil
 }

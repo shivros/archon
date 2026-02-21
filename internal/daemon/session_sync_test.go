@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -635,4 +636,106 @@ func TestLogStaleSessionRemovedIncludesWorkflowTelemetry(t *testing.T) {
 	if !strings.Contains(logs, "workflow_run_id=gwf-1") {
 		t.Fatalf("expected workflow run id in stale removal telemetry, got %q", logs)
 	}
+}
+
+func TestNewCodexSyncerWithPathResolverUsesInjectedResolver(t *testing.T) {
+	resolver := &stubWorkspacePathResolver{workspacePath: "/tmp/ws", worktreePath: "/tmp/wt"}
+	syncer := NewCodexSyncerWithPathResolver(nil, nil, resolver)
+	if syncer == nil {
+		t.Fatalf("expected syncer")
+	}
+	if syncer.paths != resolver {
+		t.Fatalf("expected injected resolver to be used")
+	}
+}
+
+func TestNewCodexSyncerProvidesDefaults(t *testing.T) {
+	syncer := NewCodexSyncer(nil, nil)
+	if syncer == nil {
+		t.Fatalf("expected syncer")
+	}
+	if syncer.paths == nil {
+		t.Fatalf("expected default path resolver")
+	}
+}
+
+func TestNewCodexSyncerWithPathResolverDefaultsWhenNil(t *testing.T) {
+	syncer := NewCodexSyncerWithPathResolver(nil, nil, nil)
+	if syncer == nil {
+		t.Fatalf("expected syncer")
+	}
+	if syncer.paths == nil {
+		t.Fatalf("expected default path resolver")
+	}
+}
+
+func TestCodexSyncerSyncWorkspaceReturnsResolverError(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	repoDir := filepath.Join(base, "repo")
+	if err := ensureDir(repoDir); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	ws, err := workspaceStore.Add(ctx, &types.Workspace{RepoPath: repoDir})
+	if err != nil {
+		t.Fatalf("add workspace: %v", err)
+	}
+
+	resolver := &stubWorkspacePathResolver{
+		validateErr:   nil,
+		workspacePath: "",
+		worktreePath:  "",
+	}
+	syncer := &CodexSyncer{
+		workspaces: workspaceStore,
+		worktrees:  workspaceStore,
+		sessions:   sessionStore,
+		meta:       metaStore,
+		snapshots: &storeSyncSnapshotLoader{
+			sessions: sessionStore,
+			meta:     metaStore,
+		},
+		paths: resolver,
+	}
+	if err := syncer.SyncWorkspace(ctx, ws.ID); err == nil {
+		t.Fatalf("expected resolver error")
+	}
+}
+
+func TestCodexSyncerSyncAllReturnsListError(t *testing.T) {
+	syncer := &CodexSyncer{
+		workspaces: &syncWorkspaceListErrorStore{err: errors.New("list failed")},
+	}
+	err := syncer.SyncAll(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "list failed") {
+		t.Fatalf("expected list error, got %v", err)
+	}
+}
+
+type syncWorkspaceListErrorStore struct {
+	err error
+}
+
+func (s *syncWorkspaceListErrorStore) List(context.Context) ([]*types.Workspace, error) {
+	return nil, s.err
+}
+
+func (s *syncWorkspaceListErrorStore) Get(context.Context, string) (*types.Workspace, bool, error) {
+	return nil, false, nil
+}
+
+func (s *syncWorkspaceListErrorStore) Add(context.Context, *types.Workspace) (*types.Workspace, error) {
+	return nil, nil
+}
+
+func (s *syncWorkspaceListErrorStore) Update(context.Context, *types.Workspace) (*types.Workspace, error) {
+	return nil, nil
+}
+
+func (s *syncWorkspaceListErrorStore) Delete(context.Context, string) error {
+	return nil
 }
