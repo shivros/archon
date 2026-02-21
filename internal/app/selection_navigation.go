@@ -64,6 +64,12 @@ type SelectionTransitionService interface {
 
 type defaultSelectionTransitionService struct{}
 
+type selectionTransitionOutcome struct {
+	command      tea.Cmd
+	stateChanged bool
+	draftChanged bool
+}
+
 func NewDefaultSelectionTransitionService() SelectionTransitionService {
 	return defaultSelectionTransitionService{}
 }
@@ -72,26 +78,63 @@ func (defaultSelectionTransitionService) SelectionChanged(m *Model, delay time.D
 	if m == nil {
 		return nil
 	}
+	service := defaultSelectionTransitionService{}
 	m.trackSelectionHistory(source)
 	item := m.selectedItem()
-	handled, stateChanged, draftChanged := m.applySelectionState(item)
-	var cmd tea.Cmd
-	if handled && item != nil && item.kind == sidebarWorkflow {
-		cmd = m.openGuidedWorkflowFromSidebar(item)
-	} else if !handled {
-		cmd = m.scheduleSessionLoad(item, delay)
-	} else if m.mode == uiModeRecents {
-		cmd = m.ensureRecentsPreviewForSelection()
-	}
-	if stateChanged || draftChanged {
-		save := m.requestAppStateSaveCmd()
-		if cmd != nil && save != nil {
-			cmd = tea.Batch(cmd, save)
-		} else if save != nil {
-			cmd = save
-		}
-	}
+	focusPolicy := m.selectionFocusPolicyOrDefault()
+	service.applySelectionFocusTransition(m, item, source, focusPolicy)
+	outcome := service.resolveSelectionTransitionOutcome(m, item, delay, source, focusPolicy)
+	cmd := service.withSelectionStatePersistence(m, outcome)
 	return m.batchWithNotesPanelSync(cmd)
+}
+
+func (defaultSelectionTransitionService) applySelectionFocusTransition(m *Model, item *sidebarItem, source selectionChangeSource, focusPolicy SelectionFocusPolicy) {
+	if m == nil || focusPolicy == nil {
+		return
+	}
+	if focusPolicy.ShouldExitGuidedWorkflowForSessionSelection(m.mode, item, source) {
+		m.exitGuidedWorkflow("")
+	}
+}
+
+func (s defaultSelectionTransitionService) resolveSelectionTransitionOutcome(m *Model, item *sidebarItem, delay time.Duration, source selectionChangeSource, focusPolicy SelectionFocusPolicy) selectionTransitionOutcome {
+	handled, stateChanged, draftChanged := m.applySelectionState(item)
+	cmd := s.resolveSelectionCommand(m, handled, item, delay, source, focusPolicy)
+	return selectionTransitionOutcome{
+		command:      cmd,
+		stateChanged: stateChanged,
+		draftChanged: draftChanged,
+	}
+}
+
+func (defaultSelectionTransitionService) resolveSelectionCommand(m *Model, handled bool, item *sidebarItem, delay time.Duration, source selectionChangeSource, focusPolicy SelectionFocusPolicy) tea.Cmd {
+	switch {
+	case handled && focusPolicy != nil && focusPolicy.ShouldOpenWorkflowSelection(item, source):
+		return m.openGuidedWorkflowFromSidebar(item)
+	case !handled:
+		return m.scheduleSessionLoad(item, delay)
+	case m.mode == uiModeRecents:
+		return m.ensureRecentsPreviewForSelection()
+	default:
+		return nil
+	}
+}
+
+func (defaultSelectionTransitionService) withSelectionStatePersistence(m *Model, outcome selectionTransitionOutcome) tea.Cmd {
+	if m == nil {
+		return outcome.command
+	}
+	if !outcome.stateChanged && !outcome.draftChanged {
+		return outcome.command
+	}
+	save := m.requestAppStateSaveCmd()
+	if outcome.command != nil && save != nil {
+		return tea.Batch(outcome.command, save)
+	}
+	if save != nil {
+		return save
+	}
+	return outcome.command
 }
 
 func WithSelectionHistory(history SelectionHistory) ModelOption {

@@ -1481,6 +1481,57 @@ func TestSelectingWorkflowChildSessionLoadsChat(t *testing.T) {
 	}
 }
 
+func TestWorkflowSnapshotDoesNotReclaimFocusAfterSelectingChildSession(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 37, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-focus-sticky", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row to be selectable")
+	}
+	if cmd := m.onSelectionChangedImmediate(); cmd == nil {
+		t.Fatalf("expected guided workflow open command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode before switching to session")
+	}
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected workflow child session row to be selectable")
+	}
+	if cmd := m.onSelectionChangedImmediate(); cmd == nil {
+		t.Fatalf("expected session load command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected normal mode after selecting child session, got %v", m.mode)
+	}
+	if got := m.selectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1 before snapshot, got %q", got)
+	}
+
+	updated, _ := m.Update(workflowRunSnapshotMsg{
+		run: cloneWorkflowRun(run),
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now, Type: "run_started", RunID: run.ID},
+			{At: now.Add(2 * time.Second), Type: "step_completed", RunID: run.ID, Message: "phase plan complete"},
+		},
+	})
+	m = asModel(t, updated)
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected workflow snapshot to keep normal mode, got %v", m.mode)
+	}
+	if got := m.selectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1 after snapshot, got %q", got)
+	}
+}
+
 func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 	now := time.Date(2026, 2, 18, 9, 0, 0, 0, time.UTC)
 	completedAt := now.Add(10 * time.Minute)

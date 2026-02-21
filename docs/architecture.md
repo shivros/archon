@@ -47,6 +47,16 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 - Event categories and toast severity rules are documented in `docs/status-policy-matrix.md`.
 - New status patterns should extend the policy table instead of writing direct `m.status = ...` assignments.
 
+## Selection Focus Flow
+
+- Selection transitions are orchestrated by `SelectionTransitionService` in `internal/app/selection_navigation.go`.
+- Selection history intent is governed by `SelectionOriginPolicy`.
+- Pane ownership rules are governed by `SelectionFocusPolicy` in `internal/app/selection_focus_policy.go`.
+- The default focus policy keeps workflow opens user-driven and makes explicit session selections leave guided workflow mode.
+- Keep policy implementations deterministic and side-effect free so event and polling paths behave consistently.
+- Add a new policy when behavior needs to vary by selection source or mode without changing transition orchestration.
+- Update transition orchestration only when introducing a new lifecycle phase that cannot be represented as policy decisions.
+
 ## Phase 0 Baseline Contract
 
 Phase 0 must keep behavior stable for:

@@ -259,6 +259,7 @@ type Model struct {
 	reasoningSnapshotCollapsed          bool
 	selectionHistory                    SelectionHistory
 	selectionOriginPolicy               SelectionOriginPolicy
+	selectionFocusPolicy                SelectionFocusPolicy
 	selectionTransitionService          SelectionTransitionService
 }
 
@@ -449,6 +450,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		clockNow:                            now,
 		selectionHistory:                    NewSelectionHistory(selectionHistoryMaxEntries),
 		selectionOriginPolicy:               DefaultSelectionOriginPolicy(),
+		selectionFocusPolicy:                DefaultSelectionFocusPolicy(),
 		selectionTransitionService:          NewDefaultSelectionTransitionService(),
 	}
 	for _, opt := range opts {
