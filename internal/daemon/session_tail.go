@@ -220,8 +220,18 @@ func flattenCodexItems(thread *codexThread) []map[string]any {
 	}
 	items := make([]map[string]any, 0)
 	for _, turn := range thread.Turns {
+		turnID := strings.TrimSpace(turn.ID)
 		for _, item := range turn.Items {
-			items = append(items, item)
+			if item == nil {
+				continue
+			}
+			clone := cloneItemMap(item)
+			if turnID != "" {
+				if strings.TrimSpace(asString(clone["turn_id"])) == "" && strings.TrimSpace(asString(clone["turnID"])) == "" {
+					clone["turn_id"] = turnID
+				}
+			}
+			items = append(items, clone)
 		}
 	}
 	return items

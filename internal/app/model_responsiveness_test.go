@@ -140,6 +140,16 @@ func (p testSidebarUpdatePolicy) ShouldUpdateSidebar(tea.Msg) bool {
 	return p.allow
 }
 
+type testSessionProjectionPostProcessor struct {
+	calls int
+	last  SessionProjectionPostProcessInput
+}
+
+func (p *testSessionProjectionPostProcessor) PostProcessSessionProjection(_ *Model, input SessionProjectionPostProcessInput) {
+	p.calls++
+	p.last = input
+}
+
 func TestWithSidebarUpdatePolicyConfiguresModelAndDefaultReset(t *testing.T) {
 	WithSidebarUpdatePolicy(testSidebarUpdatePolicy{allow: true})(nil)
 
@@ -179,6 +189,28 @@ func TestWithSessionProjectionPolicyConfiguresModelAndDefaultReset(t *testing.T)
 	}
 }
 
+func TestWithSessionProjectionPostProcessorConfiguresModelAndDefaultReset(t *testing.T) {
+	WithSessionProjectionPostProcessor(&testSessionProjectionPostProcessor{})(nil)
+
+	processor := &testSessionProjectionPostProcessor{}
+	m := NewModel(nil, WithSessionProjectionPostProcessor(processor))
+	blocks := []ChatBlock{{Role: ChatRoleUser, Text: "turn", TurnID: "turn-1"}}
+	m.applySessionProjection(sessionProjectionSourceTail, "s1", "", blocks)
+	if processor.calls != 1 {
+		t.Fatalf("expected custom post processor to be called once, got %d", processor.calls)
+	}
+	if processor.last.Source != sessionProjectionSourceTail || processor.last.SessionID != "s1" || len(processor.last.Blocks) != 1 {
+		t.Fatalf("unexpected post processor input: %#v", processor.last)
+	}
+
+	WithSessionProjectionPostProcessor(nil)(&m)
+	m.setPendingWorkflowTurnFocus("s1", "turn-1")
+	m.applySessionProjection(sessionProjectionSourceHistory, "s1", "", blocks)
+	if m.pendingWorkflowTurnFocus != nil {
+		t.Fatalf("expected default post processor to clear pending workflow turn focus")
+	}
+}
+
 func TestPolicyDefaultsHandleNilModel(t *testing.T) {
 	var m *Model
 	if got := m.sidebarUpdatePolicyOrDefault().ShouldUpdateSidebar(tea.WindowSizeMsg{}); !got {
@@ -186,6 +218,9 @@ func TestPolicyDefaultsHandleNilModel(t *testing.T) {
 	}
 	if got := m.sessionProjectionPolicyOrDefault().MaxTrackedProjectionTokens(); got != defaultSessionProjectionMaxTokens {
 		t.Fatalf("expected default projection token cap for nil model, got %d", got)
+	}
+	if processor := m.sessionProjectionPostProcessorOrDefault(); processor == nil {
+		t.Fatalf("expected default projection post processor for nil model")
 	}
 }
 

@@ -411,6 +411,7 @@ func (m *Model) openGuidedWorkflowSelectedSession() tea.Cmd {
 		return nil
 	}
 	sessionID := strings.TrimSpace(m.guidedWorkflow.SelectedStepSessionID())
+	turnID := strings.TrimSpace(m.guidedWorkflow.SelectedStepTurnID())
 	if sessionID == "" {
 		m.setValidationStatus("selected step has no linked session")
 		m.renderGuidedWorkflowContent()
@@ -421,6 +422,7 @@ func (m *Model) openGuidedWorkflowSelectedSession() tea.Cmd {
 		m.renderGuidedWorkflowContent()
 		return nil
 	}
+	m.setPendingWorkflowTurnFocus(sessionID, turnID)
 	item := m.selectedItem()
 	m.exitGuidedWorkflow("opened linked session " + sessionID)
 	return m.batchWithNotesPanelSync(m.loadSelectedSession(item))

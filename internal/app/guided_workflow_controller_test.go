@@ -167,3 +167,40 @@ func TestGuidedWorkflowControllerLauncherTemplatePickerLayoutGuards(t *testing.T
 		t.Fatalf("expected select by row to be blocked outside launcher stage")
 	}
 }
+
+func TestGuidedWorkflowControllerStepTraceChipVariants(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+
+	if got := controller.stepTraceChip(guidedworkflows.StepRun{
+		ExecutionState: guidedworkflows.StepExecutionStateLinked,
+	}); got != "[session:linked]" {
+		t.Fatalf("expected linked chip without session, got %q", got)
+	}
+
+	if got := controller.stepTraceChip(guidedworkflows.StepRun{
+		ExecutionState: guidedworkflows.StepExecutionStateLinked,
+		Execution:      &guidedworkflows.StepExecutionRef{SessionID: "s1"},
+	}); got != "[session:s1]" {
+		t.Fatalf("expected session-only linked chip, got %q", got)
+	}
+
+	if got := controller.stepTraceChip(guidedworkflows.StepRun{
+		ExecutionState: guidedworkflows.StepExecutionStateLinked,
+		Execution:      &guidedworkflows.StepExecutionRef{SessionID: "s1"},
+		TurnID:         "turn-step",
+	}); got != "[session:s1 turn:turn-step]" {
+		t.Fatalf("expected linked chip to fall back to step turn, got %q", got)
+	}
+
+	if got := controller.stepTraceChip(guidedworkflows.StepRun{
+		ExecutionState: guidedworkflows.StepExecutionStateUnavailable,
+	}); got != "[session:unavailable]" {
+		t.Fatalf("expected unavailable chip, got %q", got)
+	}
+
+	if got := controller.stepTraceChip(guidedworkflows.StepRun{
+		ExecutionState: guidedworkflows.StepExecutionStateNone,
+	}); got != "[session:none]" {
+		t.Fatalf("expected none chip, got %q", got)
+	}
+}

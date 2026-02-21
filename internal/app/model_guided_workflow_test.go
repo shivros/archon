@@ -1036,6 +1036,9 @@ func TestGuidedWorkflowTimelineShowsStepSessionTraceability(t *testing.T) {
 	if !strings.Contains(m.contentRaw, "Trace id: gwf-trace:phase_delivery:implementation:attempt-1") {
 		t.Fatalf("expected trace id in execution details")
 	}
+	if !strings.Contains(m.contentRaw, "[user turn turn-42](archon://session/s1?turn=turn-42&role=user)") {
+		t.Fatalf("expected user turn link in timeline details")
+	}
 }
 
 func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
@@ -1072,6 +1075,104 @@ func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
 	}
 	if selected := m.selectedSessionID(); selected != "s1" {
 		t.Fatalf("expected linked session s1 to be selected, got %q", selected)
+	}
+	if m.pendingWorkflowTurnFocus == nil {
+		t.Fatalf("expected pending workflow turn focus")
+	}
+	if m.pendingWorkflowTurnFocus.sessionID != "s1" || m.pendingWorkflowTurnFocus.turnID != "turn-99" {
+		t.Fatalf("unexpected pending workflow turn focus: %#v", m.pendingWorkflowTurnFocus)
+	}
+
+	items := []map[string]any{
+		{"type": "userMessage", "turn_id": "turn-99", "content": []any{map[string]any{"type": "text", "text": "step request"}}},
+		{"type": "assistant", "turn_id": "turn-99", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "agent reply"}}}},
+	}
+	blocks := projectSessionBlocksFromItems("codex", items, nil, nil, nil)
+	m.applySessionProjection(sessionProjectionSourceHistory, "s1", "", blocks)
+	if m.pendingWorkflowTurnFocus != nil {
+		t.Fatalf("expected pending workflow turn focus to clear after projection")
+	}
+	idx := m.selectedMessageRenderIndex()
+	if idx < 0 || idx >= len(m.contentBlocks) {
+		t.Fatalf("expected selected workflow-linked message block, got index=%d len=%d", idx, len(m.contentBlocks))
+	}
+	if m.contentBlocks[idx].Role != ChatRoleUser {
+		t.Fatalf("expected selected workflow turn block to be user role, got %v", m.contentBlocks[idx].Role)
+	}
+	if m.contentBlocks[idx].TurnID != "turn-99" {
+		t.Fatalf("expected selected workflow turn id turn-99, got %q", m.contentBlocks[idx].TurnID)
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionGuards(t *testing.T) {
+	var nilModel *Model
+	if cmd := nilModel.openGuidedWorkflowSelectedSession(); cmd != nil {
+		t.Fatalf("expected nil model guard to return nil command")
+	}
+
+	m := NewModel(nil)
+	m.guidedWorkflow = nil
+	if cmd := m.openGuidedWorkflowSelectedSession(); cmd != nil {
+		t.Fatalf("expected nil guided workflow guard to return nil command")
+	}
+
+	m.guidedWorkflow = NewGuidedWorkflowUIController()
+	m.sidebar = nil
+	if cmd := m.openGuidedWorkflowSelectedSession(); cmd != nil {
+		t.Fatalf("expected nil sidebar guard to return nil command")
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionValidatesLinkedSession(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 20, 0, 0, time.UTC)
+
+	missingLinkRun := newWorkflowRunFixture("gwf-open-missing", guidedworkflows.WorkflowRunStatusRunning, now)
+	missingLinkRun.CurrentPhaseIndex = 0
+	missingLinkRun.CurrentStepIndex = 1
+	missingLinkRun.Phases[0].Steps[1].Execution = nil
+	missingLinkRun.Phases[0].Steps[1].TurnID = "turn-no-session"
+
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1"})
+	m.guidedWorkflow.SetRun(missingLinkRun)
+	m.guidedWorkflow.selectedPhase = 0
+	m.guidedWorkflow.selectedStep = 1
+	m.renderGuidedWorkflowContent()
+	if cmd := m.openGuidedWorkflowSelectedSession(); cmd != nil {
+		t.Fatalf("expected no command when selected step has no linked session")
+	}
+	if m.status != "selected step has no linked session" {
+		t.Fatalf("unexpected status for missing linked session: %q", m.status)
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode to remain active on validation failure")
+	}
+	if m.pendingWorkflowTurnFocus != nil {
+		t.Fatalf("expected pending workflow turn focus to remain nil")
+	}
+
+	missingSidebarRun := newWorkflowRunFixture("gwf-open-not-found", guidedworkflows.WorkflowRunStatusRunning, now)
+	missingSidebarRun.CurrentPhaseIndex = 0
+	missingSidebarRun.CurrentStepIndex = 1
+	missingSidebarRun.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "s-missing",
+		TurnID:    "turn-404",
+	}
+	m.guidedWorkflow.SetRun(missingSidebarRun)
+	m.guidedWorkflow.selectedPhase = 0
+	m.guidedWorkflow.selectedStep = 1
+	m.renderGuidedWorkflowContent()
+	if cmd := m.openGuidedWorkflowSelectedSession(); cmd != nil {
+		t.Fatalf("expected no command when linked session is missing from sidebar")
+	}
+	if m.status != "linked session not found: s-missing" {
+		t.Fatalf("unexpected status for missing sidebar session: %q", m.status)
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode to remain active when session lookup fails")
+	}
+	if m.pendingWorkflowTurnFocus != nil {
+		t.Fatalf("expected pending workflow turn focus to remain nil when session lookup fails")
 	}
 }
 
@@ -1580,8 +1681,24 @@ func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 				ID:   "phase_delivery",
 				Name: "Phase Delivery",
 				Steps: []guidedworkflows.StepRun{
-					{ID: "phase_plan", Name: "phase plan", Status: guidedworkflows.StepRunStatusCompleted},
-					{ID: "implementation", Name: "implementation", Status: guidedworkflows.StepRunStatusCompleted},
+					{
+						ID:     "phase_plan",
+						Name:   "phase plan",
+						Status: guidedworkflows.StepRunStatusCompleted,
+						Execution: &guidedworkflows.StepExecutionRef{
+							SessionID: "s1",
+							TurnID:    "turn-1",
+						},
+					},
+					{
+						ID:     "implementation",
+						Name:   "implementation",
+						Status: guidedworkflows.StepRunStatusCompleted,
+						Execution: &guidedworkflows.StepExecutionRef{
+							SessionID: "s1",
+							TurnID:    "turn-2",
+						},
+					},
 				},
 			},
 		},
@@ -1592,6 +1709,15 @@ func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 	}
 	if !strings.Contains(content, "- Completed steps: 2/2  \n- Decisions requested: 0") {
 		t.Fatalf("expected decision count on a separate line, got %q", content)
+	}
+	if !strings.Contains(content, "### Step Links") {
+		t.Fatalf("expected step links section in summary, got %q", content)
+	}
+	if !strings.Contains(content, "[user turn turn-1](archon://session/s1?turn=turn-1&role=user)") {
+		t.Fatalf("expected first step turn link in summary")
+	}
+	if !strings.Contains(content, "[user turn turn-2](archon://session/s1?turn=turn-2&role=user)") {
+		t.Fatalf("expected second step turn link in summary")
 	}
 }
 

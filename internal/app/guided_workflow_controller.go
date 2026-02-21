@@ -62,6 +62,7 @@ type GuidedWorkflowUIController struct {
 	lastRefreshAt  time.Time
 	selectedPhase  int
 	selectedStep   int
+	userTurnLink   WorkflowUserTurnLinkBuilder
 }
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
@@ -72,6 +73,7 @@ func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
 		templatePicker: newGuidedWorkflowTemplatePicker(),
 		defaultPreset:  guidedPolicySensitivityBalanced,
 		sensitivity:    guidedPolicySensitivityBalanced,
+		userTurnLink:   NewArchonWorkflowUserTurnLinkBuilder(),
 	}
 }
 
@@ -166,6 +168,13 @@ func (c *GuidedWorkflowUIController) SetTemplatePickerSize(width, height int) {
 		return
 	}
 	c.templatePicker.SetSize(width, height)
+}
+
+func (c *GuidedWorkflowUIController) SetUserTurnLinkBuilder(builder WorkflowUserTurnLinkBuilder) {
+	if c == nil {
+		return
+	}
+	c.userTurnLink = workflowUserTurnLinkBuilderOrDefault(builder)
 }
 
 func (c *GuidedWorkflowUIController) Query() string {
@@ -466,12 +475,17 @@ func (c *GuidedWorkflowUIController) SelectedStepSessionID() string {
 	if !ok {
 		return ""
 	}
-	if step.Execution != nil {
-		if sessionID := strings.TrimSpace(step.Execution.SessionID); sessionID != "" {
-			return sessionID
-		}
+	sessionID, _ := stepSessionAndTurn(*step)
+	return sessionID
+}
+
+func (c *GuidedWorkflowUIController) SelectedStepTurnID() string {
+	_, step, ok := c.selectedStepRef()
+	if !ok {
+		return ""
 	}
-	return ""
+	_, turnID := stepSessionAndTurn(*step)
+	return turnID
 }
 
 func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowRunRequest {
@@ -645,7 +659,7 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 	lines = append(lines, "", "### Controls")
 	lines = append(lines, "- j/down: next step details")
 	lines = append(lines, "- k/up: previous step details")
-	lines = append(lines, "- o: open selected step session")
+	lines = append(lines, "- o: open selected step user turn")
 	lines = append(lines, "- r: refresh timeline")
 	lines = append(lines, "- esc: close guided workflow view")
 	if c.NeedsDecision() {
@@ -693,6 +707,8 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 	if explain := c.decisionExplanation(); explain != "" {
 		lines = append(lines, fmt.Sprintf("- Final decision explanation: %s", explain))
 	}
+	lines = append(lines, "", "### Step Links")
+	lines = append(lines, c.renderStepLinksSummary()...)
 	lines = append(lines, "", "### Controls", "- enter: close summary", "- esc: close summary")
 	return joinGuidedWorkflowLines(lines)
 }
@@ -773,6 +789,7 @@ func (c *GuidedWorkflowUIController) renderExecutionDetails() []string {
 	} else {
 		lines = append(lines, fmt.Sprintf("- Turn id: %s", valueOrFallback(step.TurnID, "(none)")))
 	}
+	lines = append(lines, fmt.Sprintf("- User turn link: %s", c.stepUserTurnLink(*step)))
 	return lines
 }
 
@@ -789,6 +806,13 @@ func (c *GuidedWorkflowUIController) renderTimeline() []string {
 		message := strings.TrimSpace(event.Message)
 		if message == "" {
 			message = strings.TrimSpace(event.Type)
+		}
+		link := ""
+		if _, step, ok := c.stepRefByID(event.PhaseID, event.StepID); ok {
+			link = c.stepUserTurnLink(*step)
+		}
+		if link != unavailableUserTurnLink {
+			message = strings.TrimSpace(message + " · " + link)
 		}
 		lines = append(lines, fmt.Sprintf("- %s %s", stamp, valueOrFallback(message, "(event)")))
 	}
@@ -823,17 +847,57 @@ func (c *GuidedWorkflowUIController) renderDecisionInbox() []string {
 	}
 }
 
+func (c *GuidedWorkflowUIController) renderStepLinksSummary() []string {
+	if c == nil || c.run == nil || len(c.run.Phases) == 0 {
+		return []string{"- No steps available"}
+	}
+	lines := make([]string, 0, 16)
+	for _, phase := range c.run.Phases {
+		phaseName := valueOrFallback(phase.Name, phase.ID)
+		for _, step := range phase.Steps {
+			stepName := valueOrFallback(step.Name, step.ID)
+			lines = append(lines, fmt.Sprintf("- %s / %s: %s", phaseName, stepName, c.stepUserTurnLink(step)))
+		}
+	}
+	return lines
+}
+
+func (c *GuidedWorkflowUIController) stepRefByID(phaseID, stepID string) (*guidedworkflows.PhaseRun, *guidedworkflows.StepRun, bool) {
+	if c == nil || c.run == nil {
+		return nil, nil, false
+	}
+	phaseID = strings.TrimSpace(phaseID)
+	stepID = strings.TrimSpace(stepID)
+	if phaseID == "" || stepID == "" {
+		return nil, nil, false
+	}
+	for i := range c.run.Phases {
+		phase := &c.run.Phases[i]
+		if strings.TrimSpace(phase.ID) != phaseID {
+			continue
+		}
+		for j := range phase.Steps {
+			step := &phase.Steps[j]
+			if strings.TrimSpace(step.ID) == stepID {
+				return phase, step, true
+			}
+		}
+	}
+	return nil, nil, false
+}
+
+func (c *GuidedWorkflowUIController) stepUserTurnLink(step guidedworkflows.StepRun) string {
+	if c == nil {
+		return unavailableUserTurnLink
+	}
+	sessionID, turnID := stepSessionAndTurn(step)
+	return workflowUserTurnLinkBuilderOrDefault(c.userTurnLink).BuildUserTurnLink(sessionID, turnID)
+}
+
 func (c *GuidedWorkflowUIController) stepTraceChip(step guidedworkflows.StepRun) string {
 	switch c.normalizedStepExecutionState(step) {
 	case guidedworkflows.StepExecutionStateLinked:
-		sessionID := ""
-		turnID := strings.TrimSpace(step.TurnID)
-		if step.Execution != nil {
-			sessionID = strings.TrimSpace(step.Execution.SessionID)
-			if turnID == "" {
-				turnID = strings.TrimSpace(step.Execution.TurnID)
-			}
-		}
+		sessionID, turnID := stepSessionAndTurn(step)
 		if sessionID == "" {
 			return "[session:linked]"
 		}

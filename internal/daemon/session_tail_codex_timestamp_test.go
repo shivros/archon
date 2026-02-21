@@ -161,6 +161,30 @@ func TestTailCodexThreadEmitsTimestampTelemetry(t *testing.T) {
 	}
 }
 
+func TestFlattenCodexItemsAnnotatesTurnID(t *testing.T) {
+	thread := &codexThread{
+		ID: "thread-turn-map",
+		Turns: []codexTurn{
+			{
+				ID: "turn-a",
+				Items: []map[string]any{
+					{"type": "userMessage", "content": []any{map[string]any{"type": "text", "text": "hello"}}},
+					{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "hi"}}}},
+				},
+			},
+		},
+	}
+	items := flattenCodexItems(thread)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 flattened items, got %#v", items)
+	}
+	for i := range items {
+		if got := strings.TrimSpace(asString(items[i]["turn_id"])); got != "turn-a" {
+			t.Fatalf("expected flattened item %d to include turn_id turn-a, got %#v", i, items[i]["turn_id"])
+		}
+	}
+}
+
 type staticCodexHistoryPool struct {
 	thread *codexThread
 }

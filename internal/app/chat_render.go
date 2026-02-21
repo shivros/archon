@@ -66,6 +66,7 @@ type ChatBlock struct {
 	Collapsed bool
 	RequestID int
 	SessionID string
+	TurnID    string
 }
 
 type renderedBlockSpan struct {

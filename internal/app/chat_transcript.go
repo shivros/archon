@@ -60,6 +60,10 @@ func (t *ChatTranscript) AppendUserMessage(text string) int {
 }
 
 func (t *ChatTranscript) AppendUserMessageAt(text string, createdAt time.Time) int {
+	return t.appendUserMessageWithMetaAt(text, createdAt, "")
+}
+
+func (t *ChatTranscript) appendUserMessageWithMetaAt(text string, createdAt time.Time, turnID string) int {
 	if t == nil {
 		return -1
 	}
@@ -73,6 +77,7 @@ func (t *ChatTranscript) AppendUserMessageAt(text string, createdAt time.Time) i
 		Text:      text,
 		Status:    ChatStatusNone,
 		CreatedAt: createdAt,
+		TurnID:    strings.TrimSpace(turnID),
 	})
 	t.trim()
 	return headerIndex
@@ -252,6 +257,7 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		return
 	}
 	createdAt := chatItemCreatedAt(item)
+	turnID := itemTurnID(item)
 	typ, _ := item["type"].(string)
 	switch typ {
 	case "log":
@@ -266,38 +272,38 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		t.FinishAgentBlock()
 	case "userMessage":
 		if text := extractContentText(item["content"]); text != "" {
-			t.AppendUserMessageAt(text, createdAt)
+			t.appendUserMessageWithMetaAt(text, createdAt, turnID)
 			return
 		}
 		if text := asString(item["text"]); text != "" {
-			t.AppendUserMessageAt(text, createdAt)
+			t.appendUserMessageWithMetaAt(text, createdAt, turnID)
 		}
 	case "agentMessage":
 		if text := asString(item["text"]); text != "" {
-			t.appendBlockAt(ChatRoleAgent, text, createdAt)
+			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
 			return
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlockAt(ChatRoleAgent, text, createdAt)
+			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
 		}
 	case "assistant":
 		if msg, ok := item["message"].(map[string]any); ok {
 			if text := extractContentText(msg["content"]); text != "" {
-				t.appendBlockAt(ChatRoleAgent, text, createdAt)
+				t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
 				return
 			}
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlockAt(ChatRoleAgent, text, createdAt)
+			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
 		}
 	case "result":
 		if text := asString(item["result"]); text != "" {
-			t.appendBlockAt(ChatRoleAgent, text, createdAt)
+			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
 			return
 		}
 		if result, ok := item["result"].(map[string]any); ok {
 			if text := asString(result["result"]); text != "" {
-				t.appendBlockAt(ChatRoleAgent, text, createdAt)
+				t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
 				return
 			}
 		}
@@ -374,13 +380,21 @@ func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
 }
 
 func (t *ChatTranscript) appendBlockAt(role ChatRole, text string, createdAt time.Time) {
+	t.appendBlockWithMetaAt(role, text, createdAt, "")
+}
+
+func (t *ChatTranscript) appendBlockWithMetaAt(role ChatRole, text string, createdAt time.Time, turnID string) {
 	if t == nil || strings.TrimSpace(text) == "" {
 		return
 	}
+	turnID = strings.TrimSpace(turnID)
 	if role == ChatRoleAgent && len(t.blocks) > 0 {
 		last := len(t.blocks) - 1
 		if t.blocks[last].Role == ChatRoleAgent {
 			t.blocks[last].Text = concatAdjacentAgentText(t.blocks[last].Text, text)
+			if strings.TrimSpace(t.blocks[last].TurnID) == "" {
+				t.blocks[last].TurnID = turnID
+			}
 			if t.blocks[last].CreatedAt.IsZero() || (!createdAt.IsZero() && createdAt.Before(t.blocks[last].CreatedAt)) {
 				t.blocks[last].CreatedAt = createdAt
 			}
@@ -394,9 +408,36 @@ func (t *ChatTranscript) appendBlockAt(role ChatRole, text string, createdAt tim
 		Status:    ChatStatusNone,
 		CreatedAt: createdAt,
 		Collapsed: role == ChatRoleReasoning,
+		TurnID:    turnID,
 	}
 	t.blocks = append(t.blocks, block)
 	t.trim()
+}
+
+func itemTurnID(item map[string]any) string {
+	if item == nil {
+		return ""
+	}
+	if turnID := strings.TrimSpace(asString(item["turn_id"])); turnID != "" {
+		return turnID
+	}
+	if turnID := strings.TrimSpace(asString(item["turnID"])); turnID != "" {
+		return turnID
+	}
+	if turnRaw, ok := item["turn"].(map[string]any); ok && turnRaw != nil {
+		if turnID := strings.TrimSpace(asString(turnRaw["id"])); turnID != "" {
+			return turnID
+		}
+	}
+	if msg, ok := item["message"].(map[string]any); ok && msg != nil {
+		if turnID := strings.TrimSpace(asString(msg["turn_id"])); turnID != "" {
+			return turnID
+		}
+		if turnID := strings.TrimSpace(asString(msg["turnID"])); turnID != "" {
+			return turnID
+		}
+	}
+	return ""
 }
 
 func concatAdjacentAgentText(current, next string) string {

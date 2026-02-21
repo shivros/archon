@@ -246,6 +246,7 @@ type Model struct {
 	recentsCompletionPolicy             RecentsCompletionPolicy
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
 	sessionProjectionPolicy             SessionProjectionPolicy
+	sessionProjectionPostProcessor      SessionProjectionPostProcessor
 	sidebarProjectionBuilder            SidebarProjectionBuilder
 	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
 	sidebarProjectionRevision           uint64
@@ -261,6 +262,7 @@ type Model struct {
 	selectionOriginPolicy               SelectionOriginPolicy
 	selectionFocusPolicy                SelectionFocusPolicy
 	selectionTransitionService          SelectionTransitionService
+	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
 }
 
 type newSessionTarget struct {
@@ -308,6 +310,11 @@ type pendingSend struct {
 	sessionID  string
 	headerLine int
 	provider   string
+}
+
+type workflowTurnFocusRequest struct {
+	sessionID string
+	turnID    string
 }
 
 type composeHistoryState struct {
@@ -440,6 +447,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
+		sessionProjectionPostProcessor:      NewDefaultSessionProjectionPostProcessor(),
 		sidebarProjectionBuilder:            NewDefaultSidebarProjectionBuilder(),
 		sidebarProjectionInvalidationPolicy: NewDefaultSidebarProjectionInvalidationPolicy(),
 		sidebarProjectionRevision:           1,

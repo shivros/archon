@@ -405,6 +405,11 @@ func (m *Model) applySessionProjection(source sessionProjectionSource, id, key s
 		m.setSnapshotBlocks(blocks)
 		m.noteRequestVisibleUpdate(id)
 	}
+	m.sessionProjectionPostProcessorOrDefault().PostProcessSessionProjection(m, SessionProjectionPostProcessInput{
+		Source:    source,
+		SessionID: id,
+		Blocks:    blocks,
+	})
 	if key != "" {
 		m.cacheTranscriptBlocks(key, blocks)
 		m.finishUILatencyAction(uiLatencyActionSwitchSession, key, uiLatencyOutcomeOK)
