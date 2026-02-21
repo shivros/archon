@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/store"
 	"control/internal/types"
 )
@@ -506,6 +509,11 @@ func TestDefaultThreadSyncPolicyShouldRemoveStale(t *testing.T) {
 	if policy.ShouldRemoveStale(record, meta, "ws-1", "wt-1", map[string]struct{}{}) {
 		t.Fatalf("expected dismissed session to block removal")
 	}
+	meta.DismissedAt = nil
+	meta.WorkflowRunID = "gwf-1"
+	if policy.ShouldRemoveStale(record, meta, "ws-1", "wt-1", map[string]struct{}{}) {
+		t.Fatalf("expected workflow-linked session to block stale removal")
+	}
 }
 
 type captureSyncMetricsSink struct {
@@ -543,5 +551,88 @@ func TestRecordSyncPathMetricUsesInjectedSink(t *testing.T) {
 	}
 	if metric.DurationMS < 0 {
 		t.Fatalf("expected non-negative duration, got %d", metric.DurationMS)
+	}
+}
+
+func TestProcessThreadLogsDismissedSkipTelemetry(t *testing.T) {
+	var logOut bytes.Buffer
+	dismissedAt := time.Now().UTC().Add(-time.Minute)
+	syncer := &CodexSyncer{
+		logger: logging.New(&logOut, logging.Info),
+		policy: &defaultThreadSyncPolicy{},
+	}
+	snapshot := &syncSnapshot{
+		recordsBySessionID: map[string]*types.SessionRecord{},
+		metaBySessionID: map[string]*types.SessionMeta{
+			"s-dismissed": {
+				SessionID:     "s-dismissed",
+				WorkflowRunID: "gwf-1",
+				DismissedAt:   &dismissedAt,
+			},
+		},
+		dismissedSessionID: map[string]struct{}{
+			"s-dismissed": {},
+		},
+	}
+	stats := &syncPathStats{}
+	err := syncer.processThread(
+		context.Background(),
+		codexThreadSummary{ID: "s-dismissed", Cwd: "/tmp/repo"},
+		"/tmp/repo",
+		"ws-1",
+		"wt-1",
+		nil,
+		snapshot,
+		map[string]struct{}{},
+		stats,
+	)
+	if err != nil {
+		t.Fatalf("processThread: %v", err)
+	}
+	if stats.threadsDismissed != 1 {
+		t.Fatalf("expected dismissed counter increment, got %d", stats.threadsDismissed)
+	}
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=codex_sync_thread_skipped_dismissed") {
+		t.Fatalf("expected dismissed skip telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "thread_id=s-dismissed") {
+		t.Fatalf("expected thread id in dismissed telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "workflow_run_id=gwf-1") {
+		t.Fatalf("expected workflow run id in dismissed telemetry, got %q", logs)
+	}
+}
+
+func TestLogStaleSessionRemovedIncludesWorkflowTelemetry(t *testing.T) {
+	var logOut bytes.Buffer
+	syncer := &CodexSyncer{
+		logger: logging.New(&logOut, logging.Info),
+	}
+	dismissedAt := time.Now().UTC().Add(-2 * time.Minute)
+	syncer.logStaleSessionRemoved(
+		&types.SessionRecord{
+			Session: &types.Session{ID: "sess-stale"},
+			Source:  sessionSourceCodex,
+		},
+		&types.SessionMeta{
+			SessionID:     "sess-stale",
+			WorkspaceID:   "ws-1",
+			WorktreeID:    "wt-1",
+			WorkflowRunID: "gwf-1",
+			DismissedAt:   &dismissedAt,
+		},
+		"ws-1",
+		"wt-1",
+	)
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=codex_sync_stale_session_removed") {
+		t.Fatalf("expected stale removal telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "session_id=sess-stale") {
+		t.Fatalf("expected session id in stale removal telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "workflow_run_id=gwf-1") {
+		t.Fatalf("expected workflow run id in stale removal telemetry, got %q", logs)
 	}
 }

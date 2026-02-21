@@ -1,8 +1,12 @@
 package daemon
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -35,5 +39,129 @@ func TestAPIWorkflowDispatchDefaultsAccessor(t *testing.T) {
 	}
 	if got.Reasoning != types.ReasoningHigh {
 		t.Fatalf("expected configured reasoning, got %q", got.Reasoning)
+	}
+}
+
+type stubWorkflowRunMetricsService struct{}
+
+func (stubWorkflowRunMetricsService) GetRunMetrics(context.Context) (guidedworkflows.RunMetricsSnapshot, error) {
+	return guidedworkflows.RunMetricsSnapshot{Enabled: true}, nil
+}
+
+type stubWorkflowRunMetricsResetService struct{}
+
+func (stubWorkflowRunMetricsResetService) ResetRunMetrics(context.Context) (guidedworkflows.RunMetricsSnapshot, error) {
+	return guidedworkflows.RunMetricsSnapshot{Enabled: true}, nil
+}
+
+type stubWorkflowSessionVisibilityService struct{}
+
+func (stubWorkflowSessionVisibilityService) SyncWorkflowRunSessionVisibility(*guidedworkflows.WorkflowRun, bool) {
+}
+
+type stubWorkflowPolicyResolver struct {
+	calls int
+}
+
+func (r *stubWorkflowPolicyResolver) ResolvePolicyOverrides(explicit *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride {
+	r.calls++
+	return explicit
+}
+
+func TestAPIServiceAccessors(t *testing.T) {
+	var nilAPI *API
+	if nilAPI.workflowRunService() != nil {
+		t.Fatalf("expected nil run service for nil API")
+	}
+	if nilAPI.workflowRunMetricsService() != nil {
+		t.Fatalf("expected nil run metrics service for nil API")
+	}
+	if nilAPI.workflowRunMetricsResetService() != nil {
+		t.Fatalf("expected nil run metrics reset service for nil API")
+	}
+	if nilAPI.workflowSessionVisibilityService() != nil {
+		t.Fatalf("expected nil session visibility service for nil API")
+	}
+
+	metricsService := stubWorkflowRunMetricsService{}
+	resetService := stubWorkflowRunMetricsResetService{}
+	visibilityService := stubWorkflowSessionVisibilityService{}
+	api := &API{
+		WorkflowRuns:              guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		WorkflowRunMetrics:        metricsService,
+		WorkflowRunMetricsReset:   resetService,
+		WorkflowSessionVisibility: visibilityService,
+	}
+	if api.workflowRunService() == nil {
+		t.Fatalf("expected configured run service")
+	}
+	if api.workflowRunMetricsService() != metricsService {
+		t.Fatalf("expected configured run metrics service")
+	}
+	if api.workflowRunMetricsResetService() != resetService {
+		t.Fatalf("expected configured run metrics reset service")
+	}
+	if api.workflowSessionVisibilityService() != visibilityService {
+		t.Fatalf("expected configured session visibility service")
+	}
+}
+
+func TestAPIWorkflowTemplateAndPolicyResolverAccessors(t *testing.T) {
+	var nilAPI *API
+	if nilAPI.workflowTemplateService() != nil {
+		t.Fatalf("expected nil workflow template service for nil API")
+	}
+	if got := nilAPI.workflowPolicyResolver(); got == nil {
+		t.Fatalf("expected default policy resolver for nil API")
+	}
+
+	api := &API{}
+	if api.workflowTemplateService() != nil {
+		t.Fatalf("expected nil workflow template service when none configured")
+	}
+	api.WorkflowRuns = guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
+	if api.workflowTemplateService() == nil {
+		t.Fatalf("expected workflow template service fallback from run service")
+	}
+
+	custom := &stubWorkflowPolicyResolver{}
+	api.WorkflowPolicy = custom
+	if got := api.workflowPolicyResolver(); got == nil {
+		t.Fatalf("expected configured policy resolver")
+	} else {
+		_ = got.ResolvePolicyOverrides(nil)
+	}
+	if custom.calls != 1 {
+		t.Fatalf("expected configured policy resolver to be used, got %d calls", custom.calls)
+	}
+}
+
+func TestAPIBoolAndLineParsers(t *testing.T) {
+	if parseLines("") != 200 {
+		t.Fatalf("expected parseLines empty default")
+	}
+	if parseLines("invalid") != 200 {
+		t.Fatalf("expected parseLines invalid default")
+	}
+	if parseLines("0") != 200 {
+		t.Fatalf("expected parseLines non-positive default")
+	}
+	if parseLines("42") != 42 {
+		t.Fatalf("expected parseLines to parse valid values")
+	}
+
+	if !parseBoolQueryValue("1") || !parseBoolQueryValue(" true ") || !parseBoolQueryValue("YES") {
+		t.Fatalf("expected true-like query values to parse as true")
+	}
+	if parseBoolQueryValue("0") || parseBoolQueryValue("no") {
+		t.Fatalf("expected false-like query values to parse as false")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?follow=1&refresh=yes", nil)
+	if !isFollowRequest(req) {
+		t.Fatalf("expected follow query helper to parse true")
+	}
+	if !isRefreshRequest(req) {
+		t.Fatalf("expected refresh query helper to parse true")
 	}
 }

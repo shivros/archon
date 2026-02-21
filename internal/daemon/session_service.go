@@ -869,55 +869,38 @@ func (s *SessionService) MarkExited(ctx context.Context, id string) error {
 }
 
 func (s *SessionService) Dismiss(ctx context.Context, id string) error {
-	if strings.TrimSpace(id) == "" {
-		return invalidError("session id is required", nil)
-	}
-	if s.manager != nil {
-		if err := s.manager.DismissSession(id); err == nil {
-			return nil
-		} else if !errors.Is(err, ErrSessionNotFound) {
-			return invalidError(err.Error(), err)
-		}
-	}
-	if s.stores == nil || s.stores.Sessions == nil {
-		return notFoundError("session not found", ErrSessionNotFound)
-	}
-	record, ok, err := s.stores.Sessions.GetRecord(ctx, id)
-	if err != nil {
-		return unavailableError(err.Error(), err)
-	}
-	if !ok || record == nil || record.Session == nil {
-		return notFoundError("session not found", ErrSessionNotFound)
-	}
-	if isActiveStatus(record.Session.Status) {
-		if !providers.CapabilitiesFor(record.Session.Provider).NoProcess {
-			return invalidError("session is active; kill it first", nil)
-		}
-	}
-	now := time.Now().UTC()
-	if s.stores == nil || s.stores.SessionMeta == nil {
-		return unavailableError("session metadata store not available", nil)
-	}
-	if _, err := s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-		SessionID:   id,
-		DismissedAt: &now,
-	}); err != nil {
-		return unavailableError(err.Error(), err)
-	}
-	return nil
+	return s.setSessionVisibility(ctx, id, true)
 }
 
 func (s *SessionService) Undismiss(ctx context.Context, id string) error {
+	return s.setSessionVisibility(ctx, id, false)
+}
+
+func (s *SessionService) setSessionVisibility(ctx context.Context, id string, dismissed bool) error {
 	if strings.TrimSpace(id) == "" {
 		return invalidError("session id is required", nil)
 	}
+	action := sessionVisibilityAction(dismissed)
+	opID := logging.NewRequestID()
+	s.logSessionVisibilityRequested(opID, action, id)
+
 	if s.manager != nil {
-		if err := s.manager.UndismissSession(id); err == nil {
+		var err error
+		if dismissed {
+			err = s.manager.DismissSession(id)
+		} else {
+			err = s.manager.UndismissSession(id)
+		}
+		if err == nil {
+			s.logSessionVisibilityApplied(opID, action, id, "session_manager")
 			return nil
-		} else if !errors.Is(err, ErrSessionNotFound) {
+		}
+		if !errors.Is(err, ErrSessionNotFound) {
+			s.logSessionVisibilityFailed(opID, action, id, "session_manager", err)
 			return invalidError(err.Error(), err)
 		}
 	}
+
 	if s.stores == nil || s.stores.Sessions == nil {
 		return notFoundError("session not found", ErrSessionNotFound)
 	}
@@ -927,18 +910,73 @@ func (s *SessionService) Undismiss(ctx context.Context, id string) error {
 	}
 	if !ok || record == nil || record.Session == nil {
 		return notFoundError("session not found", ErrSessionNotFound)
+	}
+	if dismissed && isActiveStatus(record.Session.Status) {
+		if !providers.CapabilitiesFor(record.Session.Provider).NoProcess {
+			return invalidError("session is active; kill it first", nil)
+		}
 	}
 	if s.stores == nil || s.stores.SessionMeta == nil {
 		return unavailableError("session metadata store not available", nil)
 	}
 	clear := time.Time{}
+	dismissedAt := &clear
+	if dismissed {
+		now := time.Now().UTC()
+		dismissedAt = &now
+	}
 	if _, err := s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
 		SessionID:   id,
-		DismissedAt: &clear,
+		DismissedAt: dismissedAt,
 	}); err != nil {
+		s.logSessionVisibilityFailed(opID, action, id, "session_meta_store", err)
 		return unavailableError(err.Error(), err)
 	}
+	s.logSessionVisibilityApplied(opID, action, id, "session_meta_store")
 	return nil
+}
+
+func sessionVisibilityAction(dismissed bool) string {
+	if dismissed {
+		return "dismiss"
+	}
+	return "undismiss"
+}
+
+func (s *SessionService) logSessionVisibilityRequested(opID, action, sessionID string) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Info("session_visibility_change_requested",
+		logging.F("op_id", opID),
+		logging.F("action", action),
+		logging.F("session_id", sessionID),
+	)
+}
+
+func (s *SessionService) logSessionVisibilityApplied(opID, action, sessionID, path string) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Info("session_visibility_change_applied",
+		logging.F("op_id", opID),
+		logging.F("action", action),
+		logging.F("session_id", sessionID),
+		logging.F("path", path),
+	)
+}
+
+func (s *SessionService) logSessionVisibilityFailed(opID, action, sessionID, path string, err error) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Warn("session_visibility_change_failed",
+		logging.F("op_id", opID),
+		logging.F("action", action),
+		logging.F("session_id", sessionID),
+		logging.F("path", path),
+		logging.F("error", err),
+	)
 }
 
 func (s *SessionService) Kill(ctx context.Context, id string) error {

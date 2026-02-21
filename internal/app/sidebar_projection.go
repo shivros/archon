@@ -147,6 +147,12 @@ func filterSessionsForSidebar(
 		if worktreeID != "" {
 			if _, ok := visibleWorktrees[worktreeID]; ok {
 				out = append(out, session)
+			} else if workspaceID != "" {
+				// Worktree visibility can be stale between async worktree refreshes.
+				// Fall back to workspace visibility instead of transiently hiding items.
+				if _, ok := visibleWorkspaces[workspaceID]; ok {
+					out = append(out, session)
+				}
 			}
 			continue
 		}
@@ -198,6 +204,12 @@ func filterWorkflowRunsForSidebar(
 		if worktreeID != "" {
 			if _, ok := visibleWorktrees[worktreeID]; ok {
 				out = append(out, run)
+			} else if workspaceID != "" {
+				// Worktree visibility can be stale between async worktree refreshes.
+				// Fall back to workspace visibility instead of transiently hiding items.
+				if _, ok := visibleWorkspaces[workspaceID]; ok {
+					out = append(out, run)
+				}
 			}
 			continue
 		}

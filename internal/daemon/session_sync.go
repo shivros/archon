@@ -240,6 +240,7 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 }
 
 func (s *CodexSyncer) processThread(ctx context.Context, thread codexThreadSummary, cwd, workspaceID, worktreeID string, exclude []string, snapshot *syncSnapshot, seen map[string]struct{}, stats *syncPathStats) error {
+	existingMeta := snapshot.meta(thread.ID)
 	switch s.classifyThread(thread, cwd, exclude, snapshot) {
 	case threadDispositionOutOfScope:
 		stats.threadsOutOfScope++
@@ -249,18 +250,19 @@ func (s *CodexSyncer) processThread(ctx context.Context, thread codexThreadSumma
 		return nil
 	case threadDispositionDismissed:
 		stats.threadsDismissed++
+		s.logThreadSkippedAsDismissed(thread, cwd, workspaceID, worktreeID, existingMeta)
 		return nil
 	default:
 		stats.threadsConsidered++
 	}
 
 	seen[thread.ID] = struct{}{}
-	existingMeta := snapshot.meta(thread.ID)
 	if existing, ok := snapshot.record(thread.ID); ok && existing != nil && existing.Session != nil {
 		// Tombstoned sessions are user-dismissed and must only be restored
 		// through explicit undismiss; sync should never revive them.
 		// Internal sessions are authoritative and should not be overwritten.
 		if s.shouldSkipOverwrite(existing, existingMeta) {
+			s.logThreadSkipOverwrite(thread, existing, existingMeta)
 			stats.threadsSkipOverwrite++
 			if existingMeta == nil || existingMeta.DismissedAt == nil {
 				meta, err := s.upsertSyncedMeta(ctx, thread, workspaceID, worktreeID, time.Now().UTC())
@@ -350,6 +352,7 @@ func (s *CodexSyncer) removeStale(ctx context.Context, workspaceID, worktreeID s
 		if !s.shouldRemoveStale(record, meta, workspaceID, worktreeID, seen) {
 			continue
 		}
+		s.logStaleSessionRemoved(record, meta, workspaceID, worktreeID)
 		_ = s.sessions.DeleteRecord(ctx, record.Session.ID)
 		_ = s.meta.Delete(ctx, record.Session.ID)
 		snapshot.delete(record.Session.ID)
@@ -541,6 +544,116 @@ func (s *CodexSyncer) recordSyncPathMetric(cwd, workspaceID, worktreeID string, 
 	})
 }
 
+func (s *CodexSyncer) logThreadSkippedAsDismissed(
+	thread codexThreadSummary,
+	cwd string,
+	workspaceID string,
+	worktreeID string,
+	meta *types.SessionMeta,
+) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	workflowRunID := ""
+	dismissedAt := ""
+	if meta != nil {
+		workflowRunID = strings.TrimSpace(meta.WorkflowRunID)
+		if meta.DismissedAt != nil {
+			dismissedAt = meta.DismissedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	s.logger.Info("codex_sync_thread_skipped_dismissed",
+		logging.F("thread_id", strings.TrimSpace(thread.ID)),
+		logging.F("thread_cwd", strings.TrimSpace(thread.Cwd)),
+		logging.F("sync_cwd", strings.TrimSpace(cwd)),
+		logging.F("workspace_id", strings.TrimSpace(workspaceID)),
+		logging.F("worktree_id", strings.TrimSpace(worktreeID)),
+		logging.F("workflow_run_id", workflowRunID),
+		logging.F("dismissed_at", dismissedAt),
+	)
+}
+
+func (s *CodexSyncer) logThreadSkipOverwrite(
+	thread codexThreadSummary,
+	record *types.SessionRecord,
+	meta *types.SessionMeta,
+) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	source := ""
+	sessionStatus := ""
+	if record != nil {
+		source = strings.TrimSpace(record.Source)
+		if record.Session != nil {
+			sessionStatus = strings.TrimSpace(string(record.Session.Status))
+		}
+	}
+	workflowRunID := ""
+	dismissedAt := ""
+	if meta != nil {
+		workflowRunID = strings.TrimSpace(meta.WorkflowRunID)
+		if meta.DismissedAt != nil {
+			dismissedAt = meta.DismissedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	s.logger.Info("codex_sync_thread_skip_overwrite",
+		logging.F("thread_id", strings.TrimSpace(thread.ID)),
+		logging.F("thread_cwd", strings.TrimSpace(thread.Cwd)),
+		logging.F("session_source", source),
+		logging.F("session_status", sessionStatus),
+		logging.F("workflow_run_id", workflowRunID),
+		logging.F("dismissed_at", dismissedAt),
+		logging.F("reason", syncSkipOverwriteReason(record, meta)),
+	)
+}
+
+func syncSkipOverwriteReason(record *types.SessionRecord, meta *types.SessionMeta) string {
+	if meta != nil && meta.DismissedAt != nil {
+		return "session_dismissed"
+	}
+	if record != nil && record.Session != nil && isSyncTombstonedStatus(record.Session.Status) {
+		return "session_tombstoned"
+	}
+	if record != nil && strings.TrimSpace(record.Source) == sessionSourceInternal {
+		return "internal_source_authoritative"
+	}
+	return "policy"
+}
+
+func (s *CodexSyncer) logStaleSessionRemoved(
+	record *types.SessionRecord,
+	meta *types.SessionMeta,
+	workspaceID string,
+	worktreeID string,
+) {
+	if s == nil || s.logger == nil || record == nil || record.Session == nil {
+		return
+	}
+	workflowRunID := ""
+	dismissedAt := ""
+	metaWorkspaceID := ""
+	metaWorktreeID := ""
+	if meta != nil {
+		workflowRunID = strings.TrimSpace(meta.WorkflowRunID)
+		metaWorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+		metaWorktreeID = strings.TrimSpace(meta.WorktreeID)
+		if meta.DismissedAt != nil {
+			dismissedAt = meta.DismissedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	s.logger.Info("codex_sync_stale_session_removed",
+		logging.F("session_id", strings.TrimSpace(record.Session.ID)),
+		logging.F("session_source", strings.TrimSpace(record.Source)),
+		logging.F("workflow_run_id", workflowRunID),
+		logging.F("dismissed_at", dismissedAt),
+		logging.F("meta_workspace_id", metaWorkspaceID),
+		logging.F("meta_worktree_id", metaWorktreeID),
+		logging.F("sync_workspace_id", strings.TrimSpace(workspaceID)),
+		logging.F("sync_worktree_id", strings.TrimSpace(worktreeID)),
+	)
+}
+
 func (l *storeSyncSnapshotLoader) Load(ctx context.Context) (*syncSnapshot, error) {
 	if l == nil || l.sessions == nil || l.meta == nil {
 		return &syncSnapshot{
@@ -611,6 +724,9 @@ func (p *defaultThreadSyncPolicy) ShouldRemoveStale(record *types.SessionRecord,
 		return false
 	}
 	if meta == nil || meta.DismissedAt != nil {
+		return false
+	}
+	if strings.TrimSpace(meta.WorkflowRunID) != "" {
 		return false
 	}
 	if meta.WorkspaceID != workspaceID || meta.WorktreeID != worktreeID {

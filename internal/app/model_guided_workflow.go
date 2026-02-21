@@ -42,6 +42,15 @@ func (m *Model) openGuidedWorkflowFromSidebar(item *sidebarItem) tea.Cmd {
 		context.worktreeID = strings.TrimSpace(item.workflow.WorktreeID)
 		context.sessionID = strings.TrimSpace(item.workflow.SessionID)
 	}
+	if strings.TrimSpace(context.workspaceID) == "" {
+		context.workspaceID = strings.TrimSpace(item.workspaceID())
+	}
+	m.recordWorkflowRunState(&guidedworkflows.WorkflowRun{
+		ID:          runID,
+		WorkspaceID: strings.TrimSpace(context.workspaceID),
+		WorktreeID:  strings.TrimSpace(context.worktreeID),
+		SessionID:   strings.TrimSpace(context.sessionID),
+	})
 	m.enterGuidedWorkflow(context)
 	if m.guidedWorkflow != nil {
 		m.guidedWorkflow.SetRun(item.workflow)
@@ -127,6 +136,12 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			return true, nil
 		case m.keyMatchesCommand(keyMsg, KeyCommandDismissSelection, "d"):
+			if m.guidedWorkflow != nil {
+				if runID := strings.TrimSpace(m.guidedWorkflow.RunID()); runID != "" {
+					m.confirmDismissWorkflow(runID)
+					return true, nil
+				}
+			}
 			m.enterDismissOrDeleteForSelection()
 			return true, nil
 		}

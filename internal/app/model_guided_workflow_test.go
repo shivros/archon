@@ -138,6 +138,37 @@ func enterGuidedWorkflowForTest(m *Model, context guidedWorkflowLaunchContext) {
 	m.renderGuidedWorkflowContent()
 }
 
+func workflowRunSnapshotMsgFromCmd(t *testing.T, cmd tea.Cmd) workflowRunSnapshotMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatalf("expected workflow snapshot command")
+	}
+	var findSnapshot func(msg tea.Msg) (workflowRunSnapshotMsg, bool)
+	findSnapshot = func(msg tea.Msg) (workflowRunSnapshotMsg, bool) {
+		switch typed := msg.(type) {
+		case workflowRunSnapshotMsg:
+			return typed, true
+		case tea.BatchMsg:
+			for _, nested := range typed {
+				if nested == nil {
+					continue
+				}
+				nestedMsg := nested()
+				if snapshot, ok := findSnapshot(nestedMsg); ok {
+					return snapshot, true
+				}
+			}
+		}
+		return workflowRunSnapshotMsg{}, false
+	}
+	msg := cmd()
+	snapshot, ok := findSnapshot(msg)
+	if !ok {
+		t.Fatalf("expected workflowRunSnapshotMsg, got %T", msg)
+	}
+	return snapshot
+}
+
 func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
 	api := &guidedWorkflowAPIMock{
@@ -199,13 +230,7 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 
 	nextModel, cmd = m.Update(startMsg)
 	m = asModel(t, nextModel)
-	if cmd == nil {
-		t.Fatalf("expected snapshot workflow command")
-	}
-	snapshotMsg, ok := cmd().(workflowRunSnapshotMsg)
-	if !ok {
-		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
-	}
+	snapshotMsg := workflowRunSnapshotMsgFromCmd(t, cmd)
 
 	nextModel, _ = m.Update(snapshotMsg)
 	m = asModel(t, nextModel)
@@ -716,6 +741,58 @@ func TestWorkflowDismissNotFoundStaysHiddenAfterRunsRefresh(t *testing.T) {
 	}
 }
 
+func TestDismissedWorkflowFetchedFromSidebarStaysHiddenAfterRunsRefresh(t *testing.T) {
+	now := time.Date(2026, 2, 21, 10, 0, 0, 0, time.UTC)
+	dismissedAt := now.Add(2 * time.Minute)
+	run := newWorkflowRunFixture("gwf-dismissed-fetched", guidedworkflows.WorkflowRunStatusCompleted, now)
+	run.DismissedAt = &dismissedAt
+	run.CompletedAt = &dismissedAt
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{cloneWorkflowRun(run)},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_started", RunID: run.ID},
+				{At: dismissedAt, Type: "run_completed", RunID: run.ID},
+			},
+		},
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	if m.sessionMeta["s1"] == nil {
+		t.Fatalf("expected session meta fixture")
+	}
+	m.sessionMeta["s1"].WorkflowRunID = run.ID
+	m.applySidebarItems()
+	if !sidebarHasWorkflowItem(m, run.ID) {
+		t.Fatalf("expected workflow placeholder before fetch")
+	}
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected dismissed workflow placeholder to be selectable")
+	}
+
+	cmd := m.onSelectionChangedImmediate()
+	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
+	updated, _ := m.Update(msg)
+	m = asModel(t, updated)
+
+	if sidebarHasWorkflowItem(m, run.ID) {
+		t.Fatalf("expected dismissed workflow to be hidden after snapshot fetch")
+	}
+	if strings.Contains(strings.ToLower(m.status), "guided workflow completed") {
+		t.Fatalf("expected dismissed workflow snapshot to suppress completion toast, got %q", m.status)
+	}
+	if len(m.appState.DismissedMissingWorkflowRunIDs) != 1 || m.appState.DismissedMissingWorkflowRunIDs[0] != run.ID {
+		t.Fatalf("expected dismissed workflow id to persist for placeholder suppression, got %#v", m.appState.DismissedMissingWorkflowRunIDs)
+	}
+
+	updated, _ = m.Update(workflowRunsMsg{runs: []*guidedworkflows.WorkflowRun{}})
+	m = asModel(t, updated)
+	if sidebarHasWorkflowItem(m, run.ID) {
+		t.Fatalf("expected dismissed workflow placeholder to stay hidden after workflow refresh")
+	}
+}
+
 func TestWorkflowDismissNotFoundSurvivesAppStateRestore(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	meta := m.sessionMeta["s1"]
@@ -933,10 +1010,7 @@ func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected snapshot refresh after decision")
 	}
-	snapshotMsg, ok := cmd().(workflowRunSnapshotMsg)
-	if !ok {
-		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
-	}
+	snapshotMsg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ = m.Update(snapshotMsg)
 	m = asModel(t, updated)
 
@@ -992,13 +1066,7 @@ func TestSelectingWorkflowSidebarNodeOpensGuidedWorkflowView(t *testing.T) {
 
 	m.sidebar.Select(workflowRow)
 	cmd := m.onSelectionChangedImmediate()
-	if cmd == nil {
-		t.Fatalf("expected snapshot command after selecting workflow row")
-	}
-	msg, ok := cmd().(workflowRunSnapshotMsg)
-	if !ok {
-		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
-	}
+	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ := m.Update(msg)
 	m = asModel(t, updated)
 	if m.mode != uiModeGuidedWorkflow {
@@ -1029,13 +1097,7 @@ func TestGuidedWorkflowModeDismissHotkeyTargetsSelectedWorkflow(t *testing.T) {
 		t.Fatalf("expected workflow row to be selectable")
 	}
 	cmd := m.onSelectionChangedImmediate()
-	if cmd == nil {
-		t.Fatalf("expected workflow snapshot command")
-	}
-	msg, ok := cmd().(workflowRunSnapshotMsg)
-	if !ok {
-		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
-	}
+	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ := m.Update(msg)
 	m = asModel(t, updated)
 	if m.mode != uiModeGuidedWorkflow {
@@ -1043,6 +1105,221 @@ func TestGuidedWorkflowModeDismissHotkeyTargetsSelectedWorkflow(t *testing.T) {
 	}
 
 	updated, cmd = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no async command before confirm choice")
+	}
+	action, ok := m.pendingSelectionAction.(dismissWorkflowSelectionAction)
+	if !ok {
+		t.Fatalf("expected workflow dismiss selection action, got %T", m.pendingSelectionAction)
+	}
+	if action.runID != run.ID {
+		t.Fatalf("expected workflow run id %q, got %q", run.ID, action.runID)
+	}
+}
+
+func TestSelectingCompletedWorkflowDoesNotRepeatCompletedToast(t *testing.T) {
+	now := time.Date(2026, 2, 21, 8, 0, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-completed-sidebar", guidedworkflows.WorkflowRunStatusCompleted, now)
+	completedAt := now.Add(2 * time.Minute)
+	run.CompletedAt = &completedAt
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{cloneWorkflowRun(run)},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_started", RunID: run.ID},
+				{At: completedAt, Type: "run_completed", RunID: run.ID},
+			},
+		},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected completed workflow row to be selectable")
+	}
+	cmd := m.onSelectionChangedImmediate()
+	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
+	updated, _ := m.Update(msg)
+	m = asModel(t, updated)
+	if strings.Contains(strings.ToLower(m.status), "guided workflow completed") {
+		t.Fatalf("expected completed snapshot to avoid duplicate completion toast, got %q", m.status)
+	}
+}
+
+func TestWorkflowRunSnapshotPreservesExistingWorkflowContext(t *testing.T) {
+	now := time.Date(2026, 2, 21, 8, 15, 0, 0, time.UTC)
+	existing := newWorkflowRunFixture("gwf-context-preserve", guidedworkflows.WorkflowRunStatusRunning, now)
+	existing.WorkspaceID = "ws1"
+	existing.WorktreeID = "wt-missing"
+	existing.SessionID = "s1"
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"g1"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace", GroupIDs: []string{"g1"}},
+	}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {},
+	}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{existing}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(existing.ID) {
+		t.Fatalf("expected workflow row before snapshot update")
+	}
+	snapshot := &guidedworkflows.WorkflowRun{
+		ID:        existing.ID,
+		Status:    guidedworkflows.WorkflowRunStatusCompleted,
+		CreatedAt: existing.CreatedAt,
+		// Intentionally missing workspace/worktree/session to simulate sparse snapshot payloads.
+	}
+	updated, _ := m.Update(workflowRunSnapshotMsg{
+		run: snapshot,
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now.Add(time.Minute), Type: "run_completed", RunID: existing.ID},
+		},
+	})
+	m = asModel(t, updated)
+	var stored *guidedworkflows.WorkflowRun
+	for _, run := range m.workflowRuns {
+		if run != nil && strings.TrimSpace(run.ID) == existing.ID {
+			stored = run
+			break
+		}
+	}
+	if stored == nil {
+		t.Fatalf("expected workflow run to remain stored")
+	}
+	if stored.WorkspaceID != "ws1" || stored.WorktreeID != "wt-missing" || stored.SessionID != "s1" {
+		t.Fatalf("expected workflow context to be preserved, got workspace=%q worktree=%q session=%q", stored.WorkspaceID, stored.WorktreeID, stored.SessionID)
+	}
+	if !m.sidebar.SelectByWorkflowID(existing.ID) {
+		t.Fatalf("expected workflow row to remain visible after sparse snapshot update")
+	}
+}
+
+func TestWorkflowRunsRefreshPreservesExistingWorkflowContext(t *testing.T) {
+	now := time.Date(2026, 2, 21, 9, 0, 0, 0, time.UTC)
+	existing := newWorkflowRunFixture("gwf-list-context", guidedworkflows.WorkflowRunStatusRunning, now)
+	existing.WorkspaceID = "ws1"
+	existing.WorktreeID = "wt-missing"
+	existing.SessionID = "s1"
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"g1"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace", GroupIDs: []string{"g1"}},
+	}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {},
+	}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{existing}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(existing.ID) {
+		t.Fatalf("expected workflow row before workflow list refresh")
+	}
+
+	updated, _ := m.Update(workflowRunsMsg{
+		runs: []*guidedworkflows.WorkflowRun{
+			{
+				ID:        existing.ID,
+				Status:    guidedworkflows.WorkflowRunStatusCompleted,
+				CreatedAt: existing.CreatedAt,
+				// Sparse list payload: missing workspace/worktree/session should not drop context.
+			},
+		},
+	})
+	m = asModel(t, updated)
+	var stored *guidedworkflows.WorkflowRun
+	for _, run := range m.workflowRuns {
+		if run != nil && strings.TrimSpace(run.ID) == existing.ID {
+			stored = run
+			break
+		}
+	}
+	if stored == nil {
+		t.Fatalf("expected workflow run to remain stored")
+	}
+	if stored.WorkspaceID != "ws1" || stored.WorktreeID != "wt-missing" || stored.SessionID != "s1" {
+		t.Fatalf("expected workflow context to be preserved from existing run, got workspace=%q worktree=%q session=%q", stored.WorkspaceID, stored.WorktreeID, stored.SessionID)
+	}
+	if !m.sidebar.SelectByWorkflowID(existing.ID) {
+		t.Fatalf("expected workflow row to remain visible after sparse list refresh")
+	}
+}
+
+func TestWorkflowRunsRefreshKeepsSelectedWorkflowWhenListTransientlyDrops(t *testing.T) {
+	now := time.Date(2026, 2, 21, 9, 5, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-refresh-sticky", guidedworkflows.WorkflowRunStatusCompleted, now)
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow to be selected")
+	}
+
+	updated, _ := m.Update(workflowRunsMsg{runs: []*guidedworkflows.WorkflowRun{}})
+	m = asModel(t, updated)
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected selected workflow to survive transient empty workflow list")
+	}
+}
+
+func TestWorkflowRunSnapshotUsesStatusIndexToAvoidDuplicateCompletedToast(t *testing.T) {
+	now := time.Date(2026, 2, 21, 9, 10, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-status-index", guidedworkflows.WorkflowRunStatusCompleted, now)
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	m.recordWorkflowRunState(run)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(cloneWorkflowRun(run))
+	m.status = ""
+
+	updated, _ := m.Update(workflowRunSnapshotMsg{
+		run: cloneWorkflowRun(run),
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now, Type: "run_completed", RunID: run.ID},
+		},
+	})
+	m = asModel(t, updated)
+	if strings.Contains(strings.ToLower(m.status), "guided workflow completed") {
+		t.Fatalf("expected status index to suppress duplicate completion toast, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowModeDismissHotkeyUsesActiveRunWhenSessionSelected(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 40, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-dismiss-active", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected workflow child session row to be selectable")
+	}
+
+	m.enterGuidedWorkflow(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(run)
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	m = asModel(t, updated)
 	if cmd != nil {
 		t.Fatalf("expected no async command before confirm choice")
@@ -1353,9 +1630,7 @@ func TestGuidedWorkflowRefreshNowValidatesRunID(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected refresh command when run id is present")
 	}
-	if _, ok := cmd().(workflowRunSnapshotMsg); !ok {
-		t.Fatalf("expected workflowRunSnapshotMsg, got %T", cmd())
-	}
+	_ = workflowRunSnapshotMsgFromCmd(t, cmd)
 }
 
 func newWorkflowRunFixture(id string, status guidedworkflows.WorkflowRunStatus, now time.Time) *guidedworkflows.WorkflowRun {

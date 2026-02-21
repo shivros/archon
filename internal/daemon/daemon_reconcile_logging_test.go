@@ -51,6 +51,23 @@ func TestLogGuidedWorkflowRunReconciliationOutcome(t *testing.T) {
 		}
 	})
 
+	t.Run("logs info when linked session meta exists", func(t *testing.T) {
+		var out bytes.Buffer
+		logger := logging.New(&out, logging.Info)
+		logGuidedWorkflowRunReconciliationOutcome(logger, guidedWorkflowRunSnapshotReconciliationResult{
+			SessionMetaScanned:   3,
+			SessionMetaWithRunID: 2,
+			SessionMetaDismissed: 1,
+		}, nil)
+		logs := out.String()
+		if !strings.Contains(logs, "msg=guided_workflow_runs_reconciled_from_session_meta") {
+			t.Fatalf("expected reconcile info log for linked session metadata, got %q", logs)
+		}
+		if !strings.Contains(logs, "session_meta_with_run_id=2") {
+			t.Fatalf("expected session_meta_with_run_id field in log output, got %q", logs)
+		}
+	})
+
 	t.Run("stays silent on zero result and nil error", func(t *testing.T) {
 		var out bytes.Buffer
 		logger := logging.New(&out, logging.Info)

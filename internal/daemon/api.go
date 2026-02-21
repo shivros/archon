@@ -12,20 +12,23 @@ import (
 )
 
 type API struct {
-	Version                  string
-	Manager                  *SessionManager
-	Stores                   *Stores
-	Shutdown                 func(context.Context) error
-	Syncer                   SessionSyncer
-	LiveCodex                *CodexLiveManager
-	CodexHistoryPool         CodexHistoryPool
-	Notifier                 NotificationPublisher
-	GuidedWorkflows          guidedworkflows.Orchestrator
-	WorkflowRuns             GuidedWorkflowRunService
-	WorkflowTemplates        GuidedWorkflowTemplateService
-	WorkflowPolicy           GuidedWorkflowPolicyResolver
-	WorkflowDispatchDefaults guidedWorkflowDispatchDefaults
-	Logger                   logging.Logger
+	Version                   string
+	Manager                   *SessionManager
+	Stores                    *Stores
+	Shutdown                  func(context.Context) error
+	Syncer                    SessionSyncer
+	LiveCodex                 *CodexLiveManager
+	CodexHistoryPool          CodexHistoryPool
+	Notifier                  NotificationPublisher
+	GuidedWorkflows           guidedworkflows.Orchestrator
+	WorkflowRuns              GuidedWorkflowRunService
+	WorkflowRunMetrics        GuidedWorkflowRunMetricsService
+	WorkflowRunMetricsReset   GuidedWorkflowRunMetricsResetService
+	WorkflowTemplates         GuidedWorkflowTemplateService
+	WorkflowPolicy            GuidedWorkflowPolicyResolver
+	WorkflowDispatchDefaults  guidedWorkflowDispatchDefaults
+	WorkflowSessionVisibility WorkflowRunSessionVisibilityService
+	Logger                    logging.Logger
 }
 
 type StartSessionRequest struct {
@@ -104,6 +107,18 @@ type GuidedWorkflowTemplateService interface {
 	ListTemplates(ctx context.Context) ([]guidedworkflows.WorkflowTemplate, error)
 }
 
+type GuidedWorkflowRunMetricsService interface {
+	GetRunMetrics(ctx context.Context) (guidedworkflows.RunMetricsSnapshot, error)
+}
+
+type GuidedWorkflowRunMetricsResetService interface {
+	ResetRunMetrics(ctx context.Context) (guidedworkflows.RunMetricsSnapshot, error)
+}
+
+type WorkflowRunSessionVisibilityService interface {
+	SyncWorkflowRunSessionVisibility(run *guidedworkflows.WorkflowRun, dismissed bool)
+}
+
 type GuidedWorkflowPolicyResolver interface {
 	ResolvePolicyOverrides(explicit *guidedworkflows.CheckpointPolicyOverride) *guidedworkflows.CheckpointPolicyOverride
 }
@@ -153,6 +168,20 @@ func (a *API) workflowRunService() GuidedWorkflowRunService {
 	return a.WorkflowRuns
 }
 
+func (a *API) workflowRunMetricsService() GuidedWorkflowRunMetricsService {
+	if a == nil {
+		return nil
+	}
+	return a.WorkflowRunMetrics
+}
+
+func (a *API) workflowRunMetricsResetService() GuidedWorkflowRunMetricsResetService {
+	if a == nil {
+		return nil
+	}
+	return a.WorkflowRunMetricsReset
+}
+
 func (a *API) workflowTemplateService() GuidedWorkflowTemplateService {
 	if a == nil {
 		return nil
@@ -180,4 +209,11 @@ func (a *API) workflowDispatchDefaults() guidedWorkflowDispatchDefaults {
 		return guidedWorkflowDispatchDefaults{}
 	}
 	return a.WorkflowDispatchDefaults
+}
+
+func (a *API) workflowSessionVisibilityService() WorkflowRunSessionVisibilityService {
+	if a == nil {
+		return nil
+	}
+	return a.WorkflowSessionVisibility
 }

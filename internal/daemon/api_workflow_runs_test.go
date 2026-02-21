@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"control/internal/config"
 	"control/internal/guidedworkflows"
 	"control/internal/logging"
+	"control/internal/store"
 	"control/internal/types"
 )
 
@@ -124,6 +126,306 @@ func TestWorkflowRunEndpointsDismissAndUndismiss(t *testing.T) {
 	undismissed := postWorkflowRunAction(t, server, created.ID, "undismiss", http.StatusOK)
 	if undismissed.DismissedAt != nil {
 		t.Fatalf("expected dismissed_at to clear")
+	}
+}
+
+func TestWorkflowRunEndpointsEmitListAndFetchTelemetry(t *testing.T) {
+	var logOut bytes.Buffer
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Logger:       logging.New(&logOut, logging.Info),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	getWorkflowRuns(t, server, http.StatusOK)
+	getWorkflowRun(t, server, created.ID, http.StatusOK)
+
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=guided_workflow_runs_listed") {
+		t.Fatalf("expected workflow list telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "msg=guided_workflow_run_fetched") {
+		t.Fatalf("expected workflow fetch telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "run_id="+created.ID) {
+		t.Fatalf("expected run id in telemetry logs, got %q", logs)
+	}
+}
+
+func TestWorkflowRunEndpointsDismissAndUndismissCascadeWorkflowSessions(t *testing.T) {
+	ctx := context.Background()
+	sessionStore := storeSessionsIndex(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	now := time.Now().UTC()
+	for _, sessionID := range []string{"sess-owned", "sess-linked"} {
+		_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+			Session: &types.Session{
+				ID:        sessionID,
+				Provider:  "codex",
+				Cmd:       "codex app-server",
+				Status:    types.SessionStatusInactive,
+				CreatedAt: now,
+			},
+			Source: sessionSourceInternal,
+		})
+		if err != nil {
+			t.Fatalf("upsert session %s: %v", sessionID, err)
+		}
+	}
+
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Stores: &Stores{
+			Sessions:    sessionStore,
+			SessionMeta: metaStore,
+		},
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-owned",
+	})
+	for _, sessionID := range []string{"sess-owned", "sess-linked"} {
+		if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+			SessionID:     sessionID,
+			WorkflowRunID: created.ID,
+		}); err != nil {
+			t.Fatalf("upsert session meta %s: %v", sessionID, err)
+		}
+	}
+
+	sessionService := NewSessionService(nil, api.Stores, nil, nil)
+	before, _, err := sessionService.ListWithMetaIncludingWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("list sessions before dismiss: %v", err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("expected both workflow sessions visible before dismiss, got %#v", before)
+	}
+
+	dismissed := postWorkflowRunAction(t, server, created.ID, "dismiss", http.StatusOK)
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed_at to be set")
+	}
+	waitForCondition(t, 3*time.Second, func() bool {
+		for _, sessionID := range []string{"sess-owned", "sess-linked"} {
+			meta, ok, err := metaStore.Get(ctx, sessionID)
+			if err != nil || !ok || meta == nil || meta.DismissedAt == nil {
+				return false
+			}
+		}
+		return true
+	}, "sessions should be dismissed with workflow")
+	hidden, _, err := sessionService.ListWithMetaIncludingWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("list hidden sessions: %v", err)
+	}
+	if len(hidden) != 0 {
+		t.Fatalf("expected workflow sessions hidden after dismiss, got %#v", hidden)
+	}
+	included, _, err := sessionService.ListWithMetaIncludingDismissedAndWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("list include dismissed sessions: %v", err)
+	}
+	if len(included) != 2 {
+		t.Fatalf("expected workflow sessions in include dismissed list, got %#v", included)
+	}
+
+	undismissed := postWorkflowRunAction(t, server, created.ID, "undismiss", http.StatusOK)
+	if undismissed.DismissedAt != nil {
+		t.Fatalf("expected dismissed_at to clear")
+	}
+	waitForCondition(t, 3*time.Second, func() bool {
+		for _, sessionID := range []string{"sess-owned", "sess-linked"} {
+			meta, ok, err := metaStore.Get(ctx, sessionID)
+			if err != nil || !ok || meta == nil || meta.DismissedAt != nil {
+				return false
+			}
+		}
+		return true
+	}, "sessions should be undismissed with workflow")
+	restored, _, err := sessionService.ListWithMetaIncludingWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("list restored sessions: %v", err)
+	}
+	if len(restored) != 2 {
+		t.Fatalf("expected both workflow sessions visible after undismiss, got %#v", restored)
+	}
+}
+
+func TestWorkflowRunEndpointsDismissAndUndismissEmitSessionVisibilityTelemetry(t *testing.T) {
+	ctx := context.Background()
+	sessionStore := storeSessionsIndex(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	now := time.Now().UTC()
+	for _, sessionID := range []string{"sess-owned", "sess-linked"} {
+		_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+			Session: &types.Session{
+				ID:        sessionID,
+				Provider:  "codex",
+				Cmd:       "codex app-server",
+				Status:    types.SessionStatusInactive,
+				CreatedAt: now,
+			},
+			Source: sessionSourceInternal,
+		})
+		if err != nil {
+			t.Fatalf("upsert session %s: %v", sessionID, err)
+		}
+	}
+	var logOut bytes.Buffer
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Logger:       logging.New(&logOut, logging.Info),
+		Stores: &Stores{
+			Sessions:    sessionStore,
+			SessionMeta: metaStore,
+		},
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-owned",
+	})
+	for _, sessionID := range []string{"sess-owned", "sess-linked"} {
+		if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+			SessionID:     sessionID,
+			WorkflowRunID: created.ID,
+		}); err != nil {
+			t.Fatalf("upsert session meta %s: %v", sessionID, err)
+		}
+	}
+
+	_ = postWorkflowRunAction(t, server, created.ID, "dismiss", http.StatusOK)
+	_ = postWorkflowRunAction(t, server, created.ID, "undismiss", http.StatusOK)
+
+	waitForCondition(t, 3*time.Second, func() bool {
+		logs := logOut.String()
+		return strings.Contains(logs, "msg=guided_workflow_session_visibility_sync_started") &&
+			strings.Contains(logs, "msg=guided_workflow_session_visibility_sync_applied") &&
+			strings.Contains(logs, "msg=guided_workflow_session_visibility_sync_completed") &&
+			strings.Contains(logs, "action=dismiss") &&
+			strings.Contains(logs, "action=undismiss") &&
+			strings.Contains(logs, "target_source=run_session+workflow_link") &&
+			strings.Contains(logs, "target_source=workflow_link")
+	}, "workflow session visibility telemetry should include both dismiss and undismiss events")
+}
+
+func TestWorkflowRunEndpointsDismissSkipsSessionVisibilityWhenSessionRelinked(t *testing.T) {
+	ctx := context.Background()
+	sessionStore := storeSessionsIndex(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	now := time.Now().UTC()
+	if _, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-shared",
+			Provider:  "codex",
+			Cmd:       "codex app-server",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	}); err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Stores: &Stores{
+			Sessions:    sessionStore,
+			SessionMeta: metaStore,
+		},
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-shared",
+	})
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     "sess-shared",
+		WorkflowRunID: "gwf-new-owner",
+		DismissedAt:   nil,
+	}); err != nil {
+		t.Fatalf("upsert relinked session meta: %v", err)
+	}
+
+	dismissed := postWorkflowRunAction(t, server, created.ID, "dismiss", http.StatusOK)
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected run to be dismissed")
+	}
+	waitForCondition(t, 2*time.Second, func() bool {
+		meta, ok, err := metaStore.Get(ctx, "sess-shared")
+		if err != nil || !ok || meta == nil {
+			return false
+		}
+		return strings.TrimSpace(meta.WorkflowRunID) == "gwf-new-owner" && meta.DismissedAt == nil
+	}, "session visibility should not be overwritten when ownership changes")
+}
+
+func TestWorkflowSessionVisibilitySyncSkipsStaleLinkedSessionTargets(t *testing.T) {
+	ctx := context.Background()
+	baseMeta := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	if _, err := baseMeta.Upsert(ctx, &types.SessionMeta{
+		SessionID:     "sess-1",
+		WorkflowRunID: "gwf-new-owner",
+	}); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+	metaStore := &staleListSessionMetaStore{
+		base: baseMeta,
+		stale: []*types.SessionMeta{
+			{
+				SessionID:     "sess-1",
+				WorkflowRunID: "gwf-old-owner",
+			},
+		},
+	}
+	api := &API{
+		Version: "test",
+		Stores: &Stores{
+			SessionMeta: metaStore,
+		},
+	}
+
+	err := api.syncWorkflowLinkedSessionDismissal(ctx, &guidedworkflows.WorkflowRun{
+		ID: "gwf-old-owner",
+	}, true)
+	if err != nil {
+		t.Fatalf("sync workflow linked session dismissal: %v", err)
+	}
+	meta, ok, err := baseMeta.Get(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("load session meta: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected session meta to exist")
+	}
+	if strings.TrimSpace(meta.WorkflowRunID) != "gwf-new-owner" {
+		t.Fatalf("expected workflow ownership to remain unchanged, got %q", meta.WorkflowRunID)
+	}
+	if meta.DismissedAt != nil {
+		t.Fatalf("expected stale linked target to be skipped without dismissing session")
+	}
+	if metaStore.upsertCalls != 0 {
+		t.Fatalf("expected no writes for stale linked target, got %d", metaStore.upsertCalls)
 	}
 }
 
@@ -790,9 +1092,11 @@ func TestWorkflowRunEndpointsStartWrapsSessionResolutionErrors(t *testing.T) {
 }
 
 func TestWorkflowRunMetricsEndpoint(t *testing.T) {
+	runService := guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
 	api := &API{
-		Version:      "test",
-		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Version:            "test",
+		WorkflowRuns:       runService,
+		WorkflowRunMetrics: runService,
 	}
 	server := newWorkflowRunTestServer(t, api)
 	defer server.Close()
@@ -818,10 +1122,24 @@ func TestWorkflowRunMetricsEndpoint(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunMetricsResetEndpoint(t *testing.T) {
+func TestWorkflowRunMetricsEndpointRequiresExplicitMetricsService(t *testing.T) {
 	api := &API{
 		Version:      "test",
 		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	_ = getWorkflowRunMetrics(t, server, http.StatusInternalServerError)
+}
+
+func TestWorkflowRunMetricsResetEndpoint(t *testing.T) {
+	runService := guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
+	api := &API{
+		Version:                 "test",
+		WorkflowRuns:            runService,
+		WorkflowRunMetrics:      runService,
+		WorkflowRunMetricsReset: runService,
 	}
 	server := newWorkflowRunTestServer(t, api)
 	defer server.Close()
@@ -843,6 +1161,19 @@ func TestWorkflowRunMetricsResetEndpoint(t *testing.T) {
 	if after.RunsStarted != 0 || after.PauseCount != 0 || after.ApprovalCount != 0 {
 		t.Fatalf("expected metrics endpoint to return reset values, got %#v", after)
 	}
+}
+
+func TestWorkflowRunMetricsResetEndpointRequiresExplicitResetService(t *testing.T) {
+	runService := guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
+	api := &API{
+		Version:            "test",
+		WorkflowRuns:       runService,
+		WorkflowRunMetrics: runService,
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	_ = postWorkflowRunMetricsReset(t, server, http.StatusInternalServerError)
 }
 
 func TestToGuidedWorkflowServiceErrorMappings(t *testing.T) {
@@ -1096,6 +1427,18 @@ func TestWorkflowRunServiceInterfaceCompatibility(t *testing.T) {
 	var _ GuidedWorkflowTemplateService = guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
 }
 
+func waitForCondition(t *testing.T, timeout time.Duration, check func() bool, message string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out after %s: %s", timeout, message)
+}
+
 type stubWorkflowTemplateService struct {
 	templates []guidedworkflows.WorkflowTemplate
 	err       error
@@ -1108,4 +1451,57 @@ func (s stubWorkflowTemplateService) ListTemplates(context.Context) ([]guidedwor
 	out := make([]guidedworkflows.WorkflowTemplate, len(s.templates))
 	copy(out, s.templates)
 	return out, nil
+}
+
+type staleListSessionMetaStore struct {
+	base        SessionMetaStore
+	stale       []*types.SessionMeta
+	listCalls   int
+	upsertCalls int
+}
+
+func (s *staleListSessionMetaStore) List(ctx context.Context) ([]*types.SessionMeta, error) {
+	if s != nil && s.listCalls == 0 && len(s.stale) > 0 {
+		s.listCalls++
+		out := make([]*types.SessionMeta, 0, len(s.stale))
+		for _, entry := range s.stale {
+			if entry == nil {
+				continue
+			}
+			copy := *entry
+			out = append(out, &copy)
+		}
+		return out, nil
+	}
+	if s != nil {
+		s.listCalls++
+	}
+	if s == nil || s.base == nil {
+		return []*types.SessionMeta{}, nil
+	}
+	return s.base.List(ctx)
+}
+
+func (s *staleListSessionMetaStore) Get(ctx context.Context, sessionID string) (*types.SessionMeta, bool, error) {
+	if s == nil || s.base == nil {
+		return nil, false, nil
+	}
+	return s.base.Get(ctx, sessionID)
+}
+
+func (s *staleListSessionMetaStore) Upsert(ctx context.Context, meta *types.SessionMeta) (*types.SessionMeta, error) {
+	if s != nil {
+		s.upsertCalls++
+	}
+	if s == nil || s.base == nil {
+		return meta, nil
+	}
+	return s.base.Upsert(ctx, meta)
+}
+
+func (s *staleListSessionMetaStore) Delete(ctx context.Context, sessionID string) error {
+	if s == nil || s.base == nil {
+		return nil
+	}
+	return s.base.Delete(ctx, sessionID)
 }

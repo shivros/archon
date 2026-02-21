@@ -176,12 +176,16 @@ type guidedWorkflowRunSnapshotReconciliationInput struct {
 }
 
 type guidedWorkflowRunSnapshotReconciliationResult struct {
-	ExistingSnapshots int
-	CreatedSnapshots  int
-	SkippedEmptyRunID int
-	SkippedExisting   int
-	SkippedByPolicy   int
-	FailedWrites      int
+	ExistingSnapshots        int
+	CreatedSnapshots         int
+	SkippedEmptyRunID        int
+	SkippedExisting          int
+	SkippedByPolicy          int
+	FailedWrites             int
+	SessionMetaScanned       int
+	SessionMetaWithRunID     int
+	SessionMetaDismissed     int
+	CreatedFromDismissedMeta int
 }
 
 type defaultGuidedWorkflowMissingRunSnapshotPolicy struct{}
@@ -274,10 +278,15 @@ func reconcileGuidedWorkflowRunSnapshots(
 	}
 	for _, item := range meta {
 		item = normalizeGuidedWorkflowSessionMeta(item)
+		result.SessionMetaScanned++
 		runID := strings.TrimSpace(item.WorkflowRunID)
 		if runID == "" {
 			result.SkippedEmptyRunID++
 			continue
+		}
+		result.SessionMetaWithRunID++
+		if item.DismissedAt != nil {
+			result.SessionMetaDismissed++
 		}
 		if _, ok := existing[runID]; ok {
 			result.SkippedExisting++
@@ -291,6 +300,9 @@ func reconcileGuidedWorkflowRunSnapshots(
 		if err := input.RunStore.UpsertWorkflowRun(ctx, snapshot); err != nil {
 			result.FailedWrites++
 			continue
+		}
+		if item.DismissedAt != nil {
+			result.CreatedFromDismissedMeta++
 		}
 		existing[runID] = struct{}{}
 		result.CreatedSnapshots++
@@ -482,10 +494,69 @@ func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Conte
 	if sessionID == "" || runID == "" {
 		return
 	}
-	_, _ = d.sessionMeta.Upsert(ctx, &types.SessionMeta{
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opID := logging.NewRequestID()
+	var (
+		existingWorkflowRunID string
+		existingDismissed     bool
+		existingDismissedAt   string
+	)
+	if existing, ok, err := d.sessionMeta.Get(ctx, sessionID); err != nil {
+		if d.logger != nil {
+			d.logger.Warn("guided_workflow_session_link_lookup_failed",
+				logging.F("op_id", opID),
+				logging.F("session_id", sessionID),
+				logging.F("run_id", runID),
+				logging.F("error", err),
+			)
+		}
+	} else if ok && existing != nil {
+		existingWorkflowRunID = strings.TrimSpace(existing.WorkflowRunID)
+		existingDismissed = existing.DismissedAt != nil
+		if existing.DismissedAt != nil {
+			existingDismissedAt = existing.DismissedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	if d.logger != nil {
+		d.logger.Info("guided_workflow_session_link_requested",
+			logging.F("op_id", opID),
+			logging.F("session_id", sessionID),
+			logging.F("run_id", runID),
+			logging.F("existing_workflow_run_id", existingWorkflowRunID),
+			logging.F("existing_dismissed", existingDismissed),
+			logging.F("existing_dismissed_at", existingDismissedAt),
+		)
+	}
+	_, err := d.sessionMeta.Upsert(ctx, &types.SessionMeta{
 		SessionID:     sessionID,
 		WorkflowRunID: runID,
 	})
+	if err != nil {
+		if d.logger != nil {
+			d.logger.Warn("guided_workflow_session_link_failed",
+				logging.F("op_id", opID),
+				logging.F("session_id", sessionID),
+				logging.F("run_id", runID),
+				logging.F("existing_workflow_run_id", existingWorkflowRunID),
+				logging.F("existing_dismissed", existingDismissed),
+				logging.F("existing_dismissed_at", existingDismissedAt),
+				logging.F("error", err),
+			)
+		}
+		return
+	}
+	if d.logger != nil {
+		d.logger.Info("guided_workflow_session_linked",
+			logging.F("op_id", opID),
+			logging.F("session_id", sessionID),
+			logging.F("run_id", runID),
+			logging.F("previous_workflow_run_id", existingWorkflowRunID),
+			logging.F("previous_dismissed", existingDismissed),
+			logging.F("previous_dismissed_at", existingDismissedAt),
+		)
+	}
 }
 
 func guidedWorkflowProviderSupportsPromptDispatch(provider string) bool {

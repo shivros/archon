@@ -343,7 +343,7 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 	}); err == nil {
 		t.Fatalf("expected create run to fail when max_active_runs guardrail is reached")
 	}
-	metricsProvider, ok := any(service).(guidedWorkflowRunMetricsProvider)
+	metricsProvider, ok := any(service).(GuidedWorkflowRunMetricsService)
 	if !ok {
 		t.Fatalf("expected run service to expose metrics provider")
 	}
@@ -1293,6 +1293,67 @@ func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSessi
 	}
 	if !strings.Contains(logs, "effective_reasoning=high") {
 		t.Fatalf("expected effective reasoning in session creation logs, got %q", logs)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherLogsSessionLinkTelemetry(t *testing.T) {
+	now := time.Now().UTC()
+	var logOut bytes.Buffer
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+			},
+		},
+		turnID: "turn-link-telemetry",
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{
+		entries: map[string]*types.SessionMeta{
+			"sess-1": {
+				SessionID:     "sess-1",
+				WorkflowRunID: "gwf-old",
+				DismissedAt:   &now,
+			},
+		},
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:    gateway,
+		sessionMeta: metaStore,
+		logger:      logging.New(&logOut, logging.Info),
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-new",
+		SessionID:   "sess-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-1" {
+		t.Fatalf("expected dispatched result on sess-1, got %#v", result)
+	}
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=guided_workflow_session_link_requested") {
+		t.Fatalf("expected link requested telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "msg=guided_workflow_session_linked") {
+		t.Fatalf("expected link success telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "existing_workflow_run_id=gwf-old") {
+		t.Fatalf("expected previous workflow run id in telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "existing_dismissed=true") {
+		t.Fatalf("expected previous dismissed marker in telemetry, got %q", logs)
+	}
+	if !strings.Contains(logs, "run_id=gwf-new") {
+		t.Fatalf("expected target run id in telemetry, got %q", logs)
 	}
 }
 

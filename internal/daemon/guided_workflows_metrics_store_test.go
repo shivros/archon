@@ -119,7 +119,7 @@ func TestNewGuidedWorkflowRunServiceRestoresPersistedMetrics(t *testing.T) {
 	cfg.GuidedWorkflows.Enabled = boolPtr(true)
 	service := newGuidedWorkflowRunService(cfg, &Stores{AppState: appStateStore}, nil, nil, nil)
 
-	metricsProvider, ok := any(service).(guidedWorkflowRunMetricsProvider)
+	metricsProvider, ok := any(service).(GuidedWorkflowRunMetricsService)
 	if !ok {
 		t.Fatalf("expected run service metrics provider")
 	}

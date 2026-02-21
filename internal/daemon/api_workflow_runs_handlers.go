@@ -5,19 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"control/internal/guidedworkflows"
 	"control/internal/logging"
 )
-
-type guidedWorkflowRunMetricsProvider interface {
-	GetRunMetrics(ctx context.Context) (guidedworkflows.RunMetricsSnapshot, error)
-}
-
-type guidedWorkflowRunMetricsResetter interface {
-	ResetRunMetrics(ctx context.Context) (guidedworkflows.RunMetricsSnapshot, error)
-}
 
 func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 	service := a.workflowRunService()
@@ -41,6 +34,7 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
 			return
 		}
+		a.logWorkflowRunsListTelemetry(includeDismissed, runs)
 		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 		return
 	case http.MethodPost:
@@ -94,12 +88,12 @@ func (a *API) WorkflowRunMetricsEndpoint(w http.ResponseWriter, r *http.Request)
 		writeServiceError(w, unavailableError("guided workflow run service not available", nil))
 		return
 	}
-	metricsProvider, ok := any(service).(guidedWorkflowRunMetricsProvider)
-	if !ok {
+	metricsService := a.workflowRunMetricsService()
+	if metricsService == nil {
 		writeServiceError(w, unavailableError("guided workflow metrics are not available", nil))
 		return
 	}
-	metrics, err := metricsProvider.GetRunMetrics(r.Context())
+	metrics, err := metricsService.GetRunMetrics(r.Context())
 	if err != nil {
 		writeServiceError(w, toGuidedWorkflowServiceError(err))
 		return
@@ -117,8 +111,8 @@ func (a *API) WorkflowRunMetricsResetEndpoint(w http.ResponseWriter, r *http.Req
 		writeServiceError(w, unavailableError("guided workflow run service not available", nil))
 		return
 	}
-	resetter, ok := any(service).(guidedWorkflowRunMetricsResetter)
-	if !ok {
+	resetter := a.workflowRunMetricsResetService()
+	if resetter == nil {
 		writeServiceError(w, unavailableError("guided workflow metrics reset is not available", nil))
 		return
 	}
@@ -154,110 +148,116 @@ func (a *API) WorkflowRunByID(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
 			return
 		}
+		a.logWorkflowRunFetchTelemetry(run)
 		writeJSON(w, http.StatusOK, run)
 		return
 	}
 
 	action := strings.TrimSpace(parts[1])
-	switch action {
-	case "timeline":
-		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		events, err := service.GetRunTimeline(r.Context(), id)
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"timeline": events})
+	route, ok := a.workflowRunActionRoutes()[action]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
-	case "start":
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		run, err := service.StartRun(r.Context(), id)
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		a.publishGuidedWorkflowDecisionNotification(run)
-		writeJSON(w, http.StatusOK, run)
+	}
+	if r.Method != route.method {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
-	case "pause":
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		run, err := service.PauseRun(r.Context(), id)
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, run)
-		return
-	case "resume":
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		run, err := service.ResumeRun(r.Context(), id)
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		a.publishGuidedWorkflowDecisionNotification(run)
-		writeJSON(w, http.StatusOK, run)
-		return
-	case "dismiss":
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		run, err := service.DismissRun(r.Context(), id)
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, run)
-		return
-	case "undismiss":
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		run, err := service.UndismissRun(r.Context(), id)
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, run)
-		return
-	case "decision":
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		var req WorkflowRunDecisionRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	}
+	payload, err := route.handle(r.Context(), r, id, service)
+	if err != nil {
+		if errors.Is(err, errWorkflowRunInvalidJSONBody) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
 			return
 		}
-		run, err := service.HandleDecision(r.Context(), id, guidedworkflows.DecisionActionRequest{
-			Action:     req.Action,
-			DecisionID: strings.TrimSpace(req.DecisionID),
-			Note:       strings.TrimSpace(req.Note),
-		})
-		if err != nil {
-			writeServiceError(w, toGuidedWorkflowServiceError(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, run)
+		writeServiceError(w, toGuidedWorkflowServiceError(err))
 		return
-	default:
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+type workflowRunActionRoute struct {
+	method string
+	handle func(context.Context, *http.Request, string, GuidedWorkflowRunService) (any, error)
+}
+
+var errWorkflowRunInvalidJSONBody = errors.New("invalid json body")
+
+func (a *API) workflowRunActionRoutes() map[string]workflowRunActionRoute {
+	return map[string]workflowRunActionRoute{
+		"timeline": {
+			method: http.MethodGet,
+			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				events, err := service.GetRunTimeline(ctx, runID)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"timeline": events}, nil
+			},
+		},
+		"start": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				run, err := service.StartRun(ctx, runID)
+				if err != nil {
+					return nil, err
+				}
+				a.publishGuidedWorkflowDecisionNotification(run)
+				return run, nil
+			},
+		},
+		"pause": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				return service.PauseRun(ctx, runID)
+			},
+		},
+		"resume": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				run, err := service.ResumeRun(ctx, runID)
+				if err != nil {
+					return nil, err
+				}
+				a.publishGuidedWorkflowDecisionNotification(run)
+				return run, nil
+			},
+		},
+		"dismiss": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				run, err := service.DismissRun(ctx, runID)
+				if err != nil {
+					return nil, err
+				}
+				a.syncWorkflowSessionVisibility(run, true)
+				return run, nil
+			},
+		},
+		"undismiss": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				run, err := service.UndismissRun(ctx, runID)
+				if err != nil {
+					return nil, err
+				}
+				a.syncWorkflowSessionVisibility(run, false)
+				return run, nil
+			},
+		},
+		"decision": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, r *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				var req WorkflowRunDecisionRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					return nil, errWorkflowRunInvalidJSONBody
+				}
+				return service.HandleDecision(ctx, runID, guidedworkflows.DecisionActionRequest{
+					Action:     req.Action,
+					DecisionID: strings.TrimSpace(req.DecisionID),
+					Note:       strings.TrimSpace(req.Note),
+				})
+			},
+		},
 	}
 }
 
@@ -270,6 +270,182 @@ func (a *API) publishGuidedWorkflowDecisionNotification(run *guidedworkflows.Wor
 		return
 	}
 	a.Notifier.Publish(event)
+}
+
+func (a *API) syncWorkflowSessionVisibility(run *guidedworkflows.WorkflowRun, dismissed bool) {
+	if a == nil || run == nil {
+		return
+	}
+	visibility := a.workflowSessionVisibilityService()
+	if visibility == nil {
+		syncer := a.workflowRunSessionVisibilitySyncer()
+		if syncer == nil {
+			return
+		}
+		visibility = syncer
+	}
+	visibility.SyncWorkflowRunSessionVisibility(run, dismissed)
+}
+
+func (a *API) syncWorkflowRunPrimarySessionVisibility(ctx context.Context, run *guidedworkflows.WorkflowRun, dismissed bool) error {
+	syncer := a.workflowRunSessionVisibilitySyncer()
+	if syncer == nil {
+		return nil
+	}
+	return syncer.syncWorkflowRunPrimarySessionVisibility(ctx, run, dismissed)
+}
+
+func (a *API) syncWorkflowLinkedSessionDismissal(ctx context.Context, run *guidedworkflows.WorkflowRun, dismissed bool) error {
+	syncer := a.workflowRunSessionVisibilitySyncer()
+	if syncer == nil {
+		return nil
+	}
+	return syncer.syncWorkflowLinkedSessionDismissal(ctx, run, dismissed)
+}
+
+func (a *API) workflowRunSessionVisibilitySyncer() *workflowRunSessionVisibilitySyncService {
+	if a == nil {
+		return nil
+	}
+	if syncer, ok := a.workflowSessionVisibilityService().(*workflowRunSessionVisibilitySyncService); ok {
+		return syncer
+	}
+	if a.Stores == nil || a.Stores.SessionMeta == nil {
+		return nil
+	}
+	return &workflowRunSessionVisibilitySyncService{
+		sessionMeta: a.Stores.SessionMeta,
+		logger:      a.Logger,
+		async:       false,
+	}
+}
+
+func (a *API) logWorkflowRunsListTelemetry(includeDismissed bool, runs []*guidedworkflows.WorkflowRun) {
+	if a == nil || a.Logger == nil {
+		return
+	}
+	total := 0
+	dismissed := 0
+	missingAllContext := 0
+	missingWorkspace := 0
+	missingWorktree := 0
+	missingSession := 0
+	statusCounts := map[string]int{}
+	sampleIDs := make([]string, 0, 10)
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		total++
+		runID := strings.TrimSpace(run.ID)
+		if runID != "" && len(sampleIDs) < 10 {
+			sampleIDs = append(sampleIDs, runID)
+		}
+		if run.DismissedAt != nil {
+			dismissed++
+		}
+		status := strings.TrimSpace(string(run.Status))
+		if status == "" {
+			status = "unknown"
+		}
+		statusCounts[status]++
+		workspaceID := strings.TrimSpace(run.WorkspaceID)
+		worktreeID := strings.TrimSpace(run.WorktreeID)
+		sessionID := strings.TrimSpace(run.SessionID)
+		if workspaceID == "" {
+			missingWorkspace++
+		}
+		if worktreeID == "" {
+			missingWorktree++
+		}
+		if sessionID == "" {
+			missingSession++
+		}
+		if workspaceID == "" && worktreeID == "" && sessionID == "" {
+			missingAllContext++
+			a.Logger.Warn("guided_workflow_run_list_missing_context",
+				logging.F("run_id", runID),
+				logging.F("status", status),
+				logging.F("dismissed", run.DismissedAt != nil),
+			)
+		}
+	}
+	a.Logger.Info("guided_workflow_runs_listed",
+		logging.F("include_dismissed", includeDismissed),
+		logging.F("count", total),
+		logging.F("dismissed", dismissed),
+		logging.F("missing_all_context", missingAllContext),
+		logging.F("missing_workspace", missingWorkspace),
+		logging.F("missing_worktree", missingWorktree),
+		logging.F("missing_session", missingSession),
+		logging.F("status_counts", formatWorkflowStatusCounts(statusCounts)),
+		logging.F("sample_run_ids", sampleIDs),
+	)
+}
+
+func (a *API) logWorkflowRunFetchTelemetry(run *guidedworkflows.WorkflowRun) {
+	if a == nil || a.Logger == nil || run == nil {
+		return
+	}
+	runID := strings.TrimSpace(run.ID)
+	status := strings.TrimSpace(string(run.Status))
+	if status == "" {
+		status = "unknown"
+	}
+	workspaceID := strings.TrimSpace(run.WorkspaceID)
+	worktreeID := strings.TrimSpace(run.WorktreeID)
+	sessionID := strings.TrimSpace(run.SessionID)
+	a.Logger.Info("guided_workflow_run_fetched",
+		logging.F("run_id", runID),
+		logging.F("status", status),
+		logging.F("dismissed", run.DismissedAt != nil),
+		logging.F("workspace_id", workspaceID),
+		logging.F("worktree_id", worktreeID),
+		logging.F("session_id", sessionID),
+		logging.F("missing_all_context", workspaceID == "" && worktreeID == "" && sessionID == ""),
+	)
+}
+
+func formatWorkflowStatusCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(counts))
+	for status := range counts {
+		status = strings.TrimSpace(status)
+		if status == "" {
+			status = "unknown"
+		}
+		keys = append(keys, status)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, status := range keys {
+		parts = append(parts, status+":"+itoa(counts[status]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func itoa(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	negative := value < 0
+	if negative {
+		value = -value
+	}
+	buf := [32]byte{}
+	i := len(buf)
+	for value > 0 {
+		i--
+		buf[i] = byte('0' + (value % 10))
+		value /= 10
+	}
+	if negative {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 func toGuidedWorkflowServiceError(err error) error {

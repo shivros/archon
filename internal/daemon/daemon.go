@@ -158,6 +158,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.Notifier = eventPublisher
 	api.GuidedWorkflows = guided
 	api.WorkflowRuns = workflowRuns
+	api.WorkflowSessionVisibility = newWorkflowRunSessionVisibilitySyncService(d.stores, d.logger)
+	if metrics, ok := any(workflowRuns).(GuidedWorkflowRunMetricsService); ok {
+		api.WorkflowRunMetrics = metrics
+	}
+	if reset, ok := any(workflowRuns).(GuidedWorkflowRunMetricsResetService); ok {
+		api.WorkflowRunMetricsReset = reset
+	}
 	api.WorkflowTemplates = workflowRuns
 	api.WorkflowPolicy = newGuidedWorkflowPolicyResolver(coreCfg)
 	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg)
@@ -219,12 +226,17 @@ func logGuidedWorkflowRunReconciliationOutcome(
 		logger.Warn("guided_workflow_runs_reconcile_failed", logging.F("error", err))
 		return
 	}
-	if result.CreatedSnapshots <= 0 && result.FailedWrites <= 0 {
+	if result.CreatedSnapshots <= 0 && result.FailedWrites <= 0 && result.SessionMetaWithRunID <= 0 {
 		return
 	}
 	logger.Info("guided_workflow_runs_reconciled_from_session_meta",
 		logging.F("created_runs", result.CreatedSnapshots),
 		logging.F("failed_writes", result.FailedWrites),
+		logging.F("existing_snapshots", result.ExistingSnapshots),
+		logging.F("session_meta_scanned", result.SessionMetaScanned),
+		logging.F("session_meta_with_run_id", result.SessionMetaWithRunID),
+		logging.F("session_meta_dismissed", result.SessionMetaDismissed),
+		logging.F("created_from_dismissed_meta", result.CreatedFromDismissedMeta),
 		logging.F("skipped_existing", result.SkippedExisting),
 		logging.F("skipped_empty_run_id", result.SkippedEmptyRunID),
 		logging.F("skipped_by_policy", result.SkippedByPolicy),
