@@ -15,6 +15,7 @@ import (
 type SidebarController struct {
 	list                  list.Model
 	delegate              *sidebarDelegate
+	selectionDecider      sidebarSelectionDecisionService
 	selectedKey           string
 	scrollOffset          int
 	viewedSessionActivity map[string]string
@@ -56,6 +57,7 @@ func NewSidebarController() *SidebarController {
 	return &SidebarController{
 		list:                  mlist,
 		delegate:              delegate,
+		selectionDecider:      NewDefaultSidebarSelectionDecisionService(),
 		viewedSessionActivity: map[string]string{},
 		unreadSessions:        map[string]struct{}{},
 		expandByDefault:       true,
@@ -835,6 +837,10 @@ func (c *SidebarController) IsWorkflowExpanded(id string) bool {
 }
 
 func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, workflowRuns []*guidedworkflows.WorkflowRun, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string, showDismissed bool) *sidebarItem {
+	return c.ApplyWithReason(workspaces, worktrees, sessions, workflowRuns, meta, activeWorkspaceID, activeWorktreeID, showDismissed, sidebarApplyReasonUser)
+}
+
+func (c *SidebarController) ApplyWithReason(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, sessions []*types.Session, workflowRuns []*guidedworkflows.WorkflowRun, meta map[string]*types.SessionMeta, activeWorkspaceID, activeWorktreeID string, showDismissed bool, reason sidebarApplyReason) *sidebarItem {
 	viewAnchorKey := c.viewAnchorKey()
 	viewAnchorOffset := c.scrollOffset
 	c.workspacesSnapshot = workspaces
@@ -861,15 +867,9 @@ func (c *SidebarController) Apply(workspaces []*types.Workspace, worktrees map[s
 		c.updateUnreadSessions(sessions, meta)
 		return nil
 	}
-	if !sidebarItemsContainKey(items, selectedKey) {
-		selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
-		if selectedIdx < 0 || selectedIdx >= len(items) {
-			selectedIdx = 0
-		}
-		if entry, ok := items[selectedIdx].(*sidebarItem); ok && entry != nil {
-			c.selectedKey = entry.key()
-		}
-	}
+	decision := c.resolveSelectionDecision(items, selectedKey, activeWorkspaceID, activeWorktreeID, reason)
+	c.applySelectionDecision(decision)
+	items = c.list.Items()
 	if !c.restoreScrollAnchor(items, viewAnchorKey, viewAnchorOffset) {
 		c.clampScrollOffset()
 	}
@@ -903,6 +903,61 @@ func (c *SidebarController) SetRecentsState(state sidebarRecentsState) bool {
 	c.recentsState = state
 	c.rebuild(c.SelectedKey())
 	return true
+}
+
+func (c *SidebarController) selectionDecisionServiceOrDefault() sidebarSelectionDecisionService {
+	if c == nil || c.selectionDecider == nil {
+		return NewDefaultSidebarSelectionDecisionService()
+	}
+	return c.selectionDecider
+}
+
+func (c *SidebarController) resolveSelectionDecision(items []list.Item, selectedKey, activeWorkspaceID, activeWorktreeID string, reason sidebarApplyReason) sidebarSelectionDecision {
+	if c == nil || len(items) == 0 {
+		return sidebarSelectionDecision{Reason: sidebarSelectionReasonEmpty}
+	}
+	decider := c.selectionDecisionServiceOrDefault()
+	if decider == nil {
+		return sidebarSelectionDecision{Reason: sidebarSelectionReasonEmpty}
+	}
+	return decider.Decide(sidebarSelectionDecisionInput{
+		Items:             items,
+		SelectedKey:       selectedKey,
+		ActiveWorkspaceID: activeWorkspaceID,
+		ActiveWorktreeID:  activeWorktreeID,
+		Reason:            reason,
+		Lookup:            c,
+	})
+}
+
+func (c *SidebarController) applySelectionDecision(decision sidebarSelectionDecision) {
+	if c == nil {
+		return
+	}
+	for _, key := range decision.Candidates {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if c.SelectByKey(key) {
+			return
+		}
+	}
+	if len(decision.Candidates) == 0 {
+		return
+	}
+	items := c.list.Items()
+	if len(items) == 0 {
+		c.selectedKey = ""
+		return
+	}
+	if entry, ok := items[0].(*sidebarItem); ok && entry != nil {
+		c.selectedKey = entry.key()
+	}
+}
+
+func (c *SidebarController) HasSession(sessionID string) bool {
+	return c.canSelectSessionID(strings.TrimSpace(sessionID))
 }
 
 func (c *SidebarController) syncDelegate() {
@@ -1060,17 +1115,9 @@ func (c *SidebarController) rebuild(selectedKey string) {
 		activeWorkspaceID = c.delegate.activeWorkspaceID
 		activeWorktreeID = c.delegate.activeWorktreeID
 	}
-	if !sidebarItemsContainKey(items, selectedKey) {
-		selectedIdx := selectSidebarIndex(items, selectedKey, activeWorkspaceID, activeWorktreeID)
-		if selectedIdx < 0 || selectedIdx >= len(items) {
-			selectedIdx = 0
-		}
-		if entry, ok := items[selectedIdx].(*sidebarItem); ok && entry != nil {
-			c.selectedKey = entry.key()
-		}
-	} else {
-		c.selectedKey = selectedKey
-	}
+	decision := c.resolveSelectionDecision(items, selectedKey, activeWorkspaceID, activeWorktreeID, sidebarApplyReasonUser)
+	c.applySelectionDecision(decision)
+	items = c.list.Items()
 	if !c.restoreScrollAnchor(items, viewAnchorKey, viewAnchorOffset) {
 		c.clampScrollOffset()
 	}

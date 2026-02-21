@@ -133,6 +133,8 @@ type Model struct {
 	sessions                            []*types.Session
 	sessionMeta                         map[string]*types.SessionMeta
 	workflowRuns                        []*guidedworkflows.WorkflowRun
+	workflowRunStatusIndex              map[string]guidedworkflows.WorkflowRunStatus
+	workflowRunContextIndex             map[string]guidedWorkflowLaunchContext
 	providerOptions                     map[string]*types.ProviderOptionCatalog
 	appState                            types.AppState
 	hasAppState                         bool
@@ -394,6 +396,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		groups:                              []*types.WorkspaceGroup{},
 		worktrees:                           map[string][]*types.Worktree{},
 		sessionMeta:                         map[string]*types.SessionMeta{},
+		workflowRunStatusIndex:              map[string]guidedworkflows.WorkflowRunStatus{},
+		workflowRunContextIndex:             map[string]guidedWorkflowLaunchContext{},
 		providerOptions:                     map[string]*types.ProviderOptionCatalog{},
 		contentRaw:                          "No sessions.",
 		contentEsc:                          false,
@@ -1143,12 +1147,73 @@ func (m *Model) setSessionsAndMeta(sessions []*types.Session, meta map[string]*t
 	m.invalidateSidebarProjection(sidebarProjectionChangeSessions)
 }
 
-func (m *Model) setWorkflowRunsData(runs []*guidedworkflows.WorkflowRun) {
+func (m *Model) setWorkflowRunsData(runs []*guidedworkflows.WorkflowRun) bool {
 	if m == nil {
-		return
+		return false
 	}
-	m.workflowRuns = runs
+	appStateChanged := false
+	existingByID := make(map[string]*guidedworkflows.WorkflowRun, len(m.workflowRuns))
+	for _, existing := range m.workflowRuns {
+		if existing == nil {
+			continue
+		}
+		runID := strings.TrimSpace(existing.ID)
+		if runID == "" {
+			continue
+		}
+		existingByID[runID] = existing
+	}
+	seen := make(map[string]struct{}, len(runs))
+	merged := make([]*guidedworkflows.WorkflowRun, 0, len(runs))
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		next := m.enrichWorkflowRunContext(run, existingByID[runID])
+		if next == nil {
+			continue
+		}
+		if run.DismissedAt != nil && !m.showDismissed {
+			if m.addDismissedMissingWorkflowRunID(runID) {
+				appStateChanged = true
+			}
+		} else {
+			if m.removeDismissedMissingWorkflowRunID(runID) {
+				appStateChanged = true
+			}
+		}
+		merged = append(merged, next)
+		seen[runID] = struct{}{}
+	}
+	for runID, existing := range existingByID {
+		if existing == nil {
+			continue
+		}
+		if _, ok := seen[runID]; ok {
+			continue
+		}
+		if existing.DismissedAt != nil && !m.showDismissed {
+			if m.addDismissedMissingWorkflowRunID(runID) {
+				appStateChanged = true
+			}
+			continue
+		}
+		if !m.workflowRunShouldPersistAcrossRefresh(runID) {
+			continue
+		}
+		next := m.enrichWorkflowRunContext(existing, existing)
+		if next == nil {
+			continue
+		}
+		merged = append(merged, next)
+	}
+	m.workflowRuns = merged
 	m.invalidateSidebarProjection(sidebarProjectionChangeWorkflow)
+	return appStateChanged
 }
 
 func (m *Model) workflowRunsForSidebar() []*guidedworkflows.WorkflowRun {
@@ -1187,6 +1252,11 @@ func (m *Model) upsertWorkflowRun(run *guidedworkflows.WorkflowRun) {
 	if runID == "" {
 		return
 	}
+	normalized := m.enrichWorkflowRunContext(run, nil)
+	if normalized == nil {
+		return
+	}
+	applied := normalized
 	out := make([]*guidedworkflows.WorkflowRun, 0, max(1, len(m.workflowRuns)))
 	replaced := false
 	for _, existing := range m.workflowRuns {
@@ -1194,17 +1264,171 @@ func (m *Model) upsertWorkflowRun(run *guidedworkflows.WorkflowRun) {
 			continue
 		}
 		if strings.TrimSpace(existing.ID) == runID {
-			out = append(out, run)
+			merged := m.enrichWorkflowRunContext(normalized, existing)
+			out = append(out, merged)
+			applied = merged
 			replaced = true
 			continue
 		}
 		out = append(out, existing)
 	}
 	if !replaced {
-		out = append(out, run)
+		out = append(out, normalized)
 	}
 	m.workflowRuns = out
+	m.recordWorkflowRunState(applied)
 	m.invalidateSidebarProjection(sidebarProjectionChangeWorkflow)
+}
+
+func (m *Model) enrichWorkflowRunContext(run *guidedworkflows.WorkflowRun, existing *guidedworkflows.WorkflowRun) *guidedworkflows.WorkflowRun {
+	if m == nil || run == nil {
+		return nil
+	}
+	runID := strings.TrimSpace(run.ID)
+	if runID == "" {
+		return nil
+	}
+	merged := cloneWorkflowRun(run)
+	if merged == nil {
+		merged = run
+	}
+	if existing != nil {
+		merged = mergeWorkflowRunForUpsert(merged, existing)
+	}
+	workspaceID, worktreeID, sessionID := m.workflowRunContextFromSessions(runID)
+	if strings.TrimSpace(merged.WorkspaceID) == "" {
+		merged.WorkspaceID = workspaceID
+	}
+	if strings.TrimSpace(merged.WorktreeID) == "" {
+		merged.WorktreeID = worktreeID
+	}
+	if strings.TrimSpace(merged.SessionID) == "" {
+		merged.SessionID = sessionID
+	}
+	if m.workflowRunContextIndex != nil {
+		if hint, ok := m.workflowRunContextIndex[runID]; ok {
+			if strings.TrimSpace(merged.WorkspaceID) == "" {
+				merged.WorkspaceID = strings.TrimSpace(hint.workspaceID)
+			}
+			if strings.TrimSpace(merged.WorktreeID) == "" {
+				merged.WorktreeID = strings.TrimSpace(hint.worktreeID)
+			}
+			if strings.TrimSpace(merged.SessionID) == "" {
+				merged.SessionID = strings.TrimSpace(hint.sessionID)
+			}
+		}
+	}
+	m.recordWorkflowRunState(merged)
+	return merged
+}
+
+func (m *Model) recordWorkflowRunState(run *guidedworkflows.WorkflowRun) {
+	if m == nil || run == nil {
+		return
+	}
+	runID := strings.TrimSpace(run.ID)
+	if runID == "" {
+		return
+	}
+	if m.workflowRunStatusIndex == nil {
+		m.workflowRunStatusIndex = map[string]guidedworkflows.WorkflowRunStatus{}
+	}
+	if status := strings.TrimSpace(string(run.Status)); status != "" {
+		m.workflowRunStatusIndex[runID] = run.Status
+	}
+	if m.workflowRunContextIndex == nil {
+		m.workflowRunContextIndex = map[string]guidedWorkflowLaunchContext{}
+	}
+	hint := m.workflowRunContextIndex[runID]
+	workspaceID := strings.TrimSpace(run.WorkspaceID)
+	worktreeID := strings.TrimSpace(run.WorktreeID)
+	sessionID := strings.TrimSpace(run.SessionID)
+	if workspaceID != "" {
+		hint.workspaceID = workspaceID
+	}
+	if worktreeID != "" {
+		hint.worktreeID = worktreeID
+	}
+	if sessionID != "" {
+		hint.sessionID = sessionID
+	}
+	if strings.TrimSpace(hint.workspaceID) != "" || strings.TrimSpace(hint.worktreeID) != "" || strings.TrimSpace(hint.sessionID) != "" {
+		m.workflowRunContextIndex[runID] = hint
+	}
+}
+
+func (m *Model) workflowRunShouldPersistAcrossRefresh(runID string) bool {
+	if m == nil {
+		return false
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return false
+	}
+	if m.guidedWorkflow != nil && strings.TrimSpace(m.guidedWorkflow.RunID()) == runID {
+		return true
+	}
+	if item := m.selectedItem(); item != nil && strings.TrimSpace(item.workflowRunID()) == runID {
+		return true
+	}
+	if len(m.sessionMeta) == 0 {
+		return false
+	}
+	for _, meta := range m.sessionMeta {
+		if meta == nil || strings.TrimSpace(meta.WorkflowRunID) != runID {
+			continue
+		}
+		if meta.DismissedAt != nil && !m.showDismissed {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func mergeWorkflowRunForUpsert(incoming *guidedworkflows.WorkflowRun, existing *guidedworkflows.WorkflowRun) *guidedworkflows.WorkflowRun {
+	if incoming == nil {
+		return nil
+	}
+	if existing == nil {
+		return incoming
+	}
+	merged := cloneWorkflowRun(incoming)
+	if merged == nil {
+		merged = incoming
+	}
+	if strings.TrimSpace(merged.WorkspaceID) == "" {
+		merged.WorkspaceID = strings.TrimSpace(existing.WorkspaceID)
+	}
+	if strings.TrimSpace(merged.WorktreeID) == "" {
+		merged.WorktreeID = strings.TrimSpace(existing.WorktreeID)
+	}
+	if strings.TrimSpace(merged.SessionID) == "" {
+		merged.SessionID = strings.TrimSpace(existing.SessionID)
+	}
+	return merged
+}
+
+func (m *Model) workflowRunStatus(runID string) (guidedworkflows.WorkflowRunStatus, bool) {
+	if m == nil {
+		return "", false
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return "", false
+	}
+	for _, run := range m.workflowRuns {
+		if run == nil || strings.TrimSpace(run.ID) != runID {
+			continue
+		}
+		return run.Status, true
+	}
+	if m.workflowRunStatusIndex != nil {
+		if status, ok := m.workflowRunStatusIndex[runID]; ok && strings.TrimSpace(string(status)) != "" {
+			return status, true
+		}
+	}
+	return "", false
 }
 
 func (m *Model) dismissWorkflowRunLocally(runID string) bool {
@@ -1431,6 +1655,10 @@ func (m *Model) handleMenuGroupChange(previous []string) bool {
 }
 
 func (m *Model) applySidebarItems() {
+	m.applySidebarItemsWithReason(sidebarApplyReasonUser)
+}
+
+func (m *Model) applySidebarItemsWithReason(reason sidebarApplyReason) {
 	if m.sidebar == nil {
 		m.resetStream()
 		if m.mode != uiModeGuidedWorkflow {
@@ -1452,7 +1680,17 @@ func (m *Model) applySidebarItems() {
 		ActiveWorkspaceIDs: append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...),
 	})
 	m.sidebar.recentsState = m.sidebarRecentsState(projection.Sessions)
-	item := m.sidebar.Apply(projection.Workspaces, m.worktrees, projection.Sessions, projection.WorkflowRuns, m.sessionMeta, m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID, m.showDismissed)
+	item := m.sidebar.ApplyWithReason(
+		projection.Workspaces,
+		m.worktrees,
+		projection.Sessions,
+		projection.WorkflowRuns,
+		m.sessionMeta,
+		m.appState.ActiveWorkspaceID,
+		m.appState.ActiveWorktreeID,
+		m.showDismissed,
+		reason,
+	)
 	m.sidebarProjectionApplied = m.sidebarProjectionRevision
 	if item == nil {
 		m.resetStream()
@@ -1533,13 +1771,17 @@ func (m *Model) sidebarRecentsState(visibleSessions []*types.Session) sidebarRec
 }
 
 func (m *Model) applySidebarItemsIfDirty() {
+	m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonUser)
+}
+
+func (m *Model) applySidebarItemsIfDirtyWithReason(reason sidebarApplyReason) {
 	if m == nil {
 		return
 	}
 	if m.sidebarProjectionApplied == m.sidebarProjectionRevision {
 		return
 	}
-	m.applySidebarItems()
+	m.applySidebarItemsWithReason(reason)
 }
 
 func (m *Model) sidebarWidth() int {

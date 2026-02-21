@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -288,5 +289,97 @@ func TestSessionsWithMetaMsgSkipsReloadWhenFollowPaused(t *testing.T) {
 	}
 	if m.follow {
 		t.Fatalf("expected follow to remain paused")
+	}
+}
+
+func TestSessionsWithMetaMsgPreservesSelectionWhenSessionBecomesWorkflowNested(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected s1 to be selected")
+	}
+
+	now := time.Now().UTC()
+	handled, _ := m.reduceStateMessages(workflowRunsMsg{
+		runs: []*guidedworkflows.WorkflowRun{
+			{
+				ID:           "gwf-1",
+				WorkspaceID:  "ws1",
+				Status:       guidedworkflows.WorkflowRunStatusRunning,
+				TemplateName: "SOLID",
+				CreatedAt:    now,
+			},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected workflowRunsMsg to be handled")
+	}
+	if m.sidebar == nil {
+		t.Fatalf("expected sidebar")
+	}
+	m.sidebar.SetWorkflowExpanded("gwf-1", false)
+
+	current := m.sessions[0]
+	handled, _ = m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: []*types.Session{
+			{
+				ID:        current.ID,
+				Provider:  current.Provider,
+				Status:    current.Status,
+				CreatedAt: current.CreatedAt,
+				Title:     current.Title,
+			},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:     "s1",
+				WorkspaceID:   "ws1",
+				WorkflowRunID: "gwf-1",
+			},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if got := m.selectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1 after nesting refresh, got %q", got)
+	}
+	if !m.sidebar.IsWorkflowExpanded("gwf-1") {
+		t.Fatalf("expected workflow parent to auto-expand for selected session")
+	}
+	item := m.selectedItem()
+	if item == nil || !item.isSession() || item.session == nil || item.session.ID != "s1" {
+		t.Fatalf("expected selected item to remain session s1, got %#v", item)
+	}
+}
+
+func TestWorkflowRunsMsgSchedulesAppStateSaveWhenDismissedRunHidden(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.stateAPI = &phase1AppStateSyncStub{}
+	m.hasAppState = true
+	now := time.Now().UTC()
+	dismissedAt := now.Add(time.Minute)
+
+	handled, cmd := m.reduceStateMessages(workflowRunsMsg{
+		runs: []*guidedworkflows.WorkflowRun{
+			{
+				ID:          "gwf-hidden",
+				WorkspaceID: "ws1",
+				Status:      guidedworkflows.WorkflowRunStatusCompleted,
+				CreatedAt:   now,
+				DismissedAt: &dismissedAt,
+			},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected workflowRunsMsg to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected app state save command")
+	}
+	if _, ok := cmd().(appStateSaveFlushMsg); !ok {
+		t.Fatalf("expected appStateSaveFlushMsg, got %T", cmd())
+	}
+	if len(m.appState.DismissedMissingWorkflowRunIDs) != 1 || m.appState.DismissedMissingWorkflowRunIDs[0] != "gwf-hidden" {
+		t.Fatalf("expected dismissed hidden workflow id persisted, got %#v", m.appState.DismissedMissingWorkflowRunIDs)
 	}
 }

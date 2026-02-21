@@ -73,21 +73,47 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.renderGuidedWorkflowContent()
 			return true, nil
 		}
-		m.upsertWorkflowRun(msg.run)
-		m.applySidebarItemsIfDirty()
-		m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
+		previousStatus := guidedworkflows.WorkflowRunStatus("")
+		previousStatusKnown := false
 		if msg.run != nil {
+			previousStatus, previousStatusKnown = m.workflowRunStatus(strings.TrimSpace(msg.run.ID))
+		}
+		appStateSaveCmd := tea.Cmd(nil)
+		if msg.run != nil {
+			runID := strings.TrimSpace(msg.run.ID)
+			if runID != "" {
+				if msg.run.DismissedAt != nil && !m.showDismissed {
+					if m.addDismissedMissingWorkflowRunID(runID) {
+						appStateSaveCmd = m.requestAppStateSaveCmd()
+					}
+				} else {
+					if m.removeDismissedMissingWorkflowRunID(runID) {
+						appStateSaveCmd = m.requestAppStateSaveCmd()
+					}
+				}
+			}
+		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
+		m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
+		if msg.run != nil && (msg.run.DismissedAt == nil || m.showDismissed) {
 			switch msg.run.Status {
 			case guidedworkflows.WorkflowRunStatusPaused:
-				m.setStatusInfo("guided workflow paused: decision needed")
+				if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusPaused {
+					m.setStatusInfo("guided workflow paused: decision needed")
+				}
 			case guidedworkflows.WorkflowRunStatusCompleted:
-				m.setStatusInfo("guided workflow completed")
+				if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusCompleted {
+					m.setStatusInfo("guided workflow completed")
+				}
 			case guidedworkflows.WorkflowRunStatusFailed:
-				m.setStatusError("guided workflow failed")
+				if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusFailed {
+					m.setStatusError("guided workflow failed")
+				}
 			}
 		}
 		m.renderGuidedWorkflowContent()
-		return true, nil
+		return true, appStateSaveCmd
 	case workflowRunDecisionMsg:
 		if m.guidedWorkflow == nil {
 			return true, nil
@@ -129,8 +155,16 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			runID = strings.TrimSpace(msg.run.ID)
 		}
 		appStateSaveCmd := tea.Cmd(nil)
-		if runID != "" && m.removeDismissedMissingWorkflowRunID(runID) {
-			appStateSaveCmd = m.requestAppStateSaveCmd()
+		if runID != "" {
+			if msg.dismissed {
+				if m.addDismissedMissingWorkflowRunID(runID) {
+					appStateSaveCmd = m.requestAppStateSaveCmd()
+				}
+			} else {
+				if m.removeDismissedMissingWorkflowRunID(runID) {
+					appStateSaveCmd = m.requestAppStateSaveCmd()
+				}
+			}
 		}
 		m.applySidebarItemsIfDirty()
 		if msg.dismissed {
@@ -543,8 +577,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setBackgroundError("guided workflow runs error: " + msg.err.Error())
 			return true, nil
 		}
-		m.setWorkflowRunsData(msg.runs)
-		m.applySidebarItemsIfDirty()
+		appStateChanged := m.setWorkflowRunsData(msg.runs)
+		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
+		if appStateChanged {
+			return true, m.requestAppStateSaveCmd()
+		}
 		return true, nil
 	case sessionsWithMetaMsg:
 		m.sessionMetaRefreshPending = false
@@ -565,7 +602,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.syncRecentsCompletionWatches()
 			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
 		}
-		m.applySidebarItemsIfDirty()
+		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
 		saveSidebarExpansionCmd := tea.Cmd(nil)
 		if m.pendingSelectID != "" && m.sidebar != nil {
 			if m.sidebar.SelectBySessionID(m.pendingSelectID) {

@@ -305,3 +305,91 @@ func TestSidebarControllerSelectByWorkflowIDAutoExpandsParent(t *testing.T) {
 		t.Fatalf("expected workspace ws1 expanded")
 	}
 }
+
+func TestSidebarControllerBackgroundApplyKeepsSessionSelectedWhenNestingUnderWorkflow(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	baseMeta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, baseMeta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") {
+		t.Fatalf("expected s1 selected before workflow nesting")
+	}
+
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning, CreatedAt: now},
+	}
+	controller.SetWorkflowExpanded("gwf-1", false)
+	nestedMeta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+	}
+	item := controller.ApplyWithReason(
+		workspaces,
+		map[string][]*types.Worktree{},
+		sessions,
+		workflows,
+		nestedMeta,
+		"ws1",
+		"",
+		false,
+		sidebarApplyReasonBackground,
+	)
+	if item == nil || !item.isSession() || item.session == nil || item.session.ID != "s1" {
+		t.Fatalf("expected session s1 to stay selected, got %#v", item)
+	}
+	if got := controller.SelectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1, got %q", got)
+	}
+	if !controller.IsWorkflowExpanded("gwf-1") {
+		t.Fatalf("expected workflow gwf-1 to auto-expand to preserve selection")
+	}
+}
+
+func TestSidebarControllerApplySelectionDecisionNilControllerNoPanic(t *testing.T) {
+	var controller *SidebarController
+	controller.applySelectionDecision(sidebarSelectionDecision{Candidates: []string{"sess:s1"}})
+}
+
+func TestSidebarControllerApplySelectionDecisionNoCandidatesKeepsSelection(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now}}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	before := controller.SelectedKey()
+	controller.applySelectionDecision(sidebarSelectionDecision{})
+	if got := controller.SelectedKey(); got != before {
+		t.Fatalf("expected selection unchanged, got %q want %q", got, before)
+	}
+}
+
+func TestSidebarControllerApplySelectionDecisionFallsBackToFirstVisibleItem(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now}}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	controller.applySelectionDecision(sidebarSelectionDecision{Candidates: []string{"sess:missing"}})
+	item := controller.SelectedItem()
+	if item == nil || item.kind != sidebarWorkspace || item.workspace == nil || item.workspace.ID != "ws1" {
+		t.Fatalf("expected fallback to first visible workspace row, got %#v", item)
+	}
+}
