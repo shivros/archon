@@ -1573,6 +1573,30 @@ func TestRunLifecycleMaxActiveRunsGuardrail(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleMaxActiveRunsDismissedRunDoesNotCount(t *testing.T) {
+	service := NewRunService(Config{Enabled: true}, WithMaxActiveRuns(1))
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun first: %v", err)
+	}
+	dismissed, err := service.DismissRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("DismissRun: %v", err)
+	}
+	if dismissed.DismissedAt == nil {
+		t.Fatalf("expected dismissed run to set dismissed_at")
+	}
+	if _, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-2",
+	}); err != nil {
+		t.Fatalf("expected dismissed run to be excluded from active limit, got %v", err)
+	}
+}
+
 func TestRunLifecycleTelemetryPersistenceRoundTrip(t *testing.T) {
 	store := &stubRunMetricsStore{
 		loadSnapshot: RunMetricsSnapshot{
@@ -2073,5 +2097,103 @@ func TestRunLifecyclePersistsSnapshotsAcrossServiceRestart(t *testing.T) {
 	}
 	if len(timeline) == 0 {
 		t.Fatalf("expected persisted timeline after restart")
+	}
+}
+
+func TestRunLifecycleRestoreRunningRunMarksInterrupted(t *testing.T) {
+	startedAt := time.Now().UTC().Add(-5 * time.Minute)
+	runID := "gwf-restart-running"
+	snapshotStore := &stubRunSnapshotStore{
+		loadSnapshots: []RunStatusSnapshot{
+			{
+				Run: &WorkflowRun{
+					ID:           runID,
+					TemplateID:   TemplateIDSolidPhaseDelivery,
+					TemplateName: "Solid Phase Delivery",
+					WorkspaceID:  "ws-1",
+					WorktreeID:   "wt-1",
+					Status:       WorkflowRunStatusRunning,
+					CreatedAt:    startedAt.Add(-2 * time.Minute),
+					StartedAt:    &startedAt,
+				},
+				Timeline: []RunTimelineEvent{
+					{At: startedAt, Type: "run_started", RunID: runID},
+				},
+			},
+		},
+	}
+
+	restarted := NewRunService(Config{Enabled: true}, WithRunSnapshotStore(snapshotStore))
+	loaded, err := restarted.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun after restart: %v", err)
+	}
+	if loaded.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected running run to be marked failed after restart, got %q", loaded.Status)
+	}
+	if loaded.CompletedAt == nil {
+		t.Fatalf("expected interrupted run to set completed_at")
+	}
+	if !strings.Contains(loaded.LastError, "interrupted by daemon restart") {
+		t.Fatalf("expected restart interruption reason, got %q", loaded.LastError)
+	}
+	timeline, err := restarted.GetRunTimeline(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline after restart: %v", err)
+	}
+	if len(timeline) == 0 || timeline[len(timeline)-1].Type != "run_interrupted" {
+		t.Fatalf("expected run_interrupted timeline event, got %#v", timeline)
+	}
+	saved, ok := snapshotStore.savedByRunID[runID]
+	if !ok || saved.Run == nil {
+		t.Fatalf("expected interrupted run snapshot to be persisted")
+	}
+	if saved.Run.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected persisted interrupted run status failed, got %q", saved.Run.Status)
+	}
+}
+
+func TestRunLifecycleRestorePausedRunPreservesState(t *testing.T) {
+	pausedAt := time.Now().UTC().Add(-3 * time.Minute)
+	runID := "gwf-restart-paused"
+	snapshotStore := &stubRunSnapshotStore{
+		loadSnapshots: []RunStatusSnapshot{
+			{
+				Run: &WorkflowRun{
+					ID:           runID,
+					TemplateID:   TemplateIDSolidPhaseDelivery,
+					TemplateName: "Solid Phase Delivery",
+					WorkspaceID:  "ws-1",
+					WorktreeID:   "wt-1",
+					Status:       WorkflowRunStatusPaused,
+					CreatedAt:    pausedAt.Add(-10 * time.Minute),
+					PausedAt:     &pausedAt,
+				},
+				Timeline: []RunTimelineEvent{
+					{At: pausedAt, Type: "run_paused", RunID: runID},
+				},
+			},
+		},
+	}
+
+	restarted := NewRunService(Config{Enabled: true}, WithRunSnapshotStore(snapshotStore))
+	loaded, err := restarted.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun after restart: %v", err)
+	}
+	if loaded.Status != WorkflowRunStatusPaused {
+		t.Fatalf("expected paused run state to be preserved, got %q", loaded.Status)
+	}
+	if loaded.CompletedAt != nil {
+		t.Fatalf("expected paused run not to be marked completed")
+	}
+	timeline, err := restarted.GetRunTimeline(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline after restart: %v", err)
+	}
+	for _, event := range timeline {
+		if event.Type == "run_interrupted" {
+			t.Fatalf("did not expect interrupted event for paused run")
+		}
 	}
 }

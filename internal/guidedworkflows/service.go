@@ -1794,6 +1794,9 @@ func (s *InMemoryRunService) activeRunsLocked() int {
 		if run == nil {
 			continue
 		}
+		if run.DismissedAt != nil {
+			continue
+		}
 		switch run.Status {
 		case WorkflowRunStatusCreated, WorkflowRunStatusRunning, WorkflowRunStatusPaused:
 			count++
@@ -1959,6 +1962,7 @@ func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	recoveredRunIDs := make([]string, 0)
 	for _, snapshot := range snapshots {
 		if snapshot.Run == nil {
 			continue
@@ -1979,9 +1983,15 @@ func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
 				timeline[i].RunID = runID
 			}
 		}
+		if s.recoverInterruptedRunLocked(run, &timeline) {
+			recoveredRunIDs = append(recoveredRunIDs, runID)
+		}
 		s.runs[runID] = run
 		s.timelines[runID] = timeline
 		s.hydrateTurnReceiptsLocked(run)
+	}
+	for _, runID := range recoveredRunIDs {
+		s.persistRunSnapshotLocked(ctx, runID)
 	}
 }
 
@@ -2002,6 +2012,38 @@ func (s *InMemoryRunService) hydrateTurnReceiptsLocked(run *WorkflowRun) {
 			s.turnSeen[turnReceiptKey(runID, turnID)] = struct{}{}
 		}
 	}
+}
+
+func (s *InMemoryRunService) recoverInterruptedRunLocked(run *WorkflowRun, timeline *[]RunTimelineEvent) bool {
+	if s == nil || run == nil {
+		return false
+	}
+	switch run.Status {
+	case WorkflowRunStatusCreated, WorkflowRunStatusRunning:
+		// These states represent in-flight work that cannot be resumed safely
+		// after daemon restart because turn progression is event-driven.
+	default:
+		return false
+	}
+	now := s.engine.now()
+	run.Status = WorkflowRunStatusFailed
+	run.CompletedAt = &now
+	run.PausedAt = nil
+	run.LastError = "workflow run interrupted by daemon restart"
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_interrupted",
+		Outcome: "failed",
+		Detail:  run.LastError,
+	})
+	appendTimelineEvent(timeline, RunTimelineEvent{
+		At:      now,
+		Type:    "run_interrupted",
+		RunID:   strings.TrimSpace(run.ID),
+		Message: run.LastError,
+	})
+	return true
 }
 
 // persistRunSnapshotLocked snapshots a run and timeline while service state is locked.
