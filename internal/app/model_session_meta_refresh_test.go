@@ -352,6 +352,113 @@ func TestSessionsWithMetaMsgPreservesSelectionWhenSessionBecomesWorkflowNested(t
 	}
 }
 
+func TestSessionsWithMetaMsgPreservesSelectedWorkflowSessionWhenRefreshTransientlyDropsIt(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	now := time.Now().UTC()
+	m.sessions = append(m.sessions, &types.Session{
+		ID:        "s2",
+		Provider:  "codex",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: now.Add(-1 * time.Minute),
+		Title:     "Other session",
+	})
+	m.sessionMeta["s2"] = &types.SessionMeta{
+		SessionID:   "s2",
+		WorkspaceID: "ws1",
+	}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: "gwf-1",
+	}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{
+		{
+			ID:           "gwf-1",
+			WorkspaceID:  "ws1",
+			Status:       guidedworkflows.WorkflowRunStatusRunning,
+			TemplateName: "SOLID",
+			CreatedAt:    now,
+		},
+	}
+	m.applySidebarItems()
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected s1 to be selected before transient refresh drop")
+	}
+
+	handled, _ := m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: []*types.Session{
+			{
+				ID:        "s2",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: now.Add(-1 * time.Minute),
+				Title:     "Other session",
+			},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "s2", WorkspaceID: "ws1"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if got := m.selectedSessionID(); got != "s1" {
+		t.Fatalf("expected selected session s1 to survive transient drop, got %q", got)
+	}
+	if !sessionSliceContainsID(m.sessions, "s1") {
+		t.Fatalf("expected selected workflow session s1 to persist in reconciled sessions")
+	}
+	meta := m.sessionMeta["s1"]
+	if meta == nil || meta.WorkflowRunID != "gwf-1" {
+		t.Fatalf("expected selected session metadata to preserve workflow linkage, got %#v", meta)
+	}
+}
+
+func TestSessionsWithMetaMsgDoesNotPreserveDroppedNonWorkflowSelection(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	now := time.Now().UTC()
+	m.sessions = append(m.sessions, &types.Session{
+		ID:        "s2",
+		Provider:  "codex",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: now.Add(-1 * time.Minute),
+		Title:     "Other session",
+	})
+	m.sessionMeta["s2"] = &types.SessionMeta{
+		SessionID:   "s2",
+		WorkspaceID: "ws1",
+	}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:   "s1",
+		WorkspaceID: "ws1",
+	}
+	m.applySidebarItems()
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected s1 to be selected before refresh")
+	}
+
+	handled, _ := m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: []*types.Session{
+			{
+				ID:        "s2",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: now.Add(-1 * time.Minute),
+				Title:     "Other session",
+			},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "s2", WorkspaceID: "ws1"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if sessionSliceContainsID(m.sessions, "s1") {
+		t.Fatalf("expected non-workflow selected session s1 not to persist when dropped")
+	}
+}
+
 func TestWorkflowRunsMsgSchedulesAppStateSaveWhenDismissedRunHidden(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.stateAPI = &phase1AppStateSyncStub{}

@@ -594,10 +594,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		previousSelection := m.selectedSessionSnapshot()
-		m.setSessionsAndMeta(msg.sessions, normalizeSessionMeta(msg.meta))
+		nextSessions, nextMeta := m.reconcileSessionsRefreshPayload(msg.sessions, normalizeSessionMeta(msg.meta))
+		m.setSessionsAndMeta(nextSessions, nextMeta)
 		recentsStateSaveCmd := tea.Cmd(nil)
 		if m.recents != nil {
-			m.recents.ObserveSessions(msg.sessions)
+			m.recents.ObserveSessions(nextSessions)
 			m.recents.ObserveMeta(m.recentsMetaFallbackMap(), now)
 			m.syncRecentsCompletionWatches()
 			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
@@ -614,7 +615,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		saveStateCmd := tea.Batch(saveSidebarExpansionCmd, recentsStateSaveCmd)
 		nextSelection := m.selectedSessionSnapshot()
-		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(msg.sessions)))
+		m.setBackgroundStatus(fmt.Sprintf("%d sessions", len(nextSessions)))
 		recentsCmd := tea.Cmd(nil)
 		if m.mode == uiModeRecents {
 			m.refreshRecentsContent()
@@ -1090,6 +1091,61 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	default:
 		return false, nil
 	}
+}
+
+func (m *Model) reconcileSessionsRefreshPayload(sessions []*types.Session, meta map[string]*types.SessionMeta) ([]*types.Session, map[string]*types.SessionMeta) {
+	if m == nil {
+		return sessions, meta
+	}
+	selected := m.selectedItem()
+	if selected == nil || selected.session == nil {
+		return sessions, meta
+	}
+	selectedID := strings.TrimSpace(selected.session.ID)
+	if selectedID == "" || sessionSliceContainsID(sessions, selectedID) {
+		return sessions, meta
+	}
+	selectedMeta := m.sessionMeta[selectedID]
+	if selectedMeta == nil {
+		selectedMeta = selected.meta
+	}
+	if selectedMeta == nil {
+		return sessions, meta
+	}
+	if selectedMeta.DismissedAt != nil {
+		return sessions, meta
+	}
+	if strings.TrimSpace(selectedMeta.WorkflowRunID) == "" {
+		return sessions, meta
+	}
+	if !isVisibleStatus(selected.session.Status) {
+		return sessions, meta
+	}
+	nextSessions := append([]*types.Session(nil), sessions...)
+	nextSessions = append(nextSessions, selected.session)
+	if meta == nil {
+		meta = map[string]*types.SessionMeta{}
+	}
+	if _, ok := meta[selectedID]; !ok {
+		meta[selectedID] = selectedMeta
+	}
+	return nextSessions, meta
+}
+
+func sessionSliceContainsID(sessions []*types.Session, sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		if strings.TrimSpace(session.ID) == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) shouldKeepLiveCodexSnapshot(provider, sessionID string) bool {
