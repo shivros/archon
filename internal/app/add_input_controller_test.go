@@ -43,6 +43,48 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 }
 
+func TestAddWorkspaceControllerClearCommandClearsInput(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{}
+	controller.Enter()
+	if controller.input == nil {
+		t.Fatalf("expected input")
+	}
+	controller.input.SetValue("/tmp/repo")
+
+	handled, cmd := controller.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, host)
+	if !handled {
+		t.Fatalf("expected clear command to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for clear action")
+	}
+	if got := controller.input.Value(); got != "" {
+		t.Fatalf("expected add workspace input to clear, got %q", got)
+	}
+	if controller.step != 0 {
+		t.Fatalf("expected clear command to keep current step, got %d", controller.step)
+	}
+}
+
+func TestAddWorkspaceControllerSupportsRemappedClearCommand(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{clearKey: "f7"}
+	controller.Enter()
+	if controller.input == nil {
+		t.Fatalf("expected input")
+	}
+	controller.input.SetValue("/tmp/repo")
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyF7}, host)
+	if !handled {
+		t.Fatalf("expected remapped clear command to be handled")
+	}
+	if got := controller.input.Value(); got != "" {
+		t.Fatalf("expected add workspace input to clear, got %q", got)
+	}
+}
+
 func TestAddWorktreeControllerSupportsRemappedSubmit(t *testing.T) {
 	controller := NewAddWorktreeController(80)
 	host := &stubAddWorktreeHost{submitKey: "f6"}
@@ -132,8 +174,35 @@ func TestAddWorktreeControllerExistingPasteUpdatesFilterQuery(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeControllerExistingClearCommandClearsFilterQuery(t *testing.T) {
+	controller := NewAddWorktreeController(80)
+	host := &stubAddWorktreeHost{}
+	controller.Enter("ws1", "/tmp/repo")
+	controller.mode = worktreeModeExisting
+	controller.step = 0
+	controller.SetAvailable([]*types.GitWorktree{
+		{Path: "/tmp/repo/feature-ui", Branch: "feature-ui"},
+		{Path: "/tmp/repo/fix-api", Branch: "fix-api"},
+	}, nil, "/tmp/repo")
+	if !controller.appendQuery("fxapi") {
+		t.Fatalf("expected query to be initialized")
+	}
+
+	handled, cmd := controller.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, host)
+	if !handled {
+		t.Fatalf("expected clear command to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for clear action")
+	}
+	if got := controller.query; got != "" {
+		t.Fatalf("expected existing-worktree filter query to clear, got %q", got)
+	}
+}
+
 type stubAddWorkspaceHost struct {
 	submitKey  string
+	clearKey   string
 	status     string
 	createPath string
 	createName string
@@ -154,6 +223,9 @@ func (h *stubAddWorkspaceHost) keyMatchesCommand(msg tea.KeyMsg, command, fallba
 	if command == KeyCommandInputSubmit && strings.TrimSpace(h.submitKey) != "" {
 		return key == strings.TrimSpace(h.submitKey)
 	}
+	if command == KeyCommandInputClear && strings.TrimSpace(h.clearKey) != "" {
+		return key == strings.TrimSpace(h.clearKey)
+	}
 	return key == strings.TrimSpace(fallback)
 }
 
@@ -167,6 +239,7 @@ func (h *stubAddWorkspaceHost) setStatus(status string) {
 
 type stubAddWorktreeHost struct {
 	submitKey string
+	clearKey  string
 	status    string
 }
 
@@ -190,6 +263,9 @@ func (h *stubAddWorktreeHost) keyMatchesCommand(msg tea.KeyMsg, command, fallbac
 	key := strings.TrimSpace(msg.String())
 	if command == KeyCommandInputSubmit && strings.TrimSpace(h.submitKey) != "" {
 		return key == strings.TrimSpace(h.submitKey)
+	}
+	if command == KeyCommandInputClear && strings.TrimSpace(h.clearKey) != "" {
+		return key == strings.TrimSpace(h.clearKey)
 	}
 	return key == strings.TrimSpace(fallback)
 }

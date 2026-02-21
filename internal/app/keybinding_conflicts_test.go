@@ -67,6 +67,81 @@ func TestDetectKeybindingConflictsDetectsComposeInputConflict(t *testing.T) {
 	}
 }
 
+func TestDetectKeybindingConflictsDetectsSearchInputConflictForInputClear(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandInputClear: "enter",
+	})
+
+	conflicts := DetectKeybindingConflicts(bindings)
+	found := false
+	for _, conflict := range conflicts {
+		if conflict.Scope == keyScopeSearchInput && conflict.Key == "enter" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected search input conflict for enter, got %#v", conflicts)
+	}
+}
+
+func TestDetectKeybindingConflictsLegacyComposeClearAliasNormalizesToInputClear(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandComposeClearInput: "enter",
+	})
+
+	conflicts := DetectKeybindingConflicts(bindings)
+	found := false
+	for _, conflict := range conflicts {
+		if conflict.Scope == keyScopeSearchInput && conflict.Key == "enter" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected legacy compose clear alias to conflict as input clear, got %#v", conflicts)
+	}
+}
+
+func TestDetectKeybindingConflictsInputClearScopesCoverAllInputContexts(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandInputClear: "enter",
+	})
+
+	conflicts := DetectKeybindingConflicts(bindings)
+	expectedScopes := []string{
+		keyScopeComposeInput,
+		keyScopeAddNoteInput,
+		keyScopeSearchInput,
+		keyScopeApprovalResponseInput,
+		keyScopeRenameInput,
+		keyScopeWorkspaceGroupInput,
+		keyScopeAddWorkspaceInput,
+		keyScopeAddWorktreeInput,
+		keyScopeRecentsReplyInput,
+		keyScopeGuidedWorkflowSetupInput,
+	}
+	for _, scope := range expectedScopes {
+		if !hasConflictWithCommand(conflicts, scope, "enter", KeyCommandInputClear) {
+			t.Fatalf("expected input clear conflict in scope %q, got %#v", scope, conflicts)
+		}
+	}
+}
+
+func hasConflictWithCommand(conflicts []KeybindingConflict, scope, key, command string) bool {
+	for _, conflict := range conflicts {
+		if conflict.Scope != scope || conflict.Key != key {
+			continue
+		}
+		for _, candidate := range conflict.Commands {
+			if candidate == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestKeybindingConflictToastMessageIncludesKeyAndCommands(t *testing.T) {
 	conflict := KeybindingConflict{
 		Key:      "ctrl+n",

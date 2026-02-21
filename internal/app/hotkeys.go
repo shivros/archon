@@ -91,7 +91,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "esc", Label: "cancel", Context: HotkeyChatInput, Priority: 10},
 		{Key: "enter", Label: "send", Context: HotkeyChatInput, Priority: 11},
 		{Key: "ctrl+g", Command: KeyCommandCopySessionID, Label: "copy id", Context: HotkeyChatInput, Priority: 12},
-		{Key: "ctrl+c", Command: KeyCommandComposeClearInput, Label: "clear", Context: HotkeyChatInput, Priority: 13},
+		{Key: "ctrl+c", Command: KeyCommandInputClear, Label: "clear", Context: HotkeyChatInput, Priority: 13},
 		{Key: "↑/↓", Label: "history", Context: HotkeyChatInput, Priority: 14},
 		{Key: "ctrl+a", Command: KeyCommandInputSelectAll, Label: "select all", Context: HotkeyChatInput, Priority: 15},
 		{Key: "ctrl+z", Command: KeyCommandInputUndo, Label: "undo", Context: HotkeyChatInput, Priority: 16},

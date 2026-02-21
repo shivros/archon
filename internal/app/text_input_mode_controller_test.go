@@ -53,6 +53,68 @@ func TestTextInputModeControllerEnterCallsSubmitWithTrimmedText(t *testing.T) {
 	}
 }
 
+func TestTextInputModeControllerCtrlCClearsInput(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.SetValue("clear me")
+	cleared := false
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		onClear: func() tea.Cmd {
+			cleared = true
+			return nil
+		},
+	}
+
+	handled, cmd := controller.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+c to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if !cleared {
+		t.Fatalf("expected clear callback to be invoked")
+	}
+	if got := input.Value(); got != "" {
+		t.Fatalf("expected input to be cleared, got %q", got)
+	}
+}
+
+func TestTextInputModeControllerSupportsRemappedClearCommand(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.SetValue("clear me")
+	cleared := false
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		keyMatchesCommand: func(msg tea.KeyMsg, command, fallback string) bool {
+			return command == KeyCommandInputClear && msg.String() == "f7"
+		},
+		onClear: func() tea.Cmd {
+			cleared = true
+			return nil
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected remapped clear command to be handled")
+	}
+	if !cleared {
+		t.Fatalf("expected clear callback to be invoked")
+	}
+	if got := input.Value(); got != "" {
+		t.Fatalf("expected input to be cleared, got %q", got)
+	}
+}
+
 func TestTextInputModeControllerSupportsRemappedSubmitCommand(t *testing.T) {
 	input := NewTextInput(40, TextInputConfig{Height: 3})
 	input.SetValue("hello")

@@ -378,7 +378,7 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.pauseFollow`
 - `ui.toggleReasoning`
 - `ui.toggleMessageSelect`
-- `ui.composeClearInput`
+- `ui.inputClear`
 - `ui.composeModel`
 - `ui.composeReasoning`
 - `ui.composeAccess`
@@ -396,3 +396,4 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.notesNew`
 
 `ui.dismissSession` is still accepted as a legacy alias for `ui.dismissSelection`.
+`ui.composeClearInput` is still accepted as a legacy alias for `ui.inputClear`.

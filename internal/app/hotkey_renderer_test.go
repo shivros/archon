@@ -32,3 +32,39 @@ func TestDefaultHotkeyResolver(t *testing.T) {
 		t.Fatalf("expected HotkeyAddWorktree context")
 	}
 }
+
+func TestDefaultHotkeysUseCanonicalInputClearCommand(t *testing.T) {
+	hotkeys := DefaultHotkeys()
+	foundCanonical := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command == KeyCommandInputClear {
+			foundCanonical = true
+		}
+		if hotkey.Command == KeyCommandComposeClearInput {
+			t.Fatalf("did not expect legacy compose clear command in hotkey metadata")
+		}
+	}
+	if !foundCanonical {
+		t.Fatalf("expected canonical input clear command in default hotkeys")
+	}
+}
+
+func TestResolveHotkeysAppliesInputClearOverride(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandInputClear: "f7",
+	})
+	hotkeys := ResolveHotkeys(DefaultHotkeys(), bindings)
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command != KeyCommandInputClear {
+			continue
+		}
+		found = true
+		if hotkey.Key != "f7" {
+			t.Fatalf("expected overridden input clear hotkey f7, got %q", hotkey.Key)
+		}
+	}
+	if !found {
+		t.Fatalf("expected input clear hotkey to be present")
+	}
+}

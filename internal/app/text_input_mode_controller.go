@@ -12,6 +12,7 @@ type textInputModeController struct {
 	keyMatchesCommand func(tea.KeyMsg, string, string) bool
 	onCancel          func() tea.Cmd
 	onSubmit          func(text string) tea.Cmd
+	onClear           func() tea.Cmd
 	beforeInputUpdate func()
 	preHandle         func(key string, msg tea.KeyMsg) (bool, tea.Cmd)
 }
@@ -59,6 +60,13 @@ func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 	}
 	if c.matchesCommand(keyMsg, KeyCommandInputDeleteWordRight, "alt+delete") || key == "alt+d" {
 		return true, c.input.DeleteWordRight()
+	}
+	if c.matchesCommand(keyMsg, KeyCommandInputClear, "ctrl+c") {
+		c.input.Clear()
+		if c.onClear != nil {
+			return true, c.onClear()
+		}
+		return true, nil
 	}
 	if c.matchesCommand(keyMsg, KeyCommandInputNewline, "shift+enter") || key == "ctrl+enter" {
 		return true, c.input.InsertNewline()

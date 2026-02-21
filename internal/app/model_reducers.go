@@ -540,6 +540,10 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 		keyMatchesCommand: m.keyMatchesCommand,
 		onCancel:          m.cancelComposeInput,
 		onSubmit:          m.submitComposeInput,
+		onClear: func() tea.Cmd {
+			m.setStatusMessage("input cleared")
+			return nil
+		},
 		beforeInputUpdate: m.resetComposeHistoryCursor,
 		preHandle: func(key string, msg tea.KeyMsg) (bool, tea.Cmd) {
 			if m.composeOptionPickerOpen() {
@@ -607,12 +611,6 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 						m.chatInput.SetValue(value)
 						return true, nil
 					}
-				}
-				return true, nil
-			case "ctrl+c":
-				if m.chatInput != nil {
-					m.chatInput.Clear()
-					m.setStatusMessage("input cleared")
 				}
 				return true, nil
 			}

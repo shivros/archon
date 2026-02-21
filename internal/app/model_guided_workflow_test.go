@@ -521,6 +521,38 @@ func TestGuidedWorkflowSetupTypingQDoesNotQuit(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowSetupClearCommandClearsPrompt(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage")
+	}
+	if m.guidedWorkflowPromptInput == nil {
+		t.Fatalf("expected setup prompt input")
+	}
+	m.guidedWorkflowPromptInput.SetValue("Fix flaky retry logic")
+	m.syncGuidedWorkflowPromptInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.guidedWorkflowPromptInput.Value(); got != "" {
+		t.Fatalf("expected setup prompt input to clear, got %q", got)
+	}
+	if got := m.guidedWorkflow.UserPrompt(); got != "" {
+		t.Fatalf("expected guided workflow prompt to clear, got %q", got)
+	}
+}
+
 func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
 	api := &guidedWorkflowAPIMock{

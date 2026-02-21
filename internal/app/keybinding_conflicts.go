@@ -8,12 +8,20 @@ import (
 )
 
 const (
-	keyScopeNormal          = "normal"
-	keyScopeComposeInput    = "compose_input"
-	keyScopeAddNoteInput    = "add_note_input"
-	keyScopeNotesMode       = "notes_mode"
-	keyScopePendingApproval = "pending_approval"
-	keyScopeMessageSelect   = "message_selection"
+	keyScopeNormal                   = "normal"
+	keyScopeComposeInput             = "compose_input"
+	keyScopeAddNoteInput             = "add_note_input"
+	keyScopeSearchInput              = "search_input"
+	keyScopeApprovalResponseInput    = "approval_response_input"
+	keyScopeRenameInput              = "rename_input"
+	keyScopeWorkspaceGroupInput      = "workspace_group_input"
+	keyScopeAddWorkspaceInput        = "add_workspace_input"
+	keyScopeAddWorktreeInput         = "add_worktree_input"
+	keyScopeRecentsReplyInput        = "recents_reply_input"
+	keyScopeGuidedWorkflowSetupInput = "guided_workflow_setup_input"
+	keyScopeNotesMode                = "notes_mode"
+	keyScopePendingApproval          = "pending_approval"
+	keyScopeMessageSelect            = "message_selection"
 )
 
 type KeybindingConflict struct {
@@ -88,8 +96,12 @@ func keybindingScopesFor(command, boundKey, defaultKey string) []string {
 	switch command {
 	case KeyCommandQuit:
 		return []string{keyScopeNormal, keyScopeNotesMode, keyScopeAddNoteInput, keyScopeMessageSelect}
+	case KeyCommandMenu:
+		return []string{keyScopeNormal, keyScopeGuidedWorkflowSetupInput}
+	case KeyCommandToggleSidebar:
+		return []string{keyScopeNormal, keyScopeGuidedWorkflowSetupInput}
 	case KeyCommandToggleNotesPanel:
-		return []string{keyScopeNormal, keyScopeComposeInput, keyScopeNotesMode, keyScopeAddNoteInput}
+		return []string{keyScopeNormal, keyScopeComposeInput, keyScopeNotesMode, keyScopeAddNoteInput, keyScopeGuidedWorkflowSetupInput}
 	case KeyCommandCopySessionID:
 		return []string{keyScopeNormal, keyScopeComposeInput}
 	case KeyCommandToggleMessageSelect:
@@ -102,12 +114,24 @@ func keybindingScopesFor(command, boundKey, defaultKey string) []string {
 			scopes = append(scopes, keyScopeNormal, keyScopeComposeInput)
 		}
 		return scopes
-	case KeyCommandComposeModel, KeyCommandComposeReasoning, KeyCommandComposeAccess, KeyCommandComposeClearInput:
+	case KeyCommandComposeModel, KeyCommandComposeReasoning, KeyCommandComposeAccess:
 		return []string{keyScopeComposeInput}
 	case KeyCommandInputSubmit, KeyCommandInputNewline, KeyCommandInputWordLeft, KeyCommandInputWordRight,
 		KeyCommandInputDeleteWordLeft, KeyCommandInputDeleteWordRight, KeyCommandInputSelectAll,
+		KeyCommandInputClear,
 		KeyCommandInputUndo, KeyCommandInputRedo:
-		return []string{keyScopeComposeInput, keyScopeAddNoteInput}
+		return []string{
+			keyScopeComposeInput,
+			keyScopeAddNoteInput,
+			keyScopeSearchInput,
+			keyScopeApprovalResponseInput,
+			keyScopeRenameInput,
+			keyScopeWorkspaceGroupInput,
+			keyScopeAddWorkspaceInput,
+			keyScopeAddWorktreeInput,
+			keyScopeRecentsReplyInput,
+			keyScopeGuidedWorkflowSetupInput,
+		}
 	case KeyCommandToggleNotesWorkspace, KeyCommandToggleNotesWorktree, KeyCommandToggleNotesSession, KeyCommandToggleNotesAll:
 		return []string{keyScopeNormal, keyScopeNotesMode}
 	default:

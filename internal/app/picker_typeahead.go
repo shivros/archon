@@ -50,17 +50,23 @@ func WithPickerPasteNormalizer(normalizer PickerPasteNormalizer) ModelOption {
 }
 
 type pickerTypeAheadController struct {
-	keyString       func(tea.KeyMsg) string
-	pasteNormalizer PickerPasteNormalizer
+	keyString         func(tea.KeyMsg) string
+	keyMatchesCommand func(tea.KeyMsg, string, string) bool
+	pasteNormalizer   PickerPasteNormalizer
 }
 
-func newPickerTypeAheadController(keyString func(tea.KeyMsg) string, pasteNormalizer PickerPasteNormalizer) pickerTypeAheadController {
+func newPickerTypeAheadController(
+	keyString func(tea.KeyMsg) string,
+	keyMatchesCommand func(tea.KeyMsg, string, string) bool,
+	pasteNormalizer PickerPasteNormalizer,
+) pickerTypeAheadController {
 	if pasteNormalizer == nil {
 		pasteNormalizer = defaultPickerPasteNormalizer{}
 	}
 	return pickerTypeAheadController{
-		keyString:       keyString,
-		pasteNormalizer: pasteNormalizer,
+		keyString:         keyString,
+		keyMatchesCommand: keyMatchesCommand,
+		pasteNormalizer:   pasteNormalizer,
 	}
 }
 
@@ -79,6 +85,9 @@ func (c pickerTypeAheadController) handleKey(msg tea.KeyMsg, picker queryPicker)
 	if picker == nil {
 		return false
 	}
+	if c.matchesCommand(msg, KeyCommandInputClear, "ctrl+c") {
+		return picker.ClearQuery()
+	}
 	key := msg.String()
 	if c.keyString != nil {
 		key = c.keyString(msg)
@@ -94,6 +103,24 @@ func (c pickerTypeAheadController) handleKey(msg tea.KeyMsg, picker queryPicker)
 		return false
 	}
 	return picker.AppendQuery(text)
+}
+
+func (c pickerTypeAheadController) matchesCommand(msg tea.KeyMsg, command, fallback string) bool {
+	if c.keyMatchesCommand != nil {
+		return c.keyMatchesCommand(msg, command, fallback)
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		return false
+	}
+	key := strings.TrimSpace(msg.String())
+	if key == fallback {
+		return true
+	}
+	if c.keyString != nil {
+		return strings.TrimSpace(c.keyString(msg)) == fallback
+	}
+	return false
 }
 
 func (c pickerTypeAheadController) handlePaste(msg tea.PasteMsg, picker queryPicker) bool {
@@ -113,12 +140,14 @@ func (c pickerTypeAheadController) handlePaste(msg tea.PasteMsg, picker queryPic
 
 func (m *Model) pickerTypeAheadController() pickerTypeAheadController {
 	var keyFn func(tea.KeyMsg) string
+	var matchesFn func(tea.KeyMsg, string, string) bool
 	var normalizer PickerPasteNormalizer
 	if m != nil {
 		keyFn = m.keyString
+		matchesFn = m.keyMatchesCommand
 		normalizer = m.pickerPasteNormalizer
 	}
-	return newPickerTypeAheadController(keyFn, normalizer)
+	return newPickerTypeAheadController(keyFn, matchesFn, normalizer)
 }
 
 func (m *Model) applyPickerTypeAhead(msg tea.KeyMsg, picker queryPicker) bool {

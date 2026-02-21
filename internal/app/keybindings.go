@@ -46,7 +46,8 @@ const (
 	KeyCommandToggleMessageSelect  = "ui.toggleMessageSelect"
 	KeyCommandHistoryBack          = "ui.historyBack"
 	KeyCommandHistoryForward       = "ui.historyForward"
-	KeyCommandComposeClearInput    = "ui.composeClearInput"
+	KeyCommandInputClear           = "ui.inputClear"
+	KeyCommandComposeClearInput    = "ui.composeClearInput" // legacy alias; normalized to ui.inputClear
 	KeyCommandComposeModel         = "ui.composeModel"
 	KeyCommandComposeReasoning     = "ui.composeReasoning"
 	KeyCommandComposeAccess        = "ui.composeAccess"
@@ -99,7 +100,7 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandToggleMessageSelect:  "v",
 	KeyCommandHistoryBack:          "alt+left",
 	KeyCommandHistoryForward:       "alt+right",
-	KeyCommandComposeClearInput:    "ctrl+c",
+	KeyCommandInputClear:           "ctrl+c",
 	KeyCommandComposeModel:         "ctrl+1",
 	KeyCommandComposeReasoning:     "ctrl+2",
 	KeyCommandComposeAccess:        "ctrl+3",
@@ -333,6 +334,8 @@ func normalizeKeybindingCommand(command string) string {
 	switch command {
 	case KeyCommandDismissSession:
 		return KeyCommandDismissSelection
+	case KeyCommandComposeClearInput:
+		return KeyCommandInputClear
 	default:
 		return command
 	}

@@ -137,7 +137,7 @@ func (c *AddWorktreeController) Update(msg tea.Msg, host addWorktreeHost) (bool,
 	case tea.PasteMsg:
 		if c.mode == worktreeModeExisting && c.step == 0 {
 			picker := addWorktreeQueryPicker{controller: c}
-			typeAhead := newPickerTypeAheadController(host.keyString, defaultPickerPasteNormalizer{})
+			typeAhead := newPickerTypeAheadController(host.keyString, host.keyMatchesCommand, defaultPickerPasteNormalizer{})
 			typeAhead.handlePaste(msg, picker)
 			return true, nil
 		}
@@ -206,7 +206,7 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 				return true, nil
 			}
 			picker := addWorktreeQueryPicker{controller: c}
-			typeAhead := newPickerTypeAheadController(host.keyString, defaultPickerPasteNormalizer{})
+			typeAhead := newPickerTypeAheadController(host.keyString, host.keyMatchesCommand, defaultPickerPasteNormalizer{})
 			if typeAhead.handleKey(keyMsg, picker) {
 				return true, nil
 			}

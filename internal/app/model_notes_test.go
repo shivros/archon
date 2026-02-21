@@ -343,6 +343,29 @@ func TestReduceAddNoteModeHandlesPaste(t *testing.T) {
 	}
 }
 
+func TestReduceAddNoteModeClearCommandClearsInput(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddNote
+	if m.noteInput == nil {
+		t.Fatalf("expected note input")
+	}
+	m.noteInput.SetValue("note body")
+
+	handled, cmd := m.reduceAddNoteMode(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected clear command to be handled in add note mode")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.noteInput.Value(); got != "" {
+		t.Fatalf("expected note input to clear, got %q", got)
+	}
+	if m.mode != uiModeAddNote {
+		t.Fatalf("expected clear command to keep add note mode, got %v", m.mode)
+	}
+}
+
 func TestUpdateNotesMsgWhileAddNoteModeRendersNotes(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

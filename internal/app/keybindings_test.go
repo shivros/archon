@@ -123,6 +123,47 @@ func TestLoadKeybindingsLegacyDismissAliasArrayFormat(t *testing.T) {
 	}
 }
 
+func TestLoadKeybindingsLegacyComposeClearAliasMapsToInputClear(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	data := []byte(`{"ui.composeClearInput":"f7"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	bindings, err := LoadKeybindings(path)
+	if err != nil {
+		t.Fatalf("LoadKeybindings: %v", err)
+	}
+	if got := bindings.KeyFor(KeyCommandInputClear, ""); got != "f7" {
+		t.Fatalf("unexpected input clear binding: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandComposeClearInput, ""); got != "f7" {
+		t.Fatalf("unexpected compose clear legacy alias binding: %q", got)
+	}
+	if got := bindings.Remap("f7"); got != "ctrl+c" {
+		t.Fatalf("expected legacy alias remap to canonical ctrl+c, got %q", got)
+	}
+}
+
+func TestLoadKeybindingsLegacyComposeClearAliasArrayFormat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	data := []byte(`[
+  {"command":"ui.composeClearInput","key":"f8"}
+]`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	bindings, err := LoadKeybindings(path)
+	if err != nil {
+		t.Fatalf("LoadKeybindings: %v", err)
+	}
+	if got := bindings.KeyFor(KeyCommandInputClear, ""); got != "f8" {
+		t.Fatalf("unexpected input clear binding from array alias: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandComposeClearInput, ""); got != "f8" {
+		t.Fatalf("unexpected compose clear alias binding from array alias: %q", got)
+	}
+}
+
 func TestResolveHotkeysUsesBindings(t *testing.T) {
 	bindings := NewKeybindings(map[string]string{
 		KeyCommandToggleSidebar: "alt+b",
@@ -273,6 +314,12 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	}
 	if got := bindings.KeyFor(KeyCommandInputRedo, ""); got != "ctrl+y" {
 		t.Fatalf("expected default input redo key ctrl+y, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandInputClear, ""); got != "ctrl+c" {
+		t.Fatalf("expected default input clear key ctrl+c, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandComposeClearInput, ""); got != "ctrl+c" {
+		t.Fatalf("expected legacy compose clear alias key ctrl+c, got %q", got)
 	}
 	if got := bindings.KeyFor(KeyCommandHistoryBack, ""); got != "alt+left" {
 		t.Fatalf("expected default history back key alt+left, got %q", got)

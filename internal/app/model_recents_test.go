@@ -159,6 +159,41 @@ func TestRecentsReplyShiftEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestRecentsReplyClearCommandClearsInput(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.mode = uiModeRecents
+	m.recentsSelectedSessionID = "s1"
+	if !m.startRecentsReply() {
+		t.Fatalf("expected to start recents reply")
+	}
+	m.recentsReplyInput.SetValue("reply text")
+
+	handled, cmd := m.reduceRecentsMode(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected clear command to be handled by recents reply input")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.recentsReplyInput.Value(); got != "" {
+		t.Fatalf("expected recents reply input to clear, got %q", got)
+	}
+	if m.recentsReplySessionID != "s1" {
+		t.Fatalf("expected recents reply target to remain active, got %q", m.recentsReplySessionID)
+	}
+}
+
 func TestRecentsEntryShowsWorktreeInLocationLabel(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()

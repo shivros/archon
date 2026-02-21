@@ -29,7 +29,7 @@ func TestPickerTypeAheadControllerPasteAppendsNormalizedQuery(t *testing.T) {
 		{id: "claude", label: "Claude"},
 		{id: "codex", label: "Codex"},
 	})
-	controller := newPickerTypeAheadController(nil, defaultPickerPasteNormalizer{})
+	controller := newPickerTypeAheadController(nil, nil, defaultPickerPasteNormalizer{})
 	if !controller.Handle(tea.PasteMsg{Content: "\x1b[32mcld\x1b[0m\n"}, picker) {
 		t.Fatalf("expected paste to update picker query")
 	}
@@ -38,6 +38,46 @@ func TestPickerTypeAheadControllerPasteAppendsNormalizedQuery(t *testing.T) {
 	}
 	if got := picker.SelectedID(); got != "claude" {
 		t.Fatalf("expected filtered selection to be claude, got %q", got)
+	}
+}
+
+func TestPickerTypeAheadControllerClearCommandClearsQuery(t *testing.T) {
+	picker := NewSelectPicker(40, 5)
+	picker.SetOptions([]selectOption{
+		{id: "claude", label: "Claude"},
+		{id: "codex", label: "Codex"},
+	})
+	picker.AppendQuery("cla")
+	controller := newPickerTypeAheadController(nil, nil, defaultPickerPasteNormalizer{})
+
+	if !controller.Handle(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, picker) {
+		t.Fatalf("expected clear command to be handled")
+	}
+	if got := picker.Query(); got != "" {
+		t.Fatalf("expected query to clear, got %q", got)
+	}
+}
+
+func TestPickerTypeAheadControllerSupportsRemappedClearCommand(t *testing.T) {
+	picker := NewSelectPicker(40, 5)
+	picker.SetOptions([]selectOption{
+		{id: "claude", label: "Claude"},
+		{id: "codex", label: "Codex"},
+	})
+	picker.AppendQuery("cla")
+	controller := newPickerTypeAheadController(
+		nil,
+		func(msg tea.KeyMsg, command, fallback string) bool {
+			return command == KeyCommandInputClear && msg.String() == "f7"
+		},
+		defaultPickerPasteNormalizer{},
+	)
+
+	if !controller.Handle(tea.KeyPressMsg{Code: tea.KeyF7}, picker) {
+		t.Fatalf("expected remapped clear command to be handled")
+	}
+	if got := picker.Query(); got != "" {
+		t.Fatalf("expected query to clear, got %q", got)
 	}
 }
 

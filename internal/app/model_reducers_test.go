@@ -108,6 +108,36 @@ func TestApprovalResponseReducerEscCancels(t *testing.T) {
 	}
 }
 
+func TestApprovalResponseReducerClearCommandClearsInput(t *testing.T) {
+	m := NewModel(nil)
+	req := &ApprovalRequest{
+		RequestID: 7,
+		SessionID: "s1",
+		Method:    approvalMethodRequestUserInput,
+		Summary:   "user input",
+		Detail:    "Provide a reason",
+	}
+	m.enterApprovalResponse("s1", req)
+	if m.approvalInput == nil {
+		t.Fatalf("expected approval input")
+	}
+	m.approvalInput.SetValue("because tests")
+
+	handled, cmd := m.reduceApprovalResponseMode(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected approval response reducer to handle clear command")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.approvalInput.Value(); got != "" {
+		t.Fatalf("expected approval input to clear, got %q", got)
+	}
+	if m.mode != uiModeApprovalResponse {
+		t.Fatalf("expected mode to remain approval response, got %v", m.mode)
+	}
+}
+
 func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
 	m := NewModel(nil)
 	m.applyKeybindings(NewKeybindings(map[string]string{
@@ -131,6 +161,29 @@ func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
 	}
 	if m.searchQuery != "hello" {
 		t.Fatalf("expected search query to be applied, got %q", m.searchQuery)
+	}
+}
+
+func TestSearchReducerClearCommandClearsInput(t *testing.T) {
+	m := NewModel(nil)
+	m.enterSearch()
+	if m.searchInput == nil {
+		t.Fatalf("expected search input")
+	}
+	m.searchInput.SetValue("hello")
+
+	handled, cmd := m.reduceSearchModeKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected search reducer to handle clear command")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.searchInput.Value(); got != "" {
+		t.Fatalf("expected search input to clear, got %q", got)
+	}
+	if m.mode != uiModeSearch {
+		t.Fatalf("expected mode to remain search, got %v", m.mode)
 	}
 }
 
@@ -323,6 +376,49 @@ func TestWorkspaceEditReducerRenameSessionPasteUpdatesInput(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEditReducerRenameSessionClearCommandClearsInput(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameSession
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Session")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle clear command")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.renameInput.Value(); got != "" {
+		t.Fatalf("expected clear command to reset rename input, got %q", got)
+	}
+	if m.mode != uiModeRenameSession {
+		t.Fatalf("expected clear command to keep rename mode, got %v", m.mode)
+	}
+}
+
+func TestWorkspaceEditReducerRenameSessionSupportsRemappedClearCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputClear: "f7",
+	}))
+	m.mode = uiModeRenameSession
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Session")
+
+	handled, _ := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle remapped clear command")
+	}
+	if got := m.renameInput.Value(); got != "" {
+		t.Fatalf("expected remapped clear command to reset rename input, got %q", got)
+	}
+}
+
 func TestWorkspaceEditReducerRenameSessionSupportsRemappedSubmit(t *testing.T) {
 	m := NewModel(nil)
 	m.applyKeybindings(NewKeybindings(map[string]string{
@@ -482,6 +578,30 @@ func TestPickProviderReducerPasteAppendsToQuery(t *testing.T) {
 	}
 }
 
+func TestPickProviderReducerClearCommandClearsQuery(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+	if m.providerPicker == nil {
+		t.Fatalf("expected provider picker to exist")
+	}
+	m.providerPicker.AppendQuery("claude")
+
+	handled, cmd := m.reducePickProviderMode(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected pick provider reducer to handle clear command")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear query action")
+	}
+	if got := m.providerPicker.Query(); got != "" {
+		t.Fatalf("expected query to be cleared, got %q", got)
+	}
+	if m.mode != uiModePickProvider {
+		t.Fatalf("expected picker mode to remain active, got %v", m.mode)
+	}
+}
+
 func TestPickProviderPasteViaUpdate(t *testing.T) {
 	m := NewModel(nil)
 	m.newSession = &newSessionTarget{}
@@ -536,5 +656,31 @@ func TestReduceComposeInputKeyPasteRoutesToComposeOptionPicker(t *testing.T) {
 	}
 	if got := m.chatInput.Value(); got != "existing" {
 		t.Fatalf("expected compose input to remain unchanged, got %q", got)
+	}
+}
+
+func TestReduceComposeInputKeySupportsRemappedClearCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputClear: "f7",
+	}))
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello compose")
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle remapped clear command")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for clear action")
+	}
+	if got := m.chatInput.Value(); got != "" {
+		t.Fatalf("expected compose input to clear, got %q", got)
+	}
+	if m.status != "input cleared" {
+		t.Fatalf("expected input cleared status, got %q", m.status)
 	}
 }
