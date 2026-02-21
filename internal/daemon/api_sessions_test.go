@@ -407,6 +407,46 @@ func TestAPISessionsIncludeWorkflowOwnedQuery(t *testing.T) {
 	}
 }
 
+func TestAPISessionsCombinedIncludeQuery(t *testing.T) {
+	sessionStore := storeSessionsIndex(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	now := time.Now().UTC()
+	_, err := sessionStore.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-workflow-owned-dismissed",
+			Provider:  "codex",
+			Cmd:       "codex app-server",
+			Status:    types.SessionStatusExited,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	dismissedAt := now.Add(-time.Minute)
+	if _, err := metaStore.Upsert(context.Background(), &types.SessionMeta{
+		SessionID:     "sess-workflow-owned-dismissed",
+		WorkflowRunID: "gwf-1",
+		DismissedAt:   &dismissedAt,
+	}); err != nil {
+		t.Fatalf("upsert meta: %v", err)
+	}
+
+	server := newTestServerWithStores(t, nil, &Stores{Sessions: sessionStore, SessionMeta: metaStore})
+	defer server.Close()
+
+	defaultList := listSessions(t, server)
+	if len(defaultList.Sessions) != 0 {
+		t.Fatalf("expected session hidden from default list, got %+v", defaultList.Sessions)
+	}
+
+	combinedList := listSessionsPath(t, server, "/v1/sessions?include_dismissed=1&include_workflow_owned=1")
+	if len(combinedList.Sessions) != 1 || combinedList.Sessions[0].ID != "sess-workflow-owned-dismissed" {
+		t.Fatalf("expected session when include_dismissed=1&include_workflow_owned=1, got %+v", combinedList.Sessions)
+	}
+}
+
 func newTestServer(t *testing.T, manager *SessionManager) *httptest.Server {
 	return newTestServerWithStores(t, manager, nil)
 }

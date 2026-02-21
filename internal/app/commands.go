@@ -21,7 +21,7 @@ type fetchSessionsOptions struct {
 	includeWorkflowOwned bool
 }
 
-func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessionsOptions) tea.Cmd {
+func fetchSessionsWithMetaCmd(api SessionListWithMetaQueryAPI, options ...fetchSessionsOptions) tea.Cmd {
 	opts := fetchSessionsOptions{}
 	if len(options) > 0 {
 		opts = options[0]
@@ -38,29 +38,12 @@ func fetchSessionsWithMetaCmd(api SessionListWithMetaAPI, options ...fetchSessio
 			meta     []*types.SessionMeta
 			err      error
 		)
-		if opts.refresh {
-			if refresher, ok := api.(SessionListWithMetaRefreshWithOptionsAPI); ok {
-				sessions, meta, err = refresher.ListSessionsWithMetaRefreshWithOptions(ctx, opts.workspaceID, opts.includeDismissed, opts.includeWorkflowOwned)
-				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
-			}
-			if refresher, ok := api.(SessionListWithMetaRefreshAPI); ok {
-				sessions, meta, err = refresher.ListSessionsWithMetaRefresh(ctx, opts.workspaceID, opts.includeDismissed)
-				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
-			}
-		}
-		if opts.includeWorkflowOwned {
-			if includer, ok := api.(SessionListWithMetaIncludeWorkflowOwnedAPI); ok {
-				sessions, meta, err = includer.ListSessionsWithMetaIncludeWorkflowOwned(ctx)
-				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
-			}
-		}
-		if opts.includeDismissed {
-			if includer, ok := api.(SessionListWithMetaIncludeDismissedAPI); ok {
-				sessions, meta, err = includer.ListSessionsWithMetaIncludeDismissed(ctx)
-				return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
-			}
-		}
-		sessions, meta, err = api.ListSessionsWithMeta(ctx)
+		sessions, meta, err = api.ListSessionsWithMetaQuery(ctx, SessionListQuery{
+			Refresh:              opts.refresh,
+			WorkspaceID:          opts.workspaceID,
+			IncludeDismissed:     opts.includeDismissed,
+			IncludeWorkflowOwned: opts.includeWorkflowOwned,
+		})
 		return sessionsWithMetaMsg{sessions: sessions, meta: meta, err: err}
 	}
 }

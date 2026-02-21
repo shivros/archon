@@ -86,12 +86,29 @@ type SessionListWithMetaAPI interface {
 	ListSessionsWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 }
 
+type SessionListQuery struct {
+	Refresh              bool
+	WorkspaceID          string
+	IncludeDismissed     bool
+	IncludeWorkflowOwned bool
+}
+
+type SessionListWithMetaQueryAPI interface {
+	ListSessionsWithMetaQuery(ctx context.Context, query SessionListQuery) ([]*types.Session, []*types.SessionMeta, error)
+}
+
+// Deprecated: prefer SessionListWithMetaQueryAPI.
 type SessionListWithMetaIncludeDismissedAPI interface {
 	ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 }
 
+// Deprecated: prefer SessionListWithMetaQueryAPI.
 type SessionListWithMetaIncludeWorkflowOwnedAPI interface {
 	ListSessionsWithMetaIncludeWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
+}
+
+type SessionListWithMetaOptionsAPI interface {
+	ListSessionsWithMetaOptions(ctx context.Context, includeDismissed bool, includeWorkflowOwned bool) ([]*types.Session, []*types.SessionMeta, error)
 }
 
 type SessionListWithMetaRefreshAPI interface {
@@ -115,7 +132,7 @@ type SessionHistoryAPI interface {
 }
 
 type SessionSelectionAPI interface {
-	SessionListWithMetaAPI
+	SessionListWithMetaQueryAPI
 }
 
 type SessionTailStreamAPI interface {
@@ -332,6 +349,17 @@ func (a *ClientAPI) ListSessionsWithMetaIncludeDismissed(ctx context.Context) ([
 
 func (a *ClientAPI) ListSessionsWithMetaIncludeWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error) {
 	return a.client.ListSessionsWithMetaIncludeWorkflowOwned(ctx)
+}
+
+func (a *ClientAPI) ListSessionsWithMetaOptions(ctx context.Context, includeDismissed bool, includeWorkflowOwned bool) ([]*types.Session, []*types.SessionMeta, error) {
+	return a.client.ListSessionsWithMetaOptions(ctx, includeDismissed, includeWorkflowOwned)
+}
+
+func (a *ClientAPI) ListSessionsWithMetaQuery(ctx context.Context, query SessionListQuery) ([]*types.Session, []*types.SessionMeta, error) {
+	if query.Refresh {
+		return a.client.ListSessionsWithMetaRefreshWithOptions(ctx, query.WorkspaceID, query.IncludeDismissed, query.IncludeWorkflowOwned)
+	}
+	return a.client.ListSessionsWithMetaOptions(ctx, query.IncludeDismissed, query.IncludeWorkflowOwned)
 }
 
 func (a *ClientAPI) ListSessionsWithMetaRefresh(ctx context.Context, workspaceID string, includeDismissed bool) ([]*types.Session, []*types.SessionMeta, error) {

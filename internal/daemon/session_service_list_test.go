@@ -275,3 +275,55 @@ func TestSessionServiceListWithMetaFiltersWorkflowOwnedByDefault(t *testing.T) {
 		t.Fatalf("expected workflow-owned session in include_workflow_owned list, got %#v", includeWorkflowOwned)
 	}
 }
+
+func TestSessionServiceListWithMetaIncludesDismissedWorkflowOwnedWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	sessionID := "sess-workflow-owned-dismissed"
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        sessionID,
+			Provider:  "codex",
+			Status:    types.SessionStatusExited,
+			CreatedAt: time.Now().UTC(),
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+	dismissedAt := time.Now().UTC().Add(-time.Minute)
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     sessionID,
+		WorkflowRunID: "gwf-1",
+		DismissedAt:   &dismissedAt,
+	}); err != nil {
+		t.Fatalf("upsert meta: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+
+	defaultList, _, err := service.ListWithMeta(ctx)
+	if err != nil {
+		t.Fatalf("default list: %v", err)
+	}
+	if len(defaultList) != 0 {
+		t.Fatalf("expected session hidden from default list, got %#v", defaultList)
+	}
+
+	combinedList, _, err := service.ListWithMetaIncludingDismissedAndWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("combined list: %v", err)
+	}
+	if len(combinedList) != 1 || combinedList[0].ID != sessionID {
+		t.Fatalf("expected session in combined include list, got %#v", combinedList)
+	}
+}
