@@ -91,12 +91,15 @@ type TemplateConfigPresenceProvider interface {
 }
 
 type InMemoryRunService struct {
-	cfg              Config
-	engine           *Engine
-	templates        map[string]WorkflowTemplate
-	templateProvider TemplateProvider
-	stepDispatcher   StepPromptDispatcher
-	turnMatcher      TurnSignalMatcher
+	cfg                    Config
+	engine                 *Engine
+	templates              map[string]WorkflowTemplate
+	templateProvider       TemplateProvider
+	stepDispatcher         StepPromptDispatcher
+	turnMatcher            TurnSignalMatcher
+	dispatchClassifier     DispatchErrorClassifier
+	dispatchRetryPolicy    DispatchRetryPolicy
+	dispatchRetryScheduler DispatchRetryScheduler
 
 	mu        sync.RWMutex
 	runs      map[string]*WorkflowRun
@@ -171,6 +174,33 @@ func WithTurnSignalMatcher(matcher TurnSignalMatcher) RunServiceOption {
 			return
 		}
 		s.turnMatcher = matcher
+	}
+}
+
+func WithDispatchErrorClassifier(classifier DispatchErrorClassifier) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || classifier == nil {
+			return
+		}
+		s.dispatchClassifier = classifier
+	}
+}
+
+func WithDispatchRetryPolicy(policy DispatchRetryPolicy) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || policy == nil {
+			return
+		}
+		s.dispatchRetryPolicy = policy
+	}
+}
+
+func WithDispatchRetryScheduler(scheduler DispatchRetryScheduler) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || scheduler == nil {
+			return
+		}
+		s.dispatchRetryScheduler = scheduler
 	}
 }
 
@@ -261,16 +291,18 @@ func WithMissingRunTombstoneFactory(factory MissingRunTombstoneFactory) RunServi
 
 func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	service := &InMemoryRunService{
-		cfg:              NormalizeConfig(cfg),
-		engine:           NewEngine(),
-		templates:        BuiltinTemplates(),
-		runs:             map[string]*WorkflowRun{},
-		timelines:        map[string][]RunTimelineEvent{},
-		turnSeen:         map[string]struct{}{},
-		actions:          map[string]struct{}{},
-		telemetryEnabled: true,
-		tombstoneFactory: defaultMissingRunTombstoneFactory{},
-		turnMatcher:      StrictSessionTurnSignalMatcher{},
+		cfg:                 NormalizeConfig(cfg),
+		engine:              NewEngine(),
+		templates:           BuiltinTemplates(),
+		runs:                map[string]*WorkflowRun{},
+		timelines:           map[string][]RunTimelineEvent{},
+		turnSeen:            map[string]struct{}{},
+		actions:             map[string]struct{}{},
+		telemetryEnabled:    true,
+		tombstoneFactory:    defaultMissingRunTombstoneFactory{},
+		turnMatcher:         StrictSessionTurnSignalMatcher{},
+		dispatchClassifier:  defaultDispatchErrorClassifier{},
+		dispatchRetryPolicy: defaultDispatchRetryPolicy(),
 		metrics: runServiceMetrics{
 			interventionCauses: map[string]int{},
 		},
@@ -280,9 +312,31 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 			opt(service)
 		}
 	}
+	if service.dispatchClassifier == nil {
+		service.dispatchClassifier = defaultDispatchErrorClassifier{}
+	}
+	if service.dispatchRetryPolicy == nil {
+		service.dispatchRetryPolicy = defaultDispatchRetryPolicy()
+	}
+	if service.dispatchRetryScheduler == nil {
+		service.dispatchRetryScheduler = NewDispatchRetryScheduler(service.dispatchRetryPolicy, service.retryDeferredDispatch)
+	}
 	service.restoreMetrics(context.Background())
 	service.restoreRuns(context.Background())
 	return service
+}
+
+func (s *InMemoryRunService) Close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	scheduler := s.dispatchRetryScheduler
+	s.dispatchRetryScheduler = nil
+	s.mu.Unlock()
+	if scheduler != nil {
+		scheduler.Close()
+	}
 }
 
 func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error) {
@@ -1175,6 +1229,10 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 		Prompt:             dispatchPrompt,
 	})
 	if err != nil {
+		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(err) == DispatchErrorDispositionDeferred {
+			s.deferRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
+			return true, nil
+		}
 		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
 		return false, err
 	}
@@ -1303,6 +1361,94 @@ func (s *InMemoryRunService) failRunForStepDispatchLocked(run *WorkflowRun, phas
 	})
 }
 
+func (s *InMemoryRunService) deferRunForStepDispatchLocked(run *WorkflowRun, phaseIndex, stepIndex int, cause error) {
+	if s == nil || run == nil {
+		return
+	}
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return
+	}
+	phase := &run.Phases[phaseIndex]
+	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
+		return
+	}
+	step := &phase.Steps[stepIndex]
+	now := s.engine.now()
+	run.CurrentPhaseIndex = phaseIndex
+	run.CurrentStepIndex = stepIndex
+	if phase.Status == PhaseRunStatusPending {
+		phase.Status = PhaseRunStatusRunning
+		phase.StartedAt = &now
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "phase",
+			Action:  "phase_started",
+			PhaseID: phase.ID,
+			Outcome: "running",
+			Detail:  phase.Name,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "phase_started",
+			RunID:   run.ID,
+			PhaseID: phase.ID,
+		})
+	}
+	step.Status = StepRunStatusPending
+	step.AwaitingTurn = false
+	step.CompletedAt = nil
+	step.Error = ""
+	step.Outcome = "waiting_dispatch"
+	step.Output = ""
+	step.TurnID = ""
+	recordStepExecutionDeferred(step, strings.TrimSpace(cause.Error()), now)
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_dispatch_deferred",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "waiting_dispatch",
+		Detail:  strings.TrimSpace(cause.Error()),
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_dispatch_deferred",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: strings.TrimSpace(cause.Error()),
+	})
+	if s.dispatchRetryScheduler != nil {
+		s.dispatchRetryScheduler.Enqueue(run.ID)
+	}
+}
+
+func (s *InMemoryRunService) retryDeferredDispatch(runID string) bool {
+	if s == nil {
+		return true
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[runID]
+	if !ok || run == nil {
+		return true
+	}
+	if run.Status != WorkflowRunStatusRunning || !runHasDeferredDispatch(run) {
+		return true
+	}
+	if err := s.advanceOnceLocked(context.Background(), run); err != nil {
+		s.persistRunSnapshotLocked(context.Background(), run.ID)
+		return true
+	}
+	s.persistRunSnapshotLocked(context.Background(), run.ID)
+	return run.Status != WorkflowRunStatusRunning || !runHasDeferredDispatch(run)
+}
+
 func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, signal TurnSignal) (bool, error) {
 	if s == nil || run == nil {
 		return false, nil
@@ -1319,6 +1465,50 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, si
 		return false, fmt.Errorf("%w: awaiting step index out of range", ErrInvalidTransition)
 	}
 	step := &phase.Steps[stepIndex]
+	expectedTurnID := strings.TrimSpace(step.TurnID)
+	signalTurnID := strings.TrimSpace(signal.TurnID)
+	if expectedTurnID != "" && signalTurnID == "" {
+		now := s.engine.now()
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "step",
+			Action:  "step_turn_signal_ignored",
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Outcome: "awaiting_turn",
+			Detail:  "missing turn_id while step awaits " + expectedTurnID,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "step_turn_signal_ignored",
+			RunID:   run.ID,
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Message: "missing turn_id for awaiting step",
+		})
+		return false, nil
+	}
+	if expectedTurnID != "" && signalTurnID != "" && signalTurnID != expectedTurnID {
+		now := s.engine.now()
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "step",
+			Action:  "step_turn_signal_ignored",
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Outcome: "awaiting_turn",
+			Detail:  "turn_id mismatch expected=" + expectedTurnID + " got=" + signalTurnID,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "step_turn_signal_ignored",
+			RunID:   run.ID,
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Message: "turn_id mismatch for awaiting step",
+		})
+		return false, nil
+	}
 	now := s.engine.now()
 	step.Status = StepRunStatusCompleted
 	step.AwaitingTurn = false
@@ -1606,6 +1796,20 @@ func recordStepExecutionFailure(step *StepRun, message string, now time.Time) {
 		return
 	}
 	step.ExecutionState = StepExecutionStateUnavailable
+	step.ExecutionMessage = strings.TrimSpace(message)
+	if step.Execution != nil {
+		step.Execution.CompletedAt = &now
+	}
+	if len(step.ExecutionAttempts) > 0 {
+		step.ExecutionAttempts[len(step.ExecutionAttempts)-1].CompletedAt = &now
+	}
+}
+
+func recordStepExecutionDeferred(step *StepRun, message string, now time.Time) {
+	if step == nil {
+		return
+	}
+	step.ExecutionState = StepExecutionStateDeferred
 	step.ExecutionMessage = strings.TrimSpace(message)
 	if step.Execution != nil {
 		step.Execution.CompletedAt = &now
@@ -2012,6 +2216,23 @@ func currentRunPosition(run *WorkflowRun) (phaseID string, stepID string) {
 func isRunAwaitingTurn(run *WorkflowRun) bool {
 	_, _, ok := findAwaitingTurn(run)
 	return ok
+}
+
+func runHasDeferredDispatch(run *WorkflowRun) bool {
+	if run == nil {
+		return false
+	}
+	for _, phase := range run.Phases {
+		for _, step := range phase.Steps {
+			if step.Status != StepRunStatusPending {
+				continue
+			}
+			if step.ExecutionState == StepExecutionStateDeferred || strings.EqualFold(strings.TrimSpace(step.Outcome), "waiting_dispatch") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func findAwaitingTurn(run *WorkflowRun) (phaseIndex int, stepIndex int, ok bool) {

@@ -106,6 +106,12 @@ type NoteStore interface {
 	Delete(ctx context.Context, id string) error
 }
 
+type guidedWorkflowRunCloser interface {
+	Close()
+}
+
+var newGuidedWorkflowRunServiceFn = newGuidedWorkflowRunService
+
 func New(addr, token, version string, manager *SessionManager, stores *Stores) *Daemon {
 	if manager != nil && stores != nil && stores.SessionMeta != nil {
 		manager.SetMetaStore(stores.SessionMeta)
@@ -146,7 +152,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		guidedWorkflowRunSnapshotReconciliationInputFromStores(d.stores),
 	)
 	logGuidedWorkflowRunReconciliationOutcome(d.logger, reconcileResult, reconcileErr)
-	workflowRuns := newGuidedWorkflowRunService(coreCfg, d.stores, d.manager, liveCodex, d.logger)
+	workflowRuns := newGuidedWorkflowRunServiceFn(coreCfg, d.stores, d.manager, liveCodex, d.logger)
+	if closer, ok := any(workflowRuns).(guidedWorkflowRunCloser); ok {
+		defer closer.Close()
+	}
 	var turnProcessor guidedworkflows.TurnEventProcessor
 	if processor, ok := any(workflowRuns).(guidedworkflows.TurnEventProcessor); ok {
 		turnProcessor = processor

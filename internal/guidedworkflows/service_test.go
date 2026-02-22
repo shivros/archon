@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ type stubStepPromptDispatcher struct {
 	calls     []StepPromptDispatchRequest
 	responses []StepPromptDispatchResult
 	err       error
+	errs      []error
 }
 
 type stubMissingRunContextResolver struct {
@@ -50,6 +52,50 @@ type missingRunTombstoneFactoryCall struct {
 type stubMissingRunTombstoneFactory struct {
 	runByID map[string]*WorkflowRun
 	calls   []missingRunTombstoneFactoryCall
+}
+
+type stubDispatchErrorClassifier struct {
+	disposition DispatchErrorDisposition
+}
+
+type stubDispatchRetryScheduler struct {
+	enqueued   []string
+	closeCalls int
+}
+
+type countingDispatchRetryPolicy struct {
+	delay time.Duration
+	calls atomic.Int32
+}
+
+func (s stubDispatchErrorClassifier) Classify(error) DispatchErrorDisposition {
+	return s.disposition
+}
+
+func (s *stubDispatchRetryScheduler) Enqueue(runID string) {
+	if s == nil {
+		return
+	}
+	s.enqueued = append(s.enqueued, strings.TrimSpace(runID))
+}
+
+func (s *stubDispatchRetryScheduler) Close() {
+	if s == nil {
+		return
+	}
+	s.closeCalls++
+}
+
+func (p *countingDispatchRetryPolicy) NextDelay(_ int) (time.Duration, bool) {
+	if p == nil {
+		return 0, false
+	}
+	p.calls.Add(1)
+	delay := p.delay
+	if delay <= 0 {
+		delay = 1 * time.Millisecond
+	}
+	return delay, true
 }
 
 func (s *stubTemplateProvider) ListWorkflowTemplates(context.Context) ([]WorkflowTemplate, error) {
@@ -81,6 +127,17 @@ func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req Ste
 		return StepPromptDispatchResult{}, nil
 	}
 	s.calls = append(s.calls, req)
+	if len(s.errs) > 0 {
+		err := s.errs[0]
+		if len(s.errs) == 1 {
+			s.errs = s.errs[:0]
+		} else {
+			s.errs = s.errs[1:]
+		}
+		if err != nil {
+			return StepPromptDispatchResult{}, err
+		}
+	}
 	if s.err != nil {
 		return StepPromptDispatchResult{}, s.err
 	}
@@ -1721,6 +1778,378 @@ func TestRunLifecyclePromptDispatchUnavailableFailsRun(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(run.LastError), "dispatcher did not dispatch") {
 		t.Fatalf("expected unavailable dispatch detail in LastError, got %q", run.LastError)
+	}
+}
+
+func TestRunLifecyclePromptDispatchDeferredRetriesAndSucceeds(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_deferred",
+		Name: "Prompted Deferred",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		errs: []error{
+			fmt.Errorf("%w: turn already in progress", ErrStepDispatchDeferred),
+		},
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_deferred",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected running status after deferred dispatch, got %q", run.Status)
+	}
+	if got := run.Phases[0].Steps[0]; got.ExecutionState != StepExecutionStateDeferred || got.Outcome != "waiting_dispatch" {
+		t.Fatalf("expected first step deferred state after initial dispatch contention, got %#v", got)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		current, getErr := service.GetRun(context.Background(), run.ID)
+		if getErr != nil {
+			t.Fatalf("GetRun while waiting for retry: %v", getErr)
+		}
+		step := current.Phases[0].Steps[0]
+		if step.Status == StepRunStatusRunning && step.AwaitingTurn && step.ExecutionState == StepExecutionStateLinked {
+			run = current
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if got := run.Phases[0].Steps[0]; got.Status != StepRunStatusRunning || !got.AwaitingTurn {
+		t.Fatalf("expected deferred dispatch retry to eventually dispatch step, got %#v", got)
+	}
+	if len(dispatcher.calls) < 2 {
+		t.Fatalf("expected retry loop to re-attempt dispatch, got %d dispatch call(s)", len(dispatcher.calls))
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after turn completion, got %d", len(updated))
+	}
+	if updated[0].Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected run completion after retried dispatch turn completes, got %q", updated[0].Status)
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedIgnoresMismatchedTurnID(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_match",
+		Name: "Prompted Turn Match",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_match",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-b",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted mismatched: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one running update for mismatched turn signal, got %d", len(updated))
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected run to stay running after mismatched turn, got %q", current.Status)
+	}
+	if got := current.Phases[0].Steps[0]; got.Status != StepRunStatusRunning || !got.AwaitingTurn || got.TurnID != "turn-a" {
+		t.Fatalf("expected awaiting step to remain unchanged after mismatched turn, got %#v", got)
+	}
+	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted matched: %v", err)
+	}
+	if len(updated) != 1 || updated[0].Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected completion after matching turn signal, got %#v", updated)
+	}
+}
+
+func TestRunLifecycleCustomDispatchClassifierFatalFailsDeferredError(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_classifier_fatal",
+		Name: "Prompted Classifier Fatal",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(&stubStepPromptDispatcher{err: ErrStepDispatchDeferred}),
+		WithDispatchErrorClassifier(stubDispatchErrorClassifier{disposition: DispatchErrorDispositionFatal}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_classifier_fatal",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err == nil {
+		t.Fatalf("expected start to fail when classifier marks deferred error fatal")
+	} else if !errors.Is(err, ErrStepDispatchDeferred) {
+		t.Fatalf("expected ErrStepDispatchDeferred, got %v", err)
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run with fatal classifier, got %q", current.Status)
+	}
+}
+
+func TestRunLifecycleCustomDispatchClassifierDeferredUsesInjectedScheduler(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_classifier_deferred",
+		Name: "Prompted Classifier Deferred",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	scheduler := &stubDispatchRetryScheduler{}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(&stubStepPromptDispatcher{err: errors.New("synthetic non-deferred dispatch error")}),
+		WithDispatchErrorClassifier(stubDispatchErrorClassifier{disposition: DispatchErrorDispositionDeferred}),
+		WithDispatchRetryScheduler(scheduler),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_classifier_deferred",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected run to stay running with deferred classifier, got %q", run.Status)
+	}
+	step := run.Phases[0].Steps[0]
+	if step.Status != StepRunStatusPending || step.ExecutionState != StepExecutionStateDeferred || step.Outcome != "waiting_dispatch" {
+		t.Fatalf("expected deferred step state, got %#v", step)
+	}
+	if len(scheduler.enqueued) != 1 || scheduler.enqueued[0] != run.ID {
+		t.Fatalf("expected injected scheduler to enqueue run once, got %#v", scheduler.enqueued)
+	}
+}
+
+func TestRunLifecycleCustomDispatchRetryPolicyWiresDefaultScheduler(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_policy_wiring",
+		Name: "Prompted Policy Wiring",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	policy := &countingDispatchRetryPolicy{delay: 1 * time.Millisecond}
+	dispatcher := &stubStepPromptDispatcher{
+		errs: []error{
+			ErrStepDispatchDeferred,
+		},
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithDispatchRetryPolicy(policy),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	defer service.Close()
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_policy_wiring",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) && policy.calls.Load() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if policy.calls.Load() == 0 {
+		t.Fatalf("expected custom retry policy to be used by default scheduler")
+	}
+}
+
+func TestRunServiceCloseClosesInjectedSchedulerOnce(t *testing.T) {
+	scheduler := &stubDispatchRetryScheduler{}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithDispatchRetryScheduler(scheduler),
+	)
+	service.Close()
+	service.Close()
+	if scheduler.closeCalls != 1 {
+		t.Fatalf("expected scheduler close to be idempotent through service.Close, got %d calls", scheduler.closeCalls)
+	}
+}
+
+func TestRetryDeferredDispatchDefensiveBranches(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	if done := service.retryDeferredDispatch(""); !done {
+		t.Fatalf("expected empty run id to return done")
+	}
+	if done := service.retryDeferredDispatch("missing-run"); !done {
+		t.Fatalf("expected missing run id to return done")
+	}
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if done := service.retryDeferredDispatch(run.ID); !done {
+		t.Fatalf("expected non-running run to return done")
+	}
+}
+
+func TestRetryDeferredDispatchReturnsDoneWhenAdvanceFails(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_retry_advance_fail",
+		Name: "Prompted Retry Advance Fail",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		errs: []error{
+			ErrStepDispatchDeferred,
+			errors.New("fatal dispatch error"),
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithDispatchRetryScheduler(&stubDispatchRetryScheduler{}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_retry_advance_fail",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if done := service.retryDeferredDispatch(run.ID); !done {
+		t.Fatalf("expected retry to return done when advance fails")
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected run to fail when retry dispatch errors fatally, got %q", current.Status)
 	}
 }
 

@@ -1259,6 +1259,7 @@ func TestToGuidedWorkflowServiceErrorMappings(t *testing.T) {
 	check(guidedworkflows.ErrInvalidTransition, ServiceErrorConflict)
 	check(guidedworkflows.ErrRunLimitExceeded, ServiceErrorConflict)
 	check(guidedworkflows.ErrDisabled, ServiceErrorUnavailable)
+	check(guidedworkflows.ErrStepDispatchDeferred, ServiceErrorConflict)
 	check(guidedworkflows.ErrStepDispatch, ServiceErrorUnavailable)
 
 	mapped := toGuidedWorkflowServiceError(fmt.Errorf("%w: turn already in progress", guidedworkflows.ErrStepDispatch))

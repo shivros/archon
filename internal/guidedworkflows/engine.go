@@ -10,15 +10,16 @@ import (
 )
 
 var (
-	ErrRunNotFound       = errors.New("workflow run not found")
-	ErrTemplateNotFound  = errors.New("workflow template not found")
-	ErrInvalidTransition = errors.New("invalid workflow run transition")
-	ErrRunNotRunning     = errors.New("workflow run is not running")
-	ErrNoPendingSteps    = errors.New("workflow run has no pending steps")
-	ErrRunLimitExceeded  = errors.New("workflow active run limit exceeded")
-	ErrCapabilityDenied  = errors.New("workflow capability denied")
-	ErrCommandFailed     = errors.New("workflow command failed")
-	ErrStepDispatch      = errors.New("workflow step prompt dispatch unavailable")
+	ErrRunNotFound          = errors.New("workflow run not found")
+	ErrTemplateNotFound     = errors.New("workflow template not found")
+	ErrInvalidTransition    = errors.New("invalid workflow run transition")
+	ErrRunNotRunning        = errors.New("workflow run is not running")
+	ErrNoPendingSteps       = errors.New("workflow run has no pending steps")
+	ErrRunLimitExceeded     = errors.New("workflow active run limit exceeded")
+	ErrCapabilityDenied     = errors.New("workflow capability denied")
+	ErrCommandFailed        = errors.New("workflow command failed")
+	ErrStepDispatch         = errors.New("workflow step prompt dispatch unavailable")
+	ErrStepDispatchDeferred = errors.New("workflow step prompt dispatch deferred")
 )
 
 type StepHandler func(ctx context.Context, run *WorkflowRun, phase *PhaseRun, step *StepRun) error

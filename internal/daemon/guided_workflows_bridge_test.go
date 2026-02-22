@@ -1055,7 +1055,7 @@ func TestGuidedWorkflowPromptDispatcherReusesOwnedWorkflowSessionWithDefaultsCon
 	}
 }
 
-func TestGuidedWorkflowPromptDispatcherFailsWhenOwnedSessionBusy(t *testing.T) {
+func TestGuidedWorkflowPromptDispatcherDefersWhenOwnedSessionBusy(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
 			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
@@ -1077,10 +1077,10 @@ func TestGuidedWorkflowPromptDispatcherFailsWhenOwnedSessionBusy(t *testing.T) {
 		Prompt:      "continue",
 	})
 	if err == nil {
-		t.Fatalf("expected dispatch to fail while existing session turn is active")
+		t.Fatalf("expected dispatch to defer while existing session turn is active")
 	}
-	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
-		t.Fatalf("expected ErrStepDispatch, got %v", err)
+	if !errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
+		t.Fatalf("expected ErrStepDispatchDeferred, got %v", err)
 	}
 	if result.Dispatched {
 		t.Fatalf("expected no dispatch result while session is busy, got %#v", result)
@@ -1090,6 +1090,47 @@ func TestGuidedWorkflowPromptDispatcherFailsWhenOwnedSessionBusy(t *testing.T) {
 	}
 	if len(gateway.sendCalls) != 3 {
 		t.Fatalf("expected in-session retries only, got %d calls", len(gateway.sendCalls))
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherReturnsFatalErrorAfterBusyRetriesWhenNonBusyErrorArrives(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1", WorkflowRunID: "gwf-1"},
+		},
+		sendErrs: []error{
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+			errors.New("thread not found"),
+		},
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err == nil {
+		t.Fatalf("expected dispatch to fail when a non-busy error arrives after busy retries")
+	}
+	if errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
+		t.Fatalf("expected fatal dispatch error classification, got %v", err)
+	}
+	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		t.Fatalf("expected wrapped ErrStepDispatch, got %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "thread not found") {
+		t.Fatalf("expected terminal error detail in dispatch error, got %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result when terminal send error occurs, got %#v", result)
+	}
+	if len(gateway.sendCalls) != 3 {
+		t.Fatalf("expected three in-session send attempts, got %d", len(gateway.sendCalls))
 	}
 }
 
@@ -1800,7 +1841,7 @@ func TestGuidedWorkflowRunServiceDispatchCreatesSessionAndReusesItAcrossSteps(t 
 
 	updated, err := runService.OnTurnCompleted(context.Background(), guidedworkflows.TurnSignal{
 		SessionID: "sess-created",
-		TurnID:    "turn-1",
+		TurnID:    "turn-dispatch",
 	})
 	if err != nil {
 		t.Fatalf("OnTurnCompleted: %v", err)

@@ -457,6 +457,7 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, ses
 	}
 	const maxAttempts = 3
 	var lastErr error
+	allBusy := true
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		turnID, err := d.sessions.SendMessage(ctx, sessionID, []map[string]any{
 			{"type": "text", "text": prompt},
@@ -466,6 +467,9 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, ses
 		}
 		lastErr = err
 		if !isTurnAlreadyInProgressError(err) || attempt == maxAttempts {
+			if !isTurnAlreadyInProgressError(err) {
+				allBusy = false
+			}
 			break
 		}
 		delay := time.Duration(attempt*150) * time.Millisecond
@@ -474,6 +478,9 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, ses
 			return "", ctx.Err()
 		case <-time.After(delay):
 		}
+	}
+	if allBusy && lastErr != nil {
+		return "", fmt.Errorf("%w: %v", guidedworkflows.ErrStepDispatchDeferred, lastErr)
 	}
 	return "", lastErr
 }
@@ -926,6 +933,9 @@ func guidedWorkflowDispatchModel(options *types.SessionRuntimeOptions) string {
 func wrapStepDispatchError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
+		return err
 	}
 	if errors.Is(err, guidedworkflows.ErrStepDispatch) {
 		return err

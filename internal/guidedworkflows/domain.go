@@ -123,6 +123,7 @@ const (
 	StepExecutionStateNone        StepExecutionState = "none"
 	StepExecutionStateLinked      StepExecutionState = "linked"
 	StepExecutionStateUnavailable StepExecutionState = "unavailable"
+	StepExecutionStateDeferred    StepExecutionState = "deferred"
 )
 
 type StepExecutionRef struct {

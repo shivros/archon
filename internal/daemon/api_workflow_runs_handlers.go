@@ -504,6 +504,8 @@ func toGuidedWorkflowServiceError(err error) error {
 		return conflictError("workflow active run limit exceeded", err)
 	case errors.Is(err, guidedworkflows.ErrDisabled):
 		return unavailableError("guided workflows are disabled", err)
+	case errors.Is(err, guidedworkflows.ErrStepDispatchDeferred):
+		return conflictError("guided workflow step prompt deferred: waiting for active turn to finish", err)
 	case errors.Is(err, guidedworkflows.ErrStepDispatch):
 		if isTurnAlreadyInProgressError(err) {
 			return conflictError("guided workflow step prompt blocked: turn already in progress", err)
