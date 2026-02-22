@@ -74,8 +74,7 @@ func (s *FileWorkspaceStore) List(ctx context.Context) ([]*types.Workspace, erro
 	}
 	out := make([]*types.Workspace, 0, len(file.Workspaces))
 	for _, ws := range file.Workspaces {
-		copy := *ws
-		out = append(out, &copy)
+		out = append(out, cloneWorkspaceRecord(ws))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
@@ -96,8 +95,7 @@ func (s *FileWorkspaceStore) Get(ctx context.Context, id string) (*types.Workspa
 	}
 	for _, ws := range file.Workspaces {
 		if ws.ID == id {
-			copy := *ws
-			return &copy, true, nil
+			return cloneWorkspaceRecord(ws), true, nil
 		}
 	}
 	return nil, false, nil
@@ -130,8 +128,7 @@ func (s *FileWorkspaceStore) Add(ctx context.Context, workspace *types.Workspace
 	if err := s.save(file); err != nil {
 		return nil, err
 	}
-	copy := *ws
-	return &copy, nil
+	return cloneWorkspaceRecord(ws), nil
 }
 
 func (s *FileWorkspaceStore) Update(ctx context.Context, workspace *types.Workspace) (*types.Workspace, error) {
@@ -163,8 +160,7 @@ func (s *FileWorkspaceStore) Update(ctx context.Context, workspace *types.Worksp
 	if err := s.save(file); err != nil {
 		return nil, err
 	}
-	copy := *ws
-	return &copy, nil
+	return cloneWorkspaceRecord(ws), nil
 }
 
 func (s *FileWorkspaceStore) Delete(ctx context.Context, id string) error {
@@ -501,18 +497,23 @@ func normalizeWorkspace(workspace *types.Workspace) (*types.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
+	additionalDirectories, err := workspacepaths.NormalizeAdditionalDirectories(workspace.AdditionalDirectories)
+	if err != nil {
+		return nil, err
+	}
 	name := strings.TrimSpace(workspace.Name)
 	if name == "" {
 		name = defaultName(path)
 	}
 	ws := &types.Workspace{
-		ID:             workspace.ID,
-		Name:           name,
-		RepoPath:       path,
-		SessionSubpath: sessionSubpath,
-		GroupIDs:       normalizeGroupIDs(workspace.GroupIDs),
-		CreatedAt:      workspace.CreatedAt,
-		UpdatedAt:      workspace.UpdatedAt,
+		ID:                    workspace.ID,
+		Name:                  name,
+		RepoPath:              path,
+		SessionSubpath:        sessionSubpath,
+		AdditionalDirectories: additionalDirectories,
+		GroupIDs:              normalizeGroupIDs(workspace.GroupIDs),
+		CreatedAt:             workspace.CreatedAt,
+		UpdatedAt:             workspace.UpdatedAt,
 	}
 	if ws.ID == "" {
 		id, err := newID()
@@ -552,6 +553,20 @@ func normalizeGroupIDs(ids []string) []string {
 		return nil
 	}
 	return out
+}
+
+func cloneWorkspaceRecord(workspace *types.Workspace) *types.Workspace {
+	if workspace == nil {
+		return nil
+	}
+	copy := *workspace
+	if len(workspace.AdditionalDirectories) > 0 {
+		copy.AdditionalDirectories = append([]string(nil), workspace.AdditionalDirectories...)
+	}
+	if len(workspace.GroupIDs) > 0 {
+		copy.GroupIDs = append([]string(nil), workspace.GroupIDs...)
+	}
+	return &copy
 }
 
 func normalizeWorkspaceGroup(group *types.WorkspaceGroup) (*types.WorkspaceGroup, error) {

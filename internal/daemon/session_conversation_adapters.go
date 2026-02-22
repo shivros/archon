@@ -296,13 +296,18 @@ func (claudeConversationAdapter) SendMessage(ctx context.Context, service *Sessi
 			if strings.TrimSpace(session.Cwd) == "" {
 				return "", invalidError("session cwd is required", nil)
 			}
+			additionalDirectories, dirsErr := service.resolveAdditionalDirectoriesForSession(ctx, session, meta)
+			if dirsErr != nil {
+				return "", invalidError(dirsErr.Error(), dirsErr)
+			}
 			_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
-				Provider:          session.Provider,
-				Cwd:               session.Cwd,
-				Env:               session.Env,
-				RuntimeOptions:    runtimeOptions,
-				Resume:            true,
-				ProviderSessionID: providerSessionID,
+				Provider:              session.Provider,
+				Cwd:                   session.Cwd,
+				AdditionalDirectories: additionalDirectories,
+				Env:                   session.Env,
+				RuntimeOptions:        runtimeOptions,
+				Resume:                true,
+				ProviderSessionID:     providerSessionID,
 			}, session)
 			if resumeErr != nil {
 				return "", invalidError(resumeErr.Error(), resumeErr)
@@ -417,13 +422,18 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 			if strings.TrimSpace(providerSessionID) == "" {
 				return "", invalidError("provider session id not available", nil)
 			}
+			additionalDirectories, dirsErr := service.resolveAdditionalDirectoriesForSession(ctx, session, meta)
+			if dirsErr != nil {
+				return "", invalidError(dirsErr.Error(), dirsErr)
+			}
 			_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
-				Provider:          session.Provider,
-				Cwd:               session.Cwd,
-				Env:               session.Env,
-				RuntimeOptions:    runtimeOptions,
-				Resume:            true,
-				ProviderSessionID: providerSessionID,
+				Provider:              session.Provider,
+				Cwd:                   session.Cwd,
+				AdditionalDirectories: additionalDirectories,
+				Env:                   session.Env,
+				RuntimeOptions:        runtimeOptions,
+				Resume:                true,
+				ProviderSessionID:     providerSessionID,
 			}, session)
 			if resumeErr != nil {
 				if service.logger != nil {
@@ -707,7 +717,7 @@ func (openCodeConversationAdapter) Approve(ctx context.Context, service *Session
 	return nil
 }
 
-func (openCodeConversationAdapter) Interrupt(_ context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) error {
+func (openCodeConversationAdapter) Interrupt(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) error {
 	if session == nil {
 		return invalidError("session is required", nil)
 	}
@@ -725,13 +735,18 @@ func (openCodeConversationAdapter) Interrupt(_ context.Context, service *Session
 			if strings.TrimSpace(providerSessionID) == "" {
 				return notFoundError("session not found", err)
 			}
+			additionalDirectories, dirsErr := service.resolveAdditionalDirectoriesForSession(ctx, session, meta)
+			if dirsErr != nil {
+				return invalidError(dirsErr.Error(), dirsErr)
+			}
 			_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
-				Provider:          session.Provider,
-				Cwd:               session.Cwd,
-				Env:               session.Env,
-				RuntimeOptions:    runtimeOptions,
-				Resume:            true,
-				ProviderSessionID: providerSessionID,
+				Provider:              session.Provider,
+				Cwd:                   session.Cwd,
+				AdditionalDirectories: additionalDirectories,
+				Env:                   session.Env,
+				RuntimeOptions:        runtimeOptions,
+				Resume:                true,
+				ProviderSessionID:     providerSessionID,
 			}, session)
 			if resumeErr != nil {
 				return invalidError(resumeErr.Error(), resumeErr)

@@ -986,6 +986,167 @@ func TestOpenCodeClientReplyPermissionUsesSessionEndpoint(t *testing.T) {
 	}
 }
 
+func TestOpenCodeClientRequestPermissionUsesSessionEndpoint(t *testing.T) {
+	var (
+		requestPath     string
+		requestBody     map[string]any
+		requestRawQuery string
+	)
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		requestRawQuery = r.URL.RawQuery
+		_ = json.NewDecoder(r.Body).Decode(&requestBody)
+		writeJSON(w, http.StatusOK, true)
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	payload := &openCodePermissionCreateRequest{
+		Permission: "external_directory",
+		Patterns:   []string{"/tmp/backend/*", "/tmp/shared/*"},
+	}
+	if err := client.RequestPermission(context.Background(), "session-1", payload, directory); err != nil {
+		t.Fatalf("RequestPermission: %v", err)
+	}
+	if requestPath != "/session/session-1/permissions" {
+		t.Fatalf("unexpected request path: %q", requestPath)
+	}
+	if got := strings.TrimSpace(requestRawQuery); got != "directory=%2Ftmp%2Fopencode-worktree" {
+		t.Fatalf("unexpected request query: %q", got)
+	}
+	if got := strings.TrimSpace(asString(requestBody["permission"])); got != "external_directory" {
+		t.Fatalf("unexpected permission payload: %#v", requestBody)
+	}
+	if got := strings.TrimSpace(asString(requestBody["sessionID"])); got != "session-1" {
+		t.Fatalf("unexpected session payload: %#v", requestBody)
+	}
+	patterns, _ := requestBody["patterns"].([]any)
+	if len(patterns) != 2 || strings.TrimSpace(asString(patterns[0])) != "/tmp/backend/*" || strings.TrimSpace(asString(patterns[1])) != "/tmp/shared/*" {
+		t.Fatalf("unexpected patterns payload: %#v", requestBody)
+	}
+}
+
+func TestOpenCodeClientRequestPermissionFallsBackWhenSessionEndpointReturnsHTML(t *testing.T) {
+	var (
+		paths []string
+		body  map[string]any
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/session/session-1/permissions":
+			w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+			_, _ = io.WriteString(w, "<!doctype html><html><body>spa</body></html>")
+			return
+		case "/permission":
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if err := client.RequestPermission(context.Background(), "session-1", &openCodePermissionCreateRequest{
+		Permission: "external_directory",
+		Patterns:   []string{"/tmp/backend/*"},
+	}, ""); err != nil {
+		t.Fatalf("RequestPermission fallback: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected session path then legacy fallback, got %v", paths)
+	}
+	if paths[0] != "/session/session-1/permissions" || paths[1] != "/permission" {
+		t.Fatalf("unexpected request order: %v", paths)
+	}
+	if got := strings.TrimSpace(asString(body["permission"])); got != "external_directory" {
+		t.Fatalf("unexpected legacy fallback payload: %#v", body)
+	}
+	if got := strings.TrimSpace(asString(body["sessionID"])); got != "session-1" {
+		t.Fatalf("unexpected legacy session payload: %#v", body)
+	}
+}
+
+func TestOpenCodeClientRequestPermissionFallsBackWhenSessionEndpointNotFound(t *testing.T) {
+	var (
+		paths []string
+		body  map[string]any
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/session/session-1/permissions":
+			http.NotFound(w, r)
+			return
+		case "/permission":
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if err := client.RequestPermission(context.Background(), "session-1", &openCodePermissionCreateRequest{
+		Permission: "external_directory",
+		Patterns:   []string{"/tmp/backend/*"},
+	}, ""); err != nil {
+		t.Fatalf("RequestPermission fallback: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("expected session path then legacy fallback, got %v", paths)
+	}
+	if paths[0] != "/session/session-1/permissions" || paths[1] != "/permission" {
+		t.Fatalf("unexpected request order: %v", paths)
+	}
+	if got := strings.TrimSpace(asString(body["permission"])); got != "external_directory" {
+		t.Fatalf("unexpected legacy fallback payload: %#v", body)
+	}
+}
+
+func TestOpenCodeClientRequestPermissionValidation(t *testing.T) {
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: "http://127.0.0.1:4096"})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if err := client.RequestPermission(context.Background(), "", &openCodePermissionCreateRequest{
+		Permission: "external_directory",
+	}, ""); err == nil {
+		t.Fatalf("expected session id validation error")
+	}
+	if err := client.RequestPermission(context.Background(), "session-1", nil, ""); err == nil {
+		t.Fatalf("expected permission validation error")
+	}
+	if err := client.RequestPermission(context.Background(), "session-1", &openCodePermissionCreateRequest{}, ""); err == nil {
+		t.Fatalf("expected permission type validation error")
+	}
+}
+
+func TestOpenCodeClientRequestPermissionNilClient(t *testing.T) {
+	var client *openCodeClient
+	if err := client.RequestPermission(context.Background(), "session-1", &openCodePermissionCreateRequest{
+		Permission: "external_directory",
+	}, ""); err == nil {
+		t.Fatalf("expected nil client validation error")
+	}
+}
+
 func TestOpenCodeClientReplyPermissionFallsBackWhenSessionEndpointReturnsHTML(t *testing.T) {
 	var (
 		paths []string

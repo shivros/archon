@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -33,7 +34,15 @@ func (p *execProvider) Command() string {
 }
 
 func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
-	cmd := exec.Command(p.cmdName, cfg.Args...)
+	args := append([]string{}, cfg.Args...)
+	if strings.EqualFold(strings.TrimSpace(p.providerName), "gemini") {
+		additionalDirArgs, err := providerAdditionalDirectoryArgs(p.providerName, cfg.AdditionalDirectories)
+		if err != nil {
+			return nil, err
+		}
+		args = append(additionalDirArgs, args...)
+	}
+	cmd := exec.Command(p.cmdName, args...)
 	if cfg.Cwd != "" {
 		cmd.Dir = cfg.Cwd
 	}

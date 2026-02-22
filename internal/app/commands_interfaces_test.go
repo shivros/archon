@@ -72,7 +72,7 @@ func TestCommandsCompileWithNarrowMocks(t *testing.T) {
 	}
 
 	createAPI := &workspaceCreateMock{}
-	createCmd := createWorkspaceCmd(createAPI, "/tmp/repo", "packages/pennies", "Repo")
+	createCmd := createWorkspaceCmd(createAPI, "/tmp/repo", "packages/pennies", "Repo", []string{"../backend", "../shared"})
 	if createCmd == nil {
 		t.Fatalf("expected create workspace command")
 	}
@@ -85,6 +85,9 @@ func TestCommandsCompileWithNarrowMocks(t *testing.T) {
 	}
 	if createAPI.lastWorkspace == nil || createAPI.lastWorkspace.SessionSubpath != "packages/pennies" {
 		t.Fatalf("expected session_subpath to be forwarded, got %#v", createAPI.lastWorkspace)
+	}
+	if createAPI.lastWorkspace == nil || len(createAPI.lastWorkspace.AdditionalDirectories) != 2 {
+		t.Fatalf("expected additional_directories to be forwarded, got %#v", createAPI.lastWorkspace)
 	}
 
 }

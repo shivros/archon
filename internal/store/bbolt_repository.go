@@ -1228,6 +1228,9 @@ func cloneWorkspace(workspace *types.Workspace) *types.Workspace {
 		return nil
 	}
 	copy := *workspace
+	if len(workspace.AdditionalDirectories) > 0 {
+		copy.AdditionalDirectories = append([]string(nil), workspace.AdditionalDirectories...)
+	}
 	if len(workspace.GroupIDs) > 0 {
 		copy.GroupIDs = append([]string(nil), workspace.GroupIDs...)
 	}

@@ -11,8 +11,8 @@ func (m *Model) setStatus(status string) {
 	m.setStatusMessage(status)
 }
 
-func (m *Model) createWorkspaceCmd(path, sessionSubpath, name string) tea.Cmd {
-	return createWorkspaceCmd(m.workspaceAPI, path, sessionSubpath, name)
+func (m *Model) createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd {
+	return createWorkspaceCmd(m.workspaceAPI, path, sessionSubpath, name, additionalDirectories)
 }
 
 func (m *Model) fetchAvailableWorktreesCmd(workspaceID, workspacePath string) tea.Cmd {

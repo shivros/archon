@@ -49,10 +49,11 @@ func TestBboltRepositoryCRUD(t *testing.T) {
 	}
 
 	workspace, err := repo.Workspaces().Add(ctx, &types.Workspace{
-		ID:             "ws-1",
-		Name:           "Main",
-		RepoPath:       filepath.Join(t.TempDir(), "repo"),
-		SessionSubpath: filepath.Join("packages", "pennies"),
+		ID:                    "ws-1",
+		Name:                  "Main",
+		RepoPath:              filepath.Join(t.TempDir(), "repo"),
+		SessionSubpath:        filepath.Join("packages", "pennies"),
+		AdditionalDirectories: []string{"../backend", "../shared"},
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -66,6 +67,9 @@ func TestBboltRepositoryCRUD(t *testing.T) {
 	}
 	if workspaces[0].SessionSubpath != filepath.Join("packages", "pennies") {
 		t.Fatalf("unexpected workspace session subpath: %#v", workspaces[0])
+	}
+	if len(workspaces[0].AdditionalDirectories) != 2 {
+		t.Fatalf("unexpected workspace additional dirs: %#v", workspaces[0])
 	}
 	group, err := repo.Groups().AddGroup(ctx, &types.WorkspaceGroup{Name: "Core"})
 	if err != nil {

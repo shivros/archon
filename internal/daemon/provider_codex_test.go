@@ -162,6 +162,40 @@ func TestCodexProviderStartRunsInitialTurnWhenInputProvided(t *testing.T) {
 	stopProviderProcess(proc)
 }
 
+func TestCodexProviderStartIncludesAdditionalDirectoryArgs(t *testing.T) {
+	wrapper := codexProviderHelperWrapper(t)
+	sink := &testProviderLogSink{}
+	provider := &codexProvider{cmdName: wrapper, model: "gpt-5"}
+	argsFile := filepath.Join(t.TempDir(), "codex-args.txt")
+
+	proc, err := provider.Start(StartSessionConfig{
+		Cwd:                   t.TempDir(),
+		AdditionalDirectories: []string{"/tmp/backend", "/tmp/shared"},
+		Env: []string{
+			"GO_WANT_CODEX_PROVIDER_HELPER_PROCESS=1",
+			"ARCHON_CODEX_HELPER_ARGS_FILE=" + argsFile,
+		},
+	}, sink, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if proc == nil || proc.Process == nil {
+		t.Fatalf("expected provider process")
+	}
+	got, err := os.ReadFile(filepath.Clean(argsFile))
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	args := string(got)
+	if !strings.Contains(args, "--add-dir") {
+		t.Fatalf("expected --add-dir flag, got %q", args)
+	}
+	if !strings.Contains(args, "/tmp/backend") || !strings.Contains(args, "/tmp/shared") {
+		t.Fatalf("expected additional directory args, got %q", args)
+	}
+	stopProviderProcess(proc)
+}
+
 func codexProviderHelperWrapper(t *testing.T) string {
 	t.Helper()
 	testBin := os.Args[0]
@@ -188,6 +222,9 @@ func stopProviderProcess(proc *providerProcess) {
 func TestCodexProviderHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_CODEX_PROVIDER_HELPER_PROCESS") != "1" {
 		return
+	}
+	if argsFile := strings.TrimSpace(os.Getenv("ARCHON_CODEX_HELPER_ARGS_FILE")); argsFile != "" {
+		_ = os.WriteFile(argsFile, []byte(strings.Join(helperProcessArgs(), "\n")), 0o600)
 	}
 	failOnTurnStart := os.Getenv("ARCHON_CODEX_HELPER_FAIL_ON_TURN_START") == "1"
 	turnInputFile := strings.TrimSpace(os.Getenv("ARCHON_CODEX_HELPER_TURN_INPUT_FILE"))
@@ -273,4 +310,19 @@ func helperTurnInputText(raw any) string {
 	}
 	text, _ := first["text"].(string)
 	return strings.TrimSpace(text)
+}
+
+func helperProcessArgs() []string {
+	args := os.Args
+	sep := -1
+	for i, arg := range args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 || sep+1 >= len(args) {
+		return nil
+	}
+	return append([]string(nil), args[sep+1:]...)
 }

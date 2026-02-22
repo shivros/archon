@@ -39,7 +39,19 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 		t.Fatalf("expected no async command after second step")
 	}
 	if controller.step != 2 {
-		t.Fatalf("expected name step after second submit, got %d", controller.step)
+		t.Fatalf("expected additional directories step after second submit, got %d", controller.step)
+	}
+	controller.input.SetValue("../backend, ../shared")
+
+	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
+	if !handled {
+		t.Fatalf("expected remapped submit key to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command after third step")
+	}
+	if controller.step != 3 {
+		t.Fatalf("expected name step after third submit, got %d", controller.step)
 	}
 	controller.input.SetValue("Repo Name")
 
@@ -52,6 +64,9 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 	if host.createPath != "/tmp/repo" || host.createSub != "packages/pennies" || host.createName != "Repo Name" {
 		t.Fatalf("unexpected create payload: path=%q sub=%q name=%q", host.createPath, host.createSub, host.createName)
+	}
+	if len(host.createDirs) != 2 || host.createDirs[0] != "../backend" || host.createDirs[1] != "../shared" {
+		t.Fatalf("unexpected additional directories: %#v", host.createDirs)
 	}
 }
 
@@ -126,6 +141,16 @@ func TestAddWorktreeControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 	if controller.step != 1 {
 		t.Fatalf("expected branch step after path submit, got %d", controller.step)
+	}
+}
+
+func TestParseAdditionalDirectories(t *testing.T) {
+	got := parseAdditionalDirectories(" ../backend, ,../shared ,,  ")
+	if len(got) != 2 {
+		t.Fatalf("expected two directories, got %#v", got)
+	}
+	if got[0] != "../backend" || got[1] != "../shared" {
+		t.Fatalf("unexpected parsed directories: %#v", got)
 	}
 }
 
@@ -218,12 +243,14 @@ type stubAddWorkspaceHost struct {
 	status     string
 	createPath string
 	createSub  string
+	createDirs []string
 	createName string
 }
 
-func (h *stubAddWorkspaceHost) createWorkspaceCmd(path, sessionSubpath, name string) tea.Cmd {
+func (h *stubAddWorkspaceHost) createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd {
 	h.createPath = path
 	h.createSub = sessionSubpath
+	h.createDirs = append([]string(nil), additionalDirectories...)
 	h.createName = name
 	return nil
 }

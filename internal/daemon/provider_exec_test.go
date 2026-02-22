@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -69,5 +70,52 @@ func TestExecProviderStartRunsProcessAndStreamsOutput(t *testing.T) {
 	}
 	if !strings.Contains(sink.stderr.String(), "oops") {
 		t.Fatalf("expected stderr output, got %q", sink.stderr.String())
+	}
+}
+
+func TestExecProviderStartGeminiIncludesDirectoryArgs(t *testing.T) {
+	wrapper := filepath.Join(t.TempDir(), "gemini-wrapper.sh")
+	script := `#!/bin/sh
+if [ -n "$ARCHON_EXEC_ARGS_FILE" ]; then
+  printf '%s\n' "$@" > "$ARCHON_EXEC_ARGS_FILE"
+fi
+echo hello
+echo oops >&2
+`
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	argsFile := filepath.Join(t.TempDir(), "gemini-args.txt")
+	backendDir := t.TempDir()
+	sharedDir := t.TempDir()
+	provider, err := newExecProvider("gemini", wrapper, nil)
+	if err != nil {
+		t.Fatalf("newExecProvider: %v", err)
+	}
+	sink := &testProviderLogSink{}
+	proc, err := provider.Start(StartSessionConfig{
+		Args:                  []string{"run", "hello"},
+		AdditionalDirectories: []string{backendDir, sharedDir},
+		Env:                   []string{"ARCHON_EXEC_ARGS_FILE=" + argsFile},
+	}, sink, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if proc == nil || proc.Wait == nil {
+		t.Fatalf("expected provider process to be initialized")
+	}
+	if err := proc.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	args := string(got)
+	if !strings.Contains(args, "--include-directories") {
+		t.Fatalf("expected include directories args, got %q", args)
+	}
+	if !strings.Contains(args, backendDir) || !strings.Contains(args, sharedDir) {
+		t.Fatalf("expected additional directory paths in args, got %q", args)
 	}
 }

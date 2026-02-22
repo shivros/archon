@@ -8,7 +8,7 @@ import (
 )
 
 type addWorkspaceHost interface {
-	createWorkspaceCmd(path, sessionSubpath, name string) tea.Cmd
+	createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd
 	exitAddWorkspace(status string)
 	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
 	keyString(msg tea.KeyMsg) string
@@ -20,6 +20,7 @@ type AddWorkspaceController struct {
 	step  int
 	path  string
 	sub   string
+	dirs  string
 	name  string
 }
 
@@ -39,6 +40,7 @@ func (c *AddWorkspaceController) Enter() {
 	c.step = 0
 	c.path = ""
 	c.sub = ""
+	c.dirs = ""
 	c.name = ""
 	c.prepareInput()
 	if c.input != nil {
@@ -50,6 +52,7 @@ func (c *AddWorkspaceController) Exit() {
 	c.step = 0
 	c.path = ""
 	c.sub = ""
+	c.dirs = ""
 	c.name = ""
 	if c.input != nil {
 		c.input.SetValue("")
@@ -88,7 +91,8 @@ func (c *AddWorkspaceController) View() string {
 	lines := []string{
 		renderAddField(c.input, c.step, "Path", c.path, 0),
 		renderAddField(c.input, c.step, "Session Subpath", c.sub, 1),
-		renderAddField(c.input, c.step, "Name", c.name, 2),
+		renderAddField(c.input, c.step, "Additional Dirs", c.dirs, 2),
+		renderAddField(c.input, c.step, "Name", c.name, 3),
 		"",
 		"Enter to continue • Esc to cancel",
 	}
@@ -112,12 +116,18 @@ func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 		c.sub = strings.TrimSpace(c.value())
 		c.step = 2
 		c.prepareInput()
-		host.setStatus("add workspace: name (optional)")
+		host.setStatus("add workspace: additional directories (optional)")
 		return nil
 	case 2:
+		c.dirs = strings.TrimSpace(c.value())
+		c.step = 3
+		c.prepareInput()
+		host.setStatus("add workspace: name (optional)")
+		return nil
+	case 3:
 		c.name = strings.TrimSpace(c.value())
 		host.setStatus("creating workspace")
-		return host.createWorkspaceCmd(c.path, c.sub, c.name)
+		return host.createWorkspaceCmd(c.path, c.sub, c.name, parseAdditionalDirectories(c.dirs))
 	default:
 		return nil
 	}
@@ -135,6 +145,9 @@ func (c *AddWorkspaceController) prepareInput() {
 		c.input.SetPlaceholder("packages/pennies (optional)")
 		c.input.SetValue(c.sub)
 	case 2:
+		c.input.SetPlaceholder("../backend, ../shared (optional)")
+		c.input.SetValue(c.dirs)
+	case 3:
 		c.input.SetPlaceholder("optional name")
 		c.input.SetValue(c.name)
 	}
@@ -162,4 +175,20 @@ func (c *AddWorkspaceController) value() string {
 
 func newAddInput(width int) *TextInput {
 	return NewTextInput(width, TextInputConfig{Height: 1, SingleLine: true})
+}
+
+func parseAdditionalDirectories(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -230,3 +230,32 @@ func TestClaudeRunnerRunIncludesResumeFlag(t *testing.T) {
 		t.Fatalf("expected resume arguments, got %q", args)
 	}
 }
+
+func TestClaudeRunnerRunIncludesAdditionalDirectoryArgs(t *testing.T) {
+	testBin := os.Args[0]
+	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
+	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("WriteFile wrapper: %v", err)
+	}
+	argsFile := filepath.Join(t.TempDir(), "claude-args.txt")
+	runner := &claudeRunner{
+		cmdName: wrapper,
+		env:     []string{"GO_WANT_HELPER_PROCESS=1"},
+		dirs:    []string{"/tmp/backend", "/tmp/shared"},
+	}
+	if err := runner.run("args_file="+argsFile, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile args: %v", err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "--add-dir") {
+		t.Fatalf("expected --add-dir arguments, got %q", args)
+	}
+	if !strings.Contains(args, "/tmp/backend") || !strings.Contains(args, "/tmp/shared") {
+		t.Fatalf("expected additional directory args, got %q", args)
+	}
+}

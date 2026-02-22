@@ -9,6 +9,7 @@ import (
 
 	"control/internal/store"
 	"control/internal/types"
+	"control/internal/workspacepaths"
 )
 
 type WorkspaceService struct {
@@ -24,10 +25,11 @@ type CreateWorktreeRequest struct {
 }
 
 type WorkspaceUpdateRequest struct {
-	Name           *string   `json:"name,omitempty"`
-	RepoPath       *string   `json:"repo_path,omitempty"`
-	SessionSubpath *string   `json:"session_subpath,omitempty"`
-	GroupIDs       *[]string `json:"group_ids,omitempty"`
+	Name                  *string   `json:"name,omitempty"`
+	RepoPath              *string   `json:"repo_path,omitempty"`
+	SessionSubpath        *string   `json:"session_subpath,omitempty"`
+	AdditionalDirectories *[]string `json:"additional_directories,omitempty"`
+	GroupIDs              *[]string `json:"group_ids,omitempty"`
 }
 
 func NewWorkspaceService(stores *Stores) *WorkspaceService {
@@ -61,6 +63,9 @@ func (s *WorkspaceService) Create(ctx context.Context, req *types.Workspace) (*t
 		return nil, invalidError("workspace payload is required", nil)
 	}
 	if err := workspacePathResolverOrDefault(s.paths).ValidateWorkspace(req.RepoPath, req.SessionSubpath); err != nil {
+		return nil, invalidError(err.Error(), err)
+	}
+	if err := validateWorkspaceAdditionalDirectories(req.RepoPath, req.SessionSubpath, req.AdditionalDirectories); err != nil {
 		return nil, invalidError(err.Error(), err)
 	}
 	ws, err := s.workspaces.Add(ctx, req)
@@ -103,11 +108,12 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *Workspace
 		name = strings.TrimSpace(*req.Name)
 	}
 	merged := &types.Workspace{
-		ID:             id,
-		Name:           name,
-		RepoPath:       providedRepoPath,
-		SessionSubpath: existing.SessionSubpath,
-		GroupIDs:       nil,
+		ID:                    id,
+		Name:                  name,
+		RepoPath:              providedRepoPath,
+		SessionSubpath:        existing.SessionSubpath,
+		AdditionalDirectories: append([]string(nil), existing.AdditionalDirectories...),
+		GroupIDs:              nil,
 	}
 	if merged.Name == "" {
 		merged.Name = existing.Name
@@ -118,13 +124,19 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *Workspace
 	if sessionSubpathProvided {
 		merged.SessionSubpath = providedSessionSubpath
 	}
+	if req.AdditionalDirectories != nil {
+		merged.AdditionalDirectories = append([]string(nil), (*req.AdditionalDirectories)...)
+	}
 	if req.GroupIDs != nil {
 		merged.GroupIDs = append([]string(nil), (*req.GroupIDs)...)
 	} else {
 		merged.GroupIDs = existing.GroupIDs
 	}
-	if req.RepoPath != nil || req.SessionSubpath != nil {
+	if req.RepoPath != nil || req.SessionSubpath != nil || req.AdditionalDirectories != nil {
 		if err := workspacePathResolverOrDefault(s.paths).ValidateWorkspace(merged.RepoPath, merged.SessionSubpath); err != nil {
+			return nil, invalidError(err.Error(), err)
+		}
+		if err := validateWorkspaceAdditionalDirectories(merged.RepoPath, merged.SessionSubpath, merged.AdditionalDirectories); err != nil {
 			return nil, invalidError(err.Error(), err)
 		}
 	}
@@ -359,4 +371,16 @@ func validateWorkspacePath(path string) error {
 		return errors.New("path is not a directory")
 	}
 	return nil
+}
+
+func validateWorkspaceAdditionalDirectories(repoPath, sessionSubpath string, directories []string) error {
+	if len(directories) == 0 {
+		return nil
+	}
+	sessionPath, err := workspacepaths.ResolveSessionPath(repoPath, sessionSubpath)
+	if err != nil {
+		return err
+	}
+	_, err = workspacepaths.ResolveAdditionalDirectories(sessionPath, directories, nil)
+	return err
 }

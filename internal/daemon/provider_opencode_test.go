@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +18,12 @@ import (
 	"control/internal/config"
 	"control/internal/types"
 )
+
+type openCodePermissionRequesterFunc func(ctx context.Context, sessionID string, permission *openCodePermissionCreateRequest, directory string) error
+
+func (f openCodePermissionRequesterFunc) RequestPermission(ctx context.Context, sessionID string, permission *openCodePermissionCreateRequest, directory string) error {
+	return f(ctx, sessionID, permission, directory)
+}
 
 func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	t.Setenv("CUSTOM_OPENCODE_TOKEN", "env-token")
@@ -61,14 +69,21 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 
 func TestOpenCodeProviderStartSendAndInterrupt(t *testing.T) {
 	var (
-		createCalls  atomic.Int32
-		promptCalls  atomic.Int32
-		abortCalls   atomic.Int32
-		lastAuthSeen atomic.Value
+		createCalls     atomic.Int32
+		permissionCalls atomic.Int32
+		promptCalls     atomic.Int32
+		abortCalls      atomic.Int32
+		lastAuthSeen    atomic.Value
+		requestMu       sync.Mutex
+		requestPaths    []string
+		permissionBody  map[string]any
 	)
 	const directory = "/tmp/opencode-provider-worktree"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lastAuthSeen.Store(r.Header.Get("Authorization"))
+		requestMu.Lock()
+		requestPaths = append(requestPaths, r.URL.Path)
+		requestMu.Unlock()
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/session":
 			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
@@ -77,6 +92,19 @@ func TestOpenCodeProviderStartSendAndInterrupt(t *testing.T) {
 			}
 			createCalls.Add(1)
 			writeJSON(w, http.StatusCreated, map[string]any{"id": "sess_123"})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/permissions":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			permissionCalls.Add(1)
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			requestMu.Lock()
+			permissionBody = body
+			requestMu.Unlock()
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/prompt":
 			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
@@ -141,6 +169,10 @@ username = "archon"
 		Provider:    "opencode",
 		Cwd:         directory,
 		InitialText: "hello there",
+		AdditionalDirectories: []string{
+			"/tmp/backend",
+			"/tmp/shared",
+		},
 		RuntimeOptions: &types.SessionRuntimeOptions{
 			Model: "anthropic/claude-sonnet-4-20250514",
 		},
@@ -151,12 +183,54 @@ username = "archon"
 	if createCalls.Load() != 1 {
 		t.Fatalf("expected one session create call, got %d", createCalls.Load())
 	}
+	if permissionCalls.Load() != 1 {
+		t.Fatalf("expected one permission call, got %d", permissionCalls.Load())
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for promptCalls.Load() < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if promptCalls.Load() < 1 {
 		t.Fatalf("expected async prompt call for initial text, got %d", promptCalls.Load())
+	}
+	requestMu.Lock()
+	pathsSnapshot := append([]string(nil), requestPaths...)
+	permissionSnapshot := map[string]any{}
+	for key, value := range permissionBody {
+		permissionSnapshot[key] = value
+	}
+	requestMu.Unlock()
+	createIdx := -1
+	permissionIdx := -1
+	promptIdx := -1
+	for idx, path := range pathsSnapshot {
+		switch path {
+		case "/session":
+			if createIdx == -1 {
+				createIdx = idx
+			}
+		case "/session/sess_123/permissions":
+			if permissionIdx == -1 {
+				permissionIdx = idx
+			}
+		case "/session/sess_123/prompt":
+			if promptIdx == -1 {
+				promptIdx = idx
+			}
+		}
+	}
+	if createIdx < 0 || permissionIdx < 0 || promptIdx < 0 {
+		t.Fatalf("expected create, permission, and prompt requests, got %v", pathsSnapshot)
+	}
+	if !(createIdx < permissionIdx && permissionIdx < promptIdx) {
+		t.Fatalf("expected request order create -> permission -> prompt, got %v", pathsSnapshot)
+	}
+	if got := strings.TrimSpace(asString(permissionSnapshot["permission"])); got != "external_directory" {
+		t.Fatalf("unexpected permission payload: %#v", permissionSnapshot)
+	}
+	patterns, _ := permissionSnapshot["patterns"].([]any)
+	if len(patterns) != 2 || strings.TrimSpace(asString(patterns[0])) != "/tmp/backend/*" || strings.TrimSpace(asString(patterns[1])) != "/tmp/shared/*" {
+		t.Fatalf("unexpected permission patterns: %#v", permissionSnapshot)
 	}
 	if proc.Send == nil {
 		t.Fatalf("expected send function")
@@ -203,6 +277,145 @@ func TestOpenCodeProviderResumeRequiresProviderSessionID(t *testing.T) {
 	}, &testProviderLogSink{}, &testItemSink{})
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider session id") {
 		t.Fatalf("expected provider session id validation error, got %v", err)
+	}
+}
+
+func TestOpenCodeProviderStartPermissionRequestFailure(t *testing.T) {
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: "http://127.0.0.1:4096"})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	provider := &openCodeProvider{
+		providerName: "opencode",
+		client:       client,
+		permissionRequester: openCodePermissionRequesterFunc(func(_ context.Context, _ string, _ *openCodePermissionCreateRequest, _ string) error {
+			return errors.New("permission request failed")
+		}),
+	}
+	_, err = provider.Start(StartSessionConfig{
+		Provider:          "opencode",
+		Resume:            true,
+		ProviderSessionID: "sess_123",
+		Cwd:               "/tmp/opencode-provider-worktree",
+		AdditionalDirectories: []string{
+			"/tmp/backend",
+		},
+	}, &testProviderLogSink{}, &testItemSink{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "permission request failed") {
+		t.Fatalf("expected permission requester error, got %v", err)
+	}
+}
+
+func TestOpenCodeProviderStartResumeUsesClientPermissionRequesterFallback(t *testing.T) {
+	var (
+		createCalls     atomic.Int32
+		permissionCalls atomic.Int32
+	)
+	const directory = "/tmp/opencode-provider-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			createCalls.Add(1)
+			writeJSON(w, http.StatusCreated, map[string]any{"id": "sess_123"})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_123/permissions":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			permissionCalls.Add(1)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	provider := &openCodeProvider{
+		providerName:        "opencode",
+		client:              client,
+		permissionRequester: nil, // exercise fallback-to-client branch in Start
+	}
+	proc, err := provider.Start(StartSessionConfig{
+		Provider:          "opencode",
+		Resume:            true,
+		ProviderSessionID: "sess_123",
+		Cwd:               directory,
+		AdditionalDirectories: []string{
+			"/tmp/backend",
+		},
+	}, &testProviderLogSink{}, &testItemSink{})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if proc == nil {
+		t.Fatalf("expected provider process")
+	}
+	if createCalls.Load() != 0 {
+		t.Fatalf("expected no create call on resume, got %d", createCalls.Load())
+	}
+	if permissionCalls.Load() != 1 {
+		t.Fatalf("expected one permission call, got %d", permissionCalls.Load())
+	}
+}
+
+func TestKiloCodeProviderStartResumeRequestsAdditionalDirectoryPermission(t *testing.T) {
+	var permissionCalls atomic.Int32
+	const directory = "/tmp/kilocode-provider-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session/kilo_123/permissions":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			permissionCalls.Add(1)
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if got := strings.TrimSpace(asString(body["permission"])); got != "external_directory" {
+				http.Error(w, "unexpected permission", http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	provider := &openCodeProvider{
+		providerName: "kilocode",
+		client:       client,
+	}
+	proc, err := provider.Start(StartSessionConfig{
+		Provider:          "kilocode",
+		Resume:            true,
+		ProviderSessionID: "kilo_123",
+		Cwd:               directory,
+		AdditionalDirectories: []string{
+			"/tmp/backend",
+		},
+	}, &testProviderLogSink{}, &testItemSink{})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if proc == nil {
+		t.Fatalf("expected provider process")
+	}
+	if permissionCalls.Load() != 1 {
+		t.Fatalf("expected one permission call, got %d", permissionCalls.Load())
 	}
 }
 

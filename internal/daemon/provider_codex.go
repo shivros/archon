@@ -45,7 +45,14 @@ func (p *codexProvider) Command() string {
 }
 
 func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
-	cmd := exec.Command(p.cmdName, "app-server")
+	additionalDirArgs, err := providerAdditionalDirectoryArgs("codex", cfg.AdditionalDirectories)
+	if err != nil {
+		return nil, err
+	}
+	cmdArgs := make([]string, 0, len(additionalDirArgs)+1)
+	cmdArgs = append(cmdArgs, additionalDirArgs...)
+	cmdArgs = append(cmdArgs, "app-server")
+	cmd := exec.Command(p.cmdName, cmdArgs...)
 	if cfg.Cwd != "" {
 		cmd.Dir = cfg.Cwd
 	}

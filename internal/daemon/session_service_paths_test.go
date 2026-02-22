@@ -155,6 +155,81 @@ func TestWithWorkspacePathResolverOption(t *testing.T) {
 	}
 }
 
+func TestResolveAdditionalDirectoriesForSession(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
+	repoDir := filepath.Join(base, "repo")
+	sessionDir := filepath.Join(repoDir, "packages", "pennies")
+	backendDir := filepath.Join(repoDir, "packages", "backend")
+	if err := ensureDir(sessionDir); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	if err := ensureDir(backendDir); err != nil {
+		t.Fatalf("mkdir backend dir: %v", err)
+	}
+	ws, err := workspaceStore.Add(ctx, &types.Workspace{
+		RepoPath:              repoDir,
+		SessionSubpath:        filepath.Join("packages", "pennies"),
+		AdditionalDirectories: []string{"../backend"},
+	})
+	if err != nil {
+		t.Fatalf("add workspace: %v", err)
+	}
+
+	service := &SessionService{
+		stores: &Stores{
+			Workspaces: workspaceStore,
+			Worktrees:  workspaceStore,
+		},
+	}
+	got, err := service.resolveAdditionalDirectoriesForSession(ctx, &types.Session{Cwd: sessionDir}, &types.SessionMeta{
+		SessionID:   "s1",
+		WorkspaceID: ws.ID,
+	})
+	if err != nil {
+		t.Fatalf("resolveAdditionalDirectoriesForSession: %v", err)
+	}
+	if len(got) != 1 || got[0] != backendDir {
+		t.Fatalf("expected backend directory %q, got %#v", backendDir, got)
+	}
+}
+
+func TestSessionStartRejectsMissingWorkspaceAdditionalDirectory(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
+	repoDir := filepath.Join(base, "repo")
+	sessionDir := filepath.Join(repoDir, "packages", "pennies")
+	if err := ensureDir(sessionDir); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	ws, err := workspaceStore.Add(ctx, &types.Workspace{
+		RepoPath:              repoDir,
+		SessionSubpath:        filepath.Join("packages", "pennies"),
+		AdditionalDirectories: []string{"../missing"},
+	})
+	if err != nil {
+		t.Fatalf("add workspace: %v", err)
+	}
+
+	service := NewSessionService(newTestManager(t), &Stores{
+		Workspaces: workspaceStore,
+		Worktrees:  workspaceStore,
+	}, nil, nil)
+
+	_, err = service.Start(ctx, StartSessionRequest{
+		Provider:    "custom",
+		WorkspaceID: ws.ID,
+	})
+	if err == nil {
+		t.Fatalf("expected missing additional directory error")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected missing directory error, got %v", err)
+	}
+}
+
 type stubWorkspacePathResolver struct {
 	validateErr   error
 	workspacePath string

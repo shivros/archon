@@ -25,6 +25,7 @@ type StartSessionConfig struct {
 	Provider              string
 	Cmd                   string
 	Cwd                   string
+	AdditionalDirectories []string
 	Args                  []string
 	Env                   []string
 	CodexHome             string

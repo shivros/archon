@@ -21,6 +21,7 @@ type claudeRunner struct {
 	cmdName string
 	cwd     string
 	env     []string
+	dirs    []string
 	sink    ProviderLogSink
 	items   ProviderItemSink
 	options *types.SessionRuntimeOptions
@@ -56,6 +57,7 @@ func (p *claudeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, ite
 		cmdName:   p.cmdName,
 		cwd:       cfg.Cwd,
 		env:       append([]string{}, cfg.Env...),
+		dirs:      append([]string{}, cfg.AdditionalDirectories...),
 		sink:      sink,
 		items:     items,
 		options:   types.CloneRuntimeOptions(cfg.RuntimeOptions),
@@ -119,6 +121,11 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 		"--verbose",
 		"--output-format", "stream-json",
 	}
+	additionalDirArgs, err := providerAdditionalDirectoryArgs("claude", r.dirs)
+	if err != nil {
+		return err
+	}
+	args = append(args, additionalDirArgs...)
 	if effectiveOptions != nil {
 		if model := strings.TrimSpace(effectiveOptions.Model); model != "" {
 			args = append(args, "--model", model)

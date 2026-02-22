@@ -3,12 +3,15 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"control/internal/store"
 	"control/internal/types"
@@ -395,6 +398,243 @@ func TestWorkspaceSessionSubpathPatchSemantics(t *testing.T) {
 	if invalidPatchResp.StatusCode != http.StatusBadRequest {
 		data, _ := io.ReadAll(invalidPatchResp.Body)
 		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
+	}
+}
+
+func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
+	stores := newTestStores(t)
+	api := &API{Version: "test", Manager: nil, Stores: stores}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/workspaces", api.Workspaces)
+	mux.HandleFunc("/v1/workspaces/", api.WorkspaceByID)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	sessionSubpath := filepath.Join("packages", "pennies")
+	sessionDir := filepath.Join(repoDir, sessionSubpath)
+	backendDir := filepath.Join(repoDir, "packages", "backend")
+	sharedDir := filepath.Join(repoDir, "packages", "shared")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	if err := os.MkdirAll(backendDir, 0o755); err != nil {
+		t.Fatalf("mkdir backend dir: %v", err)
+	}
+	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
+		t.Fatalf("mkdir shared dir: %v", err)
+	}
+
+	createBody, _ := json.Marshal(types.Workspace{
+		RepoPath:              repoDir,
+		SessionSubpath:        sessionSubpath,
+		AdditionalDirectories: []string{"../backend", "../shared"},
+	})
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
+	}
+	var created types.Workspace
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode workspace: %v", err)
+	}
+	if len(created.AdditionalDirectories) != 2 {
+		t.Fatalf("expected additional directories to persist, got %#v", created.AdditionalDirectories)
+	}
+
+	renamePatchBody, _ := json.Marshal(map[string]any{"name": "Renamed"})
+	renamePatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(renamePatchBody))
+	renamePatchReq.Header.Set("Authorization", "Bearer token")
+	renamePatchReq.Header.Set("Content-Type", "application/json")
+	renamePatchResp, err := http.DefaultClient.Do(renamePatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace name: %v", err)
+	}
+	defer renamePatchResp.Body.Close()
+	if renamePatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(renamePatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", renamePatchResp.StatusCode, string(data))
+	}
+	var renamed types.Workspace
+	if err := json.NewDecoder(renamePatchResp.Body).Decode(&renamed); err != nil {
+		t.Fatalf("decode renamed workspace: %v", err)
+	}
+	if len(renamed.AdditionalDirectories) != 2 {
+		t.Fatalf("expected additional directories unchanged, got %#v", renamed.AdditionalDirectories)
+	}
+
+	setPatchBody, _ := json.Marshal(map[string]any{"additional_directories": []string{"../backend"}})
+	setPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(setPatchBody))
+	setPatchReq.Header.Set("Authorization", "Bearer token")
+	setPatchReq.Header.Set("Content-Type", "application/json")
+	setPatchResp, err := http.DefaultClient.Do(setPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace additional directories: %v", err)
+	}
+	defer setPatchResp.Body.Close()
+	if setPatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(setPatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", setPatchResp.StatusCode, string(data))
+	}
+	var updated types.Workspace
+	if err := json.NewDecoder(setPatchResp.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated workspace: %v", err)
+	}
+	if len(updated.AdditionalDirectories) != 1 || updated.AdditionalDirectories[0] != filepath.Clean("../backend") {
+		t.Fatalf("expected additional directories update, got %#v", updated.AdditionalDirectories)
+	}
+
+	clearPatchBody, _ := json.Marshal(map[string]any{"additional_directories": []string{}})
+	clearPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(clearPatchBody))
+	clearPatchReq.Header.Set("Authorization", "Bearer token")
+	clearPatchReq.Header.Set("Content-Type", "application/json")
+	clearPatchResp, err := http.DefaultClient.Do(clearPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace clear additional directories: %v", err)
+	}
+	defer clearPatchResp.Body.Close()
+	if clearPatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(clearPatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", clearPatchResp.StatusCode, string(data))
+	}
+	var cleared types.Workspace
+	if err := json.NewDecoder(clearPatchResp.Body).Decode(&cleared); err != nil {
+		t.Fatalf("decode cleared workspace: %v", err)
+	}
+	if len(cleared.AdditionalDirectories) != 0 {
+		t.Fatalf("expected additional directories cleared, got %#v", cleared.AdditionalDirectories)
+	}
+
+	invalidPatchBody, _ := json.Marshal(map[string]any{"additional_directories": []string{"../missing"}})
+	invalidPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(invalidPatchBody))
+	invalidPatchReq.Header.Set("Authorization", "Bearer token")
+	invalidPatchReq.Header.Set("Content-Type", "application/json")
+	invalidPatchResp, err := http.DefaultClient.Do(invalidPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace invalid additional directories: %v", err)
+	}
+	defer invalidPatchResp.Body.Close()
+	if invalidPatchResp.StatusCode != http.StatusBadRequest {
+		data, _ := io.ReadAll(invalidPatchResp.Body)
+		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
+	}
+}
+
+func TestWorkspaceSessionsEndpointUsesAdditionalDirectoriesForGemini(t *testing.T) {
+	stores := newTestStores(t)
+	manager := newTestManager(t)
+	api := &API{Version: "test", Manager: manager, Stores: stores}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/workspaces", api.Workspaces)
+	mux.HandleFunc("/v1/workspaces/", api.WorkspaceByID)
+	mux.HandleFunc("/v1/sessions", api.Sessions)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	homeDir := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".archon"), 0o700); err != nil {
+		t.Fatalf("mkdir home config dir: %v", err)
+	}
+	wrapper := filepath.Join(t.TempDir(), "gemini-wrapper.sh")
+	argsFile := filepath.Join(t.TempDir(), "gemini-args.txt")
+	script := `#!/bin/sh
+if [ -n "$ARCHON_EXEC_ARGS_FILE" ]; then
+  printf '%s\n' "$@" > "$ARCHON_EXEC_ARGS_FILE"
+fi
+echo ok
+`
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	cfg := fmt.Sprintf("[providers.gemini]\ncommand = %q\n", wrapper)
+	if err := os.WriteFile(filepath.Join(homeDir, ".archon", "config.toml"), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	sessionSubpath := filepath.Join("packages", "pennies")
+	sessionDir := filepath.Join(repoDir, sessionSubpath)
+	backendDir := filepath.Join(repoDir, "packages", "backend")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	if err := os.MkdirAll(backendDir, 0o755); err != nil {
+		t.Fatalf("mkdir backend dir: %v", err)
+	}
+
+	createBody, _ := json.Marshal(types.Workspace{
+		RepoPath:              repoDir,
+		SessionSubpath:        sessionSubpath,
+		AdditionalDirectories: []string{"../backend"},
+	})
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
+	}
+	var created types.Workspace
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode workspace: %v", err)
+	}
+
+	startReq := StartSessionRequest{
+		Provider: "gemini",
+		Text:     "hello",
+		Env:      []string{"ARCHON_EXEC_ARGS_FILE=" + argsFile},
+	}
+	body, _ := json.Marshal(startReq)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces/"+created.ID+"/sessions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(data))
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(argsFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for args file")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	args := string(got)
+	if !strings.Contains(args, "--include-directories") {
+		t.Fatalf("expected --include-directories in args, got %q", args)
+	}
+	if !strings.Contains(args, backendDir) {
+		t.Fatalf("expected backend path in args, got %q", args)
+	}
+	if !strings.Contains(args, "hello") {
+		t.Fatalf("expected prompt text in args, got %q", args)
 	}
 }
 

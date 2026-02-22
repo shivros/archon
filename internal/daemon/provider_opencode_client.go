@@ -107,6 +107,11 @@ type openCodePermission struct {
 	Raw          map[string]any
 }
 
+type openCodePermissionCreateRequest struct {
+	Permission string
+	Patterns   []string
+}
+
 func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 	baseURL := strings.TrimSpace(cfg.BaseURL)
 	if baseURL == "" {
@@ -323,6 +328,13 @@ func (c *openCodeClient) ReplyPermission(ctx context.Context, sessionID, permiss
 		return errors.New("permission service is required")
 	}
 	return c.permissionSvc.ReplyPermission(ctx, sessionID, permissionID, decision, responses, directory)
+}
+
+func (c *openCodeClient) RequestPermission(ctx context.Context, sessionID string, permission *openCodePermissionCreateRequest, directory string) error {
+	if c == nil || c.permissionSvc == nil {
+		return errors.New("permission service is required")
+	}
+	return c.permissionSvc.RequestPermission(ctx, sessionID, permission, directory)
 }
 
 func (c *openCodeClient) SubscribeSessionEvents(ctx context.Context, sessionID, directory string) (<-chan types.CodexEvent, func(), error) {

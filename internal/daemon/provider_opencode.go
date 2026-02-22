@@ -14,8 +14,9 @@ import (
 )
 
 type openCodeProvider struct {
-	providerName string
-	client       *openCodeClient
+	providerName        string
+	client              *openCodeClient
+	permissionRequester openCodePermissionRequester
 }
 
 type openCodeRunner struct {
@@ -26,6 +27,10 @@ type openCodeRunner struct {
 	directory  string
 	providerID string
 	onSession  func(string)
+}
+
+type openCodePermissionRequester interface {
+	RequestPermission(ctx context.Context, sessionID string, permission *openCodePermissionCreateRequest, directory string) error
 }
 
 func newOpenCodeProvider(providerName string) (Provider, error) {
@@ -39,8 +44,9 @@ func newOpenCodeProvider(providerName string) (Provider, error) {
 		return nil, err
 	}
 	return &openCodeProvider{
-		providerName: providerName,
-		client:       client,
+		providerName:        providerName,
+		client:              client,
+		permissionRequester: client,
 	}, nil
 }
 
@@ -72,6 +78,19 @@ func (p *openCodeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, i
 			return nil, err
 		}
 		providerSessionID = createdID
+	}
+	additionalPermission, err := providerAdditionalDirectoryPermission(p.providerName, cfg.AdditionalDirectories)
+	if err != nil {
+		return nil, err
+	}
+	if additionalPermission != nil {
+		permissionRequester := p.permissionRequester
+		if permissionRequester == nil {
+			permissionRequester = p.client
+		}
+		if err := permissionRequester.RequestPermission(context.Background(), providerSessionID, additionalPermission, cfg.Cwd); err != nil {
+			return nil, err
+		}
 	}
 
 	runner := &openCodeRunner{

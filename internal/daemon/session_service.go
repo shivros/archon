@@ -12,6 +12,7 @@ import (
 	"control/internal/providers"
 	"control/internal/store"
 	"control/internal/types"
+	"control/internal/workspacepaths"
 )
 
 type SessionService struct {
@@ -528,6 +529,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 
 	cwd := strings.TrimSpace(req.Cwd)
 	workspacePath := ""
+	var workspace *types.Workspace
 	if cwd == "" && s.stores != nil {
 		resolved, root, err := s.resolveWorktreePath(ctx, req.WorkspaceID, req.WorktreeID)
 		if err != nil {
@@ -540,7 +542,17 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	} else if s.stores != nil && s.stores.Workspaces != nil && strings.TrimSpace(req.WorkspaceID) != "" {
 		if ws, ok, err := s.stores.Workspaces.Get(ctx, req.WorkspaceID); err == nil && ok && ws != nil {
 			workspacePath = ws.RepoPath
+			workspace = ws
 		}
+	}
+	if workspace == nil && s.stores != nil && s.stores.Workspaces != nil && strings.TrimSpace(req.WorkspaceID) != "" {
+		if ws, ok, err := s.stores.Workspaces.Get(ctx, req.WorkspaceID); err == nil && ok && ws != nil {
+			workspace = ws
+		}
+	}
+	additionalDirectories, err := s.resolveAdditionalDirectoriesForWorkspace(cwd, workspace)
+	if err != nil {
+		return nil, invalidError(err.Error(), err)
 	}
 
 	rawInput := strings.Join(req.Args, " ")
@@ -573,6 +585,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		Provider:              req.Provider,
 		Cmd:                   req.Cmd,
 		Cwd:                   cwd,
+		AdditionalDirectories: additionalDirectories,
 		Args:                  req.Args,
 		Env:                   req.Env,
 		CodexHome:             codexHome,
@@ -1212,6 +1225,36 @@ func (s *SessionService) resolveWorkspacePath(ctx context.Context, meta *types.S
 		return ws.RepoPath
 	}
 	return ""
+}
+
+func (s *SessionService) resolveAdditionalDirectoriesForWorkspace(cwd string, workspace *types.Workspace) ([]string, error) {
+	if workspace == nil || len(workspace.AdditionalDirectories) == 0 {
+		return nil, nil
+	}
+	return workspacepaths.ResolveAdditionalDirectories(cwd, workspace.AdditionalDirectories, nil)
+}
+
+func (s *SessionService) resolveAdditionalDirectoriesForSession(ctx context.Context, session *types.Session, meta *types.SessionMeta) ([]string, error) {
+	if meta == nil || strings.TrimSpace(meta.WorkspaceID) == "" {
+		return nil, nil
+	}
+	if s.stores == nil || s.stores.Workspaces == nil {
+		return nil, nil
+	}
+	ws, ok, err := s.stores.Workspaces.Get(ctx, meta.WorkspaceID)
+	if err != nil || !ok || ws == nil {
+		return nil, err
+	}
+	cwd := ""
+	if session != nil {
+		cwd = strings.TrimSpace(session.Cwd)
+	}
+	if cwd == "" {
+		if resolved, _, pathErr := s.resolveWorktreePath(ctx, meta.WorkspaceID, meta.WorktreeID); pathErr == nil {
+			cwd = resolved
+		}
+	}
+	return s.resolveAdditionalDirectoriesForWorkspace(cwd, ws)
 }
 
 func (s *SessionService) getSessionMeta(ctx context.Context, sessionID string) *types.SessionMeta {

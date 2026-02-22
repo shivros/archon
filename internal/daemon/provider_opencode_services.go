@@ -447,6 +447,44 @@ func (s *openCodePermissionService) ListPermissions(ctx context.Context, session
 	return out, nil
 }
 
+func (s *openCodePermissionService) RequestPermission(ctx context.Context, sessionID string, permission *openCodePermissionCreateRequest, directory string) error {
+	if s == nil || s.requester == nil {
+		return errors.New("requester is required")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	if permission == nil {
+		return fmt.Errorf("permission is required")
+	}
+	permissionKind := strings.TrimSpace(permission.Permission)
+	if permissionKind == "" {
+		return fmt.Errorf("permission type is required")
+	}
+	body := map[string]any{"sessionID": sessionID, "permission": permissionKind}
+	if len(permission.Patterns) > 0 {
+		body["patterns"] = append([]string(nil), permission.Patterns...)
+	}
+
+	sessionPath := appendOpenCodeDirectoryQuery(
+		fmt.Sprintf("/session/%s/permissions", url.PathEscape(sessionID)),
+		directory,
+	)
+	var sessionReply any
+	if err := s.requester.doJSON(ctx, http.MethodPost, sessionPath, body, &sessionReply); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if !openCodeShouldFallbackLegacy(err) && !openCodeShouldFallbackLegacySessionPermissionReply(err) {
+			return err
+		}
+		legacyPath := appendOpenCodeDirectoryQuery("/permission", directory)
+		return s.requester.doJSON(ctx, http.MethodPost, legacyPath, body, nil)
+	}
+	return nil
+}
+
 func (s *openCodePermissionService) ReplyPermission(ctx context.Context, sessionID, permissionID, decision string, responses []string, directory string) error {
 	if s == nil || s.requester == nil {
 		return errors.New("requester is required")

@@ -23,9 +23,10 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 	}
 
 	ws, err := store.Add(ctx, &types.Workspace{
-		RepoPath:       repoDir,
-		SessionSubpath: "packages/pennies/",
-		GroupIDs:       []string{"group-1", " group-1 ", "ungrouped", ""},
+		RepoPath:              repoDir,
+		SessionSubpath:        "packages/pennies/",
+		AdditionalDirectories: []string{" ../backend ", "../shared", "../backend"},
+		GroupIDs:              []string{"group-1", " group-1 ", "ungrouped", ""},
 	})
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
@@ -41,6 +42,15 @@ func TestWorkspaceStoreCRUD(t *testing.T) {
 	}
 	if ws.SessionSubpath != filepath.Join("packages", "pennies") {
 		t.Fatalf("expected normalized session subpath, got %q", ws.SessionSubpath)
+	}
+	if len(ws.AdditionalDirectories) != 2 {
+		t.Fatalf("expected normalized additional directories, got %#v", ws.AdditionalDirectories)
+	}
+	if ws.AdditionalDirectories[0] != filepath.Clean("../backend") {
+		t.Fatalf("unexpected first additional directory: %q", ws.AdditionalDirectories[0])
+	}
+	if ws.AdditionalDirectories[1] != filepath.Clean("../shared") {
+		t.Fatalf("unexpected second additional directory: %q", ws.AdditionalDirectories[1])
 	}
 	if len(ws.GroupIDs) != 1 || ws.GroupIDs[0] != "group-1" {
 		t.Fatalf("expected normalized group ids")
@@ -279,5 +289,19 @@ func TestWorkspaceStoreRejectsInvalidSessionSubpath(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected invalid session subpath error for %q", subpath)
 		}
+	}
+}
+
+func TestWorkspaceStoreRejectsInvalidAdditionalDirectories(t *testing.T) {
+	ctx := context.Background()
+	store := NewFileWorkspaceStore(filepath.Join(t.TempDir(), "workspaces.json"))
+
+	repoDir := t.TempDir()
+	_, err := store.Add(ctx, &types.Workspace{
+		RepoPath:              repoDir,
+		AdditionalDirectories: []string{"../backend", " "},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid additional directory error")
 	}
 }
