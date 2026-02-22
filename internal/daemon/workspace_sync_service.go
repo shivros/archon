@@ -31,8 +31,13 @@ func (s *WorkspaceSyncService) Create(ctx context.Context, req *types.Workspace)
 	return ws, nil
 }
 
-func (s *WorkspaceSyncService) Update(ctx context.Context, id string, req *WorkspaceUpdateRequest) (*types.Workspace, error) {
-	return s.base.Update(ctx, id, req)
+func (s *WorkspaceSyncService) Update(ctx context.Context, id string, req *types.WorkspacePatch) (*types.Workspace, error) {
+	ws, err := s.base.Update(ctx, id, req)
+	if err != nil {
+		return nil, err
+	}
+	s.syncWorkspace(ws)
+	return ws, nil
 }
 
 func (s *WorkspaceSyncService) Delete(ctx context.Context, id string) error {

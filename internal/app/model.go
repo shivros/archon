@@ -62,7 +62,7 @@ const (
 	uiModeRecents
 	uiModeApprovalResponse
 	uiModeSearch
-	uiModeRenameWorkspace
+	uiModeEditWorkspace
 	uiModeRenameWorktree
 	uiModeRenameSession
 	uiModeRenameWorkflow
@@ -95,6 +95,7 @@ type Model struct {
 	viewport                            viewport.Model
 	mode                                uiMode
 	addWorkspace                        *AddWorkspaceController
+	editWorkspace                       *EditWorkspaceController
 	addWorktree                         *AddWorktreeController
 	providerPicker                      *ProviderPicker
 	compose                             *ComposeController
@@ -398,6 +399,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		chat:                                NewSessionChatController(api, codexStream),
 		mode:                                uiModeNormal,
 		addWorkspace:                        NewAddWorkspaceController(minViewportWidth),
+		editWorkspace:                       NewEditWorkspaceController(minViewportWidth),
 		addWorktree:                         NewAddWorktreeController(minViewportWidth),
 		providerPicker:                      NewProviderPicker(minViewportWidth, minContentHeight-1),
 		compose:                             NewComposeController(minViewportWidth),
@@ -840,6 +842,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	}
 	if m.addWorkspace != nil {
 		m.addWorkspace.Resize(mainViewportWidth)
+	}
+	if m.editWorkspace != nil {
+		m.editWorkspace.Resize(mainViewportWidth)
 	}
 	if m.addWorktree != nil {
 		m.addWorktree.Resize(mainViewportWidth)
@@ -3901,10 +3906,10 @@ func (m *Model) enterRenameForSelection() {
 	switch item.kind {
 	case sidebarWorkspace:
 		if item.workspace == nil || item.workspace.ID == "" || item.workspace.ID == unassignedWorkspaceID {
-			m.setValidationStatus("select a workspace to rename")
+			m.setValidationStatus("select a workspace to edit")
 			return
 		}
-		m.enterRenameWorkspace(item.workspace.ID)
+		m.enterEditWorkspace(item.workspace.ID)
 	case sidebarWorktree:
 		if item.worktree == nil || item.worktree.ID == "" || item.worktree.WorkspaceID == "" {
 			m.setValidationStatus("select a worktree to rename")
@@ -3938,28 +3943,26 @@ func (m *Model) enterDismissOrDeleteForSelection() {
 	m.openSelectionActionConfirm(action)
 }
 
-func (m *Model) enterRenameWorkspace(id string) {
-	m.mode = uiModeRenameWorkspace
+func (m *Model) enterEditWorkspace(id string) {
+	m.mode = uiModeEditWorkspace
 	m.renameWorkspaceID = id
-	if m.renameInput != nil {
-		name := ""
-		if ws := m.workspaceByID(id); ws != nil {
-			name = ws.Name
+	if m.editWorkspace != nil {
+		if ok := m.editWorkspace.Enter(id, m.workspaceByID(id)); !ok {
+			m.setValidationStatus("select a workspace to edit")
+			m.exitEditWorkspace("")
+			return
 		}
-		m.renameInput.SetValue(name)
-		m.renameInput.Focus()
 	}
 	if m.input != nil {
-		m.input.FocusChatInput()
+		m.input.FocusSidebar()
 	}
-	m.setStatusMessage("rename workspace")
+	m.setStatusMessage("edit workspace")
 }
 
-func (m *Model) exitRenameWorkspace(status string) {
+func (m *Model) exitEditWorkspace(status string) {
 	m.mode = uiModeNormal
-	if m.renameInput != nil {
-		m.renameInput.SetValue("")
-		m.renameInput.Blur()
+	if m.editWorkspace != nil {
+		m.editWorkspace.Exit()
 	}
 	m.renameWorkspaceID = ""
 	if m.input != nil {

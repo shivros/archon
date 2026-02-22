@@ -345,16 +345,16 @@ func (c *Client) CreateWorkspace(ctx context.Context, workspace *types.Workspace
 	return &resp, nil
 }
 
-func (c *Client) UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error) {
+func (c *Client) UpdateWorkspace(ctx context.Context, id string, patch *types.WorkspacePatch) (*types.Workspace, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("workspace id is required")
 	}
-	if workspace == nil {
-		return nil, errors.New("workspace is required")
+	if patch == nil {
+		return nil, errors.New("workspace patch is required")
 	}
 	var resp types.Workspace
 	path := fmt.Sprintf("/v1/workspaces/%s", id)
-	if err := c.doJSON(ctx, http.MethodPatch, path, workspace, true, &resp); err != nil {
+	if err := c.doJSON(ctx, http.MethodPatch, path, patch, true, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

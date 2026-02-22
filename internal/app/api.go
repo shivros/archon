@@ -18,7 +18,7 @@ type WorkspaceCreateAPI interface {
 }
 
 type WorkspaceUpdateAPI interface {
-	UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error)
+	UpdateWorkspace(ctx context.Context, id string, patch *types.WorkspacePatch) (*types.Workspace, error)
 }
 
 type WorkspaceDeleteAPI interface {
@@ -293,8 +293,8 @@ func (a *ClientAPI) CreateWorkspace(ctx context.Context, workspace *types.Worksp
 	return a.client.CreateWorkspace(ctx, workspace)
 }
 
-func (a *ClientAPI) UpdateWorkspace(ctx context.Context, id string, workspace *types.Workspace) (*types.Workspace, error) {
-	return a.client.UpdateWorkspace(ctx, id, workspace)
+func (a *ClientAPI) UpdateWorkspace(ctx context.Context, id string, patch *types.WorkspacePatch) (*types.Workspace, error) {
+	return a.client.UpdateWorkspace(ctx, id, patch)
 }
 
 func (a *ClientAPI) DeleteWorkspace(ctx context.Context, id string) error {

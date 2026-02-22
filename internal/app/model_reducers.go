@@ -8,19 +8,16 @@ import (
 
 func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 	switch m.mode {
-	case uiModeRenameWorkspace:
-		if !isTextInputMsg(msg) {
+	case uiModeEditWorkspace:
+		if stream, ok := msg.(streamMsg); ok {
+			m.applyStreamMsg(stream)
 			return true, nil
 		}
-		controller := m.newSingleLineInputController(
-			m.renameInput,
-			func() tea.Cmd {
-				m.exitRenameWorkspace("rename canceled")
-				return nil
-			},
-			m.submitRenameWorkspaceInput,
-		)
-		return controller.Update(msg)
+		if m.editWorkspace == nil {
+			return true, nil
+		}
+		_, cmd := m.editWorkspace.Update(msg, m)
+		return true, cmd
 	case uiModeRenameWorktree:
 		if !isTextInputMsg(msg) {
 			return true, nil
@@ -98,7 +95,7 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 					return true, nil
 				}
 				if m.mode == uiModePickWorkspaceRename {
-					m.enterRenameWorkspace(id)
+					m.enterEditWorkspace(id)
 				} else {
 					m.enterEditWorkspaceGroups(id)
 				}
@@ -438,24 +435,6 @@ func (m *Model) submitSearchInput(query string) tea.Cmd {
 	m.applySearch(query)
 	m.exitSearch("")
 	return nil
-}
-
-func (m *Model) submitRenameWorkspaceInput(name string) tea.Cmd {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		m.setValidationStatus("name is required")
-		return nil
-	}
-	id := m.renameWorkspaceID
-	if id == "" {
-		m.setValidationStatus("no workspace selected")
-		return nil
-	}
-	if m.renameInput != nil {
-		m.renameInput.SetValue("")
-	}
-	m.exitRenameWorkspace("renaming workspace")
-	return updateWorkspaceCmd(m.workspaceAPI, id, name)
 }
 
 func (m *Model) submitRenameWorktreeInput(name string) tea.Cmd {

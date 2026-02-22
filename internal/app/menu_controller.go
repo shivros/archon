@@ -543,7 +543,7 @@ func (m *MenuController) submenuLabels() []string {
 	case submenuWorkspaces:
 		fallthrough
 	default:
-		return []string{"Create Workspace", "Rename Workspace", "Delete Workspace", "Edit Workspace Groups"}
+		return []string{"Create Workspace", "Edit Workspace", "Delete Workspace", "Edit Workspace Groups"}
 	}
 }
 

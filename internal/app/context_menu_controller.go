@@ -163,7 +163,7 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
 		{Label: "Create Workspace", Action: ContextMenuWorkspaceCreate},
-		{Label: "Rename Workspace", Action: ContextMenuWorkspaceRename},
+		{Label: "Edit Workspace", Action: ContextMenuWorkspaceRename},
 		{Label: "Edit Workspace Groups", Action: ContextMenuWorkspaceEditGroups},
 		{Label: "Open Notes", Action: ContextMenuWorkspaceOpenNotes},
 		{Label: "Add Note", Action: ContextMenuWorkspaceAddNote},

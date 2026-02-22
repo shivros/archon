@@ -70,7 +70,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 		t.Fatalf("expected 1 workspace")
 	}
 
-	updateBody, _ := json.Marshal(types.Workspace{Name: "Renamed"})
+	updateBody, _ := json.Marshal(map[string]any{"name": "Renamed"})
 	updateReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(updateBody))
 	updateReq.Header.Set("Authorization", "Bearer token")
 	updateReq.Header.Set("Content-Type", "application/json")
@@ -525,6 +525,245 @@ func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
 	if invalidPatchResp.StatusCode != http.StatusBadRequest {
 		data, _ := io.ReadAll(invalidPatchResp.Body)
 		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
+	}
+}
+
+func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
+	stores := newTestStores(t)
+	api := &API{Version: "test", Manager: nil, Stores: stores}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/workspaces", api.Workspaces)
+	mux.HandleFunc("/v1/workspaces/", api.WorkspaceByID)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	repoOne := filepath.Join(t.TempDir(), "repo-one")
+	repoTwo := filepath.Join(t.TempDir(), "repo-two")
+	subpath := filepath.Join("packages", "pennies")
+	if err := os.MkdirAll(filepath.Join(repoOne, subpath), 0o755); err != nil {
+		t.Fatalf("mkdir repo one subpath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoTwo, subpath), 0o755); err != nil {
+		t.Fatalf("mkdir repo two subpath: %v", err)
+	}
+
+	createBody, _ := json.Marshal(types.Workspace{
+		RepoPath:       repoOne,
+		SessionSubpath: subpath,
+	})
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
+	}
+	var created types.Workspace
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode workspace: %v", err)
+	}
+
+	patchBody, _ := json.Marshal(map[string]any{"repo_path": repoTwo})
+	patchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(patchBody))
+	patchReq.Header.Set("Authorization", "Bearer token")
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	if err != nil {
+		t.Fatalf("patch workspace repo path: %v", err)
+	}
+	defer patchResp.Body.Close()
+	if patchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(patchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", patchResp.StatusCode, string(data))
+	}
+	var updated types.Workspace
+	if err := json.NewDecoder(patchResp.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated workspace: %v", err)
+	}
+	if updated.RepoPath != repoTwo {
+		t.Fatalf("expected repo_path %q, got %q", repoTwo, updated.RepoPath)
+	}
+	if updated.SessionSubpath != subpath {
+		t.Fatalf("expected session_subpath %q, got %q", subpath, updated.SessionSubpath)
+	}
+	if updated.Name != filepath.Base(repoOne) {
+		t.Fatalf("expected name to remain %q, got %q", filepath.Base(repoOne), updated.Name)
+	}
+
+	clearNamePatchBody, _ := json.Marshal(map[string]any{"name": ""})
+	clearNamePatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(clearNamePatchBody))
+	clearNamePatchReq.Header.Set("Authorization", "Bearer token")
+	clearNamePatchReq.Header.Set("Content-Type", "application/json")
+	clearNamePatchResp, err := http.DefaultClient.Do(clearNamePatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace clear name: %v", err)
+	}
+	defer clearNamePatchResp.Body.Close()
+	if clearNamePatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(clearNamePatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", clearNamePatchResp.StatusCode, string(data))
+	}
+	var renamed types.Workspace
+	if err := json.NewDecoder(clearNamePatchResp.Body).Decode(&renamed); err != nil {
+		t.Fatalf("decode renamed workspace: %v", err)
+	}
+	if renamed.Name != filepath.Base(repoTwo) {
+		t.Fatalf("expected default name %q, got %q", filepath.Base(repoTwo), renamed.Name)
+	}
+
+	whitespaceNamePatchBody, _ := json.Marshal(map[string]any{"name": "   "})
+	whitespaceNamePatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(whitespaceNamePatchBody))
+	whitespaceNamePatchReq.Header.Set("Authorization", "Bearer token")
+	whitespaceNamePatchReq.Header.Set("Content-Type", "application/json")
+	whitespaceNamePatchResp, err := http.DefaultClient.Do(whitespaceNamePatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace whitespace name: %v", err)
+	}
+	defer whitespaceNamePatchResp.Body.Close()
+	if whitespaceNamePatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(whitespaceNamePatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", whitespaceNamePatchResp.StatusCode, string(data))
+	}
+	var whitespaceRenamed types.Workspace
+	if err := json.NewDecoder(whitespaceNamePatchResp.Body).Decode(&whitespaceRenamed); err != nil {
+		t.Fatalf("decode whitespace-renamed workspace: %v", err)
+	}
+	if whitespaceRenamed.Name != filepath.Base(repoTwo) {
+		t.Fatalf("expected default name %q, got %q", filepath.Base(repoTwo), whitespaceRenamed.Name)
+	}
+
+	emptyPathPatchBody, _ := json.Marshal(map[string]any{"repo_path": ""})
+	emptyPathPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(emptyPathPatchBody))
+	emptyPathPatchReq.Header.Set("Authorization", "Bearer token")
+	emptyPathPatchReq.Header.Set("Content-Type", "application/json")
+	emptyPathPatchResp, err := http.DefaultClient.Do(emptyPathPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace empty repo path: %v", err)
+	}
+	defer emptyPathPatchResp.Body.Close()
+	if emptyPathPatchResp.StatusCode != http.StatusBadRequest {
+		data, _ := io.ReadAll(emptyPathPatchResp.Body)
+		t.Fatalf("expected 400, got %d: %s", emptyPathPatchResp.StatusCode, string(data))
+	}
+
+	invalidPath := filepath.Join(t.TempDir(), "missing-repo")
+	invalidPatchBody, _ := json.Marshal(map[string]any{"repo_path": invalidPath})
+	invalidPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(invalidPatchBody))
+	invalidPatchReq.Header.Set("Authorization", "Bearer token")
+	invalidPatchReq.Header.Set("Content-Type", "application/json")
+	invalidPatchResp, err := http.DefaultClient.Do(invalidPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace invalid repo path: %v", err)
+	}
+	defer invalidPatchResp.Body.Close()
+	if invalidPatchResp.StatusCode != http.StatusBadRequest {
+		data, _ := io.ReadAll(invalidPatchResp.Body)
+		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
+	}
+}
+
+func TestWorkspaceGroupIDsPatchSemantics(t *testing.T) {
+	stores := newTestStores(t)
+	api := &API{Version: "test", Manager: nil, Stores: stores}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/workspaces", api.Workspaces)
+	mux.HandleFunc("/v1/workspaces/", api.WorkspaceByID)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+
+	createBody, _ := json.Marshal(types.Workspace{
+		RepoPath: repoDir,
+	})
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workspaces", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		data, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
+	}
+	var created types.Workspace
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode workspace: %v", err)
+	}
+
+	setPatchBody, _ := json.Marshal(map[string]any{
+		"group_ids": []string{"group-b", " group-a ", "group-a", "ungrouped", ""},
+	})
+	setPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(setPatchBody))
+	setPatchReq.Header.Set("Authorization", "Bearer token")
+	setPatchReq.Header.Set("Content-Type", "application/json")
+	setPatchResp, err := http.DefaultClient.Do(setPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace groups: %v", err)
+	}
+	defer setPatchResp.Body.Close()
+	if setPatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(setPatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", setPatchResp.StatusCode, string(data))
+	}
+	var updated types.Workspace
+	if err := json.NewDecoder(setPatchResp.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated workspace: %v", err)
+	}
+	if len(updated.GroupIDs) != 2 || updated.GroupIDs[0] != "group-a" || updated.GroupIDs[1] != "group-b" {
+		t.Fatalf("expected normalized group ids, got %#v", updated.GroupIDs)
+	}
+
+	renamePatchBody, _ := json.Marshal(map[string]any{"name": "Renamed"})
+	renamePatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(renamePatchBody))
+	renamePatchReq.Header.Set("Authorization", "Bearer token")
+	renamePatchReq.Header.Set("Content-Type", "application/json")
+	renamePatchResp, err := http.DefaultClient.Do(renamePatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace name: %v", err)
+	}
+	defer renamePatchResp.Body.Close()
+	if renamePatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(renamePatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", renamePatchResp.StatusCode, string(data))
+	}
+	var renamed types.Workspace
+	if err := json.NewDecoder(renamePatchResp.Body).Decode(&renamed); err != nil {
+		t.Fatalf("decode renamed workspace: %v", err)
+	}
+	if len(renamed.GroupIDs) != 2 || renamed.GroupIDs[0] != "group-a" || renamed.GroupIDs[1] != "group-b" {
+		t.Fatalf("expected group ids unchanged, got %#v", renamed.GroupIDs)
+	}
+
+	clearPatchBody, _ := json.Marshal(map[string]any{"group_ids": []string{}})
+	clearPatchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/workspaces/"+created.ID, bytes.NewReader(clearPatchBody))
+	clearPatchReq.Header.Set("Authorization", "Bearer token")
+	clearPatchReq.Header.Set("Content-Type", "application/json")
+	clearPatchResp, err := http.DefaultClient.Do(clearPatchReq)
+	if err != nil {
+		t.Fatalf("patch workspace clear groups: %v", err)
+	}
+	defer clearPatchResp.Body.Close()
+	if clearPatchResp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(clearPatchResp.Body)
+		t.Fatalf("expected 200, got %d: %s", clearPatchResp.StatusCode, string(data))
+	}
+	var cleared types.Workspace
+	if err := json.NewDecoder(clearPatchResp.Body).Decode(&cleared); err != nil {
+		t.Fatalf("decode cleared workspace: %v", err)
+	}
+	if len(cleared.GroupIDs) != 0 {
+		t.Fatalf("expected group ids cleared, got %#v", cleared.GroupIDs)
 	}
 }
 

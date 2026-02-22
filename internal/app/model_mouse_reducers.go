@@ -765,7 +765,7 @@ func (m *Model) reduceModePickersLeftPressMouse(msg tea.MouseMsg, layout mouseLa
 					return true
 				}
 				if m.mode == uiModePickWorkspaceRename {
-					m.enterRenameWorkspace(id)
+					m.enterEditWorkspace(id)
 				} else {
 					m.enterEditWorkspaceGroups(id)
 				}

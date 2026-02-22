@@ -15,6 +15,10 @@ func (m *Model) createWorkspaceCmd(path, sessionSubpath, name string, additional
 	return createWorkspaceCmd(m.workspaceAPI, path, sessionSubpath, name, additionalDirectories)
 }
 
+func (m *Model) updateWorkspaceCmd(id string, patch *types.WorkspacePatch) tea.Cmd {
+	return updateWorkspaceCmd(m.workspaceAPI, id, patch)
+}
+
 func (m *Model) fetchAvailableWorktreesCmd(workspaceID, workspacePath string) tea.Cmd {
 	return fetchAvailableWorktreesCmd(m.workspaceAPI, workspaceID, workspacePath)
 }

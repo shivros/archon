@@ -77,10 +77,10 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		bodyText = m.approvalResponseBody()
 	case uiModeSearch:
 		headerText = "Search"
-	case uiModeRenameWorkspace:
-		headerText = "Rename Workspace"
-		if m.renameInput != nil {
-			bodyText = m.renameInput.View()
+	case uiModeEditWorkspace:
+		headerText = "Edit Workspace"
+		if m.editWorkspace != nil {
+			bodyText = m.editWorkspace.View()
 		}
 	case uiModeRenameWorktree:
 		headerText = "Rename Worktree"

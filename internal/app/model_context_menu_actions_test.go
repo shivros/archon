@@ -453,6 +453,8 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 	foundNote := false
 	foundAdd := false
 	foundGuided := false
+	foundEdit := false
+	foundLegacyRename := false
 	found := false
 	for _, item := range c.items {
 		if item.Action == ContextMenuWorkspaceOpenNotes {
@@ -470,6 +472,12 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 		if item.Action == ContextMenuWorkspaceCopyPath {
 			found = true
 		}
+		if item.Action == ContextMenuWorkspaceRename && item.Label == "Edit Workspace" {
+			foundEdit = true
+		}
+		if item.Label == "Rename Workspace" {
+			foundLegacyRename = true
+		}
 	}
 	if !foundOpen {
 		t.Fatalf("expected workspace context menu to include open notes action")
@@ -485,6 +493,12 @@ func TestContextMenuControllerWorkspaceIncludesCopyPathAction(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected workspace context menu to include copy path action")
+	}
+	if !foundEdit {
+		t.Fatalf("expected workspace context menu to include Edit Workspace label")
+	}
+	if foundLegacyRename {
+		t.Fatalf("did not expect legacy Rename Workspace label in workspace context menu")
 	}
 }
 
@@ -600,7 +614,7 @@ func TestHandleContextMenuActionClosesMenuAndRoutes(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no command")
 	}
-	if m.mode != uiModeRenameWorkspace {
+	if m.mode != uiModeEditWorkspace {
 		t.Fatalf("expected rename workspace mode, got %v", m.mode)
 	}
 	if m.renameWorkspaceID != "ws1" {

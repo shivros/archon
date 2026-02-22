@@ -22,7 +22,7 @@ func TestRenameHotkeyRoutesWorkspaceSelection(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no async command for entering rename")
 	}
-	if m.mode != uiModeRenameWorkspace {
+	if m.mode != uiModeEditWorkspace {
 		t.Fatalf("expected workspace rename mode, got %v", m.mode)
 	}
 	if m.renameWorkspaceID != "ws1" {

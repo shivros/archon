@@ -266,11 +266,11 @@ func deleteWorkspaceGroupCmd(api WorkspaceGroupDeleteAPI, id string) tea.Cmd {
 	}
 }
 
-func updateWorkspaceCmd(api WorkspaceUpdateAPI, id, name string) tea.Cmd {
+func updateWorkspaceCmd(api WorkspaceUpdateAPI, id string, patch *types.WorkspacePatch) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
-		workspace, err := api.UpdateWorkspace(ctx, id, &types.Workspace{Name: name})
+		workspace, err := api.UpdateWorkspace(ctx, id, patch)
 		return updateWorkspaceMsg{workspace: workspace, err: err}
 	}
 }
@@ -279,9 +279,15 @@ func updateWorkspaceGroupsCmd(api WorkspaceUpdateAPI, id string, groupIDs []stri
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
-		workspace, err := api.UpdateWorkspace(ctx, id, &types.Workspace{GroupIDs: groupIDs})
+		normalized := normalizePatchStringSlice(groupIDs)
+		workspace, err := api.UpdateWorkspace(ctx, id, &types.WorkspacePatch{GroupIDs: &normalized})
 		return updateWorkspaceMsg{workspace: workspace, err: err}
 	}
+}
+
+func normalizePatchStringSlice(values []string) []string {
+	out := make([]string, 0, len(values))
+	return append(out, values...)
 }
 
 func updateSessionCmd(api SessionUpdateAPI, id, title string) tea.Cmd {
@@ -450,7 +456,8 @@ func assignGroupWorkspacesCmd(api WorkspaceUpdateAPI, groupID string, workspaceI
 			if slicesEqual(ws.GroupIDs, next) {
 				continue
 			}
-			if _, err := api.UpdateWorkspace(ctx, ws.ID, &types.Workspace{GroupIDs: next}); err != nil {
+			normalized := normalizePatchStringSlice(next)
+			if _, err := api.UpdateWorkspace(ctx, ws.ID, &types.WorkspacePatch{GroupIDs: &normalized}); err != nil {
 				return assignGroupWorkspacesMsg{groupID: groupID, err: err, updated: updated}
 			}
 			updated++

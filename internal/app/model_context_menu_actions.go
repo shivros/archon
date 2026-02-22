@@ -25,10 +25,10 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 		return true, nil
 	case ContextMenuWorkspaceRename:
 		if target.id == "" {
-			m.setValidationStatus("select a workspace to rename")
+			m.setValidationStatus("select a workspace to edit")
 			return true, nil
 		}
-		m.enterRenameWorkspace(target.id)
+		m.enterEditWorkspace(target.id)
 		return true, nil
 	case ContextMenuWorkspaceEditGroups:
 		if target.id == "" {

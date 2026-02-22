@@ -138,6 +138,8 @@ func (r DefaultHotkeyResolver) ActiveContexts(m *Model) []HotkeyContext {
 	switch m.mode {
 	case uiModeAddWorkspace:
 		contexts = append(contexts, HotkeyAddWorkspace)
+	case uiModeEditWorkspace:
+		contexts = append(contexts, HotkeyAddWorkspace)
 	case uiModeAddWorktree:
 		contexts = append(contexts, HotkeyAddWorktree)
 	case uiModePickProvider:

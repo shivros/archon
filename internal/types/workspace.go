@@ -12,3 +12,11 @@ type Workspace struct {
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
+
+type WorkspacePatch struct {
+	Name                  *string   `json:"name,omitempty"`
+	RepoPath              *string   `json:"repo_path,omitempty"`
+	SessionSubpath        *string   `json:"session_subpath,omitempty"`
+	AdditionalDirectories *[]string `json:"additional_directories,omitempty"`
+	GroupIDs              *[]string `json:"group_ids,omitempty"`
+}
