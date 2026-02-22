@@ -177,6 +177,9 @@ type Model struct {
 	renderedForSelection                int
 	renderedForTimestampMode            ChatTimestampMode
 	renderedForRelativeBucket           int64
+	renderGeneration                    int
+	lastRenderRequested                 viewportRenderSignature
+	hasLastRenderRequested              bool
 	searchQuery                         string
 	searchMatches                       []int
 	searchIndex                         int
@@ -200,6 +203,8 @@ type Model struct {
 	sessionMetaRefreshPending           bool
 	sessionMetaSyncPending              bool
 	streamRenderScheduler               RenderScheduler
+	asyncViewportRendering              bool
+	asyncViewportRenderer               *asyncViewportRenderer
 	pendingComposeOptionTarget          composeOptionKind
 	pendingComposeOptionFor             string
 	menu                                *MenuController
@@ -466,6 +471,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sidebarProjectionRevision:           1,
 		renderPipeline:                      NewDefaultRenderPipeline(),
 		streamRenderScheduler:               NewDefaultRenderScheduler(),
+		asyncViewportRendering:              client != nil,
+		asyncViewportRenderer:               newAsyncViewportRenderer(),
 		layerComposer:                       NewTextLayerComposer(),
 		timestampMode:                       ChatTimestampModeRelative,
 		clockNow:                            now,
@@ -513,6 +520,7 @@ func Run(client *client.Client) error {
 
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
+		tea.RequestBackgroundColor,
 		fetchAppStateCmd(m.stateAPI),
 		fetchWorkspacesCmd(m.workspaceAPI),
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
@@ -527,10 +535,16 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	startedAt := time.Now()
 	defer m.recordUILatencySpan(uiLatencySpanModelUpdate, startedAt)
+	m.consumeCompletedViewportRender()
 
 	switch msg := msg.(type) {
 	case tickMsg:
 		return m, m.handleTick(msg)
+	case tea.BackgroundColorMsg:
+		if setMarkdownBackgroundDark(msg.IsDark()) {
+			m.renderViewport()
+		}
+		return m, nil
 	}
 	if handled, cmd := m.reduceMutationMessages(msg); handled {
 		return m, cmd
@@ -2761,47 +2775,128 @@ func (m *Model) renderViewport() {
 	}
 	mode := normalizeChatTimestampMode(m.timestampMode)
 	relativeBucket := chatTimestampRenderBucket(mode, now)
-	needsRender := m.renderedForWidth != renderWidth ||
-		m.renderedForContent != m.contentVersion ||
-		m.renderedForSelection != selectedRenderIndex ||
-		m.renderedForTimestampMode != mode ||
-		m.renderedForRelativeBucket != relativeBucket
-	if needsRender {
-		pipeline := m.renderPipeline
-		if pipeline == nil {
-			pipeline = NewDefaultRenderPipeline()
-			m.renderPipeline = pipeline
+	signature := viewportRenderSignature{
+		width:          renderWidth,
+		contentVersion: m.contentVersion,
+		selectionIndex: selectedRenderIndex,
+		timestampMode:  mode,
+		relativeBucket: relativeBucket,
+	}
+	appliedNow := false
+	if m.needsViewportRender(signature) {
+		if !m.hasLastRenderRequested || !m.lastRenderRequested.Equal(signature) {
+			m.renderGeneration++
+			m.lastRenderRequested = signature
+			m.hasLastRenderRequested = true
+			req := RenderRequest{
+				Width:              renderWidth,
+				MaxLines:           maxViewportLines,
+				RawContent:         m.contentRaw,
+				EscapeMarkdown:     m.contentEsc,
+				RenderRaw:          m.contentRenderRaw,
+				Blocks:             m.contentBlocks,
+				BlockMetaByID:      m.contentBlockMetaByID,
+				SelectedBlockIndex: selectedRenderIndex,
+				TimestampMode:      mode,
+				TimestampNow:       now,
+			}
+			if m.asyncViewportRendering && req.Blocks != nil {
+				m.scheduleViewportRender(req, signature, m.renderGeneration)
+			} else {
+				m.applyViewportRenderResult(signature, m.renderGeneration, m.renderRequest(req))
+				appliedNow = true
+			}
 		}
-		result := pipeline.Render(RenderRequest{
-			Width:              renderWidth,
-			MaxLines:           maxViewportLines,
-			RawContent:         m.contentRaw,
-			EscapeMarkdown:     m.contentEsc,
-			RenderRaw:          m.contentRenderRaw,
-			Blocks:             m.contentBlocks,
-			BlockMetaByID:      m.contentBlockMetaByID,
-			SelectedBlockIndex: selectedRenderIndex,
-			TimestampMode:      mode,
-			TimestampNow:       now,
-		})
-		m.renderedText = result.Text
-		m.renderedLines = result.Lines
-		m.renderedPlain = result.PlainLines
-		m.contentBlockSpans = result.Spans
-		m.renderedForWidth = renderWidth
-		m.renderedForContent = m.contentVersion
-		m.renderedForSelection = selectedRenderIndex
-		m.renderedForTimestampMode = mode
-		m.renderedForRelativeBucket = relativeBucket
-		m.renderVersion++
+	}
+	if !appliedNow {
+		m.applyViewportContent(m.isViewportRenderCurrent(signature))
+	}
+}
+
+func (m *Model) needsViewportRender(signature viewportRenderSignature) bool {
+	return !m.isViewportRenderCurrent(signature)
+}
+
+func (m *Model) isViewportRenderCurrent(signature viewportRenderSignature) bool {
+	return m.renderedForWidth == signature.width &&
+		m.renderedForContent == signature.contentVersion &&
+		m.renderedForSelection == signature.selectionIndex &&
+		m.renderedForTimestampMode == signature.timestampMode &&
+		m.renderedForRelativeBucket == signature.relativeBucket
+}
+
+func (m *Model) renderRequest(req RenderRequest) RenderResult {
+	pipeline := m.renderPipeline
+	if pipeline == nil {
+		pipeline = NewDefaultRenderPipeline()
+		m.renderPipeline = pipeline
+	}
+	return pipeline.Render(req)
+}
+
+func (m *Model) scheduleViewportRender(req RenderRequest, signature viewportRenderSignature, generation int) {
+	if m == nil {
+		return
+	}
+	if m.asyncViewportRenderer == nil {
+		m.asyncViewportRenderer = newAsyncViewportRenderer()
+	}
+	pipeline := m.renderPipeline
+	if pipeline == nil {
+		pipeline = NewDefaultRenderPipeline()
+		m.renderPipeline = pipeline
+	}
+	m.asyncViewportRenderer.Schedule(asyncViewportRenderJob{
+		generation: generation,
+		signature:  signature,
+		request:    req,
+	}, pipeline)
+}
+
+func (m *Model) applyViewportRenderResult(signature viewportRenderSignature, generation int, result RenderResult) {
+	if m == nil {
+		return
+	}
+	m.renderedText = result.Text
+	m.renderedLines = result.Lines
+	m.renderedPlain = result.PlainLines
+	m.contentBlockSpans = result.Spans
+	m.renderedForWidth = signature.width
+	m.renderedForContent = signature.contentVersion
+	m.renderedForSelection = signature.selectionIndex
+	m.renderedForTimestampMode = signature.timestampMode
+	m.renderedForRelativeBucket = signature.relativeBucket
+	m.renderVersion++
+	m.applyViewportContent(true)
+}
+
+func (m *Model) applyViewportContent(renderCurrent bool) {
+	if m == nil {
+		return
 	}
 	m.viewport.SetContent(m.renderedText)
-	if m.scrollOnLoad && !m.loading {
+	if renderCurrent && m.scrollOnLoad && !m.loading {
 		m.viewport.GotoBottom()
 		m.scrollOnLoad = false
 	}
 	if m.follow {
 		m.viewport.GotoBottom()
+	}
+}
+
+func (m *Model) consumeCompletedViewportRender() {
+	if m == nil || !m.asyncViewportRendering || m.asyncViewportRenderer == nil {
+		return
+	}
+	for {
+		completed, ok := m.asyncViewportRenderer.TakeCompleted()
+		if !ok {
+			return
+		}
+		if completed.generation != m.renderGeneration {
+			continue
+		}
+		m.applyViewportRenderResult(completed.signature, completed.generation, completed.result)
 	}
 }
 

@@ -1,11 +1,9 @@
 package app
 
 import (
-	"os"
 	"strings"
 	"sync"
 
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
@@ -13,9 +11,9 @@ import (
 )
 
 var (
-	rendererMu    sync.Mutex
-	rendererWidth int
-	renderer      *glamour.TermRenderer
+	rendererMu       sync.Mutex
+	renderersByStyle = map[markdownRendererKey]*glamour.TermRenderer{}
+	markdownDarkMode = true
 )
 
 func renderMarkdown(input string, width int) string {
@@ -26,7 +24,7 @@ func renderMarkdown(input string, width int) string {
 	if width <= 0 {
 		width = 80
 	}
-	r := getRenderer(width)
+	r := getRenderer(width, markdownBackgroundDark())
 	if r == nil {
 		return input
 	}
@@ -39,28 +37,47 @@ func renderMarkdown(input string, width int) string {
 	return strings.TrimRight(out, "\n")
 }
 
-func getRenderer(width int) *glamour.TermRenderer {
+type markdownRendererKey struct {
+	width int
+	dark  bool
+}
+
+func markdownBackgroundDark() bool {
 	rendererMu.Lock()
 	defer rendererMu.Unlock()
-	if renderer != nil && rendererWidth == width {
+	return markdownDarkMode
+}
+
+func setMarkdownBackgroundDark(dark bool) bool {
+	rendererMu.Lock()
+	defer rendererMu.Unlock()
+	changed := markdownDarkMode != dark
+	markdownDarkMode = dark
+	return changed
+}
+
+func getRenderer(width int, dark bool) *glamour.TermRenderer {
+	rendererMu.Lock()
+	defer rendererMu.Unlock()
+	key := markdownRendererKey{width: width, dark: dark}
+	if renderer, ok := renderersByStyle[key]; ok && renderer != nil {
 		return renderer
 	}
-	style := buildStyleConfig()
+	style := buildStyleConfig(dark)
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(style),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
-		return renderer
+		return nil
 	}
-	renderer = r
-	rendererWidth = width
-	return renderer
+	renderersByStyle[key] = r
+	return r
 }
 
-func buildStyleConfig() glamouransi.StyleConfig {
+func buildStyleConfig(dark bool) glamouransi.StyleConfig {
 	var base glamouransi.StyleConfig
-	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+	if dark {
 		base = styles.DarkStyleConfig
 	} else {
 		base = styles.LightStyleConfig

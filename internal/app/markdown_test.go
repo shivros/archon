@@ -3,7 +3,7 @@ package app
 import "testing"
 
 func TestBuildStyleConfigDisablesDocumentOuterMargins(t *testing.T) {
-	cfg := buildStyleConfig()
+	cfg := buildStyleConfig(true)
 	if cfg.Document.StylePrimitive.BlockPrefix != "" {
 		t.Fatalf("expected empty document block prefix, got %q", cfg.Document.StylePrimitive.BlockPrefix)
 	}
