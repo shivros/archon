@@ -39,5 +39,6 @@ func (m *Model) sendMessageCmd(sessionID, text string) tea.Cmd {
 }
 
 func (m *Model) startWorkspaceSessionCmd(workspaceID, worktreeID, provider, text string, runtimeOptions *types.SessionRuntimeOptions) tea.Cmd {
-	return startSessionCmd(m.sessionAPI, workspaceID, worktreeID, provider, text, runtimeOptions)
+	ctx := m.replaceRequestScope(requestScopeSessionStart)
+	return startSessionCmdWithContext(m.sessionAPI, workspaceID, worktreeID, provider, text, runtimeOptions, ctx)
 }

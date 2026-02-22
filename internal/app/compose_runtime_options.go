@@ -251,7 +251,8 @@ func (m *Model) requestComposeOptionPicker(target composeOptionKind) tea.Cmd {
 		m.pendingComposeOptionTarget = target
 		m.pendingComposeOptionFor = provider
 		m.setStatusMessage("loading " + composeOptionLabel(target) + " options")
-		return fetchProviderOptionsCmd(m.sessionAPI, provider)
+		ctx := m.replaceRequestScope(requestScopeProviderOption)
+		return fetchProviderOptionsCmdWithContext(m.sessionAPI, provider, ctx)
 	}
 	if m.openComposeOptionPicker(target) {
 		m.setStatusMessage("select " + composeOptionLabel(target))
@@ -261,7 +262,8 @@ func (m *Model) requestComposeOptionPicker(target composeOptionKind) tea.Cmd {
 	m.pendingComposeOptionTarget = target
 	m.pendingComposeOptionFor = provider
 	m.setStatusMessage("loading " + composeOptionLabel(target) + " options")
-	return fetchProviderOptionsCmd(m.sessionAPI, provider)
+	ctx := m.replaceRequestScope(requestScopeProviderOption)
+	return fetchProviderOptionsCmdWithContext(m.sessionAPI, provider, ctx)
 }
 
 func (m *Model) shouldRefreshComposeOptions(provider string, target composeOptionKind) bool {
@@ -385,4 +387,5 @@ func (m *Model) clearPendingComposeOptionRequest() {
 	}
 	m.pendingComposeOptionTarget = composeOptionNone
 	m.pendingComposeOptionFor = ""
+	m.cancelRequestScope(requestScopeProviderOption)
 }

@@ -283,7 +283,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.exitAddWorktree("worktree added")
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
+			cmds = append(cmds, m.fetchWorktreesForWorkspace(msg.workspaceID))
 		}
 		return true, tea.Batch(cmds...)
 	case addWorktreeMsg:
@@ -294,7 +294,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.exitAddWorktree("worktree added")
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
+			cmds = append(cmds, m.fetchWorktreesForWorkspace(msg.workspaceID))
 		}
 		return true, tea.Batch(cmds...)
 	case updateWorktreeMsg:
@@ -305,7 +305,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.setStatusInfo("worktree updated")
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
+			cmds = append(cmds, m.fetchWorktreesForWorkspace(msg.workspaceID))
 		} else {
 			cmds = append(cmds, m.fetchWorktreesForWorkspaces())
 		}
@@ -322,7 +322,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.setStatusInfo("worktree deleted")
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		if msg.workspaceID != "" {
-			cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, msg.workspaceID))
+			cmds = append(cmds, m.fetchWorktreesForWorkspace(msg.workspaceID))
 		}
 		return true, tea.Batch(cmds...)
 	case updateWorkspaceMsg:
@@ -396,6 +396,9 @@ func (m *Model) prepareSessionItemsMessageContext(source sessionProjectionSource
 
 func (m *Model) handleSessionItemsMessageError(ctx sessionItemsMessageContext, err error) {
 	if m == nil || err == nil {
+		return
+	}
+	if isCanceledRequestError(err) {
 		return
 	}
 	m.setBackgroundError(string(ctx.source) + " error: " + err.Error())
@@ -736,6 +739,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, saveStateCmd
 	case workspacesMsg:
 		if msg.err != nil {
+			if isCanceledRequestError(msg.err) {
+				return true, nil
+			}
 			m.setBackgroundError("workspaces error: " + msg.err.Error())
 			return true, nil
 		}
@@ -744,6 +750,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, m.fetchWorktreesForWorkspaces()
 	case worktreesMsg:
 		if msg.err != nil {
+			if isCanceledRequestError(msg.err) {
+				return true, nil
+			}
 			m.setBackgroundError("worktrees error: " + msg.err.Error())
 			return true, nil
 		}
@@ -860,6 +869,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		provider := strings.ToLower(strings.TrimSpace(msg.provider))
 		isPending := provider != "" && strings.EqualFold(provider, strings.TrimSpace(m.pendingComposeOptionFor))
 		if msg.err != nil {
+			if isCanceledRequestError(msg.err) {
+				return true, nil
+			}
 			if isPending {
 				m.clearPendingComposeOptionRequest()
 			}
@@ -923,9 +935,10 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		provider := m.providerForSessionID(msg.id)
-		cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, msg.id, msg.key, m.historyFetchLinesInitial())}
+		ctx := m.requestScopeContext(requestScopeSessionLoad)
+		cmds := []tea.Cmd{fetchHistoryCmdWithContext(m.sessionHistoryAPI, msg.id, msg.key, m.historyFetchLinesInitial(), ctx)}
 		if shouldStreamItems(provider) {
-			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
+			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.id, ctx))
 		}
 		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
 		return true, tea.Batch(cmds...)
@@ -973,7 +986,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.refreshRecentsContent()
 		}
 		if shouldStreamItems(provider) {
-			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.id))
+			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.id, m.requestScopeContext(requestScopeSessionLoad)))
 		}
 		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.id))
@@ -1013,6 +1026,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case approvalsMsg:
 		if msg.err != nil {
+			if isCanceledRequestError(msg.err) {
+				return true, nil
+			}
 			m.setBackgroundError("approvals error: " + msg.err.Error())
 			return true, nil
 		}
@@ -1051,7 +1067,14 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, m.loadSelectedSession(item)
 	case startSessionMsg:
+		m.cancelRequestScope(requestScopeSessionStart)
 		if msg.err != nil {
+			if isCanceledRequestError(msg.err) {
+				m.loading = false
+				m.loadingKey = ""
+				m.stopRequestActivity()
+				return true, nil
+			}
 			m.setStatusError("start session error: " + msg.err.Error())
 			m.loading = false
 			m.loadingKey = ""
@@ -1093,7 +1116,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
-		cmds := []tea.Cmd{m.fetchSessionsCmd(false), fetchHistoryCmd(m.sessionHistoryAPI, msg.session.ID, key, initialLines)}
+		loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
+		cmds := []tea.Cmd{
+			m.fetchSessionsCmd(false),
+			fetchHistoryCmdWithContext(m.sessionHistoryAPI, msg.session.ID, key, initialLines, loadCtx),
+		}
 		if recentsStateSaveCmd != nil {
 			cmds = append(cmds, recentsStateSaveCmd)
 		}
@@ -1101,7 +1128,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			cmds = append(cmds, watchCmd)
 		}
 		if shouldStreamItems(msg.session.Provider) {
-			cmds = append(cmds, fetchApprovalsCmd(m.sessionAPI, msg.session.ID))
+			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.session.ID, loadCtx))
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
 		} else if msg.session.Provider == "codex" {
 			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.session.ID))

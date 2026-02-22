@@ -21,6 +21,17 @@ type fetchSessionsOptions struct {
 	includeWorkflowOwned bool
 }
 
+func commandParentContext(parent context.Context) context.Context {
+	if parent == nil {
+		return context.Background()
+	}
+	return parent
+}
+
+func commandWithTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(commandParentContext(parent), timeout)
+}
+
 func fetchSessionsWithMetaCmd(api SessionListWithMetaQueryAPI, options ...fetchSessionsOptions) tea.Cmd {
 	opts := fetchSessionsOptions{}
 	if len(options) > 0 {
@@ -49,6 +60,10 @@ func fetchSessionsWithMetaCmd(api SessionListWithMetaQueryAPI, options ...fetchS
 }
 
 func fetchProviderOptionsCmd(api SessionProviderOptionsAPI, provider string) tea.Cmd {
+	return fetchProviderOptionsCmdWithContext(api, provider, nil)
+}
+
+func fetchProviderOptionsCmdWithContext(api SessionProviderOptionsAPI, provider string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
 		timeout := 4 * time.Second
 		switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -56,7 +71,7 @@ func fetchProviderOptionsCmd(api SessionProviderOptionsAPI, provider string) tea
 			// Give local server auto-start and cold plugin init enough time.
 			timeout = 90 * time.Second
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := commandWithTimeout(parent, timeout)
 		defer cancel()
 		options, err := api.GetProviderOptions(ctx, provider)
 		return providerOptionsMsg{provider: provider, options: options, err: err}
@@ -82,8 +97,12 @@ func fetchWorkspaceGroupsCmd(api WorkspaceGroupListAPI) tea.Cmd {
 }
 
 func fetchWorktreesCmd(api WorktreeListAPI, workspaceID string) tea.Cmd {
+	return fetchWorktreesCmdWithContext(api, workspaceID, nil)
+}
+
+func fetchWorktreesCmdWithContext(api WorktreeListAPI, workspaceID string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ctx, cancel := commandWithTimeout(parent, 4*time.Second)
 		defer cancel()
 		worktrees, err := api.ListWorktrees(ctx, workspaceID)
 		return worktreesMsg{workspaceID: workspaceID, worktrees: worktrees, err: err}
@@ -528,8 +547,12 @@ func fetchTailCmd(api SessionTailAPI, id, key string) tea.Cmd {
 }
 
 func fetchHistoryCmd(api SessionHistoryAPI, id, key string, lines int) tea.Cmd {
+	return fetchHistoryCmdWithContext(api, id, key, lines, nil)
+}
+
+func fetchHistoryCmdWithContext(api SessionHistoryAPI, id, key string, lines int, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := commandWithTimeout(parent, 8*time.Second)
 		defer cancel()
 		resp, err := api.History(ctx, id, lines)
 		if err != nil {
@@ -570,13 +593,17 @@ func openEventsCmd(api SessionEventStreamAPI, id string) tea.Cmd {
 }
 
 func watchRecentsTurnCompletionCmd(api SessionEventStreamAPI, id, expectedTurn string) tea.Cmd {
+	return watchRecentsTurnCompletionCmdWithContext(api, id, expectedTurn, nil)
+}
+
+func watchRecentsTurnCompletionCmdWithContext(api SessionEventStreamAPI, id, expectedTurn string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
 		id = strings.TrimSpace(id)
 		expectedTurn = strings.TrimSpace(expectedTurn)
 		if id == "" {
 			return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: errors.New("session id is required")}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		ctx, cancel := commandWithTimeout(parent, 20*time.Minute)
 		defer cancel()
 		ch, streamCancel, err := api.EventStream(ctx, id)
 		if err != nil {
@@ -645,8 +672,12 @@ func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {
 }
 
 func fetchApprovalsCmd(api SessionApprovalsAPI, id string) tea.Cmd {
+	return fetchApprovalsCmdWithContext(api, id, nil)
+}
+
+func fetchApprovalsCmdWithContext(api SessionApprovalsAPI, id string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ctx, cancel := commandWithTimeout(parent, 4*time.Second)
 		defer cancel()
 		approvals, err := api.ListApprovals(ctx, id)
 		return approvalsMsg{id: id, approvals: approvals, err: err}
@@ -787,6 +818,10 @@ func approveSessionCmd(api SessionApproveAPI, id string, requestID int, decision
 }
 
 func startSessionCmd(api WorkspaceSessionStartAPI, workspaceID, worktreeID, provider, text string, runtimeOptions *types.SessionRuntimeOptions) tea.Cmd {
+	return startSessionCmdWithContext(api, workspaceID, worktreeID, provider, text, runtimeOptions, nil)
+}
+
+func startSessionCmdWithContext(api WorkspaceSessionStartAPI, workspaceID, worktreeID, provider, text string, runtimeOptions *types.SessionRuntimeOptions, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
 		timeout := 8 * time.Second
 		switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -794,7 +829,7 @@ func startSessionCmd(api WorkspaceSessionStartAPI, workspaceID, worktreeID, prov
 			// OpenCode/Kilo cold starts can take longer on first run.
 			timeout = 90 * time.Second
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := commandWithTimeout(parent, timeout)
 		defer cancel()
 		req := client.StartSessionRequest{
 			Provider:       provider,

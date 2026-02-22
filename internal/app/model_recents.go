@@ -780,8 +780,10 @@ func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.
 	if current, ok := m.recentsCompletionWatching[sessionID]; ok && strings.TrimSpace(current) == expectedTurn {
 		return nil
 	}
+	m.cancelRequestScope(recentsRequestScopeName(sessionID))
 	m.recentsCompletionWatching[sessionID] = expectedTurn
-	return watchRecentsTurnCompletionCmd(m.sessionAPI, sessionID, expectedTurn)
+	ctx := m.replaceRequestScope(recentsRequestScopeName(sessionID))
+	return watchRecentsTurnCompletionCmdWithContext(m.sessionAPI, sessionID, expectedTurn, ctx)
 }
 
 func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd {
@@ -797,6 +799,7 @@ func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd 
 		if current, ok := m.recentsCompletionWatching[sessionID]; ok {
 			if expectedTurn == "" || strings.TrimSpace(current) == expectedTurn {
 				delete(m.recentsCompletionWatching, sessionID)
+				m.cancelRequestScope(recentsRequestScopeName(sessionID))
 			}
 		}
 	}
@@ -821,6 +824,7 @@ func (m *Model) syncRecentsCompletionWatches() {
 	for sessionID := range m.recentsCompletionWatching {
 		if !m.recents.IsRunning(sessionID) {
 			delete(m.recentsCompletionWatching, sessionID)
+			m.cancelRequestScope(recentsRequestScopeName(sessionID))
 		}
 	}
 }

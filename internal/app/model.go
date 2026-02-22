@@ -222,6 +222,7 @@ type Model struct {
 	composeDrafts                       map[string]string
 	noteDrafts                          map[string]string
 	requestActivity                     requestActivity
+	requestScopes                       map[string]requestScope
 	tickFn                              func() tea.Cmd
 	pendingConfirm                      confirmAction
 	pendingSelectionAction              selectionAction
@@ -449,6 +450,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		recentsExpandedSessions:             map[string]bool{},
 		recentsPreviews:                     map[string]recentsPreview{},
 		recentsCompletionWatching:           map[string]string{},
+		requestScopes:                       map[string]requestScope{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
 		uiLatency:                           newUILatencyTracker(nil),
@@ -1048,6 +1050,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.startUILatencyAction(uiLatencyActionSwitchSession, token)
 
 	id := item.session.ID
+	m.cancelRequestScope(requestScopeSessionStart)
 	m.resetStream()
 	m.pendingApproval = nil
 	m.pendingSessionKey = token
@@ -1064,7 +1067,11 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		m.setLoadingContent()
 	}
 	initialLines := m.historyFetchLinesInitial()
-	cmds := []tea.Cmd{fetchHistoryCmd(m.sessionHistoryAPI, id, token, initialLines), fetchApprovalsCmd(m.sessionAPI, id)}
+	ctx := m.replaceRequestScope(requestScopeSessionLoad)
+	cmds := []tea.Cmd{
+		fetchHistoryCmdWithContext(m.sessionHistoryAPI, id, token, initialLines, ctx),
+		fetchApprovalsCmdWithContext(m.sessionAPI, id, ctx),
+	}
 	if isActiveStatus(item.session.Status) {
 		if shouldStreamItems(item.session.Provider) {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
@@ -2222,6 +2229,8 @@ func (m *Model) maybeRefreshRelativeTimestampLabels(now time.Time) {
 }
 
 func (m *Model) resetStream() {
+	m.cancelRequestScope(requestScopeSessionLoad)
+	m.cancelRequestScope(requestScopeSessionStart)
 	if m.stream != nil {
 		m.stream.Reset()
 	}
@@ -2464,17 +2473,74 @@ func (m *Model) worktreeByID(id string) *types.Worktree {
 }
 
 func (m *Model) fetchWorktreesForWorkspaces() tea.Cmd {
-	if m.workspaceAPI == nil || len(m.workspaces) == 0 {
+	if m.workspaceAPI == nil {
 		return nil
 	}
-	cmds := make([]tea.Cmd, 0, len(m.workspaces))
-	for _, ws := range m.workspaces {
-		if ws == nil {
+	ids := m.worktreeRefreshWorkspaceIDs()
+	if len(ids) == 0 {
+		return nil
+	}
+	ctx := m.replaceRequestScope(requestScopeWorktrees)
+	cmds := make([]tea.Cmd, 0, len(ids))
+	for _, workspaceID := range ids {
+		if strings.TrimSpace(workspaceID) == "" {
 			continue
 		}
-		cmds = append(cmds, fetchWorktreesCmd(m.workspaceAPI, ws.ID))
+		cmds = append(cmds, fetchWorktreesCmdWithContext(m.workspaceAPI, workspaceID, ctx))
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) fetchWorktreesForWorkspace(workspaceID string) tea.Cmd {
+	if m == nil || m.workspaceAPI == nil {
+		return nil
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil
+	}
+	ctx := m.replaceRequestScope(requestScopeWorktrees)
+	return fetchWorktreesCmdWithContext(m.workspaceAPI, workspaceID, ctx)
+}
+
+func (m *Model) worktreeRefreshWorkspaceIDs() []string {
+	if m == nil {
+		return nil
+	}
+	candidates := make([]string, 0, 3)
+	if item := m.selectedItem(); item != nil {
+		if workspaceID := strings.TrimSpace(item.workspaceID()); workspaceID != "" && workspaceID != unassignedWorkspaceID {
+			candidates = append(candidates, workspaceID)
+		}
+	}
+	if workspaceID := strings.TrimSpace(m.appState.ActiveWorkspaceID); workspaceID != "" && workspaceID != unassignedWorkspaceID {
+		candidates = append(candidates, workspaceID)
+	}
+	if len(candidates) == 0 {
+		for _, workspace := range m.workspaces {
+			if workspace == nil {
+				continue
+			}
+			workspaceID := strings.TrimSpace(workspace.ID)
+			if workspaceID != "" {
+				candidates = append(candidates, workspaceID)
+				break
+			}
+		}
+	}
+	if len(candidates) <= 1 {
+		return candidates
+	}
+	dedup := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		dedup = append(dedup, candidate)
+	}
+	return dedup
 }
 
 func (m *Model) advanceToNextSession() bool {
@@ -3944,6 +4010,7 @@ func (m *Model) exitCompose(status string) {
 	m.startUILatencyAction(uiLatencyActionExitCompose, "")
 	defer m.finishUILatencyAction(uiLatencyActionExitCompose, "", uiLatencyOutcomeOK)
 
+	m.cancelRequestScope(requestScopeSessionStart)
 	m.saveCurrentComposeDraft()
 	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeNormal
@@ -3967,6 +4034,7 @@ func (m *Model) exitCompose(status string) {
 
 func (m *Model) enterProviderPick() {
 	m.clearPendingComposeOptionRequest()
+	m.cancelRequestScope(requestScopeProviderOption)
 	m.mode = uiModePickProvider
 	if m.providerPicker != nil {
 		m.providerPicker.Enter("")
@@ -3983,6 +4051,7 @@ func (m *Model) enterProviderPick() {
 
 func (m *Model) exitProviderPick(status string) {
 	m.clearPendingComposeOptionRequest()
+	m.cancelRequestScope(requestScopeProviderOption)
 	m.mode = uiModeNormal
 	if m.providerPicker != nil {
 		m.providerPicker.Enter("")
@@ -4031,7 +4100,8 @@ func (m *Model) applyProviderSelection(provider string) tea.Cmd {
 	}
 	m.setStatusMessage("provider set: " + provider)
 	m.resize(m.width, m.height)
-	return fetchProviderOptionsCmd(m.sessionAPI, provider)
+	ctx := m.replaceRequestScope(requestScopeProviderOption)
+	return fetchProviderOptionsCmdWithContext(m.sessionAPI, provider, ctx)
 }
 
 func (m *Model) enterSearch() {
@@ -4326,6 +4396,32 @@ func (m *Model) enterNewSession() bool {
 	}
 	m.enterProviderPick()
 	return true
+}
+
+func (m *Model) enterNewSessionCmd() tea.Cmd {
+	if !m.enterNewSession() {
+		return nil
+	}
+	return m.prefetchProviderOptionsForPickerCmd()
+}
+
+func (m *Model) prefetchProviderOptionsForPickerCmd() tea.Cmd {
+	if m == nil || m.sessionAPI == nil {
+		return nil
+	}
+	ctx := m.replaceRequestScope(requestScopeProviderOption)
+	cmds := make([]tea.Cmd, 0, 2)
+	for _, def := range providers.All() {
+		provider := strings.ToLower(strings.TrimSpace(def.Name))
+		if provider == "" {
+			continue
+		}
+		if m.providerOptionCatalog(provider) != nil {
+			continue
+		}
+		cmds = append(cmds, fetchProviderOptionsCmdWithContext(m.sessionAPI, provider, ctx))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) selectedSessionLabel() string {

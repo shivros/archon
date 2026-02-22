@@ -173,8 +173,7 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 		m.enterRenameForSelection()
 		return true, nil
 	case "ctrl+n":
-		m.enterNewSession()
-		return true, nil
+		return true, m.enterNewSessionCmd()
 	case "a":
 		m.enterAddWorkspace()
 		return true, nil
