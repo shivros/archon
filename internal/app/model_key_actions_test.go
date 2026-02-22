@@ -82,6 +82,31 @@ func TestRenameHotkeyRoutesSessionSelection(t *testing.T) {
 	}
 }
 
+func TestRenameHotkeyRoutesWorkflowSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, workflows, map[string]*types.SessionMeta{}, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected rename hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for entering rename")
+	}
+	if m.mode != uiModeRenameWorkflow {
+		t.Fatalf("expected workflow rename mode, got %v", m.mode)
+	}
+	if m.renameWorkflowRunID != "gwf-1" {
+		t.Fatalf("expected workflow run id gwf-1, got %q", m.renameWorkflowRunID)
+	}
+}
+
 func TestDeleteHotkeyRoutesWorkspaceSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}

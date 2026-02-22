@@ -422,25 +422,18 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		)
 	}
 	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt)
-	if err != nil && shouldFallbackToReplacementWorkflowSession(err) {
-		fallbackSessionID, fallbackProvider, fallbackModel, startErr := d.startWorkflowSession(ctx, req, nil, nil)
-		if startErr == nil && strings.TrimSpace(fallbackSessionID) != "" && strings.TrimSpace(fallbackSessionID) != strings.TrimSpace(sessionID) {
-			fallbackTurnID, fallbackErr := d.sendStepPrompt(ctx, fallbackSessionID, prompt)
-			if fallbackErr == nil {
-				sessionID = strings.TrimSpace(fallbackSessionID)
-				provider = strings.TrimSpace(fallbackProvider)
-				model = strings.TrimSpace(fallbackModel)
-				turnID = strings.TrimSpace(fallbackTurnID)
-				err = nil
-			} else {
-				err = fallbackErr
-			}
-		}
-	}
 	if err != nil {
+		if shouldFailStepDispatchWithoutSessionReplacement(err) && d.logger != nil {
+			d.logger.Warn("guided_workflow_step_dispatch_blocked",
+				logging.F("run_id", strings.TrimSpace(req.RunID)),
+				logging.F("session_id", strings.TrimSpace(sessionID)),
+				logging.F("provider", strings.TrimSpace(provider)),
+				logging.F("error", err),
+			)
+		}
 		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
 	}
-	d.linkSessionToWorkflow(ctx, sessionID, req.RunID)
+	d.linkSessionToWorkflow(ctx, sessionID, req.RunID, req.WorkspaceID, req.WorktreeID)
 	return guidedworkflows.StepPromptDispatchResult{
 		Dispatched: true,
 		SessionID:  sessionID,
@@ -485,12 +478,14 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, ses
 	return "", lastErr
 }
 
-func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Context, sessionID, runID string) {
+func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Context, sessionID, runID, workspaceID, worktreeID string) {
 	if d == nil || d.sessionMeta == nil {
 		return
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	runID = strings.TrimSpace(runID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	worktreeID = strings.TrimSpace(worktreeID)
 	if sessionID == "" || runID == "" {
 		return
 	}
@@ -529,10 +524,17 @@ func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Conte
 			logging.F("existing_dismissed_at", existingDismissedAt),
 		)
 	}
-	_, err := d.sessionMeta.Upsert(ctx, &types.SessionMeta{
+	meta := &types.SessionMeta{
 		SessionID:     sessionID,
 		WorkflowRunID: runID,
-	})
+	}
+	if workspaceID != "" {
+		meta.WorkspaceID = workspaceID
+	}
+	if worktreeID != "" {
+		meta.WorktreeID = worktreeID
+	}
+	_, err := d.sessionMeta.Upsert(ctx, meta)
 	if err != nil {
 		if d.logger != nil {
 			d.logger.Warn("guided_workflow_session_link_failed",
@@ -938,7 +940,7 @@ func isTurnAlreadyInProgressError(err error) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "turn already in progress")
 }
 
-func shouldFallbackToReplacementWorkflowSession(err error) bool {
+func shouldFailStepDispatchWithoutSessionReplacement(err error) bool {
 	if err == nil {
 		return false
 	}

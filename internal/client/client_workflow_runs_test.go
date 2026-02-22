@@ -43,6 +43,28 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 			seen["start"] = true
 			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
 			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/resume":
+			var req WorkflowRunResumeRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode resume request: %v", err)
+			}
+			if !req.ResumeFailed || req.Message != "resume from outage" {
+				t.Fatalf("unexpected resume payload: %+v", req)
+			}
+			seen["resume_failed"] = true
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/rename":
+			var req WorkflowRunRenameRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode rename request: %v", err)
+			}
+			if strings.TrimSpace(req.Name) != "Renamed Workflow" {
+				t.Fatalf("unexpected rename payload: %+v", req)
+			}
+			seen["rename"] = true
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"Renamed Workflow"}`))
+			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/dismiss":
 			seen["dismiss"] = true
 			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","dismissed_at":"2026-02-17T00:00:00Z","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
@@ -132,6 +154,25 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected started run: %#v", started)
 	}
 
+	resumed, err := c.ResumeFailedWorkflowRun(ctx, "gwf-1", WorkflowRunResumeRequest{
+		ResumeFailed: true,
+		Message:      "resume from outage",
+	})
+	if err != nil {
+		t.Fatalf("ResumeFailedWorkflowRun error: %v", err)
+	}
+	if resumed == nil || resumed.Status != guidedworkflows.WorkflowRunStatusRunning {
+		t.Fatalf("unexpected resumed run: %#v", resumed)
+	}
+
+	renamed, err := c.RenameWorkflowRun(ctx, "gwf-1", "Renamed Workflow")
+	if err != nil {
+		t.Fatalf("RenameWorkflowRun error: %v", err)
+	}
+	if renamed == nil || strings.TrimSpace(renamed.TemplateName) != "Renamed Workflow" {
+		t.Fatalf("unexpected renamed run: %#v", renamed)
+	}
+
 	dismissed, err := c.DismissWorkflowRun(ctx, "gwf-1")
 	if err != nil {
 		t.Fatalf("DismissWorkflowRun error: %v", err)
@@ -191,7 +232,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected metrics reset response: %#v", reset)
 	}
 
-	for _, key := range []string{"templates", "list", "create", "start", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
+	for _, key := range []string{"templates", "list", "create", "start", "resume_failed", "rename", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
 		if !seen[key] {
 			t.Fatalf("expected request %q to be executed", key)
 		}

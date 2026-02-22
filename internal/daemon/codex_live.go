@@ -14,11 +14,12 @@ import (
 )
 
 type CodexLiveManager struct {
-	mu       sync.Mutex
-	sessions map[string]*codexLiveSession
-	stores   *Stores
-	logger   logging.Logger
-	notifier NotificationPublisher
+	mu        sync.Mutex
+	sessions  map[string]*codexLiveSession
+	stores    *Stores
+	logger    logging.Logger
+	notifier  NotificationPublisher
+	turnProbe turnActivityProbe
 }
 
 func NewCodexLiveManager(stores *Stores, logger logging.Logger) *CodexLiveManager {
@@ -29,6 +30,9 @@ func NewCodexLiveManager(stores *Stores, logger logging.Logger) *CodexLiveManage
 		sessions: make(map[string]*codexLiveSession),
 		stores:   stores,
 		logger:   logger,
+		turnProbe: codexThreadTurnActivityProbe{
+			timeout: defaultTurnActivityProbeTimeout,
+		},
 	}
 }
 
@@ -65,7 +69,7 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 			ls.mu.Unlock()
 			return ls.client.StartTurn(ctx, threadID, input, runtimeOptions, model)
 		}
-		turnID, err := reserveSessionTurn(ls, startTurn)
+		turnID, err := reserveSessionTurn(ctx, ls, m.turnProbe, startTurn)
 		if err == nil {
 			m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
 			return turnID, nil
@@ -78,7 +82,7 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 					lastErr = recoverErr
 					break
 				}
-				turnID, retryErr := reserveSessionTurn(ls, startTurn)
+				turnID, retryErr := reserveSessionTurn(ctx, ls, m.turnProbe, startTurn)
 				if retryErr == nil {
 					m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
 					return turnID, nil
@@ -546,7 +550,7 @@ func isCodexMissingThreadError(err error) bool {
 		strings.Contains(text, "no rollout found for thread id")
 }
 
-func reserveSessionTurn(ls *codexLiveSession, start func() (string, error)) (string, error) {
+func reserveSessionTurn(ctx context.Context, ls *codexLiveSession, probe turnActivityProbe, start func() (string, error)) (string, error) {
 	if ls == nil {
 		return "", errors.New("live session is required")
 	}
@@ -554,13 +558,36 @@ func reserveSessionTurn(ls *codexLiveSession, start func() (string, error)) (str
 		return "", errors.New("turn starter is required")
 	}
 	ls.mu.Lock()
-	if ls.activeTurn != "" || ls.starting {
+	if ls.activeTurn == "" && !ls.starting {
+		ls.starting = true
 		ls.mu.Unlock()
-		return "", errors.New("turn already in progress")
+		return startReservedSessionTurn(ls, start)
 	}
-	ls.starting = true
+	busyTurnID := strings.TrimSpace(ls.activeTurn)
+	threadID := strings.TrimSpace(ls.threadID)
+	reader := ls.client
 	ls.mu.Unlock()
 
+	if busyTurnID != "" && probe != nil && reader != nil {
+		status, err := probe.Probe(ctx, reader, threadID, busyTurnID)
+		if err == nil && status == turnActivityInactive {
+			ls.mu.Lock()
+			if !ls.starting && strings.TrimSpace(ls.activeTurn) == busyTurnID {
+				ls.activeTurn = ""
+			}
+			if ls.activeTurn == "" && !ls.starting {
+				ls.starting = true
+				ls.mu.Unlock()
+				return startReservedSessionTurn(ls, start)
+			}
+			ls.mu.Unlock()
+		}
+	}
+
+	return "", errors.New("turn already in progress")
+}
+
+func startReservedSessionTurn(ls *codexLiveSession, start func() (string, error)) (string, error) {
 	turnID, err := start()
 	now := time.Now().UTC()
 	ls.mu.Lock()

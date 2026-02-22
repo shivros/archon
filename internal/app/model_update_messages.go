@@ -63,6 +63,42 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
 		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunResumedMsg:
+		if m.guidedWorkflow == nil {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.guidedWorkflow.SetResumeError(msg.err)
+			m.setStatusError("guided workflow resume error: " + msg.err.Error())
+			m.renderGuidedWorkflowContent()
+			return true, nil
+		}
+		m.upsertWorkflowRun(msg.run)
+		m.applySidebarItemsIfDirty()
+		m.guidedWorkflow.SetRun(msg.run)
+		m.setStatusInfo("guided workflow resumed")
+		m.renderGuidedWorkflowContent()
+		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+		if runID == "" {
+			return true, nil
+		}
+		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
+		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+	case workflowRunRenamedMsg:
+		if msg.err != nil {
+			m.setStatusError("guided workflow rename error: " + msg.err.Error())
+			return true, nil
+		}
+		if msg.run != nil {
+			m.upsertWorkflowRun(msg.run)
+			if m.guidedWorkflow != nil && strings.TrimSpace(m.guidedWorkflow.RunID()) == strings.TrimSpace(msg.run.ID) {
+				m.guidedWorkflow.SetRun(msg.run)
+				m.renderGuidedWorkflowContent()
+			}
+		}
+		m.applySidebarItemsIfDirty()
+		m.setStatusInfo("workflow renamed")
+		return true, fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed)
 	case workflowRunSnapshotMsg:
 		if m.guidedWorkflow == nil {
 			return true, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -213,13 +214,37 @@ func (a *API) workflowRunActionRoutes() map[string]workflowRunActionRoute {
 		},
 		"resume": {
 			method: http.MethodPost,
-			handle: func(ctx context.Context, _ *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
-				run, err := service.ResumeRun(ctx, runID)
+			handle: func(ctx context.Context, r *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				var req WorkflowRunResumeRequest
+				if err := decodeOptionalWorkflowRunActionRequest(r, &req); err != nil {
+					return nil, errWorkflowRunInvalidJSONBody
+				}
+				var (
+					run *guidedworkflows.WorkflowRun
+					err error
+				)
+				if req.ResumeFailed {
+					run, err = service.ResumeFailedRun(ctx, runID, guidedworkflows.ResumeFailedRunRequest{
+						Message: strings.TrimSpace(req.Message),
+					})
+				} else {
+					run, err = service.ResumeRun(ctx, runID)
+				}
 				if err != nil {
 					return nil, err
 				}
 				a.publishGuidedWorkflowDecisionNotification(run)
 				return run, nil
+			},
+		},
+		"rename": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, r *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {
+				var req WorkflowRunRenameRequest
+				if err := decodeOptionalWorkflowRunActionRequest(r, &req); err != nil {
+					return nil, errWorkflowRunInvalidJSONBody
+				}
+				return service.RenameRun(ctx, runID, strings.TrimSpace(req.Name))
 			},
 		},
 		"dismiss": {
@@ -259,6 +284,20 @@ func (a *API) workflowRunActionRoutes() map[string]workflowRunActionRoute {
 			},
 		},
 	}
+}
+
+func decodeOptionalWorkflowRunActionRequest(r *http.Request, dst any) error {
+	if r == nil || r.Body == nil || dst == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (a *API) publishGuidedWorkflowDecisionNotification(run *guidedworkflows.WorkflowRun) {

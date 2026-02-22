@@ -53,6 +53,8 @@ const (
 	KeyCommandComposeAccess        = "ui.composeAccess"
 	KeyCommandInputSubmit          = "ui.inputSubmit"
 	KeyCommandInputNewline         = "ui.inputNewline"
+	KeyCommandInputLineUp          = "ui.inputLineUp"
+	KeyCommandInputLineDown        = "ui.inputLineDown"
 	KeyCommandInputWordLeft        = "ui.inputWordLeft"
 	KeyCommandInputWordRight       = "ui.inputWordRight"
 	KeyCommandInputDeleteWordLeft  = "ui.inputDeleteWordLeft"
@@ -106,6 +108,8 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandComposeAccess:        "ctrl+3",
 	KeyCommandInputSubmit:          "enter",
 	KeyCommandInputNewline:         "shift+enter",
+	KeyCommandInputLineUp:          "up",
+	KeyCommandInputLineDown:        "down",
 	KeyCommandInputWordLeft:        "ctrl+left",
 	KeyCommandInputWordRight:       "ctrl+right",
 	KeyCommandInputDeleteWordLeft:  "alt+backspace",

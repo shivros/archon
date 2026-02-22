@@ -37,6 +37,7 @@ const (
 	ContextMenuSessionInterrupt
 	ContextMenuSessionCopyID
 	ContextMenuWorkflowOpen
+	ContextMenuWorkflowRename
 	ContextMenuWorkflowDismiss
 	ContextMenuWorkflowUndismiss
 	ContextMenuWorkflowCopyID
@@ -250,6 +251,7 @@ func (c *ContextMenuController) OpenWorkflow(workflowID, label string, dismissed
 	}
 	c.items = []contextMenuItem{
 		{Label: "Open Workflow", Action: ContextMenuWorkflowOpen},
+		{Label: "Rename Workflow", Action: ContextMenuWorkflowRename},
 		visibilityAction,
 		{Label: "Copy Workflow ID", Action: ContextMenuWorkflowCopyID},
 	}

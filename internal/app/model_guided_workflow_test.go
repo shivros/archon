@@ -21,9 +21,12 @@ type guidedWorkflowAPIMock struct {
 	listTemplatesErr  error
 	createReqs        []client.CreateWorkflowRunRequest
 	startRunIDs       []string
+	resumeRunIDs      []string
 	decisionReqs      []client.WorkflowRunDecisionRequest
+	resumeReqs        []client.WorkflowRunResumeRequest
 	createRun         *guidedworkflows.WorkflowRun
 	startRun          *guidedworkflows.WorkflowRun
+	resumeRun         *guidedworkflows.WorkflowRun
 	decisionRun       *guidedworkflows.WorkflowRun
 	snapshotRuns      []*guidedworkflows.WorkflowRun
 	snapshotTimelines [][]guidedworkflows.RunTimelineEvent
@@ -68,6 +71,25 @@ func (m *guidedWorkflowAPIMock) StartWorkflowRun(_ context.Context, runID string
 		return nil, nil
 	}
 	return cloneWorkflowRun(m.startRun), nil
+}
+
+func (m *guidedWorkflowAPIMock) ResumeFailedWorkflowRun(_ context.Context, runID string, req client.WorkflowRunResumeRequest) (*guidedworkflows.WorkflowRun, error) {
+	m.resumeRunIDs = append(m.resumeRunIDs, runID)
+	m.resumeReqs = append(m.resumeReqs, req)
+	if m.resumeRun == nil {
+		return nil, nil
+	}
+	return cloneWorkflowRun(m.resumeRun), nil
+}
+
+func (m *guidedWorkflowAPIMock) RenameWorkflowRun(_ context.Context, runID, name string) (*guidedworkflows.WorkflowRun, error) {
+	_ = runID
+	if m.startRun == nil {
+		return nil, nil
+	}
+	run := cloneWorkflowRun(m.startRun)
+	run.TemplateName = strings.TrimSpace(name)
+	return run, nil
 }
 
 func (m *guidedWorkflowAPIMock) DismissWorkflowRun(_ context.Context, _ string) (*guidedworkflows.WorkflowRun, error) {
@@ -398,8 +420,15 @@ func TestGuidedWorkflowLauncherTemplatePickerSupportsTypeAhead(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
-	m = asModel(t, updated)
+	var updated tea.Model
+	for _, key := range []string{"t", "r", "i", "a", "g", "e"} {
+		var cmd tea.Cmd
+		updated, cmd = m.Update(tea.KeyPressMsg{Text: key})
+		m = asModel(t, updated)
+		if cmd != nil {
+			t.Fatalf("expected no command while typing launcher filter, got %T", cmd())
+		}
+	}
 	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
 		t.Fatalf("expected filtered template selection, got %q", m.contentRaw)
 	}
@@ -411,6 +440,28 @@ func TestGuidedWorkflowLauncherTemplatePickerSupportsTypeAhead(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(m.status), "filter cleared") {
 		t.Fatalf("expected filter cleared status, got %q", m.status)
+	}
+}
+
+func TestGuidedWorkflowLauncherPreservesANSIPickerRendering(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if !m.guidedWorkflow.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected launcher to require ANSI passthrough when templates are loaded")
+	}
+	if !m.contentRenderRaw {
+		t.Fatalf("expected launcher content to use raw ANSI rendering")
+	}
+	if !strings.Contains(m.renderedText, "\x1b[") {
+		t.Fatalf("expected rendered launcher text to retain ANSI styling, got %q", m.renderedText)
 	}
 }
 
@@ -1036,7 +1087,7 @@ func TestGuidedWorkflowTimelineShowsStepSessionTraceability(t *testing.T) {
 	if !strings.Contains(m.contentRaw, "Trace id: gwf-trace:phase_delivery:implementation:attempt-1") {
 		t.Fatalf("expected trace id in execution details")
 	}
-	if !strings.Contains(m.contentRaw, "[user turn turn-42](archon://session/s1?turn=turn-42&role=user)") {
+	if !strings.Contains(m.contentRaw, "[user turn turn-42](archon://session/s1?turn=turn-42)") {
 		t.Fatalf("expected user turn link in timeline details")
 	}
 }
@@ -1101,6 +1152,70 @@ func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
 	}
 	if m.contentBlocks[idx].TurnID != "turn-99" {
 		t.Fatalf("expected selected workflow turn id turn-99, got %q", m.contentBlocks[idx].TurnID)
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionResolvesProviderAndThreadSessionIDs(t *testing.T) {
+	cases := []struct {
+		name              string
+		executionSession  string
+		providerSessionID string
+		threadID          string
+	}{
+		{
+			name:              "provider session id",
+			executionSession:  "provider-session-1",
+			providerSessionID: "provider-session-1",
+		},
+		{
+			name:             "thread id",
+			executionSession: "thread-1",
+			threadID:         "thread-1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 2, 17, 13, 16, 0, 0, time.UTC)
+			run := newWorkflowRunFixture("gwf-open-resolve", guidedworkflows.WorkflowRunStatusRunning, now)
+			run.CurrentPhaseIndex = 0
+			run.CurrentStepIndex = 1
+			run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+				SessionID: tc.executionSession,
+				TurnID:    "turn-99",
+			}
+			run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
+
+			m := newPhase0ModelWithSession("codex")
+			m.sessionMeta["s1"] = &types.SessionMeta{
+				SessionID:         "s1",
+				WorkspaceID:       "ws1",
+				ProviderSessionID: tc.providerSessionID,
+				ThreadID:          tc.threadID,
+			}
+			enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+				workspaceID: "ws1",
+				worktreeID:  "wt1",
+			})
+			updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
+			m = asModel(t, updated)
+			updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+			m = asModel(t, updated)
+
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+			m = asModel(t, updated)
+			if cmd == nil {
+				t.Fatalf("expected session open command")
+			}
+			if selected := m.selectedSessionID(); selected != "s1" {
+				t.Fatalf("expected linked provider/thread session to resolve to s1, got %q", selected)
+			}
+			if m.pendingWorkflowTurnFocus == nil {
+				t.Fatalf("expected pending workflow turn focus")
+			}
+			if m.pendingWorkflowTurnFocus.sessionID != "s1" || m.pendingWorkflowTurnFocus.turnID != "turn-99" {
+				t.Fatalf("unexpected pending workflow turn focus: %#v", m.pendingWorkflowTurnFocus)
+			}
+		})
 	}
 }
 
@@ -1173,6 +1288,115 @@ func TestGuidedWorkflowOpenSelectedStepSessionValidatesLinkedSession(t *testing.
 	}
 	if m.pendingWorkflowTurnFocus != nil {
 		t.Fatalf("expected pending workflow turn focus to remain nil when session lookup fails")
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionExpandsUngroupedFilter(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"g1"}
+	if m.menu != nil {
+		m.menu.SetSelectedGroupIDs([]string{"g1"})
+	}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace 1", GroupIDs: []string{"g1"}},
+	}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now, Title: "Anchor"},
+		{ID: "s-linked", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now.Add(time.Second), Title: "Linked"},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s-linked": {
+			SessionID: "s-linked",
+			// No workspace/worktree context yet; this should be treated as ungrouped.
+		},
+	}
+	m.applySidebarItems()
+	if m.sidebar.SelectBySessionID("s-linked") {
+		t.Fatalf("expected linked session to be hidden while ungrouped is filtered out")
+	}
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	run := newWorkflowRunFixture("gwf-open-ungrouped", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "s-linked",
+		TurnID:    "turn-ungrouped",
+	}
+	m.guidedWorkflow.SetRun(run)
+	m.guidedWorkflow.selectedPhase = 0
+	m.guidedWorkflow.selectedStep = 1
+	m.renderGuidedWorkflowContent()
+
+	cmd := m.openGuidedWorkflowSelectedSession()
+	if cmd == nil {
+		t.Fatalf("expected linked session open command")
+	}
+	if selected := m.selectedSessionID(); selected != "s-linked" {
+		t.Fatalf("expected linked session selection after group expansion, got %q", selected)
+	}
+	if m.pendingWorkflowTurnFocus == nil || m.pendingWorkflowTurnFocus.sessionID != "s-linked" || m.pendingWorkflowTurnFocus.turnID != "turn-ungrouped" {
+		t.Fatalf("expected pending turn focus for linked session, got %#v", m.pendingWorkflowTurnFocus)
+	}
+	if !containsString(m.appState.ActiveWorkspaceGroupIDs, "ungrouped") {
+		t.Fatalf("expected ungrouped group to be activated, got %#v", m.appState.ActiveWorkspaceGroupIDs)
+	}
+	if m.menu != nil && !containsString(m.menu.SelectedGroupIDs(), "ungrouped") {
+		t.Fatalf("expected menu to include ungrouped selection, got %#v", m.menu.SelectedGroupIDs())
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionExpandsWorkspaceGroupFilter(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 5, 0, 0, time.UTC)
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"g1"}
+	if m.menu != nil {
+		m.menu.SetSelectedGroupIDs([]string{"g1"})
+	}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace 1", GroupIDs: []string{"g1"}},
+		{ID: "ws2", Name: "Workspace 2", GroupIDs: []string{"g2"}},
+	}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now, Title: "Anchor"},
+		{ID: "s-linked", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now.Add(time.Second), Title: "Linked"},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1":       {SessionID: "s1", WorkspaceID: "ws1"},
+		"s-linked": {SessionID: "s-linked", WorkspaceID: "ws2"},
+	}
+	m.applySidebarItems()
+	if m.sidebar.SelectBySessionID("s-linked") {
+		t.Fatalf("expected linked session to be hidden while g2 is filtered out")
+	}
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	run := newWorkflowRunFixture("gwf-open-group", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "s-linked",
+		TurnID:    "turn-group",
+	}
+	m.guidedWorkflow.SetRun(run)
+	m.guidedWorkflow.selectedPhase = 0
+	m.guidedWorkflow.selectedStep = 1
+	m.renderGuidedWorkflowContent()
+
+	cmd := m.openGuidedWorkflowSelectedSession()
+	if cmd == nil {
+		t.Fatalf("expected linked session open command")
+	}
+	if selected := m.selectedSessionID(); selected != "s-linked" {
+		t.Fatalf("expected linked session selection after group expansion, got %q", selected)
+	}
+	if !containsString(m.appState.ActiveWorkspaceGroupIDs, "g2") {
+		t.Fatalf("expected g2 group to be activated, got %#v", m.appState.ActiveWorkspaceGroupIDs)
+	}
+	if m.menu != nil && !containsString(m.menu.SelectedGroupIDs(), "g2") {
+		t.Fatalf("expected menu to include g2 selection, got %#v", m.menu.SelectedGroupIDs())
 	}
 }
 
@@ -1254,6 +1478,96 @@ func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 	}
 	if m.guidedWorkflow == nil || m.guidedWorkflow.NeedsDecision() {
 		t.Fatalf("expected decision inbox to clear after approval")
+	}
+}
+
+func TestGuidedWorkflowFailedSummaryPrimesDefaultResumeMessage(t *testing.T) {
+	now := time.Date(2026, 2, 22, 14, 0, 0, 0, time.UTC)
+	failed := newWorkflowRunFixture("gwf-failed-default-resume", guidedworkflows.WorkflowRunStatusFailed, now)
+	failed.LastError = "workflow run interrupted by daemon restart"
+	completedAt := now.Add(3 * time.Second)
+	failed.CompletedAt = &completedAt
+
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: failed})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSummary {
+		t.Fatalf("expected failed run to enter summary stage")
+	}
+	if m.guidedWorkflowResumeInput == nil {
+		t.Fatalf("expected resume input to be initialized")
+	}
+	if got := strings.TrimSpace(m.guidedWorkflowResumeInput.Value()); got != guidedworkflows.DefaultResumeFailedRunMessage {
+		t.Fatalf("expected default resume message, got %q", got)
+	}
+	if !strings.Contains(m.contentRaw, "Resume Failed Run") {
+		t.Fatalf("expected failed summary to render resume section, got %q", m.contentRaw)
+	}
+}
+
+func TestGuidedWorkflowFailedSummaryResumeUsesEditedMessage(t *testing.T) {
+	now := time.Date(2026, 2, 22, 14, 5, 0, 0, time.UTC)
+	failed := newWorkflowRunFixture("gwf-failed-resume", guidedworkflows.WorkflowRunStatusFailed, now)
+	failed.LastError = "workflow run interrupted by daemon restart"
+	completedAt := now.Add(4 * time.Second)
+	failed.CompletedAt = &completedAt
+	running := newWorkflowRunFixture("gwf-failed-resume", guidedworkflows.WorkflowRunStatusRunning, now.Add(10*time.Second))
+	api := &guidedWorkflowAPIMock{
+		resumeRun: running,
+		snapshotRuns: []*guidedworkflows.WorkflowRun{
+			running,
+		},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_resumed_after_failure", RunID: "gwf-failed-resume"},
+			},
+		},
+	}
+
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: failed})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || !m.guidedWorkflow.CanResumeFailedRun() {
+		t.Fatalf("expected failed summary to allow resume")
+	}
+	if m.guidedWorkflowResumeInput == nil || !m.guidedWorkflowResumeInput.Focused() {
+		t.Fatalf("expected resume input to be focused")
+	}
+	m.guidedWorkflowResumeInput.SetValue("Please continue the interrupted run and report status.")
+	m.syncGuidedWorkflowResumeInput()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected failed resume command")
+	}
+	resumeMsg, ok := cmd().(workflowRunResumedMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunResumedMsg, got %T", cmd())
+	}
+	updated, cmd = m.Update(resumeMsg)
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected snapshot refresh command after failed resume")
+	}
+	snapshotMsg := workflowRunSnapshotMsgFromCmd(t, cmd)
+	updated, _ = m.Update(snapshotMsg)
+	m = asModel(t, updated)
+
+	if len(api.resumeReqs) != 1 {
+		t.Fatalf("expected one resume request, got %d", len(api.resumeReqs))
+	}
+	if !api.resumeReqs[0].ResumeFailed {
+		t.Fatalf("expected resume_failed=true in resume request")
+	}
+	if api.resumeReqs[0].Message != "Please continue the interrupted run and report status." {
+		t.Fatalf("unexpected resume message payload: %q", api.resumeReqs[0].Message)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLive {
+		t.Fatalf("expected guided workflow to return to live stage after resume")
 	}
 }
 
@@ -1713,10 +2027,10 @@ func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 	if !strings.Contains(content, "### Step Links") {
 		t.Fatalf("expected step links section in summary, got %q", content)
 	}
-	if !strings.Contains(content, "[user turn turn-1](archon://session/s1?turn=turn-1&role=user)") {
+	if !strings.Contains(content, "[user turn turn-1](archon://session/s1?turn=turn-1)") {
 		t.Fatalf("expected first step turn link in summary")
 	}
-	if !strings.Contains(content, "[user turn turn-2](archon://session/s1?turn=turn-2&role=user)") {
+	if !strings.Contains(content, "[user turn turn-2](archon://session/s1?turn=turn-2)") {
 		t.Fatalf("expected second step turn link in summary")
 	}
 }
@@ -1760,7 +2074,7 @@ func TestGuidedWorkflowLauncherTemplateLoadErrorAndRetry(t *testing.T) {
 		{ID: guidedworkflows.TemplateIDSolidPhaseDelivery, Name: "SOLID Phase Delivery"},
 	}
 
-	updated, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	updated, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	m = asModel(t, updated)
 	if cmd == nil {
 		t.Fatalf("expected template refresh command")
@@ -1964,4 +2278,17 @@ func newWorkflowRunFixture(id string, status guidedworkflows.WorkflowRunStatus, 
 			},
 		},
 	}
+}
+
+func containsString(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == target {
+			return true
+		}
+	}
+	return false
 }

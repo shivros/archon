@@ -65,6 +65,7 @@ const (
 	uiModeRenameWorkspace
 	uiModeRenameWorktree
 	uiModeRenameSession
+	uiModeRenameWorkflow
 	uiModeEditWorkspaceGroups
 	uiModePickWorkspaceRename
 	uiModePickWorkspaceGroupEdit
@@ -100,6 +101,7 @@ type Model struct {
 	chatAddonController                 *ChatInputAddonController
 	chatInput                           *TextInput
 	guidedWorkflowPromptInput           *TextInput
+	guidedWorkflowResumeInput           *TextInput
 	searchInput                         *TextInput
 	renameInput                         *TextInput
 	groupInput                          *TextInput
@@ -114,6 +116,7 @@ type Model struct {
 	renameWorktreeWorkspaceID           string
 	renameWorktreeID                    string
 	renameSessionID                     string
+	renameWorkflowRunID                 string
 	editWorkspaceID                     string
 	renameGroupID                       string
 	assignGroupID                       string
@@ -159,6 +162,7 @@ type Model struct {
 	sessionApprovalResolutions          map[string][]*ApprovalResolution
 	contentRaw                          string
 	contentEsc                          bool
+	contentRenderRaw                    bool
 	contentBlocks                       []ChatBlock
 	contentBlockMetaByID                map[string]ChatBlockMetaPresentation
 	contentBlockSpans                   []renderedBlockSpan
@@ -388,6 +392,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		chatAddonController:                 NewChatInputAddonController(chatAddon),
 		chatInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		guidedWorkflowPromptInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 5, MinHeight: 4, MaxHeight: 10, AutoGrow: true}),
+		guidedWorkflowResumeInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 4, MinHeight: 3, MaxHeight: 8, AutoGrow: true}),
 		searchInput:                         NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
 		renameInput:                         NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
 		groupInput:                          NewTextInput(minViewportWidth, TextInputConfig{Height: 1, SingleLine: true}),
@@ -847,6 +852,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	}
 	if m.guidedWorkflowPromptInput != nil {
 		m.guidedWorkflowPromptInput.Resize(mainViewportWidth)
+	}
+	if m.guidedWorkflowResumeInput != nil {
+		m.guidedWorkflowResumeInput.Resize(mainViewportWidth)
 	}
 	if m.noteInput != nil {
 		m.noteInput.Resize(mainViewportWidth)
@@ -2492,6 +2500,7 @@ func (m *Model) applyLines(lines []string, escape bool) {
 func (m *Model) applyLinesNoRender(lines []string, escape bool) {
 	m.contentRaw = strings.Join(lines, "\n")
 	m.contentEsc = escape
+	m.contentRenderRaw = false
 	m.contentBlocks = nil
 	m.contentBlockMetaByID = nil
 	m.contentBlockSpans = nil
@@ -2567,6 +2576,7 @@ func (m *Model) applyBlocksNoRenderWithMeta(blocks []ChatBlock, metaByBlockID ma
 	m.clampMessageSelection()
 	m.contentRaw = ""
 	m.contentEsc = false
+	m.contentRenderRaw = false
 	m.contentVersion++
 	m.searchVersion = -1
 	m.sectionVersion = -1
@@ -2633,6 +2643,24 @@ func (m *Model) viewportScrollbarView() string {
 func (m *Model) setContentText(text string) {
 	m.contentRaw = text
 	m.contentEsc = false
+	m.contentRenderRaw = false
+	m.contentBlocks = nil
+	m.contentBlockMetaByID = nil
+	m.contentBlockSpans = nil
+	m.reasoningSnapshotHash = 0
+	m.reasoningSnapshotHas = false
+	m.reasoningSnapshotCollapsed = false
+	m.clearMessageSelection()
+	m.contentVersion++
+	m.searchVersion = -1
+	m.sectionVersion = -1
+	m.renderViewport()
+}
+
+func (m *Model) setContentANSIText(text string) {
+	m.contentRaw = text
+	m.contentEsc = false
+	m.contentRenderRaw = true
 	m.contentBlocks = nil
 	m.contentBlockMetaByID = nil
 	m.contentBlockSpans = nil
@@ -2677,6 +2705,7 @@ func (m *Model) renderViewport() {
 			MaxLines:           maxViewportLines,
 			RawContent:         m.contentRaw,
 			EscapeMarkdown:     m.contentEsc,
+			RenderRaw:          m.contentRenderRaw,
 			Blocks:             m.contentBlocks,
 			BlockMetaByID:      m.contentBlockMetaByID,
 			SelectedBlockIndex: selectedRenderIndex,
@@ -3098,6 +3127,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 	if m.reduceGuidedWorkflowLauncherLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceGuidedWorkflowTurnLinkLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {
@@ -3718,6 +3750,13 @@ func (m *Model) enterRenameForSelection() {
 			return
 		}
 		m.enterRenameSession(item.session.ID)
+	case sidebarWorkflow:
+		runID := strings.TrimSpace(item.workflowRunID())
+		if runID == "" {
+			m.setValidationStatus("select a workflow to rename")
+			return
+		}
+		m.enterRenameWorkflow(runID)
 	default:
 		m.setValidationStatus("select an item to rename")
 	}
@@ -3827,6 +3866,42 @@ func (m *Model) exitRenameSession(status string) {
 		m.renameInput.Blur()
 	}
 	m.renameSessionID = ""
+	if m.input != nil {
+		m.input.FocusSidebar()
+	}
+	if status != "" {
+		m.setStatusMessage(status)
+	}
+}
+
+func (m *Model) enterRenameWorkflow(runID string) {
+	m.mode = uiModeRenameWorkflow
+	m.renameWorkflowRunID = strings.TrimSpace(runID)
+	if m.renameInput != nil {
+		name := ""
+		for _, run := range m.workflowRuns {
+			if run == nil || strings.TrimSpace(run.ID) != m.renameWorkflowRunID {
+				continue
+			}
+			name = strings.TrimSpace(run.TemplateName)
+			break
+		}
+		m.renameInput.SetValue(name)
+		m.renameInput.Focus()
+	}
+	if m.input != nil {
+		m.input.FocusChatInput()
+	}
+	m.setStatusMessage("rename workflow")
+}
+
+func (m *Model) exitRenameWorkflow(status string) {
+	m.mode = uiModeNormal
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+		m.renameInput.Blur()
+	}
+	m.renameWorkflowRunID = ""
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}

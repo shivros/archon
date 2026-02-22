@@ -18,6 +18,7 @@ type RenderRequest struct {
 	MaxLines           int
 	RawContent         string
 	EscapeMarkdown     bool
+	RenderRaw          bool
 	Blocks             []ChatBlock
 	BlockMetaByID      map[string]ChatBlockMetaPresentation
 	SelectedBlockIndex int
@@ -88,15 +89,11 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 		return result
 	}
 
-	key := hashRenderRequestRaw(req.RawContent, req.EscapeMarkdown, width)
+	key := hashRenderRequestRaw(req.RawContent, req.EscapeMarkdown, req.RenderRaw, width)
 	if cached, ok := p.resultCache.Get(key); ok {
 		return cached
 	}
-	content := req.RawContent
-	if req.EscapeMarkdown {
-		content = escapeMarkdown(content)
-	}
-	text := renderMarkdown(content, width)
+	text := renderRawContent(req.RawContent, req.EscapeMarkdown, req.RenderRaw, width)
 	result := newRenderResult(text, nil)
 	p.resultCache.Set(key, result)
 	return result
@@ -193,9 +190,14 @@ func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBl
 	return hasher.Sum64()
 }
 
-func hashRenderRequestRaw(raw string, escaped bool, width int) uint64 {
+func hashRenderRequestRaw(raw string, escaped bool, renderRaw bool, width int) uint64 {
 	hasher := fnv.New64a()
 	writeHashInt(hasher, width)
+	if renderRaw {
+		_, _ = hasher.Write([]byte{1})
+	} else {
+		_, _ = hasher.Write([]byte{0})
+	}
 	if escaped {
 		_, _ = hasher.Write([]byte{1})
 	} else {
@@ -203,4 +205,22 @@ func hashRenderRequestRaw(raw string, escaped bool, width int) uint64 {
 	}
 	writeHashString(hasher, raw)
 	return hasher.Sum64()
+}
+
+func renderRawContent(content string, escapeMarkdownContent bool, renderRaw bool, width int) string {
+	if renderRaw {
+		content = strings.TrimRight(content, "\n")
+		if content == "" {
+			return ""
+		}
+		if width <= 0 {
+			width = 80
+		}
+		content = xansi.Hardwrap(content, width, true)
+		return strings.TrimRight(content, "\n")
+	}
+	if escapeMarkdownContent {
+		content = escapeMarkdown(content)
+	}
+	return renderMarkdown(content, width)
 }

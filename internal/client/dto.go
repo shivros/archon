@@ -132,6 +132,15 @@ type WorkflowRunDecisionRequest struct {
 	Note       string                         `json:"note,omitempty"`
 }
 
+type WorkflowRunResumeRequest struct {
+	ResumeFailed bool   `json:"resume_failed,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+type WorkflowRunRenameRequest struct {
+	Name string `json:"name,omitempty"`
+}
+
 type WorkflowRunTimelineResponse struct {
 	Timeline []guidedworkflows.RunTimelineEvent `json:"timeline"`
 }

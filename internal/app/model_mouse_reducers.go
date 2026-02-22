@@ -672,6 +672,33 @@ func (m *Model) reduceGuidedWorkflowLauncherLeftPressMouse(msg tea.MouseMsg, lay
 	return true
 }
 
+func (m *Model) reduceGuidedWorkflowTurnLinkLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
+	if m.mode != uiModeGuidedWorkflow || m.guidedWorkflow == nil {
+		return false
+	}
+	stage := m.guidedWorkflow.Stage()
+	if stage != guidedWorkflowStageLive && stage != guidedWorkflowStageSummary {
+		return false
+	}
+	mouse := msg.Mouse()
+	if mouse.X < layout.rightStart || mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
+		return false
+	}
+	col := mouse.X - layout.rightStart
+	absolute := m.viewport.YOffset() + mouse.Y - 1
+	target, ok := m.guidedWorkflowTurnLinkAtPosition(col, absolute)
+	if !ok {
+		return false
+	}
+	if cmd := m.openGuidedWorkflowSessionTurn(target.sessionID, target.turnID); cmd != nil {
+		m.pendingMouseCmd = cmd
+	}
+	return true
+}
+
 func (m *Model) guidedWorkflowLauncherPickerStartRow(layout guidedWorkflowLauncherTemplatePickerLayout) int {
 	if m == nil {
 		return -1

@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -385,6 +386,45 @@ func TestSessionContextActionStartGuidedWorkflowEntersGuidedMode(t *testing.T) {
 	}
 }
 
+func TestWorkflowContextActionRenameEntersRenameMode(t *testing.T) {
+	m := NewModel(nil)
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", TemplateName: "SOLID Phase Delivery"},
+	}
+
+	handled, cmd := m.handleWorkflowContextMenuAction(ContextMenuWorkflowRename, contextMenuTarget{workflowID: "gwf-1"})
+	if !handled {
+		t.Fatalf("expected workflow action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeRenameWorkflow {
+		t.Fatalf("expected rename workflow mode, got %v", m.mode)
+	}
+	if m.renameWorkflowRunID != "gwf-1" {
+		t.Fatalf("expected rename workflow run id gwf-1, got %q", m.renameWorkflowRunID)
+	}
+	if m.renameInput == nil || m.renameInput.Value() != "SOLID Phase Delivery" {
+		t.Fatalf("expected rename input to be prefilled")
+	}
+}
+
+func TestWorkflowContextActionRenameRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorkflowContextMenuAction(ContextMenuWorkflowRename, contextMenuTarget{})
+	if !handled {
+		t.Fatalf("expected workflow action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.status != "select a workflow" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
 func TestSessionContextActionOpenNotesEntersNotesMode(t *testing.T) {
 	m := NewModel(nil)
 	m.sessionMeta = map[string]*types.SessionMeta{
@@ -534,6 +574,21 @@ func TestContextMenuControllerSessionIncludesAddNoteAction(t *testing.T) {
 	}
 }
 
+func TestContextMenuControllerWorkflowIncludesRenameAction(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenWorkflow("gwf-1", "Workflow", false, 0, 0)
+	found := false
+	for _, item := range c.items {
+		if item.Action == ContextMenuWorkflowRename {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected workflow context menu to include rename action")
+	}
+}
+
 func TestHandleContextMenuActionClosesMenuAndRoutes(t *testing.T) {
 	m := NewModel(nil)
 	if m.contextMenu == nil {
@@ -573,6 +628,31 @@ func TestHandleContextMenuActionClosesMenuAndRoutesSessionRename(t *testing.T) {
 	}
 	if m.renameSessionID != "s1" {
 		t.Fatalf("expected session id s1, got %q", m.renameSessionID)
+	}
+	if m.contextMenu.IsOpen() {
+		t.Fatalf("expected context menu to be closed")
+	}
+}
+
+func TestHandleContextMenuActionClosesMenuAndRoutesWorkflowRename(t *testing.T) {
+	m := NewModel(nil)
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", TemplateName: "Workflow One"},
+	}
+	if m.contextMenu == nil {
+		t.Fatalf("expected context menu controller")
+	}
+	m.contextMenu.OpenWorkflow("gwf-1", "Workflow One", false, 1, 1)
+
+	cmd := m.handleContextMenuAction(ContextMenuWorkflowRename)
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.mode != uiModeRenameWorkflow {
+		t.Fatalf("expected rename workflow mode, got %v", m.mode)
+	}
+	if m.renameWorkflowRunID != "gwf-1" {
+		t.Fatalf("expected workflow id gwf-1, got %q", m.renameWorkflowRunID)
 	}
 	if m.contextMenu.IsOpen() {
 		t.Fatalf("expected context menu to be closed")

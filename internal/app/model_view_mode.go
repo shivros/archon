@@ -92,6 +92,11 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		if m.renameInput != nil {
 			bodyText = m.renameInput.View()
 		}
+	case uiModeRenameWorkflow:
+		headerText = "Rename Workflow"
+		if m.renameInput != nil {
+			bodyText = m.renameInput.View()
+		}
 	case uiModeGuidedWorkflow:
 		headerText = "Guided Workflow"
 	}
@@ -99,7 +104,7 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 }
 
 func (m *Model) modeInputView() (line string, scrollable bool) {
-	layout, ok := m.modeInputPanelLayout()
+	layout, ok := visibleInputPanelLayout(m.modeInputPanelLayout())
 	if !ok {
 		return "", false
 	}
@@ -107,11 +112,22 @@ func (m *Model) modeInputView() (line string, scrollable bool) {
 }
 
 func (m *Model) modeInputLineCount() int {
-	layout, ok := m.modeInputPanelLayout()
+	layout, ok := visibleInputPanelLayout(m.modeInputPanelLayout())
 	if !ok {
 		return 0
 	}
 	return layout.LineCount()
+}
+
+func visibleInputPanelLayout(layout InputPanelLayout, ok bool) (InputPanelLayout, bool) {
+	if !ok {
+		return InputPanelLayout{}, false
+	}
+	line, _ := layout.View()
+	if line == "" {
+		return InputPanelLayout{}, false
+	}
+	return layout, true
 }
 
 func (m *Model) modeInputPanel() (InputPanel, bool) {
@@ -119,6 +135,9 @@ func (m *Model) modeInputPanel() (InputPanel, bool) {
 		return panel, true
 	}
 	if panel, ok := m.guidedWorkflowSetupInputPanel(); ok {
+		return panel, true
+	}
+	if panel, ok := m.guidedWorkflowResumeInputPanel(); ok {
 		return panel, true
 	}
 	return InputPanel{}, false

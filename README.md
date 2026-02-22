@@ -384,6 +384,8 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.composeAccess`
 - `ui.inputSubmit`
 - `ui.inputNewline`
+- `ui.inputLineUp`
+- `ui.inputLineDown`
 - `ui.inputWordLeft`
 - `ui.inputWordRight`
 - `ui.inputDeleteWordLeft`

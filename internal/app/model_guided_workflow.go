@@ -1,12 +1,14 @@
 package app
 
 import (
+	"sort"
 	"strings"
 	"time"
 
 	"control/internal/guidedworkflows"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
@@ -21,6 +23,7 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 	m.guidedWorkflow.Enter(context)
 	m.guidedWorkflow.BeginTemplateLoad()
 	m.resetGuidedWorkflowPromptInput()
+	m.resetGuidedWorkflowResumeInput()
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
@@ -71,6 +74,12 @@ func (m *Model) exitGuidedWorkflow(status string) {
 	if m.guidedWorkflowPromptInput != nil {
 		m.guidedWorkflowPromptInput.Blur()
 	}
+	if m.guidedWorkflowResumeInput != nil {
+		m.guidedWorkflowResumeInput.Blur()
+	}
+	if m.guidedWorkflowResumeInput != nil {
+		m.guidedWorkflowResumeInput.Blur()
+	}
 	m.mode = uiModeNormal
 	if m.input != nil {
 		m.input.FocusSidebar()
@@ -94,8 +103,17 @@ func (m *Model) renderGuidedWorkflowContent() {
 	if m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
 		m.syncGuidedWorkflowPromptInput()
 	}
+	if m.guidedWorkflow.Stage() == guidedWorkflowStageSummary && m.guidedWorkflow.CanResumeFailedRun() {
+		m.primeGuidedWorkflowResumeInput()
+		m.syncGuidedWorkflowResumeInput()
+	}
 	content := m.guidedWorkflow.Render()
-	m.setContentText(content)
+	if m.guidedWorkflow.LauncherRequiresRawANSIRender() {
+		m.setContentANSIText(content)
+	} else {
+		m.setContentText(content)
+	}
+	m.syncGuidedWorkflowInputFocus()
 }
 
 func (m *Model) maybeAutoRefreshGuidedWorkflow(now time.Time) tea.Cmd {
@@ -120,6 +138,9 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
 		return true, cmd
 	}
+	if handled, cmd := m.handleGuidedWorkflowResumeInput(msg); handled {
+		return true, cmd
+	}
 	if pasteMsg, ok := msg.(tea.PasteMsg); ok {
 		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher {
 			if m.applyPickerPaste(pasteMsg, m.guidedWorkflow) {
@@ -131,6 +152,25 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if ok {
 		key := m.keyString(keyMsg)
+		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher {
+			if key == "ctrl+r" || m.keyMatchesOverriddenCommand(keyMsg, KeyCommandRefresh, "r") {
+				m.guidedWorkflow.BeginTemplateLoad()
+				m.setStatusMessage("loading workflow templates")
+				m.renderGuidedWorkflowContent()
+				return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
+			}
+			if m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
+				m.renderGuidedWorkflowContent()
+				return true, nil
+			}
+			switch key {
+			case "backspace", "ctrl+h", "ctrl+u":
+				return true, nil
+			}
+			if pickerTypeAheadText(keyMsg) != "" {
+				return true, nil
+			}
+		}
 		switch {
 		case m.keyMatchesCommand(keyMsg, KeyCommandQuit, "q"):
 			return true, tea.Quit
@@ -223,11 +263,6 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		case "r":
 			if m.guidedWorkflow != nil {
 				switch m.guidedWorkflow.Stage() {
-				case guidedWorkflowStageLauncher:
-					m.guidedWorkflow.BeginTemplateLoad()
-					m.setStatusMessage("loading workflow templates")
-					m.renderGuidedWorkflowContent()
-					return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 				case guidedWorkflowStageLive, guidedWorkflowStageSummary:
 					return true, m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
 				}
@@ -330,6 +365,9 @@ func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {
 		}
 		return m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
 	case guidedWorkflowStageSummary:
+		if m.guidedWorkflow.CanResumeFailedRun() {
+			return m.resumeFailedGuidedWorkflowRun()
+		}
 		m.exitGuidedWorkflow("guided workflow summary closed")
 		return nil
 	default:
@@ -359,6 +397,29 @@ func (m *Model) startGuidedWorkflowRun() tea.Cmd {
 	m.renderGuidedWorkflowContent()
 	m.setStatusMessage("creating guided workflow run")
 	return createWorkflowRunCmd(m.guidedWorkflowAPI, req)
+}
+
+func (m *Model) resumeFailedGuidedWorkflowRun() tea.Cmd {
+	if m == nil || m.guidedWorkflow == nil {
+		return nil
+	}
+	if !m.guidedWorkflow.CanResumeFailedRun() {
+		m.setValidationStatus("guided workflow run is not resumable")
+		return nil
+	}
+	runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+	if runID == "" {
+		m.setValidationStatus("guided run id is missing")
+		return nil
+	}
+	m.syncGuidedWorkflowResumeInput()
+	req := m.guidedWorkflow.BuildResumeRequest()
+	if m.guidedWorkflowResumeInput != nil {
+		m.guidedWorkflowResumeInput.Blur()
+	}
+	m.setStatusMessage("resuming guided workflow run")
+	m.renderGuidedWorkflowContent()
+	return resumeFailedWorkflowRunCmd(m.guidedWorkflowAPI, runID, req)
 }
 
 func (m *Model) refreshGuidedWorkflowNow(status string) tea.Cmd {
@@ -417,15 +478,222 @@ func (m *Model) openGuidedWorkflowSelectedSession() tea.Cmd {
 		m.renderGuidedWorkflowContent()
 		return nil
 	}
-	if !m.sidebar.SelectBySessionID(sessionID) {
-		m.setValidationStatus("linked session not found: " + sessionID)
+	return m.openGuidedWorkflowSessionTurn(sessionID, turnID)
+}
+
+func (m *Model) openGuidedWorkflowSessionTurn(sessionID, turnID string) tea.Cmd {
+	if m == nil || m.sidebar == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	resolvedSessionID := m.resolveGuidedWorkflowSessionID(sessionID)
+	turnID = strings.TrimSpace(turnID)
+	if sessionID == "" {
+		m.setValidationStatus("selected step has no linked session")
 		m.renderGuidedWorkflowContent()
 		return nil
 	}
-	m.setPendingWorkflowTurnFocus(sessionID, turnID)
+	if !m.sidebar.SelectBySessionID(resolvedSessionID) {
+		m.ensureGuidedWorkflowSessionVisible(resolvedSessionID)
+		if !m.sidebar.SelectBySessionID(resolvedSessionID) {
+			m.setValidationStatus("linked session not found: " + sessionID)
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
+	}
+	m.setPendingWorkflowTurnFocus(resolvedSessionID, turnID)
 	item := m.selectedItem()
-	m.exitGuidedWorkflow("opened linked session " + sessionID)
+	m.exitGuidedWorkflow("opened linked session " + resolvedSessionID)
 	return m.batchWithNotesPanelSync(m.loadSelectedSession(item))
+}
+
+func (m *Model) ensureGuidedWorkflowSessionVisible(sessionID string) {
+	if m == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	targetGroupIDs := m.workspaceGroupIDsForSession(sessionID)
+	if len(targetGroupIDs) == 0 {
+		return
+	}
+	current := append([]string(nil), m.appState.ActiveWorkspaceGroupIDs...)
+	selected := map[string]struct{}{}
+	for _, id := range current {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		selected[trimmed] = struct{}{}
+	}
+	changed := false
+	for _, id := range targetGroupIDs {
+		if _, ok := selected[id]; ok {
+			continue
+		}
+		selected[id] = struct{}{}
+		current = append(current, id)
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	next := normalizedWorkspaceGroupIDs(current)
+	if m.menu != nil {
+		m.menu.SetSelectedGroupIDs(next)
+	}
+	if m.setActiveWorkspaceGroupIDs(next) {
+		m.applySidebarItemsIfDirty()
+	}
+}
+
+func (m *Model) workspaceGroupIDsForSession(sessionID string) []string {
+	if m == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	meta := m.sessionMeta[sessionID]
+	if meta == nil {
+		return nil
+	}
+	workspaceID := strings.TrimSpace(meta.WorkspaceID)
+	if workspaceID == "" {
+		return []string{"ungrouped"}
+	}
+	workspace := m.workspaceByID(workspaceID)
+	if workspace == nil || len(workspace.GroupIDs) == 0 {
+		return []string{"ungrouped"}
+	}
+	ids := make([]string, 0, len(workspace.GroupIDs))
+	for _, id := range workspace.GroupIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		ids = append(ids, trimmed)
+	}
+	if len(ids) == 0 {
+		return []string{"ungrouped"}
+	}
+	return normalizedWorkspaceGroupIDs(ids)
+}
+
+func normalizedWorkspaceGroupIDs(ids []string) []string {
+	selected := map[string]struct{}{}
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		selected[trimmed] = struct{}{}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(selected))
+	for id := range selected {
+		normalized = append(normalized, id)
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func (m *Model) resolveGuidedWorkflowSessionID(sessionID string) string {
+	if m == nil {
+		return strings.TrimSpace(sessionID)
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	for _, session := range m.sessions {
+		if session == nil {
+			continue
+		}
+		localSessionID := strings.TrimSpace(session.ID)
+		if localSessionID == "" {
+			continue
+		}
+		if localSessionID == sessionID {
+			return localSessionID
+		}
+		meta := m.sessionMeta[localSessionID]
+		if meta == nil {
+			continue
+		}
+		if strings.TrimSpace(meta.ProviderSessionID) == sessionID ||
+			strings.TrimSpace(meta.ThreadID) == sessionID ||
+			strings.TrimSpace(meta.SessionID) == sessionID {
+			return localSessionID
+		}
+	}
+	for localSessionID, meta := range m.sessionMeta {
+		localSessionID = strings.TrimSpace(localSessionID)
+		if localSessionID == "" && meta != nil {
+			localSessionID = strings.TrimSpace(meta.SessionID)
+		}
+		if localSessionID == "" {
+			continue
+		}
+		if localSessionID == sessionID {
+			return localSessionID
+		}
+		if meta == nil {
+			continue
+		}
+		if strings.TrimSpace(meta.ProviderSessionID) == sessionID ||
+			strings.TrimSpace(meta.ThreadID) == sessionID ||
+			strings.TrimSpace(meta.SessionID) == sessionID {
+			return localSessionID
+		}
+	}
+	return sessionID
+}
+
+func (m *Model) guidedWorkflowTurnLinkAtPosition(col, absolute int) (guidedWorkflowTurnLinkTarget, bool) {
+	if m == nil || m.guidedWorkflow == nil || col < 0 || absolute < 0 {
+		return guidedWorkflowTurnLinkTarget{}, false
+	}
+	stage := m.guidedWorkflow.Stage()
+	if stage != guidedWorkflowStageLive && stage != guidedWorkflowStageSummary {
+		return guidedWorkflowTurnLinkTarget{}, false
+	}
+	lines := m.renderedPlain
+	if len(lines) == 0 && m.renderedText != "" {
+		lines = strings.Split(xansi.Strip(m.renderedText), "\n")
+	}
+	if absolute >= len(lines) {
+		return guidedWorkflowTurnLinkTarget{}, false
+	}
+	line := lines[absolute]
+	if strings.TrimSpace(line) == "" {
+		return guidedWorkflowTurnLinkTarget{}, false
+	}
+	for _, target := range m.guidedWorkflow.TurnLinkTargets() {
+		label := strings.TrimSpace(target.label)
+		if label == "" {
+			continue
+		}
+		for startSearch := 0; startSearch < len(line); {
+			idx := strings.Index(line[startSearch:], label)
+			if idx < 0 {
+				break
+			}
+			idx += startSearch
+			start := xansi.StringWidth(line[:idx])
+			end := start + xansi.StringWidth(label) - 1
+			if end >= start && col >= start && col <= end {
+				return target, true
+			}
+			startSearch = idx + len(label)
+		}
+	}
+	return guidedWorkflowTurnLinkTarget{}, false
 }
 
 func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
@@ -491,6 +759,44 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 	return handled, cmd
 }
 
+func (m *Model) handleGuidedWorkflowResumeInput(msg tea.Msg) (bool, tea.Cmd) {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowResumeInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSummary || !m.guidedWorkflow.CanResumeFailedRun() {
+		return false, nil
+	}
+	if !isTextInputMsg(msg) {
+		return false, nil
+	}
+	controller := textInputModeController{
+		input:             m.guidedWorkflowResumeInput,
+		keyString:         m.keyString,
+		keyMatchesCommand: m.keyMatchesCommand,
+		onCancel: func() tea.Cmd {
+			m.exitGuidedWorkflow("guided workflow summary closed")
+			return nil
+		},
+		onSubmit: func(string) tea.Cmd {
+			return m.resumeFailedGuidedWorkflowRun()
+		},
+		preHandle: func(string, tea.KeyMsg) (bool, tea.Cmd) {
+			return false, nil
+		},
+	}
+	handled, cmd := controller.Update(msg)
+	if !handled {
+		return false, nil
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSummary || !m.guidedWorkflow.CanResumeFailedRun() {
+		return true, cmd
+	}
+	m.syncGuidedWorkflowResumeInput()
+	if m.consumeInputHeightChanges(m.guidedWorkflowResumeInput) && m.width > 0 && m.height > 0 {
+		m.resize(m.width, m.height)
+	} else {
+		m.renderGuidedWorkflowContent()
+	}
+	return handled, cmd
+}
+
 func (m *Model) resetGuidedWorkflowPromptInput() {
 	if m == nil {
 		return
@@ -501,6 +807,32 @@ func (m *Model) resetGuidedWorkflowPromptInput() {
 	m.guidedWorkflowPromptInput.SetPlaceholder("Describe the feature request or bug fix this workflow should execute.")
 	m.guidedWorkflowPromptInput.Clear()
 	m.guidedWorkflowPromptInput.Focus()
+}
+
+func (m *Model) resetGuidedWorkflowResumeInput() {
+	if m == nil {
+		return
+	}
+	if m.guidedWorkflowResumeInput == nil {
+		m.guidedWorkflowResumeInput = NewTextInput(minViewportWidth, TextInputConfig{Height: 4, MinHeight: 3, MaxHeight: 8, AutoGrow: true})
+	}
+	m.guidedWorkflowResumeInput.SetPlaceholder("Edit the resume message before submitting.")
+	m.guidedWorkflowResumeInput.Clear()
+	m.guidedWorkflowResumeInput.Blur()
+}
+
+func (m *Model) primeGuidedWorkflowResumeInput() {
+	if m == nil || m.guidedWorkflow == nil || !m.guidedWorkflow.CanResumeFailedRun() {
+		return
+	}
+	if m.guidedWorkflowResumeInput == nil {
+		m.guidedWorkflowResumeInput = NewTextInput(minViewportWidth, TextInputConfig{Height: 4, MinHeight: 3, MaxHeight: 8, AutoGrow: true})
+	}
+	m.guidedWorkflowResumeInput.SetPlaceholder("Edit the resume message before submitting.")
+	if !m.guidedWorkflowResumeInput.Focused() && strings.TrimSpace(m.guidedWorkflowResumeInput.Value()) == "" {
+		m.guidedWorkflowResumeInput.SetValue(m.guidedWorkflow.ResumeMessage())
+	}
+	m.guidedWorkflowResumeInput.Focus()
 }
 
 func (m *Model) syncGuidedWorkflowPromptInput() {
@@ -514,12 +846,66 @@ func (m *Model) syncGuidedWorkflowPromptInput() {
 	m.guidedWorkflow.SetUserPrompt(m.guidedWorkflowPromptInput.Value())
 }
 
+func (m *Model) syncGuidedWorkflowResumeInput() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	if m.guidedWorkflowResumeInput == nil {
+		m.guidedWorkflow.SetResumeMessage("")
+		return
+	}
+	m.guidedWorkflow.SetResumeMessage(m.guidedWorkflowResumeInput.Value())
+}
+
+func (m *Model) syncGuidedWorkflowInputFocus() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	switch m.guidedWorkflow.Stage() {
+	case guidedWorkflowStageSetup:
+		if m.guidedWorkflowPromptInput != nil {
+			m.guidedWorkflowPromptInput.Focus()
+		}
+		if m.guidedWorkflowResumeInput != nil {
+			m.guidedWorkflowResumeInput.Blur()
+		}
+	case guidedWorkflowStageSummary:
+		if m.guidedWorkflow.CanResumeFailedRun() {
+			m.primeGuidedWorkflowResumeInput()
+			if m.guidedWorkflowPromptInput != nil {
+				m.guidedWorkflowPromptInput.Blur()
+			}
+			return
+		}
+		if m.guidedWorkflowResumeInput != nil {
+			m.guidedWorkflowResumeInput.Blur()
+		}
+	default:
+		if m.guidedWorkflowPromptInput != nil {
+			m.guidedWorkflowPromptInput.Blur()
+		}
+		if m.guidedWorkflowResumeInput != nil {
+			m.guidedWorkflowResumeInput.Blur()
+		}
+	}
+}
+
 func (m *Model) guidedWorkflowSetupInputPanel() (InputPanel, bool) {
 	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowPromptInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
 		return InputPanel{}, false
 	}
 	return InputPanel{
 		Input: m.guidedWorkflowPromptInput,
+		Frame: m.inputFrame(InputFrameTargetGuidedWorkflowSetup),
+	}, true
+}
+
+func (m *Model) guidedWorkflowResumeInputPanel() (InputPanel, bool) {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowResumeInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSummary || !m.guidedWorkflow.CanResumeFailedRun() {
+		return InputPanel{}, false
+	}
+	return InputPanel{
+		Input: m.guidedWorkflowResumeInput,
 		Frame: m.inputFrame(InputFrameTargetGuidedWorkflowSetup),
 	}, true
 }

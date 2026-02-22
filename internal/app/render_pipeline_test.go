@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaultRenderPipelineRendersRawContent(t *testing.T) {
 	pipeline := NewDefaultRenderPipeline()
@@ -18,6 +21,19 @@ func TestDefaultRenderPipelineRendersRawContent(t *testing.T) {
 	}
 	if len(result.Spans) != 0 {
 		t.Fatalf("expected no spans for raw markdown render")
+	}
+}
+
+func TestDefaultRenderPipelineRenderRawPreservesANSI(t *testing.T) {
+	pipeline := NewDefaultRenderPipeline()
+	result := pipeline.Render(RenderRequest{
+		Width:      80,
+		RawContent: "\x1b[38;5;118mselected\x1b[0m option",
+		RenderRaw:  true,
+	})
+
+	if !strings.Contains(result.Text, "\x1b[38;5;118mselected\x1b[0m") {
+		t.Fatalf("expected ANSI sequence to be preserved, got %q", result.Text)
 	}
 }
 

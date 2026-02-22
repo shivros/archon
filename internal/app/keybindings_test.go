@@ -318,6 +318,12 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandInputClear, ""); got != "ctrl+c" {
 		t.Fatalf("expected default input clear key ctrl+c, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandInputLineUp, ""); got != "up" {
+		t.Fatalf("expected default input line-up key up, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandInputLineDown, ""); got != "down" {
+		t.Fatalf("expected default input line-down key down, got %q", got)
+	}
 	if got := bindings.KeyFor(KeyCommandComposeClearInput, ""); got != "ctrl+c" {
 		t.Fatalf("expected legacy compose clear alias key ctrl+c, got %q", got)
 	}

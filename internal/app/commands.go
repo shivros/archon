@@ -330,6 +330,32 @@ func startWorkflowRunCmd(api GuidedWorkflowRunAPI, runID string) tea.Cmd {
 	}
 }
 
+func resumeFailedWorkflowRunCmd(api GuidedWorkflowRunAPI, runID string, req client.WorkflowRunResumeRequest) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunResumedMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.ResumeFailedWorkflowRun(ctx, runID, req)
+		return workflowRunResumedMsg{run: run, err: err}
+	}
+}
+
+func renameWorkflowRunCmd(api GuidedWorkflowRunAPI, runID, name string) tea.Cmd {
+	runID = strings.TrimSpace(runID)
+	name = strings.TrimSpace(name)
+	return func() tea.Msg {
+		if api == nil {
+			return workflowRunRenamedMsg{err: errors.New("guided workflow api is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		run, err := api.RenameWorkflowRun(ctx, runID, name)
+		return workflowRunRenamedMsg{run: run, err: err}
+	}
+}
+
 func fetchWorkflowRunSnapshotCmd(api GuidedWorkflowRunAPI, runID string) tea.Cmd {
 	return func() tea.Msg {
 		if api == nil {

@@ -168,6 +168,32 @@ func TestGuidedWorkflowControllerLauncherTemplatePickerLayoutGuards(t *testing.T
 	}
 }
 
+func TestGuidedWorkflowControllerLauncherRequiresRawANSIRender(t *testing.T) {
+	var nilController *GuidedWorkflowUIController
+	if nilController.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected nil controller to disable ANSI passthrough")
+	}
+
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	if controller.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected loading launcher to disable ANSI passthrough")
+	}
+
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: "bug_triage", Name: "Bug Triage"},
+		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
+	})
+	if !controller.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected loaded launcher picker to require ANSI passthrough")
+	}
+
+	controller.OpenSetup()
+	if controller.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected non-launcher stage to disable ANSI passthrough")
+	}
+}
+
 func TestGuidedWorkflowControllerStepTraceChipVariants(t *testing.T) {
 	controller := NewGuidedWorkflowUIController()
 
@@ -202,5 +228,56 @@ func TestGuidedWorkflowControllerStepTraceChipVariants(t *testing.T) {
 		ExecutionState: guidedworkflows.StepExecutionStateNone,
 	}); got != "[session:none]" {
 		t.Fatalf("expected none chip, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowControllerTurnLinkTargets(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:     "gwf-1",
+		Status: guidedworkflows.WorkflowRunStatusRunning,
+		Phases: []guidedworkflows.PhaseRun{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.StepRun{
+					{
+						ID:   "step-1",
+						Name: "Step 1",
+						Execution: &guidedworkflows.StepExecutionRef{
+							SessionID: "s1",
+							TurnID:    "turn-1",
+						},
+					},
+					{
+						ID:   "step-2",
+						Name: "Step 2",
+						Execution: &guidedworkflows.StepExecutionRef{
+							SessionID: "s1",
+							TurnID:    "turn-1",
+						},
+					},
+					{
+						ID:   "step-3",
+						Name: "Step 3",
+						Execution: &guidedworkflows.StepExecutionRef{
+							SessionID: "s2",
+							TurnID:    "turn-2",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	targets := controller.TurnLinkTargets()
+	if len(targets) != 2 {
+		t.Fatalf("expected deduplicated turn link targets, got %#v", targets)
+	}
+	if targets[0].label != "user turn turn-1" || targets[0].sessionID != "s1" || targets[0].turnID != "turn-1" {
+		t.Fatalf("unexpected first target: %#v", targets[0])
+	}
+	if targets[1].label != "user turn turn-2" || targets[1].sessionID != "s2" || targets[1].turnID != "turn-2" {
+		t.Fatalf("unexpected second target: %#v", targets[1])
 	}
 }

@@ -129,6 +129,26 @@ func TestWorkflowRunEndpointsDismissAndUndismiss(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsRename(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	renamed := postWorkflowRunActionWithBody(t, server, created.ID, "rename", WorkflowRunRenameRequest{
+		Name: "Renamed Workflow",
+	}, http.StatusOK)
+	if strings.TrimSpace(renamed.TemplateName) != "Renamed Workflow" {
+		t.Fatalf("expected renamed workflow template name, got %q", renamed.TemplateName)
+	}
+}
+
 func TestWorkflowRunEndpointsEmitListAndFetchTelemetry(t *testing.T) {
 	var logOut bytes.Buffer
 	api := &API{
@@ -468,7 +488,49 @@ func TestWorkflowRunEndpointsInvalidTransition(t *testing.T) {
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 	})
-	postWorkflowRunActionRaw(t, server, created.ID, "resume", http.StatusConflict)
+	postWorkflowRunActionRaw(t, server, created.ID, "resume", nil, http.StatusConflict)
+}
+
+func TestWorkflowRunEndpointsResumeFailedRouteRequiresFailedRun(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	_ = postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+	_ = postWorkflowRunAction(t, server, created.ID, "pause", http.StatusOK)
+	postWorkflowRunActionRaw(t, server, created.ID, "resume", WorkflowRunResumeRequest{
+		ResumeFailed: true,
+		Message:      "resume from outage",
+	}, http.StatusConflict)
+}
+
+func TestWorkflowRunEndpointsResumeIgnoresMessageWhenResumeFailedDisabled(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	_ = postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+	_ = postWorkflowRunAction(t, server, created.ID, "pause", http.StatusOK)
+	resumed := postWorkflowRunActionWithBody(t, server, created.ID, "resume", WorkflowRunResumeRequest{
+		Message: "this should be ignored for paused resume",
+	}, http.StatusOK)
+	if resumed.Status != guidedworkflows.WorkflowRunStatusRunning && resumed.Status != guidedworkflows.WorkflowRunStatusCompleted {
+		t.Fatalf("expected running/completed after paused resume with message, got %q", resumed.Status)
+	}
 }
 
 func TestWorkflowRunEndpointsCreateWithPolicyOverrides(t *testing.T) {
@@ -1079,7 +1141,7 @@ func TestWorkflowRunEndpointsStartWrapsSessionResolutionErrors(t *testing.T) {
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 	})
-	resp := postWorkflowRunActionRaw(t, server, created.ID, "start", http.StatusInternalServerError)
+	resp := postWorkflowRunActionRaw(t, server, created.ID, "start", nil, http.StatusInternalServerError)
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(resp.Body)
 	body := strings.ToLower(strings.TrimSpace(string(payload)))
@@ -1245,7 +1307,7 @@ func createWorkflowRunViaAPI(t *testing.T, server *httptest.Server, reqBody Crea
 
 func postWorkflowRunAction(t *testing.T, server *httptest.Server, runID, action string, wantStatus int) *guidedworkflows.WorkflowRun {
 	t.Helper()
-	resp := postWorkflowRunActionRaw(t, server, runID, action, wantStatus)
+	resp := postWorkflowRunActionRaw(t, server, runID, action, nil, wantStatus)
 	defer resp.Body.Close()
 	var run guidedworkflows.WorkflowRun
 	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
@@ -1254,10 +1316,32 @@ func postWorkflowRunAction(t *testing.T, server *httptest.Server, runID, action 
 	return &run
 }
 
-func postWorkflowRunActionRaw(t *testing.T, server *httptest.Server, runID, action string, wantStatus int) *http.Response {
+func postWorkflowRunActionWithBody(t *testing.T, server *httptest.Server, runID, action string, body any, wantStatus int) *guidedworkflows.WorkflowRun {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workflow-runs/"+runID+"/"+action, nil)
+	resp := postWorkflowRunActionRaw(t, server, runID, action, body, wantStatus)
+	defer resp.Body.Close()
+	var run guidedworkflows.WorkflowRun
+	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
+		t.Fatalf("decode action run response: %v", err)
+	}
+	return &run
+}
+
+func postWorkflowRunActionRaw(t *testing.T, server *httptest.Server, runID, action string, body any, wantStatus int) *http.Response {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal workflow action body: %v", err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workflow-runs/"+runID+"/"+action, reader)
 	req.Header.Set("Authorization", "Bearer token")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("workflow action request: %v", err)

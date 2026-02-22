@@ -92,10 +92,12 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "enter", Label: "send", Context: HotkeyChatInput, Priority: 11},
 		{Key: "ctrl+g", Command: KeyCommandCopySessionID, Label: "copy id", Context: HotkeyChatInput, Priority: 12},
 		{Key: "ctrl+c", Command: KeyCommandInputClear, Label: "clear", Context: HotkeyChatInput, Priority: 13},
-		{Key: "↑/↓", Label: "history", Context: HotkeyChatInput, Priority: 14},
-		{Key: "ctrl+a", Command: KeyCommandInputSelectAll, Label: "select all", Context: HotkeyChatInput, Priority: 15},
-		{Key: "ctrl+z", Command: KeyCommandInputUndo, Label: "undo", Context: HotkeyChatInput, Priority: 16},
-		{Key: "ctrl+y", Command: KeyCommandInputRedo, Label: "redo", Context: HotkeyChatInput, Priority: 17},
+		{Key: "up", Command: KeyCommandInputLineUp, Label: "line up", Context: HotkeyChatInput, Priority: 14},
+		{Key: "down", Command: KeyCommandInputLineDown, Label: "line down", Context: HotkeyChatInput, Priority: 15},
+		{Key: "ctrl+↑/ctrl+↓", Label: "history", Context: HotkeyChatInput, Priority: 16},
+		{Key: "ctrl+a", Command: KeyCommandInputSelectAll, Label: "select all", Context: HotkeyChatInput, Priority: 17},
+		{Key: "ctrl+z", Command: KeyCommandInputUndo, Label: "undo", Context: HotkeyChatInput, Priority: 18},
+		{Key: "ctrl+y", Command: KeyCommandInputRedo, Label: "redo", Context: HotkeyChatInput, Priority: 19},
 	}
 }
 

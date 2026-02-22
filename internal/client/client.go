@@ -438,6 +438,36 @@ func (c *Client) StartWorkflowRun(ctx context.Context, runID string) (*guidedwor
 	return &run, nil
 }
 
+func (c *Client) ResumeFailedWorkflowRun(ctx context.Context, runID string, req WorkflowRunResumeRequest) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/resume", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, req, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (c *Client) RenameWorkflowRun(ctx context.Context, runID, name string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("workflow run name is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/rename", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, WorkflowRunRenameRequest{Name: name}, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
 func (c *Client) DismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {

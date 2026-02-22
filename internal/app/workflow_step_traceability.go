@@ -28,7 +28,7 @@ func (archonWorkflowUserTurnLinkBuilder) BuildUserTurnLink(sessionID, turnID str
 	}
 	escapedSessionID := url.PathEscape(sessionID)
 	escapedTurnID := url.QueryEscape(turnID)
-	deepLink := fmt.Sprintf("archon://session/%s?turn=%s&role=user", escapedSessionID, escapedTurnID)
+	deepLink := fmt.Sprintf("archon://session/%s?turn=%s", escapedSessionID, escapedTurnID)
 	return fmt.Sprintf("[user turn %s](%s)", turnID, deepLink)
 }
 
@@ -37,6 +37,20 @@ func workflowUserTurnLinkBuilderOrDefault(builder WorkflowUserTurnLinkBuilder) W
 		return NewArchonWorkflowUserTurnLinkBuilder()
 	}
 	return builder
+}
+
+func workflowUserTurnLinkLabel(link string) string {
+	link = strings.TrimSpace(link)
+	if link == "" || link == unavailableUserTurnLink {
+		return ""
+	}
+	if strings.HasPrefix(link, "[") {
+		openParen := strings.Index(link, "](")
+		if openParen > 1 {
+			return strings.TrimSpace(link[1:openParen])
+		}
+	}
+	return link
 }
 
 func stepSessionAndTurn(step guidedworkflows.StepRun) (sessionID string, turnID string) {

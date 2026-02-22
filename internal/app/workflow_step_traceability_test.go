@@ -48,10 +48,10 @@ func TestStepSessionAndTurnResolvesExecutionThenStepFallback(t *testing.T) {
 
 func TestArchonWorkflowUserTurnLinkBuilderBuildsAndValidatesLinks(t *testing.T) {
 	builder := NewArchonWorkflowUserTurnLinkBuilder()
-	if got := builder.BuildUserTurnLink("s1", "turn-1"); got != "[user turn turn-1](archon://session/s1?turn=turn-1&role=user)" {
+	if got := builder.BuildUserTurnLink("s1", "turn-1"); got != "[user turn turn-1](archon://session/s1?turn=turn-1)" {
 		t.Fatalf("unexpected link: %q", got)
 	}
-	if got := builder.BuildUserTurnLink("session/alpha", "turn 1?x"); got != "[user turn turn 1?x](archon://session/session%2Falpha?turn="+url.QueryEscape("turn 1?x")+"&role=user)" {
+	if got := builder.BuildUserTurnLink("session/alpha", "turn 1?x"); got != "[user turn turn 1?x](archon://session/session%2Falpha?turn="+url.QueryEscape("turn 1?x")+")" {
 		t.Fatalf("expected escaped link, got %q", got)
 	}
 	if got := builder.BuildUserTurnLink(" ", "turn-1"); got != unavailableUserTurnLink {
@@ -81,7 +81,7 @@ func TestGuidedWorkflowControllerUsesConfiguredUserTurnLinkBuilder(t *testing.T)
 	}
 
 	controller.SetUserTurnLinkBuilder(nil)
-	if got := controller.stepUserTurnLink(step); got != "[user turn turn-42](archon://session/s1?turn=turn-42&role=user)" {
+	if got := controller.stepUserTurnLink(step); got != "[user turn turn-42](archon://session/s1?turn=turn-42)" {
 		t.Fatalf("expected default archon link after reset, got %q", got)
 	}
 }
@@ -98,5 +98,20 @@ func TestGuidedWorkflowControllerUserTurnLinkNilReceiverGuards(t *testing.T) {
 	})
 	if got != unavailableUserTurnLink {
 		t.Fatalf("expected unavailable link for nil controller, got %q", got)
+	}
+}
+
+func TestWorkflowUserTurnLinkLabelParsesMarkdownAndFallbacks(t *testing.T) {
+	if got := workflowUserTurnLinkLabel("[user turn turn-1](archon://session/s1?turn=turn-1)"); got != "user turn turn-1" {
+		t.Fatalf("expected markdown label extraction, got %q", got)
+	}
+	if got := workflowUserTurnLinkLabel("[custom label](archon://custom)"); got != "custom label" {
+		t.Fatalf("expected custom markdown label extraction, got %q", got)
+	}
+	if got := workflowUserTurnLinkLabel("plain label"); got != "plain label" {
+		t.Fatalf("expected plain link passthrough, got %q", got)
+	}
+	if got := workflowUserTurnLinkLabel(unavailableUserTurnLink); got != "" {
+		t.Fatalf("expected unavailable link to return empty label, got %q", got)
 	}
 }

@@ -89,13 +89,24 @@ type WorkflowRunDecisionRequest struct {
 	Note       string                         `json:"note,omitempty"`
 }
 
+type WorkflowRunResumeRequest struct {
+	ResumeFailed bool   `json:"resume_failed,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+type WorkflowRunRenameRequest struct {
+	Name string `json:"name,omitempty"`
+}
+
 type GuidedWorkflowRunService interface {
 	CreateRun(ctx context.Context, req guidedworkflows.CreateRunRequest) (*guidedworkflows.WorkflowRun, error)
 	ListRuns(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
 	ListRunsIncludingDismissed(ctx context.Context) ([]*guidedworkflows.WorkflowRun, error)
+	RenameRun(ctx context.Context, runID, name string) (*guidedworkflows.WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	ResumeFailedRun(ctx context.Context, runID string, req guidedworkflows.ResumeFailedRunRequest) (*guidedworkflows.WorkflowRun, error)
 	DismissRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	UndismissRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	HandleDecision(ctx context.Context, runID string, req guidedworkflows.DecisionActionRequest) (*guidedworkflows.WorkflowRun, error)

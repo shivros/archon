@@ -220,6 +220,55 @@ func TestComposeReducerEnterEmptyShowsValidation(t *testing.T) {
 	}
 }
 
+func TestComposeReducerArrowKeysMoveInputCursorLine(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.recordComposeHistory("s1", "history one")
+	m.chatInput.SetValue("top\nbottom")
+
+	handled, _ := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle up")
+	}
+	handled, _ = m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle text input")
+	}
+	if got := m.chatInput.Value(); got != "topx\nbottom" {
+		t.Fatalf("expected up to move cursor to previous line, got %q", got)
+	}
+}
+
+func TestComposeReducerCtrlArrowKeysNavigateHistory(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.recordComposeHistory("s1", "first")
+	m.recordComposeHistory("s1", "second")
+	m.chatInput.SetValue("draft")
+
+	handled, _ := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle ctrl+up history navigation")
+	}
+	if got := m.chatInput.Value(); got != "second" {
+		t.Fatalf("expected ctrl+up to load latest history entry, got %q", got)
+	}
+
+	handled, _ = m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle ctrl+down history navigation")
+	}
+	if got := m.chatInput.Value(); got != "" {
+		t.Fatalf("expected ctrl+down at newest entry to restore draft, got %q", got)
+	}
+}
+
 func TestComposeReducerNotesNewOverrideOpensAddNote(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("s1")
@@ -459,6 +508,53 @@ func TestWorkspaceEditReducerRenameSessionRequiresSelection(t *testing.T) {
 		t.Fatalf("expected no command without session id")
 	}
 	if m.status != "no session selected" {
+		t.Fatalf("expected missing selection status, got %q", m.status)
+	}
+}
+
+func TestWorkspaceEditReducerRenameWorkflowEnterReturnsCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameWorkflow
+	m.renameWorkflowRunID = "gwf-1"
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Workflow")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle enter")
+	}
+	if cmd == nil {
+		t.Fatalf("expected rename workflow command")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "renaming workflow" {
+		t.Fatalf("expected renaming status, got %q", m.status)
+	}
+	if m.renameWorkflowRunID != "" {
+		t.Fatalf("expected rename workflow id to clear")
+	}
+}
+
+func TestWorkspaceEditReducerRenameWorkflowRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeRenameWorkflow
+	if m.renameInput == nil {
+		t.Fatalf("expected rename input")
+	}
+	m.renameInput.SetValue("Renamed Workflow")
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected workspace edit reducer to handle enter")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command without workflow id")
+	}
+	if m.status != "no workflow selected" {
 		t.Fatalf("expected missing selection status, got %q", m.status)
 	}
 }

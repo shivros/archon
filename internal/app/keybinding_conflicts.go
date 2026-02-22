@@ -116,7 +116,7 @@ func keybindingScopesFor(command, boundKey, defaultKey string) []string {
 		return scopes
 	case KeyCommandComposeModel, KeyCommandComposeReasoning, KeyCommandComposeAccess:
 		return []string{keyScopeComposeInput}
-	case KeyCommandInputSubmit, KeyCommandInputNewline, KeyCommandInputWordLeft, KeyCommandInputWordRight,
+	case KeyCommandInputSubmit, KeyCommandInputNewline, KeyCommandInputLineUp, KeyCommandInputLineDown, KeyCommandInputWordLeft, KeyCommandInputWordRight,
 		KeyCommandInputDeleteWordLeft, KeyCommandInputDeleteWordRight, KeyCommandInputSelectAll,
 		KeyCommandInputClear,
 		KeyCommandInputUndo, KeyCommandInputRedo:

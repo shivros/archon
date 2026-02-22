@@ -23,9 +23,11 @@ type RunLifecycleService interface {
 	CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error)
 	ListRuns(ctx context.Context) ([]*WorkflowRun, error)
 	ListRunsIncludingDismissed(ctx context.Context) ([]*WorkflowRun, error)
+	RenameRun(ctx context.Context, runID, name string) (*WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*WorkflowRun, error)
+	ResumeFailedRun(ctx context.Context, runID string, req ResumeFailedRunRequest) (*WorkflowRun, error)
 	DismissRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	UndismissRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	AdvanceRun(ctx context.Context, runID string) (*WorkflowRun, error)
@@ -94,6 +96,7 @@ type InMemoryRunService struct {
 	templates        map[string]WorkflowTemplate
 	templateProvider TemplateProvider
 	stepDispatcher   StepPromptDispatcher
+	turnMatcher      TurnSignalMatcher
 
 	mu        sync.RWMutex
 	runs      map[string]*WorkflowRun
@@ -159,6 +162,15 @@ func WithStepPromptDispatcher(dispatcher StepPromptDispatcher) RunServiceOption 
 			return
 		}
 		s.stepDispatcher = dispatcher
+	}
+}
+
+func WithTurnSignalMatcher(matcher TurnSignalMatcher) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || matcher == nil {
+			return
+		}
+		s.turnMatcher = matcher
 	}
 }
 
@@ -258,6 +270,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		actions:          map[string]struct{}{},
 		telemetryEnabled: true,
 		tombstoneFactory: defaultMissingRunTombstoneFactory{},
+		turnMatcher:      StrictSessionTurnSignalMatcher{},
 		metrics: runServiceMetrics{
 			interventionCauses: map[string]int{},
 		},
@@ -466,6 +479,73 @@ func (s *InMemoryRunService) ResumeRun(ctx context.Context, runID string) (*Work
 	return run, err
 }
 
+func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, req ResumeFailedRunRequest) (*WorkflowRun, error) {
+	s.mu.Lock()
+	defer s.persistMetrics(ctx)
+	defer s.mu.Unlock()
+	run, err := s.mustRunLocked(runID)
+	if err != nil {
+		return nil, err
+	}
+	defer s.persistRunSnapshotLocked(ctx, run.ID)
+	if run.Status != WorkflowRunStatusFailed {
+		return nil, invalidTransitionError("resume_failed", run.Status)
+	}
+	phaseIndex, stepIndex, ok := findResumeTargetStep(run)
+	if !ok {
+		return nil, fmt.Errorf("%w: no resumable workflow step found", ErrInvalidTransition)
+	}
+	now := s.engine.now()
+	phase := &run.Phases[phaseIndex]
+	step := &phase.Steps[stepIndex]
+	markStepExecutionInterrupted(step, now)
+	resetStepForResume(step)
+	if phase.Status != PhaseRunStatusRunning {
+		phase.Status = PhaseRunStatusRunning
+		if phase.StartedAt == nil {
+			phase.StartedAt = &now
+		}
+	}
+	phase.CompletedAt = nil
+	run.Status = WorkflowRunStatusRunning
+	run.PausedAt = nil
+	run.CompletedAt = nil
+	run.LastError = ""
+	run.CurrentPhaseIndex = phaseIndex
+	run.CurrentStepIndex = stepIndex
+	if sessionID := firstNonEmpty(resumeStepSessionID(step), strings.TrimSpace(run.SessionID)); sessionID != "" {
+		run.SessionID = sessionID
+	}
+	message := normalizeResumeFailedRunMessage(req.Message)
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_resumed_after_failure",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "running",
+		Detail:  message,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_resumed_after_failure",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: message,
+	})
+	dispatched, err := s.dispatchPromptForStepLocked(ctx, run, phaseIndex, stepIndex, message)
+	if err != nil {
+		return nil, err
+	}
+	if !dispatched {
+		cause := fmt.Errorf("%w: resume dispatch was not attempted", ErrStepDispatch)
+		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
+		return nil, cause
+	}
+	return cloneWorkflowRun(run), nil
+}
+
 func (s *InMemoryRunService) AdvanceRun(ctx context.Context, runID string) (*WorkflowRun, error) {
 	s.mu.Lock()
 	defer s.persistMetrics(ctx)
@@ -565,7 +645,7 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 		}
 	}()
 	normalized := normalizeTurnSignal(signal)
-	if normalized.SessionID == "" && normalized.WorkspaceID == "" && normalized.WorktreeID == "" {
+	if normalized.SessionID == "" {
 		return nil, nil
 	}
 	updated := make([]*WorkflowRun, 0, 1)
@@ -573,7 +653,7 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 		if run == nil || run.Status != WorkflowRunStatusRunning {
 			continue
 		}
-		if !runMatchesTurnSignal(run, normalized) {
+		if !s.turnMatcher.Matches(run, normalized) {
 			continue
 		}
 		if normalized.TurnID != "" {
@@ -637,6 +717,42 @@ func (s *InMemoryRunService) listRuns(includeDismissed bool) ([]*WorkflowRun, er
 		return left.After(right)
 	})
 	return out, nil
+}
+
+func (s *InMemoryRunService) RenameRun(ctx context.Context, runID, name string) (*WorkflowRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
+	}
+	normalizedName := strings.TrimSpace(name)
+	if normalizedName == "" {
+		return nil, fmt.Errorf("%w: run name is required", ErrInvalidTransition)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, err := s.mustRunLocked(runID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(run.TemplateName) == normalizedName {
+		return cloneWorkflowRun(run), nil
+	}
+	now := s.engine.now()
+	run.TemplateName = normalizedName
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_renamed",
+		Outcome: "renamed",
+		Detail:  "name=" + normalizedName,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_renamed",
+		RunID:   run.ID,
+		Message: "workflow run renamed",
+	})
+	s.persistRunSnapshotLocked(ctx, run.ID)
+	return cloneWorkflowRun(run), nil
 }
 
 func (s *InMemoryRunService) DismissRun(ctx context.Context, runID string) (*WorkflowRun, error) {
@@ -1021,6 +1137,31 @@ func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, r
 	dispatchPrompt := templatePrompt
 	if shouldPrefixUserPrompt(run) {
 		dispatchPrompt = composeInitialDispatchPrompt(run.UserPrompt, templatePrompt)
+	}
+	return s.dispatchPromptForStepLocked(ctx, run, phaseIndex, stepIndex, dispatchPrompt)
+}
+
+func (s *InMemoryRunService) dispatchPromptForStepLocked(
+	ctx context.Context,
+	run *WorkflowRun,
+	phaseIndex int,
+	stepIndex int,
+	dispatchPrompt string,
+) (bool, error) {
+	if s == nil || run == nil || s.stepDispatcher == nil {
+		return false, nil
+	}
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return false, nil
+	}
+	phase := &run.Phases[phaseIndex]
+	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
+		return false, nil
+	}
+	step := &phase.Steps[stepIndex]
+	dispatchPrompt = strings.TrimSpace(dispatchPrompt)
+	if dispatchPrompt == "" {
+		return false, nil
 	}
 	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
 		RunID:              strings.TrimSpace(run.ID),
@@ -1532,6 +1673,108 @@ func composeInitialDispatchPrompt(userPrompt, templatePrompt string) string {
 		return userPrompt
 	}
 	return userPrompt + "\n\n" + templatePrompt
+}
+
+func normalizeResumeFailedRunMessage(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return DefaultResumeFailedRunMessage
+	}
+	return trimmed
+}
+
+func findResumeTargetStep(run *WorkflowRun) (phaseIndex int, stepIndex int, ok bool) {
+	if run == nil {
+		return 0, 0, false
+	}
+	if p, s, hasCurrent := currentRunStepIndex(run); hasCurrent {
+		step := run.Phases[p].Steps[s]
+		if step.Status != StepRunStatusCompleted {
+			return p, s, true
+		}
+	}
+	lastPhase := -1
+	lastStep := -1
+	for pIndex, phase := range run.Phases {
+		for sIndex, step := range phase.Steps {
+			if step.Status == StepRunStatusFailed || step.Status == StepRunStatusRunning {
+				lastPhase = pIndex
+				lastStep = sIndex
+			}
+		}
+	}
+	if lastPhase >= 0 {
+		return lastPhase, lastStep, true
+	}
+	if p, s, hasPending := findNextPending(run); hasPending {
+		return p, s, true
+	}
+	return 0, 0, false
+}
+
+func currentRunStepIndex(run *WorkflowRun) (phaseIndex int, stepIndex int, ok bool) {
+	if run == nil || len(run.Phases) == 0 {
+		return 0, 0, false
+	}
+	phaseIndex = run.CurrentPhaseIndex
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return 0, 0, false
+	}
+	stepIndex = run.CurrentStepIndex
+	if stepIndex < 0 || stepIndex >= len(run.Phases[phaseIndex].Steps) {
+		return 0, 0, false
+	}
+	return phaseIndex, stepIndex, true
+}
+
+func markStepExecutionInterrupted(step *StepRun, now time.Time) {
+	if step == nil {
+		return
+	}
+	if step.Execution != nil && step.Execution.CompletedAt == nil {
+		step.Execution.CompletedAt = &now
+	}
+	if len(step.ExecutionAttempts) == 0 {
+		return
+	}
+	lastIdx := len(step.ExecutionAttempts) - 1
+	if step.ExecutionAttempts[lastIdx].CompletedAt == nil {
+		step.ExecutionAttempts[lastIdx].CompletedAt = &now
+	}
+}
+
+func resetStepForResume(step *StepRun) {
+	if step == nil {
+		return
+	}
+	step.Status = StepRunStatusPending
+	step.AwaitingTurn = false
+	step.TurnID = ""
+	step.StartedAt = nil
+	step.CompletedAt = nil
+	step.Outcome = ""
+	step.Output = ""
+	step.Error = ""
+	step.Execution = nil
+	step.ExecutionState = StepExecutionStateNone
+	step.ExecutionMessage = ""
+}
+
+func resumeStepSessionID(step *StepRun) string {
+	if step == nil {
+		return ""
+	}
+	if step.Execution != nil {
+		if sessionID := strings.TrimSpace(step.Execution.SessionID); sessionID != "" {
+			return sessionID
+		}
+	}
+	for i := len(step.ExecutionAttempts) - 1; i >= 0; i-- {
+		if sessionID := strings.TrimSpace(step.ExecutionAttempts[i].SessionID); sessionID != "" {
+			return sessionID
+		}
+	}
+	return ""
 }
 
 func (s *InMemoryRunService) mustRunLocked(runID string) (*WorkflowRun, error) {

@@ -1055,7 +1055,7 @@ func TestGuidedWorkflowPromptDispatcherReusesOwnedWorkflowSessionWithDefaultsCon
 	}
 }
 
-func TestGuidedWorkflowPromptDispatcherFallsBackWhenOwnedSessionBusy(t *testing.T) {
+func TestGuidedWorkflowPromptDispatcherFailsWhenOwnedSessionBusy(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
 			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
@@ -1063,16 +1063,11 @@ func TestGuidedWorkflowPromptDispatcherFallsBackWhenOwnedSessionBusy(t *testing.
 		meta: []*types.SessionMeta{
 			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1", WorkflowRunID: "gwf-1"},
 		},
-		started: []*types.Session{
-			{ID: "sess-fallback", Provider: "codex", Status: types.SessionStatusRunning},
-		},
 		sendErrs: []error{
 			errors.New("turn already in progress"),
 			errors.New("turn already in progress"),
 			errors.New("turn already in progress"),
-			nil,
 		},
-		turnID: "turn-fallback",
 	}
 	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
@@ -1081,17 +1076,54 @@ func TestGuidedWorkflowPromptDispatcherFallsBackWhenOwnedSessionBusy(t *testing.
 		WorktreeID:  "wt-1",
 		Prompt:      "continue",
 	})
-	if err != nil {
-		t.Fatalf("DispatchStepPrompt: %v", err)
+	if err == nil {
+		t.Fatalf("expected dispatch to fail while existing session turn is active")
 	}
-	if !result.Dispatched || result.SessionID != "sess-fallback" {
-		t.Fatalf("expected dispatch to fallback session, got %#v", result)
+	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		t.Fatalf("expected ErrStepDispatch, got %v", err)
 	}
-	if len(gateway.startReqs) != 1 {
-		t.Fatalf("expected fallback session start request, got %d", len(gateway.startReqs))
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result while session is busy, got %#v", result)
 	}
-	if len(gateway.sendCalls) != 4 {
-		t.Fatalf("expected retries before fallback dispatch, got %d calls", len(gateway.sendCalls))
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no replacement session start request, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 3 {
+		t.Fatalf("expected in-session retries only, got %d calls", len(gateway.sendCalls))
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherFailsWhenOwnedSessionThreadMissing(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1", WorkflowRunID: "gwf-1"},
+		},
+		sendErr: errors.New("thread not found"),
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err == nil {
+		t.Fatalf("expected dispatch to fail when owned session thread is missing")
+	}
+	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		t.Fatalf("expected ErrStepDispatch, got %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result when thread is missing, got %#v", result)
+	}
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no replacement session start request, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 1 {
+		t.Fatalf("expected single dispatch attempt for missing thread, got %d", len(gateway.sendCalls))
 	}
 }
 
@@ -1354,6 +1386,44 @@ func TestGuidedWorkflowPromptDispatcherLogsSessionLinkTelemetry(t *testing.T) {
 	}
 	if !strings.Contains(logs, "run_id=gwf-new") {
 		t.Fatalf("expected target run id in telemetry, got %q", logs)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherPersistsWorkspaceContextOnLink(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{{ID: "sess-ctx", Provider: "codex", Status: types.SessionStatusRunning}},
+		turnID:   "turn-link-context",
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:    gateway,
+		sessionMeta: metaStore,
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "run-ctx",
+		SessionID:   "sess-ctx",
+		WorkspaceID: "ws-ctx",
+		WorktreeID:  "wt-ctx",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-ctx" {
+		t.Fatalf("expected dispatched result on sess-ctx, got %#v", result)
+	}
+	meta, ok := metaStore.entries["sess-ctx"]
+	if !ok || meta == nil {
+		t.Fatalf("expected session meta entry, got %#v", meta)
+	}
+	if meta.WorkflowRunID != "run-ctx" {
+		t.Fatalf("expected workflow run id stored, got %q", meta.WorkflowRunID)
+	}
+	if meta.WorkspaceID != "ws-ctx" {
+		t.Fatalf("expected workspace context stored, got %q", meta.WorkspaceID)
+	}
+	if meta.WorktreeID != "wt-ctx" {
+		t.Fatalf("expected worktree context stored, got %q", meta.WorktreeID)
 	}
 }
 

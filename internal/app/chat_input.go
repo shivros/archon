@@ -187,6 +187,22 @@ func (c *TextInput) InsertNewline() tea.Cmd {
 	return c.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 }
 
+func (c *TextInput) MoveLineUp() tea.Cmd {
+	if c == nil {
+		return nil
+	}
+	c.allSelected = false
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+}
+
+func (c *TextInput) MoveLineDown() tea.Cmd {
+	if c == nil {
+		return nil
+	}
+	c.allSelected = false
+	return c.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+}
+
 func (c *TextInput) MoveWordLeft() tea.Cmd {
 	if c == nil {
 		return nil

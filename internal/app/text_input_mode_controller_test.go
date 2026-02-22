@@ -28,6 +28,115 @@ func TestTextInputModeControllerShiftEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestTextInputModeControllerShiftEnterModifierWithoutLiteralKeyStringInsertsNewline(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("hello")
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(tea.KeyMsg) string {
+			// Some terminals report Shift+Enter as "enter" while still setting the Shift modifier.
+			return "enter"
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	if !handled {
+		t.Fatalf("expected shift+enter modifier fallback to be handled")
+	}
+	if got := input.Value(); got != "hello\n" {
+		t.Fatalf("expected newline insert from shift+enter modifier fallback, got %q", got)
+	}
+}
+
+func TestTextInputModeControllerCtrlJInsertsNewline(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("hello")
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+j to be handled")
+	}
+	if got := input.Value(); got != "hello\n" {
+		t.Fatalf("expected newline insert, got %q", got)
+	}
+}
+
+func TestTextInputModeControllerLineUpAndDownMoveCursorLine(t *testing.T) {
+	upInput := NewTextInput(40, TextInputConfig{Height: 3})
+	upInput.Focus()
+	upInput.SetValue("line1\nline2")
+	upController := textInputModeController{
+		input: upInput,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+	}
+
+	handled, _ := upController.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if !handled {
+		t.Fatalf("expected up to be handled")
+	}
+	_, _ = upController.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if got := upInput.Value(); got != "line1x\nline2" {
+		t.Fatalf("expected up to move cursor to prior line, got %q", got)
+	}
+
+	downInput := NewTextInput(40, TextInputConfig{Height: 3})
+	downInput.Focus()
+	downInput.SetValue("line1\nline2")
+	_ = downInput.MoveLineUp()
+	downController := textInputModeController{
+		input: downInput,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+	}
+
+	handled, _ = downController.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !handled {
+		t.Fatalf("expected down to be handled")
+	}
+	_, _ = downController.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if got := downInput.Value(); got != "line1\nline2x" {
+		t.Fatalf("expected down to move cursor to next line, got %q", got)
+	}
+}
+
+func TestTextInputModeControllerSupportsRemappedLineUpCommand(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("line1\nline2")
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		keyMatchesCommand: func(msg tea.KeyMsg, command, fallback string) bool {
+			return command == KeyCommandInputLineUp && msg.String() == "f7"
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected remapped line-up command to be handled")
+	}
+	_, _ = controller.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if got := input.Value(); got != "line1x\nline2" {
+		t.Fatalf("expected remapped line-up to move cursor, got %q", got)
+	}
+}
+
 func TestTextInputModeControllerEnterCallsSubmitWithTrimmedText(t *testing.T) {
 	input := NewTextInput(40, TextInputConfig{Height: 3})
 	input.SetValue("  hello world  ")

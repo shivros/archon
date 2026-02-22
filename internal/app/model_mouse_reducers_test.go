@@ -4,7 +4,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
@@ -725,6 +727,93 @@ func TestGuidedWorkflowLauncherPickerStartRowFallbackStripsANSI(t *testing.T) {
 
 	if got := m.guidedWorkflowLauncherPickerStartRow(guidedWorkflowLauncherTemplatePickerLayout{}); got != -1 {
 		t.Fatalf("expected empty query line layout to return -1, got %d", got)
+	}
+}
+
+func TestMouseReducerGuidedWorkflowTurnLinkClickOpensLinkedSession(t *testing.T) {
+	now := time.Date(2026, 2, 18, 10, 0, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-link-click", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "s1",
+		TurnID:    "turn-99",
+	}
+	run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
+
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode before link click")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = asModel(t, updated)
+
+	x, y := findVisualTokenInBody(t, &m, "user turn turn-99")
+	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	if !handled {
+		t.Fatalf("expected guided workflow turn link click to be handled")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected guided workflow to close after link click, got mode=%v", m.mode)
+	}
+	if m.pendingMouseCmd == nil {
+		t.Fatalf("expected linked session load command to be queued")
+	}
+}
+
+func TestMouseReducerGuidedWorkflowTurnLinkClickResolvesProviderSessionID(t *testing.T) {
+	now := time.Date(2026, 2, 18, 10, 5, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-link-click-provider", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "provider-session-1",
+		TurnID:    "turn-100",
+	}
+	run.Phases[0].Steps[1].ExecutionState = guidedworkflows.StepExecutionStateLinked
+
+	m := newPhase0ModelWithSession("codex")
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:         "s1",
+		WorkspaceID:       "ws1",
+		ProviderSessionID: "provider-session-1",
+	}
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode before link click")
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m = asModel(t, updated)
+
+	x, y := findVisualTokenInBody(t, &m, "user turn turn-100")
+	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	if !handled {
+		t.Fatalf("expected guided workflow turn link click to be handled")
+	}
+	if selected := m.selectedSessionID(); selected != "s1" {
+		t.Fatalf("expected provider session id to resolve to s1, got %q", selected)
+	}
+	if m.pendingWorkflowTurnFocus == nil {
+		t.Fatalf("expected pending workflow turn focus")
+	}
+	if m.pendingWorkflowTurnFocus.sessionID != "s1" || m.pendingWorkflowTurnFocus.turnID != "turn-100" {
+		t.Fatalf("unexpected pending workflow turn focus: %#v", m.pendingWorkflowTurnFocus)
+	}
+	if m.pendingMouseCmd == nil {
+		t.Fatalf("expected linked session load command to be queued")
 	}
 }
 

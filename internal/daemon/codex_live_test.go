@@ -64,7 +64,7 @@ func TestReserveSessionTurnRejectsConcurrentStart(t *testing.T) {
 	firstErr := error(nil)
 	go func() {
 		defer wg.Done()
-		firstTurnID, firstErr = reserveSessionTurn(ls, func() (string, error) {
+		firstTurnID, firstErr = reserveSessionTurn(context.Background(), ls, nil, func() (string, error) {
 			close(started)
 			<-release
 			return "turn-1", nil
@@ -76,7 +76,7 @@ func TestReserveSessionTurnRejectsConcurrentStart(t *testing.T) {
 	secondErr := error(nil)
 	go func() {
 		defer wg.Done()
-		secondTurnID, secondErr = reserveSessionTurn(ls, func() (string, error) {
+		secondTurnID, secondErr = reserveSessionTurn(context.Background(), ls, nil, func() (string, error) {
 			return "turn-2", nil
 		})
 	}()
@@ -100,7 +100,7 @@ func TestReserveSessionTurnRejectsConcurrentStart(t *testing.T) {
 
 func TestReserveSessionTurnClearsNothingOnStartError(t *testing.T) {
 	ls := &codexLiveSession{client: &codexAppServer{}}
-	_, err := reserveSessionTurn(ls, func() (string, error) {
+	_, err := reserveSessionTurn(context.Background(), ls, nil, func() (string, error) {
 		return "", errors.New("start failed")
 	})
 	if err == nil || err.Error() != "start failed" {
@@ -108,6 +108,107 @@ func TestReserveSessionTurnClearsNothingOnStartError(t *testing.T) {
 	}
 	if ls.activeTurn != "" {
 		t.Fatalf("expected active turn to stay empty on start failure, got %q", ls.activeTurn)
+	}
+}
+
+func TestReserveSessionTurnBusyProbeActiveReturnsBusy(t *testing.T) {
+	ls := &codexLiveSession{
+		client:     &codexAppServer{},
+		threadID:   "thr-1",
+		activeTurn: "turn-1",
+	}
+	startCalls := 0
+	_, err := reserveSessionTurn(context.Background(), ls, testTurnActivityProbe{
+		status: turnActivityActive,
+	}, func() (string, error) {
+		startCalls++
+		return "turn-2", nil
+	})
+	if err == nil || err.Error() != "turn already in progress" {
+		t.Fatalf("expected busy error, got %v", err)
+	}
+	if startCalls != 0 {
+		t.Fatalf("expected no start attempt while provider reports active, got %d", startCalls)
+	}
+	if ls.activeTurn != "turn-1" {
+		t.Fatalf("expected active turn unchanged, got %q", ls.activeTurn)
+	}
+}
+
+func TestReserveSessionTurnBusyProbeInactiveClearsStaleAndRetries(t *testing.T) {
+	ls := &codexLiveSession{
+		client:     &codexAppServer{},
+		threadID:   "thr-1",
+		activeTurn: "turn-stale",
+	}
+	startCalls := 0
+	turnID, err := reserveSessionTurn(context.Background(), ls, testTurnActivityProbe{
+		status: turnActivityInactive,
+	}, func() (string, error) {
+		startCalls++
+		return "turn-fresh", nil
+	})
+	if err != nil {
+		t.Fatalf("expected stale clear retry to succeed, got %v", err)
+	}
+	if turnID != "turn-fresh" {
+		t.Fatalf("expected fresh turn id, got %q", turnID)
+	}
+	if startCalls != 1 {
+		t.Fatalf("expected one start attempt after stale clear, got %d", startCalls)
+	}
+	if ls.activeTurn != "turn-fresh" {
+		t.Fatalf("expected active turn updated to fresh turn, got %q", ls.activeTurn)
+	}
+}
+
+func TestReserveSessionTurnBusyProbeUnknownReturnsBusy(t *testing.T) {
+	ls := &codexLiveSession{
+		client:     &codexAppServer{},
+		threadID:   "thr-1",
+		activeTurn: "turn-1",
+	}
+	startCalls := 0
+	_, err := reserveSessionTurn(context.Background(), ls, testTurnActivityProbe{
+		status: turnActivityUnknown,
+	}, func() (string, error) {
+		startCalls++
+		return "turn-2", nil
+	})
+	if err == nil || err.Error() != "turn already in progress" {
+		t.Fatalf("expected busy error for unknown probe status, got %v", err)
+	}
+	if startCalls != 0 {
+		t.Fatalf("expected no start attempt for unknown probe status, got %d", startCalls)
+	}
+}
+
+func TestReserveSessionTurnBusyProbeDoesNotClearWhenTurnChanged(t *testing.T) {
+	ls := &codexLiveSession{
+		client:     &codexAppServer{},
+		threadID:   "thr-1",
+		activeTurn: "turn-stale",
+	}
+	startCalls := 0
+	_, err := reserveSessionTurn(context.Background(), ls, testTurnActivityProbe{
+		status: turnActivityInactive,
+		onProbe: func() {
+			ls.mu.Lock()
+			ls.activeTurn = "turn-newer"
+			ls.mu.Unlock()
+		},
+	}, func() (string, error) {
+		startCalls++
+		return "turn-fresh", nil
+	})
+	if err == nil || err.Error() != "turn already in progress" {
+		t.Fatalf("expected busy error when turn changed during probe, got %v", err)
+	}
+	if startCalls != 0 {
+		t.Fatalf("expected no start attempt when active turn changed, got %d", startCalls)
+	}
+	if ls.activeTurn != "turn-newer" {
+		t.Fatalf("expected active turn to remain latest value, got %q", ls.activeTurn)
 	}
 }
 
@@ -391,6 +492,19 @@ func (n *activeTurnProbeNotifier) Publish(_ types.NotificationEvent) {
 	n.session.mu.Lock()
 	n.activeTurnAtPublish = n.session.activeTurn
 	n.session.mu.Unlock()
+}
+
+type testTurnActivityProbe struct {
+	status  turnActivityStatus
+	err     error
+	onProbe func()
+}
+
+func (p testTurnActivityProbe) Probe(_ context.Context, _ codexTurnReader, _, _ string) (turnActivityStatus, error) {
+	if p.onProbe != nil {
+		p.onProbe()
+	}
+	return p.status, p.err
 }
 
 type captureCodexNotificationPublisher struct {

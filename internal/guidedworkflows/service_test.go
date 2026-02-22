@@ -646,6 +646,221 @@ func TestRunLifecyclePauseResumeTransitions(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleResumeFailedRunReusesStepSessionAndCustomMessage(t *testing.T) {
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-2 * time.Minute)
+	completedAt := now.Add(-time.Minute)
+	runID := "gwf-resume-failed"
+	snapshotStore := &stubRunSnapshotStore{
+		loadSnapshots: []RunStatusSnapshot{
+			{
+				Run: &WorkflowRun{
+					ID:                runID,
+					TemplateID:        "resume_template",
+					TemplateName:      "Resume Template",
+					WorkspaceID:       "ws-1",
+					WorktreeID:        "wt-1",
+					Status:            WorkflowRunStatusFailed,
+					CreatedAt:         now.Add(-5 * time.Minute),
+					StartedAt:         &startedAt,
+					CompletedAt:       &completedAt,
+					CurrentPhaseIndex: 0,
+					CurrentStepIndex:  0,
+					LastError:         "workflow run interrupted by daemon restart",
+					Phases: []PhaseRun{
+						{
+							ID:          "phase-1",
+							Name:        "Phase 1",
+							Status:      PhaseRunStatusFailed,
+							StartedAt:   &startedAt,
+							CompletedAt: &completedAt,
+							Steps: []StepRun{
+								{
+									ID:           "step-1",
+									Name:         "Step 1",
+									Prompt:       "original workflow step prompt",
+									Status:       StepRunStatusRunning,
+									AwaitingTurn: true,
+									TurnID:       "turn-prev",
+									StartedAt:    &startedAt,
+									Attempts:     1,
+									Outcome:      "awaiting_turn",
+									Output:       "turn-prev",
+									Execution: &StepExecutionRef{
+										SessionID: "sess-prev",
+										TurnID:    "turn-prev",
+										StartedAt: &startedAt,
+									},
+									ExecutionAttempts: []StepExecutionRef{
+										{
+											SessionID: "sess-prev",
+											TurnID:    "turn-prev",
+											StartedAt: &startedAt,
+										},
+									},
+									ExecutionState: StepExecutionStateLinked,
+								},
+							},
+						},
+					},
+				},
+				Timeline: []RunTimelineEvent{
+					{
+						At:      completedAt,
+						Type:    "run_interrupted",
+						RunID:   runID,
+						Message: "workflow run interrupted by daemon restart",
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{
+				Dispatched: true,
+				SessionID:  "sess-prev",
+				TurnID:     "turn-new",
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithRunSnapshotStore(snapshotStore),
+		WithStepPromptDispatcher(dispatcher),
+		WithEngine(&Engine{
+			now:      func() time.Time { return now },
+			handlers: map[string]StepHandler{},
+			controls: NormalizeExecutionControls(ExecutionControls{}),
+			runner:   noopExecutionRunner{},
+		}),
+	)
+
+	run, err := service.ResumeFailedRun(context.Background(), runID, ResumeFailedRunRequest{
+		Message: "resume from outage and continue",
+	})
+	if err != nil {
+		t.Fatalf("ResumeFailedRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected running status after failed resume, got %q", run.Status)
+	}
+	if run.LastError != "" {
+		t.Fatalf("expected last error to clear on resume, got %q", run.LastError)
+	}
+	if run.CompletedAt != nil {
+		t.Fatalf("expected completed_at to clear on resume")
+	}
+	if run.SessionID != "sess-prev" {
+		t.Fatalf("expected run session to reuse previous step session, got %q", run.SessionID)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected one resume dispatch call, got %d", len(dispatcher.calls))
+	}
+	if dispatcher.calls[0].SessionID != "sess-prev" {
+		t.Fatalf("expected resume dispatch to reuse session sess-prev, got %q", dispatcher.calls[0].SessionID)
+	}
+	if dispatcher.calls[0].Prompt != "resume from outage and continue" {
+		t.Fatalf("expected resume dispatch prompt override, got %q", dispatcher.calls[0].Prompt)
+	}
+	step := run.Phases[0].Steps[0]
+	if step.Status != StepRunStatusRunning || !step.AwaitingTurn {
+		t.Fatalf("expected resumed step awaiting turn, got %#v", step)
+	}
+	if step.Prompt != "original workflow step prompt" {
+		t.Fatalf("expected step prompt template to remain unchanged, got %q", step.Prompt)
+	}
+	if step.Execution == nil {
+		t.Fatalf("expected execution metadata after resume dispatch")
+	}
+	if step.Execution.SessionID != "sess-prev" || step.Execution.TurnID != "turn-new" {
+		t.Fatalf("unexpected resumed execution metadata: %#v", step.Execution)
+	}
+	if step.Attempts != 2 {
+		t.Fatalf("expected resumed step attempts to increment, got %d", step.Attempts)
+	}
+	if len(step.ExecutionAttempts) != 2 {
+		t.Fatalf("expected execution attempts history to retain prior attempt, got %d", len(step.ExecutionAttempts))
+	}
+	timeline, err := service.GetRunTimeline(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline: %v", err)
+	}
+	foundResumeEvent := false
+	for _, event := range timeline {
+		if event.Type == "run_resumed_after_failure" && event.Message == "resume from outage and continue" {
+			foundResumeEvent = true
+			break
+		}
+	}
+	if !foundResumeEvent {
+		t.Fatalf("expected timeline to capture run_resumed_after_failure event with message")
+	}
+}
+
+func TestRunLifecycleResumeFailedRunDefaultsResumeMessage(t *testing.T) {
+	now := time.Date(2026, 2, 22, 11, 0, 0, 0, time.UTC)
+	runID := "gwf-resume-default-msg"
+	snapshotStore := &stubRunSnapshotStore{
+		loadSnapshots: []RunStatusSnapshot{
+			{
+				Run: &WorkflowRun{
+					ID:                runID,
+					TemplateID:        "resume_template",
+					TemplateName:      "Resume Template",
+					WorkspaceID:       "ws-1",
+					WorktreeID:        "wt-1",
+					Status:            WorkflowRunStatusFailed,
+					CreatedAt:         now.Add(-5 * time.Minute),
+					CurrentPhaseIndex: 0,
+					CurrentStepIndex:  0,
+					LastError:         "workflow run interrupted by daemon restart",
+					Phases: []PhaseRun{
+						{
+							ID:     "phase-1",
+							Name:   "Phase 1",
+							Status: PhaseRunStatusFailed,
+							Steps: []StepRun{
+								{
+									ID:     "step-1",
+									Name:   "Step 1",
+									Prompt: "original workflow step prompt",
+									Status: StepRunStatusFailed,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{
+				Dispatched: true,
+				SessionID:  "sess-default",
+				TurnID:     "turn-default",
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithRunSnapshotStore(snapshotStore),
+		WithStepPromptDispatcher(dispatcher),
+	)
+
+	_, err := service.ResumeFailedRun(context.Background(), runID, ResumeFailedRunRequest{})
+	if err != nil {
+		t.Fatalf("ResumeFailedRun: %v", err)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected one resume dispatch call, got %d", len(dispatcher.calls))
+	}
+	if dispatcher.calls[0].Prompt != DefaultResumeFailedRunMessage {
+		t.Fatalf("expected default resume message prompt, got %q", dispatcher.calls[0].Prompt)
+	}
+}
+
 func TestRunLifecycleInvalidTransitions(t *testing.T) {
 	service := NewRunService(Config{Enabled: true})
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -658,6 +873,9 @@ func TestRunLifecycleInvalidTransitions(t *testing.T) {
 
 	if _, err := service.ResumeRun(context.Background(), run.ID); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("expected invalid transition for resume before pause, got %v", err)
+	}
+	if _, err := service.ResumeFailedRun(context.Background(), run.ID, ResumeFailedRunRequest{}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected invalid transition for failed resume before run failure, got %v", err)
 	}
 	if _, err := service.PauseRun(context.Background(), run.ID); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("expected invalid transition for pause before start, got %v", err)
@@ -948,6 +1166,164 @@ func TestRunLifecycleOnTurnCompletedIdempotent(t *testing.T) {
 	}
 	if len(updated) != 0 {
 		t.Fatalf("expected duplicate turn event to be deduped, got %d updates", len(updated))
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedStrictSessionMatchPreventsCrossSessionAdvance(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_session_isolation",
+		Name: "Prompted Session Isolation",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-a", TurnID: "turn-a"},
+			{Dispatched: true, SessionID: "sess-b", TurnID: "turn-b"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+
+	runA, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_session_isolation",
+		WorkspaceID: "ws-shared",
+		WorktreeID:  "wt-shared",
+		SessionID:   "sess-a",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun runA: %v", err)
+	}
+	runB, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_session_isolation",
+		WorkspaceID: "ws-shared",
+		WorktreeID:  "wt-shared",
+		SessionID:   "sess-b",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun runB: %v", err)
+	}
+
+	if _, err := service.StartRun(context.Background(), runA.ID); err != nil {
+		t.Fatalf("StartRun runA: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), runB.ID); err != nil {
+		t.Fatalf("StartRun runB: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-a",
+		TurnID:    "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted runA: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run for sess-a turn, got %d", len(updated))
+	}
+	if updated[0].ID != runA.ID {
+		t.Fatalf("expected runA update only, got run id %q", updated[0].ID)
+	}
+
+	gotA, err := service.GetRun(context.Background(), runA.ID)
+	if err != nil {
+		t.Fatalf("GetRun runA: %v", err)
+	}
+	if gotA.Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected runA completed, got %q", gotA.Status)
+	}
+
+	gotB, err := service.GetRun(context.Background(), runB.ID)
+	if err != nil {
+		t.Fatalf("GetRun runB: %v", err)
+	}
+	if gotB.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected runB to remain running, got %q", gotB.Status)
+	}
+	if got := gotB.Phases[0].Steps[0]; got.Status != StepRunStatusRunning || !got.AwaitingTurn {
+		t.Fatalf("expected runB step to remain awaiting turn, got %#v", got)
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedIgnoresWorkspaceOnlySignal(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_session_required",
+		Name: "Prompted Session Required",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_session_required",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		TurnID:      "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted workspace-only: %v", err)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("expected no updates for workspace-only turn signal, got %d", len(updated))
+	}
+
+	got, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected run to stay running, got %q", got.Status)
+	}
+	if step := got.Phases[0].Steps[0]; step.Status != StepRunStatusRunning || !step.AwaitingTurn {
+		t.Fatalf("expected first step to remain awaiting turn, got %#v", step)
+	}
+
+	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted session-scoped: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one update for session-scoped signal, got %d", len(updated))
 	}
 }
 
@@ -1764,6 +2140,50 @@ func TestRunLifecycleListRunsSortedByRecentActivity(t *testing.T) {
 	}
 	if runs[1].ID != second.ID {
 		t.Fatalf("expected second run to sort second, got %q", runs[1].ID)
+	}
+}
+
+func TestRunLifecycleRenameRun(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	renamed, err := service.RenameRun(context.Background(), run.ID, "Renamed Workflow")
+	if err != nil {
+		t.Fatalf("RenameRun: %v", err)
+	}
+	if strings.TrimSpace(renamed.TemplateName) != "Renamed Workflow" {
+		t.Fatalf("expected renamed workflow name, got %q", renamed.TemplateName)
+	}
+	loaded, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if strings.TrimSpace(loaded.TemplateName) != "Renamed Workflow" {
+		t.Fatalf("expected persisted renamed workflow name, got %q", loaded.TemplateName)
+	}
+}
+
+func TestRunLifecycleRenameRunValidation(t *testing.T) {
+	var nilService *InMemoryRunService
+	if _, err := nilService.RenameRun(context.Background(), "gwf-any", "Renamed Workflow"); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected ErrInvalidTransition for nil service, got %v", err)
+	}
+
+	service := NewRunService(Config{Enabled: true})
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.RenameRun(context.Background(), run.ID, "   "); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected ErrInvalidTransition for blank name, got %v", err)
 	}
 }
 

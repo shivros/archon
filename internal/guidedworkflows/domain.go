@@ -195,6 +195,12 @@ type DecisionActionRequest struct {
 	Note       string         `json:"note,omitempty"`
 }
 
+const DefaultResumeFailedRunMessage = "I'm afraid we got interrupted by an outage. Please continue where you left off and give a status update when you're done."
+
+type ResumeFailedRunRequest struct {
+	Message string `json:"message,omitempty"`
+}
+
 type TurnSignal struct {
 	SessionID   string `json:"session_id,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`

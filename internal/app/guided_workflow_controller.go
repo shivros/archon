@@ -46,6 +46,12 @@ type guidedWorkflowLauncherTemplatePickerLayout struct {
 	height    int
 }
 
+type guidedWorkflowTurnLinkTarget struct {
+	label     string
+	sessionID string
+	turnID    string
+}
+
 type GuidedWorkflowUIController struct {
 	stage          guidedWorkflowStage
 	context        guidedWorkflowLaunchContext
@@ -55,6 +61,7 @@ type GuidedWorkflowUIController struct {
 	defaultPreset  guidedPolicySensitivity
 	sensitivity    guidedPolicySensitivity
 	userPrompt     string
+	resumeMessage  string
 	run            *guidedworkflows.WorkflowRun
 	timeline       []guidedworkflows.RunTimelineEvent
 	lastError      string
@@ -88,6 +95,7 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.templatePicker.Reset()
 	c.sensitivity = c.defaultPreset
 	c.userPrompt = ""
+	c.resumeMessage = guidedworkflows.DefaultResumeFailedRunMessage
 	c.run = nil
 	c.timeline = nil
 	c.lastError = ""
@@ -246,6 +254,16 @@ func (c *GuidedWorkflowUIController) LauncherTemplatePickerLayout() (guidedWorkf
 	}, true
 }
 
+func (c *GuidedWorkflowUIController) LauncherRequiresRawANSIRender() bool {
+	if c == nil || c.stage != guidedWorkflowStageLauncher {
+		return false
+	}
+	if c.templatePicker.Loading() || c.templatePicker.Error() != "" || len(c.templatePicker.Options()) == 0 {
+		return false
+	}
+	return strings.Contains(c.templatePicker.View(), "\x1b[")
+}
+
 func (c *GuidedWorkflowUIController) TemplatesLoading() bool {
 	if c == nil {
 		return false
@@ -329,6 +347,33 @@ func (c *GuidedWorkflowUIController) UserPrompt() string {
 	return strings.TrimSpace(c.userPrompt)
 }
 
+func (c *GuidedWorkflowUIController) CanResumeFailedRun() bool {
+	return c != nil && c.run != nil && c.run.Status == guidedworkflows.WorkflowRunStatusFailed
+}
+
+func (c *GuidedWorkflowUIController) SetResumeMessage(text string) {
+	if c == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		c.resumeMessage = guidedworkflows.DefaultResumeFailedRunMessage
+		return
+	}
+	c.resumeMessage = trimmed
+}
+
+func (c *GuidedWorkflowUIController) ResumeMessage() string {
+	if c == nil {
+		return guidedworkflows.DefaultResumeFailedRunMessage
+	}
+	trimmed := strings.TrimSpace(c.resumeMessage)
+	if trimmed == "" {
+		return guidedworkflows.DefaultResumeFailedRunMessage
+	}
+	return trimmed
+}
+
 func (c *GuidedWorkflowUIController) SetCreateError(err error) {
 	if c == nil {
 		return
@@ -337,6 +382,13 @@ func (c *GuidedWorkflowUIController) SetCreateError(err error) {
 }
 
 func (c *GuidedWorkflowUIController) SetStartError(err error) {
+	if c == nil {
+		return
+	}
+	c.lastError = errorText(err)
+}
+
+func (c *GuidedWorkflowUIController) SetResumeError(err error) {
 	if c == nil {
 		return
 	}
@@ -372,8 +424,12 @@ func (c *GuidedWorkflowUIController) SetRun(run *guidedworkflows.WorkflowRun) {
 	switch c.run.Status {
 	case guidedworkflows.WorkflowRunStatusCompleted, guidedworkflows.WorkflowRunStatusFailed:
 		c.stage = guidedWorkflowStageSummary
+		if c.run.Status == guidedworkflows.WorkflowRunStatusFailed && strings.TrimSpace(c.resumeMessage) == "" {
+			c.resumeMessage = guidedworkflows.DefaultResumeFailedRunMessage
+		}
 	default:
 		c.stage = guidedWorkflowStageLive
+		c.resumeMessage = ""
 	}
 }
 
@@ -392,8 +448,12 @@ func (c *GuidedWorkflowUIController) SetSnapshot(run *guidedworkflows.WorkflowRu
 	switch c.run.Status {
 	case guidedworkflows.WorkflowRunStatusCompleted, guidedworkflows.WorkflowRunStatusFailed:
 		c.stage = guidedWorkflowStageSummary
+		if c.run.Status == guidedworkflows.WorkflowRunStatusFailed && strings.TrimSpace(c.resumeMessage) == "" {
+			c.resumeMessage = guidedworkflows.DefaultResumeFailedRunMessage
+		}
 	default:
 		c.stage = guidedWorkflowStageLive
+		c.resumeMessage = ""
 	}
 }
 
@@ -488,6 +548,37 @@ func (c *GuidedWorkflowUIController) SelectedStepTurnID() string {
 	return turnID
 }
 
+func (c *GuidedWorkflowUIController) TurnLinkTargets() []guidedWorkflowTurnLinkTarget {
+	if c == nil || c.run == nil {
+		return nil
+	}
+	targets := make([]guidedWorkflowTurnLinkTarget, 0, 16)
+	seen := map[string]struct{}{}
+	for _, phase := range c.run.Phases {
+		for _, step := range phase.Steps {
+			sessionID, turnID := stepSessionAndTurn(step)
+			if sessionID == "" || turnID == "" {
+				continue
+			}
+			label := workflowUserTurnLinkLabel(c.stepUserTurnLink(step))
+			if label == "" {
+				continue
+			}
+			key := sessionID + "\x00" + turnID + "\x00" + label
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			targets = append(targets, guidedWorkflowTurnLinkTarget{
+				label:     label,
+				sessionID: sessionID,
+				turnID:    turnID,
+			})
+		}
+	}
+	return targets
+}
+
 func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowRunRequest {
 	req := client.CreateWorkflowRunRequest{
 		TemplateID:  strings.TrimSpace(c.templateID),
@@ -509,6 +600,13 @@ func (c *GuidedWorkflowUIController) BuildDecisionRequest(action guidedworkflows
 	}
 	req.DecisionID = strings.TrimSpace(c.run.LatestDecision.ID)
 	return req
+}
+
+func (c *GuidedWorkflowUIController) BuildResumeRequest() client.WorkflowRunResumeRequest {
+	return client.WorkflowRunResumeRequest{
+		ResumeFailed: true,
+		Message:      c.ResumeMessage(),
+	}
 }
 
 func (c *GuidedWorkflowUIController) RecommendedDecisionAction() guidedworkflows.DecisionAction {
@@ -588,7 +686,7 @@ func (c *GuidedWorkflowUIController) renderLauncher() string {
 		"- up/down: choose template",
 		"- type/backspace/ctrl+u: filter templates",
 		"- enter: continue to run setup",
-		"- r: reload templates",
+		"- ctrl+r: reload templates",
 		"- esc: close launcher",
 	)
 	if text := strings.TrimSpace(c.lastError); text != "" {
@@ -709,7 +807,17 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 	}
 	lines = append(lines, "", "### Step Links")
 	lines = append(lines, c.renderStepLinksSummary()...)
-	lines = append(lines, "", "### Controls", "- enter: close summary", "- esc: close summary")
+	if c.CanResumeFailedRun() {
+		lines = append(lines,
+			"",
+			"### Resume Failed Run",
+			"- Edit the resume message in the input panel below before submitting.",
+			"- Enter submits a resume request from the last in-flight workflow step.",
+		)
+		lines = append(lines, "", "### Controls", "- enter: resume run", "- esc: close summary")
+	} else {
+		lines = append(lines, "", "### Controls", "- enter: close summary", "- esc: close summary")
+	}
 	return joinGuidedWorkflowLines(lines)
 }
 

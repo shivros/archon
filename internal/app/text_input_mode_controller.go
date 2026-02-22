@@ -49,6 +49,12 @@ func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 		c.input.Redo()
 		return true, nil
 	}
+	if c.matchesCommand(keyMsg, KeyCommandInputLineUp, "up") {
+		return true, c.input.MoveLineUp()
+	}
+	if c.matchesCommand(keyMsg, KeyCommandInputLineDown, "down") {
+		return true, c.input.MoveLineDown()
+	}
 	if c.matchesCommand(keyMsg, KeyCommandInputWordLeft, "ctrl+left") || key == "alt+left" || key == "alt+b" {
 		return true, c.input.MoveWordLeft()
 	}
@@ -68,7 +74,7 @@ func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	}
-	if c.matchesCommand(keyMsg, KeyCommandInputNewline, "shift+enter") || key == "ctrl+enter" {
+	if c.matchesCommand(keyMsg, KeyCommandInputNewline, "shift+enter") || key == "ctrl+enter" || key == "ctrl+j" || isShiftOrCtrlEnterKey(keyMsg) {
 		return true, c.input.InsertNewline()
 	}
 	switch key {
@@ -106,4 +112,12 @@ func (c textInputModeController) matchesCommand(msg tea.KeyMsg, command, fallbac
 		return strings.TrimSpace(c.keyString(msg)) == fallback
 	}
 	return false
+}
+
+func isShiftOrCtrlEnterKey(msg tea.KeyMsg) bool {
+	key := msg.Key()
+	if key.Code != tea.KeyEnter {
+		return false
+	}
+	return key.Mod.Contains(tea.ModShift) || key.Mod.Contains(tea.ModCtrl)
 }

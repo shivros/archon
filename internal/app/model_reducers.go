@@ -47,6 +47,19 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 			m.submitRenameSessionInput,
 		)
 		return controller.Update(msg)
+	case uiModeRenameWorkflow:
+		if !isTextInputMsg(msg) {
+			return true, nil
+		}
+		controller := m.newSingleLineInputController(
+			m.renameInput,
+			func() tea.Cmd {
+				m.exitRenameWorkflow("rename canceled")
+				return nil
+			},
+			m.submitRenameWorkflowInput,
+		)
+		return controller.Update(msg)
 	case uiModeAddWorkspaceGroup:
 		if !isTextInputMsg(msg) {
 			return true, nil
@@ -491,6 +504,24 @@ func (m *Model) submitRenameSessionInput(name string) tea.Cmd {
 	return updateSessionCmd(m.sessionAPI, id, name)
 }
 
+func (m *Model) submitRenameWorkflowInput(name string) tea.Cmd {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.setValidationStatus("name is required")
+		return nil
+	}
+	runID := strings.TrimSpace(m.renameWorkflowRunID)
+	if runID == "" {
+		m.setValidationStatus("no workflow selected")
+		return nil
+	}
+	if m.renameInput != nil {
+		m.renameInput.SetValue("")
+	}
+	m.exitRenameWorkflow("renaming workflow")
+	return renameWorkflowRunCmd(m.guidedWorkflowAPI, runID, name)
+}
+
 func (m *Model) submitAddWorkspaceGroupInput(name string) tea.Cmd {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -597,7 +628,7 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 				return true, m.requestComposeOptionPicker(composeOptionReasoning)
 			case "ctrl+3":
 				return true, m.requestComposeOptionPicker(composeOptionAccess)
-			case "up":
+			case "ctrl+up":
 				if m.chatInput != nil {
 					if value, ok := m.composeHistoryNavigate(-1, m.chatInput.Value()); ok {
 						m.chatInput.SetValue(value)
@@ -605,7 +636,7 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 					}
 				}
 				return true, nil
-			case "down":
+			case "ctrl+down":
 				if m.chatInput != nil {
 					if value, ok := m.composeHistoryNavigate(1, m.chatInput.Value()); ok {
 						m.chatInput.SetValue(value)
