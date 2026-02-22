@@ -496,11 +496,17 @@ func (m *Model) openGuidedWorkflowSessionTurn(sessionID, turnID string) tea.Cmd 
 	if !m.sidebar.SelectBySessionID(resolvedSessionID) {
 		m.ensureGuidedWorkflowSessionVisible(resolvedSessionID)
 		if !m.sidebar.SelectBySessionID(resolvedSessionID) {
-			m.setValidationStatus("linked session not found: " + sessionID)
-			m.renderGuidedWorkflowContent()
-			return nil
+			m.pendingGuidedWorkflowSessionLookup = &guidedWorkflowSessionLookupRequest{
+				requestedSessionID: sessionID,
+				turnID:             turnID,
+			}
+			m.pendingSelectID = resolvedSessionID
+			m.setStatusMessage("locating linked session " + sessionID)
+			return m.fetchSessionsCmd(false)
 		}
 	}
+	m.pendingGuidedWorkflowSessionLookup = nil
+	m.pendingSelectID = ""
 	m.setPendingWorkflowTurnFocus(resolvedSessionID, turnID)
 	item := m.selectedItem()
 	m.exitGuidedWorkflow("opened linked session " + resolvedSessionID)

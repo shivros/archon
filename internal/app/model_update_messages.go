@@ -631,6 +631,10 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.lastSessionMetaRefreshAt = now
 		m.lastSessionMetaSyncAt = now
 		if msg.err != nil {
+			if m.pendingGuidedWorkflowSessionLookup != nil {
+				m.pendingGuidedWorkflowSessionLookup = nil
+				m.pendingSelectID = ""
+			}
 			m.setBackgroundError("error: " + msg.err.Error())
 			return true, nil
 		}
@@ -645,12 +649,40 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			recentsStateSaveCmd = m.requestRecentsStateSaveCmd()
 		}
 		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
+		lookupReq := m.pendingGuidedWorkflowSessionLookup
+		lookupFailed := false
+		if lookupReq != nil {
+			resolved := m.resolveGuidedWorkflowSessionID(lookupReq.requestedSessionID)
+			if resolved != "" {
+				m.pendingSelectID = resolved
+				m.ensureGuidedWorkflowSessionVisible(resolved)
+			}
+		}
 		saveSidebarExpansionCmd := tea.Cmd(nil)
 		if m.pendingSelectID != "" && m.sidebar != nil {
 			if m.sidebar.SelectBySessionID(m.pendingSelectID) {
 				m.pendingSelectID = ""
 				if m.syncAppStateSidebarExpansion() {
 					saveSidebarExpansionCmd = m.requestAppStateSaveCmd()
+				}
+			}
+		}
+		if lookupReq != nil {
+			resolved := m.resolveGuidedWorkflowSessionID(lookupReq.requestedSessionID)
+			if m.sidebar != nil && resolved != "" && m.sidebar.SelectBySessionID(resolved) {
+				m.pendingGuidedWorkflowSessionLookup = nil
+				m.pendingSelectID = ""
+				m.setPendingWorkflowTurnFocus(resolved, lookupReq.turnID)
+				if m.syncAppStateSidebarExpansion() {
+					saveSidebarExpansionCmd = m.requestAppStateSaveCmd()
+				}
+			} else {
+				m.pendingGuidedWorkflowSessionLookup = nil
+				m.pendingSelectID = ""
+				lookupFailed = true
+				m.setValidationStatus("linked session not found: " + lookupReq.requestedSessionID)
+				if m.mode == uiModeGuidedWorkflow {
+					m.renderGuidedWorkflowContent()
 				}
 			}
 		}
@@ -661,6 +693,15 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.mode == uiModeRecents {
 			m.refreshRecentsContent()
 			recentsCmd = m.ensureRecentsPreviewForSelection()
+		}
+		if lookupFailed {
+			if recentsCmd != nil && saveStateCmd != nil {
+				return true, tea.Batch(recentsCmd, saveStateCmd)
+			}
+			if recentsCmd != nil {
+				return true, recentsCmd
+			}
+			return true, saveStateCmd
 		}
 		if m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection) {
 			if m.shouldSkipSelectionReloadOnSessionsUpdate(previousSelection, nextSelection) {

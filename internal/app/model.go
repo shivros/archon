@@ -267,6 +267,7 @@ type Model struct {
 	selectionFocusPolicy                SelectionFocusPolicy
 	selectionTransitionService          SelectionTransitionService
 	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
+	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
 }
 
 type newSessionTarget struct {
@@ -319,6 +320,11 @@ type pendingSend struct {
 type workflowTurnFocusRequest struct {
 	sessionID string
 	turnID    string
+}
+
+type guidedWorkflowSessionLookupRequest struct {
+	requestedSessionID string
+	turnID             string
 }
 
 type composeHistoryState struct {

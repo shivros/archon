@@ -1273,18 +1273,36 @@ func TestGuidedWorkflowOpenSelectedStepSessionValidatesLinkedSession(t *testing.
 		SessionID: "s-missing",
 		TurnID:    "turn-404",
 	}
+	m.sessionSelectionAPI = &sessionListWithMetaQueryMock{
+		sessionsToReturn: []*types.Session{
+			{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now, Title: "Session"},
+		},
+		metaToReturn: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1"},
+		},
+	}
 	m.guidedWorkflow.SetRun(missingSidebarRun)
 	m.guidedWorkflow.selectedPhase = 0
 	m.guidedWorkflow.selectedStep = 1
 	m.renderGuidedWorkflowContent()
-	if cmd := m.openGuidedWorkflowSelectedSession(); cmd != nil {
-		t.Fatalf("expected no command when linked session is missing from sidebar")
+	cmd := m.openGuidedWorkflowSelectedSession()
+	if cmd == nil {
+		t.Fatalf("expected refresh command when linked session is not yet selectable")
 	}
-	if m.status != "linked session not found: s-missing" {
-		t.Fatalf("unexpected status for missing sidebar session: %q", m.status)
+	refreshMsg, ok := cmd().(sessionsWithMetaMsg)
+	if !ok {
+		t.Fatalf("expected sessionsWithMetaMsg refresh, got %T", cmd())
 	}
+	updated, _ := m.Update(refreshMsg)
+	m = asModel(t, updated)
 	if m.mode != uiModeGuidedWorkflow {
 		t.Fatalf("expected guided workflow mode to remain active when session lookup fails")
+	}
+	if selected := m.selectedSessionID(); selected != "s1" {
+		t.Fatalf("expected existing sidebar selection to remain unchanged, got %q", selected)
+	}
+	if m.pendingGuidedWorkflowSessionLookup != nil {
+		t.Fatalf("expected pending linked session lookup to be cleared after failed refresh")
 	}
 	if m.pendingWorkflowTurnFocus != nil {
 		t.Fatalf("expected pending workflow turn focus to remain nil when session lookup fails")
@@ -1397,6 +1415,114 @@ func TestGuidedWorkflowOpenSelectedStepSessionExpandsWorkspaceGroupFilter(t *tes
 	}
 	if m.menu != nil && !containsString(m.menu.SelectedGroupIDs(), "g2") {
 		t.Fatalf("expected menu to include g2 selection, got %#v", m.menu.SelectedGroupIDs())
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionRefreshesWhenSessionMissingLocally(t *testing.T) {
+	now := time.Date(2026, 2, 22, 11, 0, 0, 0, time.UTC)
+	m := newPhase0ModelWithSession("codex")
+	m.sessionSelectionAPI = &sessionListWithMetaQueryMock{
+		sessionsToReturn: []*types.Session{
+			{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now, Title: "Anchor"},
+			{ID: "s-linked", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now.Add(time.Second), Title: "Linked"},
+		},
+		metaToReturn: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1"},
+			{SessionID: "s-linked", WorkspaceID: "ws1"},
+		},
+	}
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	run := newWorkflowRunFixture("gwf-open-refresh", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: "s-linked",
+		TurnID:    "turn-refresh",
+	}
+	m.guidedWorkflow.SetRun(run)
+	m.guidedWorkflow.selectedPhase = 0
+	m.guidedWorkflow.selectedStep = 1
+	m.renderGuidedWorkflowContent()
+
+	cmd := m.openGuidedWorkflowSelectedSession()
+	if cmd == nil {
+		t.Fatalf("expected sessions refresh command when linked session is not yet local")
+	}
+	refreshMsg, ok := cmd().(sessionsWithMetaMsg)
+	if !ok {
+		t.Fatalf("expected sessionsWithMetaMsg refresh, got %T", cmd())
+	}
+
+	updated, nextCmd := m.Update(refreshMsg)
+	m = asModel(t, updated)
+	if nextCmd == nil {
+		t.Fatalf("expected follow-up selection load command")
+	}
+	if selected := m.selectedSessionID(); selected != "s-linked" {
+		t.Fatalf("expected linked session selection after refresh, got %q", selected)
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected guided workflow to close after selecting linked session, got %v", m.mode)
+	}
+	if m.pendingGuidedWorkflowSessionLookup != nil {
+		t.Fatalf("expected pending linked session lookup to clear")
+	}
+	if m.pendingWorkflowTurnFocus == nil || m.pendingWorkflowTurnFocus.sessionID != "s-linked" || m.pendingWorkflowTurnFocus.turnID != "turn-refresh" {
+		t.Fatalf("expected pending turn focus to target linked session after refresh, got %#v", m.pendingWorkflowTurnFocus)
+	}
+}
+
+func TestGuidedWorkflowOpenSelectedStepSessionReResolvesProviderIDAfterRefresh(t *testing.T) {
+	now := time.Date(2026, 2, 22, 11, 5, 0, 0, time.UTC)
+	const providerSessionID = "provider-session-42"
+	m := newPhase0ModelWithSession("codex")
+	m.sessionSelectionAPI = &sessionListWithMetaQueryMock{
+		sessionsToReturn: []*types.Session{
+			{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now, Title: "Anchor"},
+			{ID: "s-linked", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now.Add(time.Second), Title: "Linked"},
+		},
+		metaToReturn: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1"},
+			{SessionID: "s-linked", WorkspaceID: "ws1", ProviderSessionID: providerSessionID},
+		},
+	}
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	run := newWorkflowRunFixture("gwf-open-provider-refresh", guidedworkflows.WorkflowRunStatusRunning, now)
+	run.CurrentPhaseIndex = 0
+	run.CurrentStepIndex = 1
+	run.Phases[0].Steps[1].Execution = &guidedworkflows.StepExecutionRef{
+		SessionID: providerSessionID,
+		TurnID:    "turn-provider-refresh",
+	}
+	m.guidedWorkflow.SetRun(run)
+	m.guidedWorkflow.selectedPhase = 0
+	m.guidedWorkflow.selectedStep = 1
+	m.renderGuidedWorkflowContent()
+
+	cmd := m.openGuidedWorkflowSelectedSession()
+	if cmd == nil {
+		t.Fatalf("expected sessions refresh command when provider session id has not been mapped yet")
+	}
+	refreshMsg, ok := cmd().(sessionsWithMetaMsg)
+	if !ok {
+		t.Fatalf("expected sessionsWithMetaMsg refresh, got %T", cmd())
+	}
+
+	updated, nextCmd := m.Update(refreshMsg)
+	m = asModel(t, updated)
+	if nextCmd == nil {
+		t.Fatalf("expected follow-up selection load command")
+	}
+	if selected := m.selectedSessionID(); selected != "s-linked" {
+		t.Fatalf("expected provider id to resolve to local linked session after refresh, got %q", selected)
+	}
+	if m.pendingWorkflowTurnFocus == nil || m.pendingWorkflowTurnFocus.sessionID != "s-linked" || m.pendingWorkflowTurnFocus.turnID != "turn-provider-refresh" {
+		t.Fatalf("expected pending turn focus to use resolved local session id, got %#v", m.pendingWorkflowTurnFocus)
+	}
+	if m.pendingGuidedWorkflowSessionLookup != nil {
+		t.Fatalf("expected pending provider-id lookup to clear after refresh")
 	}
 }
 
