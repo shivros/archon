@@ -46,24 +46,24 @@ func TestResetStreamCancelsSessionScopes(t *testing.T) {
 	}
 }
 
-func TestWorktreeRefreshWorkspaceIDsPrefersActiveWorkspace(t *testing.T) {
+func TestWorktreeRefreshWorkspaceIDsIncludesAllWorkspaces(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{
 		{ID: "ws-1"},
 		{ID: "ws-2"},
 	}
-	if got := m.worktreeRefreshWorkspaceIDs(); len(got) != 1 || got[0] != "ws-1" {
-		t.Fatalf("expected fallback first workspace, got=%v", got)
+	if got := m.worktreeRefreshWorkspaceIDs(); len(got) != 2 || got[0] != "ws-1" || got[1] != "ws-2" {
+		t.Fatalf("expected all workspace IDs, got=%v", got)
 	}
 
 	m.appState.ActiveWorkspaceID = "ws-2"
-	if got := m.worktreeRefreshWorkspaceIDs(); len(got) != 1 || got[0] != "ws-2" {
-		t.Fatalf("expected active workspace only, got=%v", got)
+	if got := m.worktreeRefreshWorkspaceIDs(); len(got) != 2 || got[0] != "ws-2" || got[1] != "ws-1" {
+		t.Fatalf("expected active workspace first then all IDs, got=%v", got)
 	}
 
 	m.appState.ActiveWorkspaceID = unassignedWorkspaceID
-	if got := m.worktreeRefreshWorkspaceIDs(); len(got) != 1 || got[0] != "ws-1" {
-		t.Fatalf("expected unassigned active workspace to fallback, got=%v", got)
+	if got := m.worktreeRefreshWorkspaceIDs(); len(got) != 2 || got[0] != "ws-1" || got[1] != "ws-2" {
+		t.Fatalf("expected unassigned active workspace to be ignored, got=%v", got)
 	}
 }
 

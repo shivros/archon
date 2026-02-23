@@ -2526,7 +2526,7 @@ func (m *Model) worktreeRefreshWorkspaceIDs() []string {
 	if m == nil {
 		return nil
 	}
-	candidates := make([]string, 0, 3)
+	candidates := make([]string, 0, len(m.workspaces)+2)
 	if item := m.selectedItem(); item != nil {
 		if workspaceID := strings.TrimSpace(item.workspaceID()); workspaceID != "" && workspaceID != unassignedWorkspaceID {
 			candidates = append(candidates, workspaceID)
@@ -2535,17 +2535,15 @@ func (m *Model) worktreeRefreshWorkspaceIDs() []string {
 	if workspaceID := strings.TrimSpace(m.appState.ActiveWorkspaceID); workspaceID != "" && workspaceID != unassignedWorkspaceID {
 		candidates = append(candidates, workspaceID)
 	}
-	if len(candidates) == 0 {
-		for _, workspace := range m.workspaces {
-			if workspace == nil {
-				continue
-			}
-			workspaceID := strings.TrimSpace(workspace.ID)
-			if workspaceID != "" {
-				candidates = append(candidates, workspaceID)
-				break
-			}
+	for _, workspace := range m.workspaces {
+		if workspace == nil {
+			continue
 		}
+		workspaceID := strings.TrimSpace(workspace.ID)
+		if workspaceID == "" || workspaceID == unassignedWorkspaceID {
+			continue
+		}
+		candidates = append(candidates, workspaceID)
 	}
 	if len(candidates) <= 1 {
 		return candidates
