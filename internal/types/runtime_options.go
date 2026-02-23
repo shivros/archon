@@ -19,6 +19,34 @@ const (
 	AccessFull      AccessLevel = "full_access"
 )
 
+func NormalizeReasoningLevel(raw ReasoningLevel) (ReasoningLevel, bool) {
+	value := strings.ToLower(strings.TrimSpace(string(raw)))
+	value = strings.ReplaceAll(value, "-", "_")
+	switch ReasoningLevel(value) {
+	case ReasoningLow, ReasoningMedium, ReasoningHigh, ReasoningExtraHigh:
+		return ReasoningLevel(value), true
+	default:
+		return "", false
+	}
+}
+
+func NormalizeAccessLevel(raw AccessLevel) (AccessLevel, bool) {
+	value := strings.ToLower(strings.TrimSpace(string(raw)))
+	value = strings.ReplaceAll(value, "-", "_")
+	switch value {
+	case "":
+		return "", true
+	case "read_only", "readonly":
+		return AccessReadOnly, true
+	case "on_request", "onrequest":
+		return AccessOnRequest, true
+	case "full_access", "fullaccess":
+		return AccessFull, true
+	default:
+		return "", false
+	}
+}
+
 type SessionRuntimeOptions struct {
 	Model     string         `json:"model,omitempty"`
 	Reasoning ReasoningLevel `json:"reasoning,omitempty"`

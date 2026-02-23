@@ -28,6 +28,13 @@ type SessionService struct {
 	guided       guidedworkflows.Orchestrator
 }
 
+type SendMessageOptions struct {
+	RuntimeOptions       *types.SessionRuntimeOptions
+	PersistRuntimeOption bool
+}
+
+var ErrRuntimeOptionsPersistFailed = errors.New("runtime options persistence failed")
+
 type SessionServiceOption func(*SessionService)
 
 func WithSessionHistoryStrategies(history *conversationHistoryStrategyRegistry) SessionServiceOption {
@@ -741,6 +748,10 @@ func (s *SessionService) History(ctx context.Context, id string, lines int) ([]m
 }
 
 func (s *SessionService) SendMessage(ctx context.Context, id string, input []map[string]any) (string, error) {
+	return s.SendMessageWithOptions(ctx, id, input, SendMessageOptions{})
+}
+
+func (s *SessionService) SendMessageWithOptions(ctx context.Context, id string, input []map[string]any, options SendMessageOptions) (string, error) {
 	if strings.TrimSpace(id) == "" {
 		return "", invalidError("session id is required", nil)
 	}
@@ -754,8 +765,76 @@ func (s *SessionService) SendMessage(ctx context.Context, id string, input []map
 		return "", notFoundError("session not found", ErrSessionNotFound)
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
-	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).SendMessage(ctx, s, session, meta, input)
+	effectiveMeta := meta
+	var mergedRuntimeOptions *types.SessionRuntimeOptions
+	if options.RuntimeOptions != nil {
+		baseRuntimeOptions := (*types.SessionRuntimeOptions)(nil)
+		if meta != nil {
+			baseRuntimeOptions = meta.RuntimeOptions
+		}
+		var resolveErr error
+		mergedRuntimeOptions, resolveErr = resolveRuntimeOptions(session.Provider, baseRuntimeOptions, options.RuntimeOptions, false)
+		if resolveErr != nil {
+			return "", invalidError(resolveErr.Error(), resolveErr)
+		}
+		if mergedRuntimeOptions != nil {
+			if meta != nil {
+				metaCopy := *meta
+				effectiveMeta = &metaCopy
+			} else {
+				effectiveMeta = &types.SessionMeta{SessionID: session.ID}
+			}
+			effectiveMeta.RuntimeOptions = mergedRuntimeOptions
+		}
+	}
+	s.ensureSessionCwd(ctx, session, effectiveMeta)
+	turnID, sendErr := s.conversationAdapter(session.Provider).SendMessage(ctx, s, session, effectiveMeta, input)
+	if sendErr != nil {
+		return "", sendErr
+	}
+	if options.PersistRuntimeOption && mergedRuntimeOptions != nil {
+		if persistErr := s.persistRuntimeOptionsAfterSend(ctx, session.ID, mergedRuntimeOptions); persistErr != nil {
+			if s.logger != nil {
+				s.logger.Error("send_runtime_options_persist_failed",
+					logging.F("session_id", session.ID),
+					logging.F("turn_id", turnID),
+					logging.F("error", persistErr),
+				)
+			}
+			return "", unavailableError("failed to persist runtime options after send", persistErr)
+		}
+	}
+	return turnID, nil
+}
+
+func (s *SessionService) persistRuntimeOptionsAfterSend(
+	ctx context.Context,
+	sessionID string,
+	runtimeOptions *types.SessionRuntimeOptions,
+) error {
+	if s == nil || s.stores == nil || s.stores.SessionMeta == nil {
+		return ErrRuntimeOptionsPersistFailed
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ErrRuntimeOptionsPersistFailed
+	}
+	if runtimeOptions == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now().UTC()
+	_, err := s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+		SessionID:      sessionID,
+		RuntimeOptions: types.CloneRuntimeOptions(runtimeOptions),
+		LastActiveAt:   &now,
+	})
+	if err != nil {
+		return errors.Join(ErrRuntimeOptionsPersistFailed, err)
+	}
+	return nil
 }
 
 func (s *SessionService) Approve(ctx context.Context, id string, requestID int, decision string, responses []string, acceptSettings map[string]any) error {

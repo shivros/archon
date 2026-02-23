@@ -36,6 +36,10 @@ func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
 						ID:     "plan",
 						Name:   "Plan",
 						Prompt: "Write a plan",
+						RuntimeOptions: &types.SessionRuntimeOptions{
+							Model:     "gpt-5.3-codex",
+							Reasoning: types.ReasoningHigh,
+						},
 					},
 				},
 			},
@@ -58,6 +62,15 @@ func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
 	}
 	if loaded.Phases[0].Steps[0].Prompt != "Write a plan" {
 		t.Fatalf("expected prompt to round-trip, got %q", loaded.Phases[0].Steps[0].Prompt)
+	}
+	if loaded.Phases[0].Steps[0].RuntimeOptions == nil {
+		t.Fatalf("expected step runtime options to round-trip")
+	}
+	if loaded.Phases[0].Steps[0].RuntimeOptions.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected runtime model to round-trip, got %q", loaded.Phases[0].Steps[0].RuntimeOptions.Model)
+	}
+	if loaded.Phases[0].Steps[0].RuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected runtime reasoning to round-trip, got %q", loaded.Phases[0].Steps[0].RuntimeOptions.Reasoning)
 	}
 	if loaded.DefaultAccessLevel != types.AccessOnRequest {
 		t.Fatalf("expected default_access_level to round-trip, got %q", loaded.DefaultAccessLevel)
@@ -134,5 +147,65 @@ func TestWorkflowTemplateStoreValidatesDefaultAccessLevel(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected validation error for invalid default_access_level")
+	}
+}
+
+func TestWorkflowTemplateStoreValidatesStepRuntimeAccess(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+
+	_, err := store.UpsertWorkflowTemplate(ctx, guidedworkflows.WorkflowTemplate{
+		ID:   "invalid_step_access",
+		Name: "Invalid Step Access",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{
+						ID:     "step_1",
+						Name:   "Step 1",
+						Prompt: "hello",
+						RuntimeOptions: &types.SessionRuntimeOptions{
+							Access: "invalid_access",
+						},
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for invalid step runtime_options.access")
+	}
+}
+
+func TestWorkflowTemplateStoreValidatesStepRuntimeReasoning(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+
+	_, err := store.UpsertWorkflowTemplate(ctx, guidedworkflows.WorkflowTemplate{
+		ID:   "invalid_step_reasoning",
+		Name: "Invalid Step Reasoning",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{
+						ID:     "step_1",
+						Name:   "Step 1",
+						Prompt: "hello",
+						RuntimeOptions: &types.SessionRuntimeOptions{
+							Reasoning: "ultra",
+						},
+					},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for invalid step runtime_options.reasoning")
 	}
 }

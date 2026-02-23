@@ -1227,6 +1227,7 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 		PhaseID:            strings.TrimSpace(phase.ID),
 		StepID:             strings.TrimSpace(step.ID),
 		Prompt:             dispatchPrompt,
+		RuntimeOptions:     types.CloneRuntimeOptions(step.RuntimeOptions),
 	})
 	if err != nil {
 		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(err) == DispatchErrorDispositionDeferred {
@@ -2007,6 +2008,7 @@ func instantiatePhases(template WorkflowTemplate) []PhaseRun {
 				ID:             step.ID,
 				Name:           step.Name,
 				Prompt:         strings.TrimSpace(step.Prompt),
+				RuntimeOptions: types.CloneRuntimeOptions(step.RuntimeOptions),
 				Status:         StepRunStatusPending,
 				ExecutionState: StepExecutionStateNone,
 			})
@@ -2027,6 +2029,9 @@ func cloneTemplate(in WorkflowTemplate) WorkflowTemplate {
 	for i, phase := range in.Phases {
 		out.Phases[i] = phase
 		out.Phases[i].Steps = append([]WorkflowTemplateStep{}, phase.Steps...)
+		for j := range out.Phases[i].Steps {
+			out.Phases[i].Steps[j].RuntimeOptions = types.CloneRuntimeOptions(out.Phases[i].Steps[j].RuntimeOptions)
+		}
 	}
 	return out
 }
@@ -2042,6 +2047,7 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 		out.Phases[i].Steps = append([]StepRun{}, phase.Steps...)
 		for j := range out.Phases[i].Steps {
 			step := &out.Phases[i].Steps[j]
+			step.RuntimeOptions = types.CloneRuntimeOptions(step.RuntimeOptions)
 			if step.Execution != nil {
 				execution := *step.Execution
 				step.Execution = &execution

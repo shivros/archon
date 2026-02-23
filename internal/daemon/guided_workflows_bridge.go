@@ -353,6 +353,7 @@ type guidedWorkflowSessionGateway interface {
 	ListWithMeta(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 	ListWithMetaIncludingWorkflowOwned(ctx context.Context) ([]*types.Session, []*types.SessionMeta, error)
 	SendMessage(ctx context.Context, id string, input []map[string]any) (string, error)
+	SendMessageWithOptions(ctx context.Context, id string, input []map[string]any, options SendMessageOptions) (string, error)
 }
 
 type guidedWorkflowSessionStarter interface {
@@ -421,7 +422,8 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 			strings.TrimSpace(provider),
 		)
 	}
-	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt)
+	d.linkSessionToWorkflow(ctx, sessionID, req.RunID, req.WorkspaceID, req.WorktreeID)
+	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt, req.RuntimeOptions)
 	if err != nil {
 		if shouldFailStepDispatchWithoutSessionReplacement(err) && d.logger != nil {
 			d.logger.Warn("guided_workflow_step_dispatch_blocked",
@@ -433,17 +435,27 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		}
 		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
 	}
-	d.linkSessionToWorkflow(ctx, sessionID, req.RunID, req.WorkspaceID, req.WorktreeID)
+	effectiveModel := strings.TrimSpace(model)
+	if req.RuntimeOptions != nil {
+		if overrideModel := strings.TrimSpace(req.RuntimeOptions.Model); overrideModel != "" {
+			effectiveModel = overrideModel
+		}
+	}
 	return guidedworkflows.StepPromptDispatchResult{
 		Dispatched: true,
 		SessionID:  sessionID,
 		TurnID:     strings.TrimSpace(turnID),
 		Provider:   strings.TrimSpace(provider),
-		Model:      strings.TrimSpace(model),
+		Model:      effectiveModel,
 	}, nil
 }
 
-func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, sessionID string, prompt string) (string, error) {
+func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(
+	ctx context.Context,
+	sessionID string,
+	prompt string,
+	runtimeOptions *types.SessionRuntimeOptions,
+) (string, error) {
 	if d == nil || d.sessions == nil {
 		return "", fmt.Errorf("%w: session gateway unavailable", guidedworkflows.ErrStepDispatch)
 	}
@@ -459,9 +471,21 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(ctx context.Context, ses
 	var lastErr error
 	allBusy := true
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		turnID, err := d.sessions.SendMessage(ctx, sessionID, []map[string]any{
+		input := []map[string]any{
 			{"type": "text", "text": prompt},
-		})
+		}
+		var (
+			turnID string
+			err    error
+		)
+		if runtimeOptions != nil {
+			turnID, err = d.sessions.SendMessageWithOptions(ctx, sessionID, input, SendMessageOptions{
+				RuntimeOptions:       types.CloneRuntimeOptions(runtimeOptions),
+				PersistRuntimeOption: true,
+			})
+		} else {
+			turnID, err = d.sessions.SendMessage(ctx, sessionID, input)
+		}
 		if err == nil {
 			return strings.TrimSpace(turnID), nil
 		}

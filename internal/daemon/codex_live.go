@@ -45,7 +45,14 @@ func (m *CodexLiveManager) SetNotificationPublisher(notifier NotificationPublish
 	m.notifier = notifier
 }
 
-func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string, input []map[string]any) (string, error) {
+func (m *CodexLiveManager) StartTurn(
+	ctx context.Context,
+	session *types.Session,
+	meta *types.SessionMeta,
+	codexHome string,
+	input []map[string]any,
+	runtimePatch *types.SessionRuntimeOptions,
+) (string, error) {
 	if session == nil || strings.TrimSpace(session.ID) == "" {
 		return "", errors.New("session is required")
 	}
@@ -56,6 +63,15 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		latestMeta := m.refreshSessionMeta(session.ID, meta)
+		if runtimePatch != nil {
+			if latestMeta != nil {
+				metaCopy := *latestMeta
+				latestMeta = &metaCopy
+			} else {
+				latestMeta = &types.SessionMeta{SessionID: session.ID}
+			}
+			latestMeta.RuntimeOptions = types.MergeRuntimeOptions(latestMeta.RuntimeOptions, runtimePatch)
+		}
 		runtimeOptions, model := codexRuntimeConfig(latestMeta)
 
 		ls, err := m.ensure(ctx, session, latestMeta, codexHome)
@@ -202,6 +218,7 @@ func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, m
 	m.mu.Unlock()
 
 	latestMeta := m.refreshSessionMeta(session.ID, meta)
+	runtimeOptions, model := codexRuntimeConfig(latestMeta)
 	client, err := startCodexAppServer(ctx, session.Cwd, codexHome, m.logger)
 	if err != nil {
 		m.logger.Error("codex_start_error", logging.F("session_id", session.ID), logging.F("error", err))
@@ -223,8 +240,25 @@ func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, m
 			logging.F("thread_id", threadID),
 			logging.F("error", err),
 		)
-		client.Close()
-		return nil, err
+		if !shouldBootstrapMissingThread(session, latestMeta) {
+			client.Close()
+			return nil, err
+		}
+		recoveredThreadID, startErr := client.StartThread(ctx, model, session.Cwd, runtimeOptions)
+		if startErr != nil {
+			client.Close()
+			return nil, startErr
+		}
+		threadID = strings.TrimSpace(recoveredThreadID)
+		if threadID == "" {
+			client.Close()
+			return nil, errors.New("thread id not available")
+		}
+		m.logger.Info("codex_missing_thread_bootstrap_recovered",
+			logging.F("session_id", session.ID),
+			logging.F("thread_id", threadID),
+		)
+		m.persistSessionThreadID(session.ID, threadID)
 	}
 	if latestMeta == nil || strings.TrimSpace(latestMeta.ThreadID) == "" {
 		m.persistSessionThreadID(session.ID, threadID)
@@ -520,6 +554,23 @@ func isCodexMissingThreadError(err error) bool {
 	return strings.Contains(text, "thread not found") ||
 		strings.Contains(text, "thread not loaded") ||
 		strings.Contains(text, "no rollout found for thread id")
+}
+
+func shouldBootstrapMissingThread(session *types.Session, meta *types.SessionMeta) bool {
+	if session == nil {
+		return false
+	}
+	if meta == nil || strings.TrimSpace(meta.ThreadID) == "" {
+		return false
+	}
+	if strings.TrimSpace(meta.LastTurnID) != "" {
+		return false
+	}
+	createdAt := session.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		return true
+	}
+	return time.Since(createdAt) <= 2*time.Minute
 }
 
 func reserveSessionTurn(ctx context.Context, ls *codexLiveSession, probe turnActivityProbe, start func() (string, error)) (string, error) {

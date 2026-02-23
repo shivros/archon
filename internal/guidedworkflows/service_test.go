@@ -1540,6 +1540,83 @@ func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestRunLifecyclePromptDispatchIncludesStepRuntimeOptions(t *testing.T) {
+	stepRuntimeOptions := &types.SessionRuntimeOptions{
+		Model:     "gpt-5.2-codex",
+		Reasoning: types.ReasoningHigh,
+		Access:    types.AccessFull,
+	}
+	template := WorkflowTemplate{
+		ID:   "prompted_with_runtime_options",
+		Name: "Prompted with runtime options",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{
+						ID:             "step_1",
+						Name:           "step 1",
+						Prompt:         "prompt 1",
+						RuntimeOptions: stepRuntimeOptions,
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_with_runtime_options",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	step := run.Phases[0].Steps[0]
+	if step.RuntimeOptions == nil {
+		t.Fatalf("expected step runtime options to be present on run step")
+	}
+	if step.RuntimeOptions == stepRuntimeOptions {
+		t.Fatalf("expected step runtime options to be cloned for run state")
+	}
+	if step.RuntimeOptions.Model != "gpt-5.2-codex" || step.RuntimeOptions.Reasoning != types.ReasoningHigh || step.RuntimeOptions.Access != types.AccessFull {
+		t.Fatalf("unexpected run step runtime options: %#v", step.RuntimeOptions)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected one prompt dispatch call, got %d", len(dispatcher.calls))
+	}
+	if dispatcher.calls[0].RuntimeOptions == nil {
+		t.Fatalf("expected runtime options in dispatch request")
+	}
+	if dispatcher.calls[0].RuntimeOptions == stepRuntimeOptions {
+		t.Fatalf("expected dispatch runtime options to be cloned")
+	}
+	if dispatcher.calls[0].RuntimeOptions.Model != "gpt-5.2-codex" {
+		t.Fatalf("unexpected dispatch model override: %q", dispatcher.calls[0].RuntimeOptions.Model)
+	}
+	if dispatcher.calls[0].RuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("unexpected dispatch reasoning override: %q", dispatcher.calls[0].RuntimeOptions.Reasoning)
+	}
+	if dispatcher.calls[0].RuntimeOptions.Access != types.AccessFull {
+		t.Fatalf("unexpected dispatch access override: %q", dispatcher.calls[0].RuntimeOptions.Access)
+	}
+}
+
 func TestRunLifecycleFirstDispatchPrependsUserPromptOnlyOnce(t *testing.T) {
 	template := WorkflowTemplate{
 		ID:                 "prompted_with_brief",

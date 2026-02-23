@@ -2,7 +2,6 @@ package guidedworkflows
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"control/internal/types"
@@ -27,9 +26,10 @@ type WorkflowTemplatePhase struct {
 }
 
 type WorkflowTemplateStep struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Prompt string `json:"prompt,omitempty"`
+	ID             string                       `json:"id"`
+	Name           string                       `json:"name"`
+	Prompt         string                       `json:"prompt,omitempty"`
+	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
 }
 
 type WorkflowRunStatus string
@@ -99,22 +99,23 @@ type PhaseRun struct {
 }
 
 type StepRun struct {
-	ID                string             `json:"id"`
-	Name              string             `json:"name"`
-	Prompt            string             `json:"prompt,omitempty"`
-	Status            StepRunStatus      `json:"status"`
-	AwaitingTurn      bool               `json:"awaiting_turn,omitempty"`
-	TurnID            string             `json:"turn_id,omitempty"`
-	StartedAt         *time.Time         `json:"started_at,omitempty"`
-	CompletedAt       *time.Time         `json:"completed_at,omitempty"`
-	Attempts          int                `json:"attempts,omitempty"`
-	Outcome           string             `json:"outcome,omitempty"`
-	Output            string             `json:"output,omitempty"`
-	Error             string             `json:"error,omitempty"`
-	Execution         *StepExecutionRef  `json:"execution,omitempty"`
-	ExecutionAttempts []StepExecutionRef `json:"execution_attempts,omitempty"`
-	ExecutionState    StepExecutionState `json:"execution_state,omitempty"`
-	ExecutionMessage  string             `json:"execution_message,omitempty"`
+	ID                string                       `json:"id"`
+	Name              string                       `json:"name"`
+	Prompt            string                       `json:"prompt,omitempty"`
+	RuntimeOptions    *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+	Status            StepRunStatus                `json:"status"`
+	AwaitingTurn      bool                         `json:"awaiting_turn,omitempty"`
+	TurnID            string                       `json:"turn_id,omitempty"`
+	StartedAt         *time.Time                   `json:"started_at,omitempty"`
+	CompletedAt       *time.Time                   `json:"completed_at,omitempty"`
+	Attempts          int                          `json:"attempts,omitempty"`
+	Outcome           string                       `json:"outcome,omitempty"`
+	Output            string                       `json:"output,omitempty"`
+	Error             string                       `json:"error,omitempty"`
+	Execution         *StepExecutionRef            `json:"execution,omitempty"`
+	ExecutionAttempts []StepExecutionRef           `json:"execution_attempts,omitempty"`
+	ExecutionState    StepExecutionState           `json:"execution_state,omitempty"`
+	ExecutionMessage  string                       `json:"execution_message,omitempty"`
 }
 
 type StepExecutionState string
@@ -210,15 +211,16 @@ type TurnSignal struct {
 }
 
 type StepPromptDispatchRequest struct {
-	RunID              string            `json:"run_id"`
-	TemplateID         string            `json:"template_id,omitempty"`
-	DefaultAccessLevel types.AccessLevel `json:"default_access_level,omitempty"`
-	WorkspaceID        string            `json:"workspace_id,omitempty"`
-	WorktreeID         string            `json:"worktree_id,omitempty"`
-	SessionID          string            `json:"session_id,omitempty"`
-	PhaseID            string            `json:"phase_id,omitempty"`
-	StepID             string            `json:"step_id,omitempty"`
-	Prompt             string            `json:"prompt"`
+	RunID              string                       `json:"run_id"`
+	TemplateID         string                       `json:"template_id,omitempty"`
+	DefaultAccessLevel types.AccessLevel            `json:"default_access_level,omitempty"`
+	WorkspaceID        string                       `json:"workspace_id,omitempty"`
+	WorktreeID         string                       `json:"worktree_id,omitempty"`
+	SessionID          string                       `json:"session_id,omitempty"`
+	PhaseID            string                       `json:"phase_id,omitempty"`
+	StepID             string                       `json:"step_id,omitempty"`
+	Prompt             string                       `json:"prompt"`
+	RuntimeOptions     *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
 }
 
 type StepPromptDispatchResult struct {
@@ -234,19 +236,7 @@ type StepPromptDispatcher interface {
 }
 
 func NormalizeTemplateAccessLevel(raw types.AccessLevel) (types.AccessLevel, bool) {
-	value := strings.ToLower(strings.TrimSpace(string(raw)))
-	switch value {
-	case "":
-		return "", true
-	case "read_only", "readonly", "read-only":
-		return types.AccessReadOnly, true
-	case "on_request", "onrequest", "on-request":
-		return types.AccessOnRequest, true
-	case "full_access", "fullaccess", "full-access":
-		return types.AccessFull, true
-	default:
-		return "", false
-	}
+	return types.NormalizeAccessLevel(raw)
 }
 
 type RunStatusSnapshot struct {

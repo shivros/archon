@@ -167,7 +167,11 @@ func (codexConversationAdapter) SendMessage(ctx context.Context, service *Sessio
 	}
 	workspacePath := service.resolveWorkspacePath(ctx, meta)
 	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	turnID, err := service.live.StartTurn(ctx, session, meta, codexHome, input)
+	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
+	if meta != nil {
+		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
+	}
+	turnID, err := service.live.StartTurn(ctx, session, meta, codexHome, input, runtimeOptions)
 	if err != nil {
 		return "", invalidError(err.Error(), err)
 	}

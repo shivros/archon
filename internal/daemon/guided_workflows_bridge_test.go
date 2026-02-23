@@ -34,6 +34,11 @@ type stubGuidedWorkflowSessionGateway struct {
 		sessionID string
 		input     []map[string]any
 	}
+	sendWithOptionsCalls []struct {
+		sessionID string
+		input     []map[string]any
+		options   SendMessageOptions
+	}
 }
 
 type stubGuidedWorkflowSessionMetaStore struct {
@@ -101,6 +106,31 @@ func (s *stubGuidedWorkflowSessionGateway) SendMessage(_ context.Context, id str
 		sessionID: id,
 		input:     input,
 	})
+	return s.sendMessage()
+}
+
+func (s *stubGuidedWorkflowSessionGateway) SendMessageWithOptions(
+	_ context.Context,
+	id string,
+	input []map[string]any,
+	options SendMessageOptions,
+) (string, error) {
+	s.sendWithOptionsCalls = append(s.sendWithOptionsCalls, struct {
+		sessionID string
+		input     []map[string]any
+		options   SendMessageOptions
+	}{
+		sessionID: id,
+		input:     input,
+		options: SendMessageOptions{
+			RuntimeOptions:       types.CloneRuntimeOptions(options.RuntimeOptions),
+			PersistRuntimeOption: options.PersistRuntimeOption,
+		},
+	})
+	return s.sendMessage()
+}
+
+func (s *stubGuidedWorkflowSessionGateway) sendMessage() (string, error) {
 	if len(s.sendErrs) > 0 {
 		err := s.sendErrs[0]
 		if len(s.sendErrs) == 1 {
@@ -938,6 +968,69 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowPromptDispatcherUsesPerStepRuntimeOverrides(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+				RuntimeOptions: &types.SessionRuntimeOptions{
+					Model: "gpt-5.1-codex",
+				},
+			},
+		},
+		turnID: "turn-runtime",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		StepID:      "implementation",
+		Prompt:      "implement now",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model:     "gpt-5.3-codex",
+			Reasoning: types.ReasoningHigh,
+		},
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-1" || result.TurnID != "turn-runtime" {
+		t.Fatalf("unexpected dispatch result: %#v", result)
+	}
+	if result.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected dispatch result model from step runtime override, got %q", result.Model)
+	}
+	if len(gateway.sendWithOptionsCalls) != 1 {
+		t.Fatalf("expected one sendWithOptions call, got %d", len(gateway.sendWithOptionsCalls))
+	}
+	if len(gateway.sendCalls) != 0 {
+		t.Fatalf("expected runtime-aware send path, got legacy send calls: %#v", gateway.sendCalls)
+	}
+	send := gateway.sendWithOptionsCalls[0]
+	if send.sessionID != "sess-1" {
+		t.Fatalf("expected runtime-aware send to target sess-1, got %q", send.sessionID)
+	}
+	if !send.options.PersistRuntimeOption {
+		t.Fatalf("expected runtime override persistence to be enabled")
+	}
+	if send.options.RuntimeOptions == nil {
+		t.Fatalf("expected runtime options in sendWithOptions request")
+	}
+	if send.options.RuntimeOptions.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected step model override in sendWithOptions request, got %q", send.options.RuntimeOptions.Model)
+	}
+	if send.options.RuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected step reasoning override in sendWithOptions request, got %q", send.options.RuntimeOptions.Reasoning)
+	}
+}
+
 func TestGuidedWorkflowPromptDispatcherRecoversToOwnedSessionWhenExplicitMissing(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
@@ -1068,6 +1161,7 @@ func TestGuidedWorkflowPromptDispatcherReusesOwnedWorkflowSession(t *testing.T) 
 	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
 		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 		Prompt:      "continue",
@@ -1104,6 +1198,7 @@ func TestGuidedWorkflowPromptDispatcherReusesOwnedWorkflowSessionWithDefaultsCon
 	}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
 		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 		Prompt:      "continue",
@@ -1136,6 +1231,7 @@ func TestGuidedWorkflowPromptDispatcherDefersWhenOwnedSessionBusy(t *testing.T) 
 	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
 		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 		Prompt:      "continue",
@@ -1157,6 +1253,60 @@ func TestGuidedWorkflowPromptDispatcherDefersWhenOwnedSessionBusy(t *testing.T) 
 	}
 }
 
+func TestGuidedWorkflowPromptDispatcherDefersWhenOwnedSessionBusyWithRuntimeOptions(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1", WorkflowRunID: "gwf-1"},
+		},
+		sendErrs: []error{
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+		},
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model:     "gpt-5.3-codex",
+			Reasoning: types.ReasoningHigh,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected dispatch to defer while existing session turn is active")
+	}
+	if !errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
+		t.Fatalf("expected ErrStepDispatchDeferred, got %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result while session is busy, got %#v", result)
+	}
+	if len(gateway.sendCalls) != 0 {
+		t.Fatalf("expected runtime dispatch to use send with options, got %d plain calls", len(gateway.sendCalls))
+	}
+	if len(gateway.sendWithOptionsCalls) != 3 {
+		t.Fatalf("expected three send-with-options retries, got %d", len(gateway.sendWithOptionsCalls))
+	}
+	for i, call := range gateway.sendWithOptionsCalls {
+		if !call.options.PersistRuntimeOption {
+			t.Fatalf("expected persist runtime option=true for retry %d", i+1)
+		}
+		if call.options.RuntimeOptions == nil {
+			t.Fatalf("expected runtime options for retry %d", i+1)
+		}
+		if call.options.RuntimeOptions.Model != "gpt-5.3-codex" || call.options.RuntimeOptions.Reasoning != types.ReasoningHigh {
+			t.Fatalf("unexpected runtime options for retry %d: %#v", i+1, call.options.RuntimeOptions)
+		}
+	}
+}
+
 func TestGuidedWorkflowPromptDispatcherReturnsFatalErrorAfterBusyRetriesWhenNonBusyErrorArrives(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
@@ -1174,6 +1324,7 @@ func TestGuidedWorkflowPromptDispatcherReturnsFatalErrorAfterBusyRetriesWhenNonB
 	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
 	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
 		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
 		Prompt:      "continue",
@@ -1229,6 +1380,46 @@ func TestGuidedWorkflowPromptDispatcherFailsWhenOwnedSessionThreadMissing(t *tes
 	}
 	if len(gateway.sendCalls) != 1 {
 		t.Fatalf("expected single dispatch attempt for missing thread, got %d", len(gateway.sendCalls))
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherLinksSessionBeforeDispatchFailure(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+		},
+		sendErr: errors.New("thread not found"),
+	}
+	metaStore := &stubGuidedWorkflowSessionMetaStore{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:    gateway,
+		sessionMeta: metaStore,
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err == nil {
+		t.Fatalf("expected dispatch to fail when thread is missing")
+	}
+	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		t.Fatalf("expected ErrStepDispatch, got %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result when thread is missing, got %#v", result)
+	}
+	meta, ok := metaStore.entries["sess-owned"]
+	if !ok || meta == nil {
+		t.Fatalf("expected workflow link persisted before send failure")
+	}
+	if meta.WorkflowRunID != "gwf-1" {
+		t.Fatalf("expected workflow run id to be linked, got %q", meta.WorkflowRunID)
 	}
 }
 

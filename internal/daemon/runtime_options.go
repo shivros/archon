@@ -258,25 +258,11 @@ func resolveRuntimeOptions(provider string, base, patch *types.SessionRuntimeOpt
 }
 
 func normalizeReasoningLevel(raw types.ReasoningLevel) (types.ReasoningLevel, bool) {
-	value := strings.ToLower(strings.TrimSpace(string(raw)))
-	value = strings.ReplaceAll(value, "-", "_")
-	switch types.ReasoningLevel(value) {
-	case types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh, types.ReasoningExtraHigh:
-		return types.ReasoningLevel(value), true
-	default:
-		return "", false
-	}
+	return types.NormalizeReasoningLevel(raw)
 }
 
 func normalizeAccessLevel(raw types.AccessLevel) (types.AccessLevel, bool) {
-	value := strings.ToLower(strings.TrimSpace(string(raw)))
-	value = strings.ReplaceAll(value, "-", "_")
-	switch types.AccessLevel(value) {
-	case types.AccessReadOnly, types.AccessOnRequest, types.AccessFull:
-		return types.AccessLevel(value), true
-	default:
-		return "", false
-	}
+	return types.NormalizeAccessLevel(raw)
 }
 
 func containsFolded(values []string, target string) bool {

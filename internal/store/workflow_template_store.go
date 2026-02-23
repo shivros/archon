@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 var ErrWorkflowTemplateNotFound = errors.New("workflow template not found")
@@ -224,6 +225,11 @@ func normalizeWorkflowTemplate(template guidedworkflows.WorkflowTemplate) (guide
 				return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate step id: " + step.ID)
 			}
 			stepIDs[step.ID] = struct{}{}
+			runtimeOptions, err := normalizeWorkflowStepRuntimeOptions(step.RuntimeOptions)
+			if err != nil {
+				return guidedworkflows.WorkflowTemplate{}, err
+			}
+			step.RuntimeOptions = runtimeOptions
 		}
 	}
 	return template, nil
@@ -235,7 +241,45 @@ func cloneWorkflowTemplate(template guidedworkflows.WorkflowTemplate) guidedwork
 	for idx, phase := range template.Phases {
 		outPhase := phase
 		outPhase.Steps = append([]guidedworkflows.WorkflowTemplateStep{}, phase.Steps...)
+		for stepIdx := range outPhase.Steps {
+			outPhase.Steps[stepIdx].RuntimeOptions = types.CloneRuntimeOptions(outPhase.Steps[stepIdx].RuntimeOptions)
+		}
 		out.Phases[idx] = outPhase
 	}
 	return out
+}
+
+func normalizeWorkflowStepRuntimeOptions(in *types.SessionRuntimeOptions) (*types.SessionRuntimeOptions, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := types.CloneRuntimeOptions(in)
+	if out == nil {
+		return nil, nil
+	}
+	out.Model = strings.TrimSpace(out.Model)
+	if out.Reasoning != "" {
+		normalizedReasoning, ok := types.NormalizeReasoningLevel(out.Reasoning)
+		if !ok {
+			return nil, errors.New("invalid step runtime_options.reasoning: " + strings.TrimSpace(string(out.Reasoning)))
+		}
+		out.Reasoning = normalizedReasoning
+	}
+	if out.Access != "" {
+		normalizedAccess, ok := types.NormalizeAccessLevel(out.Access)
+		if !ok {
+			return nil, errors.New("invalid step runtime_options.access: " + strings.TrimSpace(string(out.Access)))
+		}
+		out.Access = normalizedAccess
+	}
+	if out.Provider != nil && len(out.Provider) == 0 {
+		out.Provider = nil
+	}
+	if out.Version == 0 {
+		out.Version = 1
+	}
+	if out.Model == "" && out.Reasoning == "" && out.Access == "" && len(out.Provider) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }

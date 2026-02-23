@@ -43,6 +43,15 @@ func TestBuiltinTemplateSolidPhaseDeliverySequence(t *testing.T) {
 			t.Fatalf("expected step %d (%s) to include default prompt", i, steps[i].ID)
 		}
 	}
+	if steps[0].RuntimeOptions == nil || steps[0].RuntimeOptions.Model != "gpt-5.3-codex" || steps[0].RuntimeOptions.Reasoning != types.ReasoningExtraHigh {
+		t.Fatalf("expected phase_plan runtime options override, got %#v", steps[0].RuntimeOptions)
+	}
+	if steps[1].RuntimeOptions == nil || steps[1].RuntimeOptions.Model != "gpt-5.2-codex" || steps[1].RuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected implementation runtime options override, got %#v", steps[1].RuntimeOptions)
+	}
+	if steps[8].RuntimeOptions == nil || steps[8].RuntimeOptions.Model != "gpt-5.3-codex-spark" || steps[8].RuntimeOptions.Reasoning != types.ReasoningLow {
+		t.Fatalf("expected commit runtime options override, got %#v", steps[8].RuntimeOptions)
+	}
 }
 
 func TestDefaultWorkflowTemplatesContainsSolidPhaseDelivery(t *testing.T) {

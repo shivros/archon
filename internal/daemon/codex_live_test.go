@@ -292,8 +292,9 @@ func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 		Cwd:      t.TempDir(),
 	}
 	initialMeta := &types.SessionMeta{
-		SessionID: session.ID,
-		ThreadID:  "thr-stale",
+		SessionID:  session.ID,
+		ThreadID:   "thr-stale",
+		LastTurnID: "turn-existing",
 		RuntimeOptions: &types.SessionRuntimeOptions{
 			Model: "gpt-5",
 		},
@@ -306,7 +307,7 @@ func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 	defer cancel()
 	turnID, err := live.StartTurn(ctx, session, initialMeta, t.TempDir(), []map[string]any{
 		{"type": "text", "text": "hello"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatalf("expected StartTurn error when thread cannot be resumed; turn=%q", turnID)
 	}
@@ -322,6 +323,66 @@ func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 	}
 	if strings.TrimSpace(updatedMeta.ThreadID) != "thr-stale" {
 		t.Fatalf("expected stale thread id to remain unchanged, got %q", strings.TrimSpace(updatedMeta.ThreadID))
+	}
+	live.dropSession(session.ID)
+}
+
+func TestCodexLiveStartTurnRecoversMissingThreadForFreshSession(t *testing.T) {
+	wrapper := codexLiveHelperWrapper(t)
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configText := "[providers.codex]\ncommand = \"" + wrapper + "\"\n"
+	if err := os.WriteFile(filepath.Join(home, ".archon", "config.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("GO_WANT_CODEX_LIVE_HELPER_PROCESS", "1")
+	t.Setenv("ARCHON_CODEX_LIVE_HELPER_MODE", "resume_missing")
+
+	base := t.TempDir()
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "session_meta.json"))
+	stores := &Stores{SessionMeta: metaStore}
+	live := NewCodexLiveManager(stores, nil)
+	session := &types.Session{
+		ID:        "sess-bootstrap",
+		Provider:  "codex",
+		Cwd:       t.TempDir(),
+		CreatedAt: time.Now().UTC(),
+	}
+	initialMeta := &types.SessionMeta{
+		SessionID: session.ID,
+		ThreadID:  "thr-stale",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: "gpt-5",
+		},
+	}
+	if _, err := metaStore.Upsert(context.Background(), initialMeta); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	turnID, err := live.StartTurn(ctx, session, initialMeta, t.TempDir(), []map[string]any{
+		{"type": "text", "text": "hello"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("expected bootstrap recovery to succeed, got %v", err)
+	}
+	if strings.TrimSpace(turnID) == "" {
+		t.Fatalf("expected turn id from recovered thread")
+	}
+
+	updatedMeta, ok, err := metaStore.Get(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("load updated meta: %v", err)
+	}
+	if !ok || updatedMeta == nil {
+		t.Fatalf("expected updated session meta")
+	}
+	if got := strings.TrimSpace(updatedMeta.ThreadID); got == "" || got == "thr-stale" {
+		t.Fatalf("expected recovered thread id to replace stale value, got %q", got)
 	}
 	live.dropSession(session.ID)
 }
@@ -363,7 +424,7 @@ func TestCodexLiveStartTurnFailsWhenThreadIDUnavailable(t *testing.T) {
 	defer cancel()
 	turnID, err := live.StartTurn(ctx, session, meta, t.TempDir(), []map[string]any{
 		{"type": "text", "text": "hello"},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatalf("expected StartTurn error when thread id is unavailable; turn=%q", turnID)
 	}

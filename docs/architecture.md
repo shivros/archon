@@ -31,6 +31,7 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 12. Guided workflow telemetry lives inside `internal/guidedworkflows` as a snapshot API (`GetRunMetrics`), is persisted through daemon adapters into app state, and is exposed at `GET /v1/workflow-runs/metrics` with operational reset support at `POST /v1/workflow-runs/metrics/reset`.
 13. Guided workflow templates are sourced from `~/.archon/workflow_templates.json`; when present, that file fully replaces built-in defaults (no merge). Built-in defaults are defined in `internal/guidedworkflows/default_workflow_templates.json` and are used only when no user template file exists.
 14. Guided workflow step execution supports prompt dispatch through an injected `StepPromptDispatcher`; when dispatched, steps move to `awaiting_turn` and are only completed by turn-completed events, preserving turn-driven progression.
+15. Workflow template steps may optionally include `runtime_options` (for example model/reasoning/access). These are applied as per-turn overrides during step dispatch and, on successful send, become the session default runtime options for later turns.
 
 ## Streaming and Persistence
 

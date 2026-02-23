@@ -54,6 +54,275 @@ func TestSessionServiceDelegatesToRegisteredConversationAdapter(t *testing.T) {
 	}
 }
 
+func TestSessionServiceSendMessageWithOptionsMergesAndPersistsRuntimeOptions(t *testing.T) {
+	ctx := context.Background()
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			"s1": {
+				Session: &types.Session{
+					ID:        "s1",
+					Provider:  "mock-provider",
+					Cwd:       "/tmp/mock",
+					Status:    types.SessionStatusRunning,
+					CreatedAt: time.Now().UTC(),
+				},
+				Source: sessionSourceInternal,
+			},
+		},
+	}
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID: "s1",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model:  "baseline-model",
+			Access: types.AccessOnRequest,
+		},
+	}); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+	adapter := &testConversationAdapter{
+		provider:   "mock-provider",
+		sendTurnID: "turn-override",
+	}
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+	service.adapters = newConversationAdapterRegistry(adapter)
+
+	turnID, err := service.SendMessageWithOptions(ctx, "s1", []map[string]any{
+		{"type": "text", "text": "hello"},
+	}, SendMessageOptions{
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model:     "override-model",
+			Reasoning: types.ReasoningHigh,
+		},
+		PersistRuntimeOption: true,
+	})
+	if err != nil {
+		t.Fatalf("SendMessageWithOptions: %v", err)
+	}
+	if turnID != "turn-override" {
+		t.Fatalf("expected turn id turn-override, got %q", turnID)
+	}
+	if adapter.lastRuntimeOptions == nil {
+		t.Fatalf("expected adapter to receive merged runtime options")
+	}
+	if adapter.lastRuntimeOptions.Model != "override-model" {
+		t.Fatalf("expected merged model override, got %q", adapter.lastRuntimeOptions.Model)
+	}
+	if adapter.lastRuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected merged reasoning override, got %q", adapter.lastRuntimeOptions.Reasoning)
+	}
+	if adapter.lastRuntimeOptions.Access != types.AccessOnRequest {
+		t.Fatalf("expected baseline access to remain merged, got %q", adapter.lastRuntimeOptions.Access)
+	}
+	meta, ok, err := metaStore.Get(ctx, "s1")
+	if err != nil {
+		t.Fatalf("get persisted meta: %v", err)
+	}
+	if !ok || meta == nil || meta.RuntimeOptions == nil {
+		t.Fatalf("expected persisted runtime options")
+	}
+	if meta.RuntimeOptions.Model != "override-model" {
+		t.Fatalf("expected persisted model override, got %q", meta.RuntimeOptions.Model)
+	}
+	if meta.RuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected persisted reasoning override, got %q", meta.RuntimeOptions.Reasoning)
+	}
+	if meta.RuntimeOptions.Access != types.AccessOnRequest {
+		t.Fatalf("expected persisted merged access, got %q", meta.RuntimeOptions.Access)
+	}
+}
+
+func TestSessionServiceSendMessageWithOptionsFailsWhenRuntimePersistenceFails(t *testing.T) {
+	ctx := context.Background()
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			"s1": {
+				Session: &types.Session{
+					ID:        "s1",
+					Provider:  "mock-provider",
+					Cwd:       "/tmp/mock",
+					Status:    types.SessionStatusRunning,
+					CreatedAt: time.Now().UTC(),
+				},
+				Source: sessionSourceInternal,
+			},
+		},
+	}
+	metaStore := &failingSessionMetaStore{
+		entry: &types.SessionMeta{
+			SessionID: "s1",
+			RuntimeOptions: &types.SessionRuntimeOptions{
+				Model: "baseline-model",
+			},
+		},
+		upsertErr: errors.New("disk full"),
+	}
+	adapter := &testConversationAdapter{
+		provider:   "mock-provider",
+		sendTurnID: "turn-override",
+	}
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+	service.adapters = newConversationAdapterRegistry(adapter)
+
+	_, err := service.SendMessageWithOptions(ctx, "s1", []map[string]any{
+		{"type": "text", "text": "hello"},
+	}, SendMessageOptions{
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: "override-model",
+		},
+		PersistRuntimeOption: true,
+	})
+	if err == nil {
+		t.Fatalf("expected SendMessageWithOptions to fail when runtime persistence fails")
+	}
+	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
+	if !errors.Is(err, ErrRuntimeOptionsPersistFailed) {
+		t.Fatalf("expected ErrRuntimeOptionsPersistFailed, got %v", err)
+	}
+}
+
+func TestSessionServiceSendMessageUsesPersistedRuntimeOptionsOnSubsequentSends(t *testing.T) {
+	ctx := context.Background()
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			"s1": {
+				Session: &types.Session{
+					ID:        "s1",
+					Provider:  "mock-provider",
+					Cwd:       "/tmp/mock",
+					Status:    types.SessionStatusRunning,
+					CreatedAt: time.Now().UTC(),
+				},
+				Source: sessionSourceInternal,
+			},
+		},
+	}
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID: "s1",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Access: types.AccessOnRequest,
+		},
+	}); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+	adapter := &testConversationAdapter{
+		provider:   "mock-provider",
+		sendTurnID: "turn-runtime",
+	}
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+	service.adapters = newConversationAdapterRegistry(adapter)
+
+	_, err := service.SendMessageWithOptions(ctx, "s1", []map[string]any{
+		{"type": "text", "text": "step 1"},
+	}, SendMessageOptions{
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model:     "gpt-5.3-codex",
+			Reasoning: types.ReasoningExtraHigh,
+		},
+		PersistRuntimeOption: true,
+	})
+	if err != nil {
+		t.Fatalf("SendMessageWithOptions step 1: %v", err)
+	}
+	_, err = service.SendMessage(ctx, "s1", []map[string]any{
+		{"type": "text", "text": "step 2"},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage step 2: %v", err)
+	}
+	if len(adapter.runtimeOptionsBySend) != 2 {
+		t.Fatalf("expected two send calls, got %d", len(adapter.runtimeOptionsBySend))
+	}
+	first := adapter.runtimeOptionsBySend[0]
+	second := adapter.runtimeOptionsBySend[1]
+	if first == nil {
+		t.Fatalf("expected first send runtime options")
+	}
+	if second == nil {
+		t.Fatalf("expected second send to inherit persisted runtime options")
+	}
+	if first.Model != "gpt-5.3-codex" || second.Model != "gpt-5.3-codex" {
+		t.Fatalf("expected persisted model to be reused, got first=%q second=%q", first.Model, second.Model)
+	}
+	if first.Reasoning != types.ReasoningExtraHigh || second.Reasoning != types.ReasoningExtraHigh {
+		t.Fatalf("expected persisted reasoning to be reused, got first=%q second=%q", first.Reasoning, second.Reasoning)
+	}
+	if first.Access != types.AccessOnRequest || second.Access != types.AccessOnRequest {
+		t.Fatalf("expected baseline access to remain, got first=%q second=%q", first.Access, second.Access)
+	}
+}
+
+func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *testing.T) {
+	t.Run("nil receiver", func(t *testing.T) {
+		var service *SessionService
+		err := service.persistRuntimeOptionsAfterSend(context.Background(), "s1", &types.SessionRuntimeOptions{Model: "m"})
+		if !errors.Is(err, ErrRuntimeOptionsPersistFailed) {
+			t.Fatalf("expected ErrRuntimeOptionsPersistFailed, got %v", err)
+		}
+	})
+
+	t.Run("missing meta store", func(t *testing.T) {
+		service := NewSessionService(nil, &Stores{}, nil, nil)
+		err := service.persistRuntimeOptionsAfterSend(context.Background(), "s1", &types.SessionRuntimeOptions{Model: "m"})
+		if !errors.Is(err, ErrRuntimeOptionsPersistFailed) {
+			t.Fatalf("expected ErrRuntimeOptionsPersistFailed, got %v", err)
+		}
+	})
+
+	t.Run("empty session id", func(t *testing.T) {
+		service := NewSessionService(nil, &Stores{
+			SessionMeta: store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json")),
+		}, nil, nil)
+		err := service.persistRuntimeOptionsAfterSend(context.Background(), "   ", &types.SessionRuntimeOptions{Model: "m"})
+		if !errors.Is(err, ErrRuntimeOptionsPersistFailed) {
+			t.Fatalf("expected ErrRuntimeOptionsPersistFailed, got %v", err)
+		}
+	})
+
+	t.Run("nil runtime options is no-op", func(t *testing.T) {
+		service := NewSessionService(nil, &Stores{
+			SessionMeta: store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json")),
+		}, nil, nil)
+		if err := service.persistRuntimeOptionsAfterSend(context.Background(), "s1", nil); err != nil {
+			t.Fatalf("expected nil runtime options to no-op, got %v", err)
+		}
+	})
+
+	t.Run("nil context persists successfully", func(t *testing.T) {
+		metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+		service := NewSessionService(nil, &Stores{
+			SessionMeta: metaStore,
+		}, nil, nil)
+		want := &types.SessionRuntimeOptions{
+			Model:     "gpt-5.2-codex",
+			Reasoning: types.ReasoningHigh,
+		}
+		if err := service.persistRuntimeOptionsAfterSend(nil, "s1", want); err != nil {
+			t.Fatalf("persistRuntimeOptionsAfterSend: %v", err)
+		}
+		meta, ok, err := metaStore.Get(context.Background(), "s1")
+		if err != nil {
+			t.Fatalf("get persisted meta: %v", err)
+		}
+		if !ok || meta == nil || meta.RuntimeOptions == nil {
+			t.Fatalf("expected persisted runtime options")
+		}
+		if meta.RuntimeOptions.Model != want.Model || meta.RuntimeOptions.Reasoning != want.Reasoning {
+			t.Fatalf("unexpected persisted runtime options: %#v", meta.RuntimeOptions)
+		}
+	})
+}
+
 func TestConversationAdapterContractHistoryRequiresSession(t *testing.T) {
 	registry := newConversationAdapterRegistry()
 	service := NewSessionService(nil, nil, nil, nil)
@@ -958,9 +1227,43 @@ func (s *stubSessionIndexStore) DeleteRecord(_ context.Context, sessionID string
 }
 
 type testConversationAdapter struct {
-	provider   string
-	sendTurnID string
-	sendCalls  int
+	provider             string
+	sendTurnID           string
+	sendCalls            int
+	lastRuntimeOptions   *types.SessionRuntimeOptions
+	runtimeOptionsBySend []*types.SessionRuntimeOptions
+}
+
+type failingSessionMetaStore struct {
+	entry     *types.SessionMeta
+	upsertErr error
+}
+
+func (s *failingSessionMetaStore) List(context.Context) ([]*types.SessionMeta, error) {
+	if s == nil || s.entry == nil {
+		return []*types.SessionMeta{}, nil
+	}
+	copy := *s.entry
+	return []*types.SessionMeta{&copy}, nil
+}
+
+func (s *failingSessionMetaStore) Get(_ context.Context, sessionID string) (*types.SessionMeta, bool, error) {
+	if s == nil || s.entry == nil || s.entry.SessionID != sessionID {
+		return nil, false, nil
+	}
+	copy := *s.entry
+	return &copy, true, nil
+}
+
+func (s *failingSessionMetaStore) Upsert(_ context.Context, _ *types.SessionMeta) (*types.SessionMeta, error) {
+	if s == nil || s.upsertErr == nil {
+		return nil, nil
+	}
+	return nil, s.upsertErr
+}
+
+func (s *failingSessionMetaStore) Delete(context.Context, string) error {
+	return nil
 }
 
 func (a *testConversationAdapter) Provider() string {
@@ -971,8 +1274,14 @@ func (a *testConversationAdapter) History(context.Context, *SessionService, *typ
 	return []map[string]any{{"type": "log", "text": "ok"}}, nil
 }
 
-func (a *testConversationAdapter) SendMessage(_ context.Context, _ *SessionService, _ *types.Session, _ *types.SessionMeta, _ []map[string]any) (string, error) {
+func (a *testConversationAdapter) SendMessage(_ context.Context, _ *SessionService, _ *types.Session, meta *types.SessionMeta, _ []map[string]any) (string, error) {
 	a.sendCalls++
+	if meta != nil {
+		a.lastRuntimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
+	} else {
+		a.lastRuntimeOptions = nil
+	}
+	a.runtimeOptionsBySend = append(a.runtimeOptionsBySend, types.CloneRuntimeOptions(a.lastRuntimeOptions))
 	return a.sendTurnID, nil
 }
 
