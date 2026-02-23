@@ -1640,7 +1640,7 @@ func TestGuidedWorkflowFailedSummaryPrimesDefaultResumeMessage(t *testing.T) {
 	if !strings.Contains(m.contentRaw, "Resume Failed Run") {
 		t.Fatalf("expected failed summary to render resume section, got %q", m.contentRaw)
 	}
-	if !strings.Contains(m.contentRaw, "Original prompt: "+failed.UserPrompt) {
+	if !strings.Contains(m.contentRaw, "### Original Prompt") || !strings.Contains(m.contentRaw, "> "+failed.UserPrompt) {
 		t.Fatalf("expected original prompt in summary content, got %q", m.contentRaw)
 	}
 }
@@ -2157,6 +2157,11 @@ func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 		},
 	})
 	content := controller.Render()
+	promptIdx := strings.Index(content, "### Original Prompt")
+	outcomeIdx := strings.Index(content, "### Outcome")
+	if promptIdx < 0 || outcomeIdx < 0 || promptIdx > outcomeIdx {
+		t.Fatalf("expected original prompt section ahead of outcome in summary, got %q", content)
+	}
 	if !strings.Contains(content, "- Final status: completed  \n- Completed steps: 2/2") {
 		t.Fatalf("expected summary fields to render on separate lines, got %q", content)
 	}
@@ -2166,11 +2171,14 @@ func TestGuidedWorkflowSummaryRendersReadableLineBreaks(t *testing.T) {
 	if !strings.Contains(content, "### Step Links") {
 		t.Fatalf("expected step links section in summary, got %q", content)
 	}
-	if !strings.Contains(content, "[user turn turn-1](archon://session/s1?turn=turn-1)") {
-		t.Fatalf("expected first step turn link in summary")
+	if !strings.Contains(content, "- Phase Delivery / phase plan: user turn turn-1") {
+		t.Fatalf("expected first step turn label in summary")
 	}
-	if !strings.Contains(content, "[user turn turn-2](archon://session/s1?turn=turn-2)") {
-		t.Fatalf("expected second step turn link in summary")
+	if !strings.Contains(content, "- Phase Delivery / implementation: user turn turn-2") {
+		t.Fatalf("expected second step turn label in summary")
+	}
+	if strings.Contains(content, "archon://session/") {
+		t.Fatalf("expected summary step links to omit raw deep-link urls, got %q", content)
 	}
 }
 

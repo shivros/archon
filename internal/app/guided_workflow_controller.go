@@ -791,13 +791,17 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 	lines := []string{
 		"# Post-run Summary",
 		"",
+		"### Original Prompt",
+	}
+	lines = append(lines, c.renderWorkflowPromptSummaryBlock(run)...)
+	lines = append(lines,
+		"",
 		"### Outcome",
 		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(unknown)")),
 		fmt.Sprintf("- Final status: %s", runStatusText(run.Status)),
 		fmt.Sprintf("- Completed steps: %d/%d", completedSteps, totalSteps),
 		fmt.Sprintf("- Decisions requested: %d", len(run.CheckpointDecisions)),
-		fmt.Sprintf("- Original prompt: %s", c.renderWorkflowPrompt(run)),
-	}
+	)
 	linkedSteps, unavailableSteps := c.traceabilityCounts()
 	lines = append(lines, fmt.Sprintf("- Traceability: %d/%d linked (%d unavailable)", linkedSteps, totalSteps, unavailableSteps))
 	if run.CompletedAt != nil {
@@ -834,6 +838,38 @@ func (c *GuidedWorkflowUIController) renderWorkflowPrompt(run *guidedworkflows.W
 		presenter = newWorkflowPromptPresenter()
 	}
 	return presenter.Present(run)
+}
+
+func (c *GuidedWorkflowUIController) renderWorkflowPromptSummaryBlock(run *guidedworkflows.WorkflowRun) []string {
+	prompt := c.resolveWorkflowPromptRaw(run)
+	if prompt == "" {
+		prompt = c.renderWorkflowPrompt(run)
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		prompt = workflowPromptUnavailable
+	}
+	lines := strings.Split(prompt, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimRight(line, " \t")
+		if line == "" {
+			out = append(out, ">")
+			continue
+		}
+		out = append(out, "> "+line)
+	}
+	return out
+}
+
+func (c *GuidedWorkflowUIController) resolveWorkflowPromptRaw(run *guidedworkflows.WorkflowRun) string {
+	if run == nil {
+		return ""
+	}
+	if prompt := strings.TrimSpace(run.DisplayUserPrompt); prompt != "" {
+		return prompt
+	}
+	return strings.TrimSpace(run.UserPrompt)
 }
 
 func joinGuidedWorkflowLines(lines []string) string {
@@ -979,7 +1015,11 @@ func (c *GuidedWorkflowUIController) renderStepLinksSummary() []string {
 		phaseName := valueOrFallback(phase.Name, phase.ID)
 		for _, step := range phase.Steps {
 			stepName := valueOrFallback(step.Name, step.ID)
-			lines = append(lines, fmt.Sprintf("- %s / %s: %s", phaseName, stepName, c.stepUserTurnLink(step)))
+			stepLinkLabel := workflowUserTurnLinkLabel(c.stepUserTurnLink(step))
+			if stepLinkLabel == "" {
+				stepLinkLabel = unavailableUserTurnLink
+			}
+			lines = append(lines, fmt.Sprintf("- %s / %s: %s", phaseName, stepName, stepLinkLabel))
 		}
 	}
 	return lines

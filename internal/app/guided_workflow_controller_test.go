@@ -310,7 +310,7 @@ func TestGuidedWorkflowControllerRenderFallsBackToUserPromptForLegacyPayloads(t 
 	})
 
 	summary := controller.renderSummary()
-	if !strings.Contains(summary, "Original prompt: prompt from legacy daemon payload") {
+	if !strings.Contains(summary, "### Original Prompt") || !strings.Contains(summary, "> prompt from legacy daemon payload") {
 		t.Fatalf("expected user prompt fallback in summary view, got %q", summary)
 	}
 }
