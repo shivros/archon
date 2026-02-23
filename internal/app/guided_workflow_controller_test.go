@@ -283,6 +283,39 @@ func TestGuidedWorkflowControllerTurnLinkTargets(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowStatusTextHelpersIncludeStoppedStates(t *testing.T) {
+	if got := runStatusText(guidedworkflows.WorkflowRunStatusStopped); got != "stopped" {
+		t.Fatalf("expected stopped run status text, got %q", got)
+	}
+	if got := runStatusText(guidedworkflows.WorkflowRunStatusRunning); got != "running" {
+		t.Fatalf("expected running run status text, got %q", got)
+	}
+	if got := runStatusText(guidedworkflows.WorkflowRunStatusPaused); got != "paused (decision needed)" {
+		t.Fatalf("expected paused run status text, got %q", got)
+	}
+	if got := runStatusText(guidedworkflows.WorkflowRunStatus(" custom ")); got != "custom" {
+		t.Fatalf("expected trimmed fallback run status, got %q", got)
+	}
+	if got := stepStatusPrefix(guidedworkflows.StepRunStatusStopped); got != "[s]" {
+		t.Fatalf("expected stopped step prefix [s], got %q", got)
+	}
+	if got := phaseStatusPrefix(guidedworkflows.PhaseRunStatusStopped); got != "[s]" {
+		t.Fatalf("expected stopped phase prefix [s], got %q", got)
+	}
+	if got := phaseStatusPrefix(guidedworkflows.PhaseRunStatusRunning); got != "[>]" {
+		t.Fatalf("expected running phase prefix [>], got %q", got)
+	}
+	if got := phaseStatusPrefix(guidedworkflows.PhaseRunStatusCompleted); got != "[x]" {
+		t.Fatalf("expected completed phase prefix [x], got %q", got)
+	}
+	if got := phaseStatusPrefix(guidedworkflows.PhaseRunStatusFailed); got != "[!]" {
+		t.Fatalf("expected failed phase prefix [!], got %q", got)
+	}
+	if got := phaseStatusPrefix(guidedworkflows.PhaseRunStatusPending); got != "[ ]" {
+		t.Fatalf("expected pending phase prefix [ ], got %q", got)
+	}
+}
+
 func TestGuidedWorkflowControllerRenderUsesDisplayPromptFallback(t *testing.T) {
 	controller := NewGuidedWorkflowUIController()
 	controller.SetRun(&guidedworkflows.WorkflowRun{

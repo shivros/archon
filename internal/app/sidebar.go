@@ -961,6 +961,8 @@ func workflowRunStatusText(run *guidedworkflows.WorkflowRun) string {
 		return "running"
 	case guidedworkflows.WorkflowRunStatusPaused:
 		return "paused"
+	case guidedworkflows.WorkflowRunStatusStopped:
+		return "stopped"
 	case guidedworkflows.WorkflowRunStatusCompleted:
 		return "completed"
 	case guidedworkflows.WorkflowRunStatusFailed:

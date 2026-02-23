@@ -263,6 +263,7 @@ type GuidedWorkflowRunAPI interface {
 	ListWorkflowRunsWithOptions(ctx context.Context, includeDismissed bool) ([]*guidedworkflows.WorkflowRun, error)
 	CreateWorkflowRun(ctx context.Context, req client.CreateWorkflowRunRequest) (*guidedworkflows.WorkflowRun, error)
 	StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	StopWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	ResumeFailedWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunResumeRequest) (*guidedworkflows.WorkflowRun, error)
 	RenameWorkflowRun(ctx context.Context, runID, name string) (*guidedworkflows.WorkflowRun, error)
 	DismissWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
@@ -491,6 +492,10 @@ func (a *ClientAPI) ListWorkflowRunsWithOptions(ctx context.Context, includeDism
 
 func (a *ClientAPI) StartWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
 	return a.client.StartWorkflowRun(ctx, runID)
+}
+
+func (a *ClientAPI) StopWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	return a.client.StopWorkflowRun(ctx, runID)
 }
 
 func (a *ClientAPI) ResumeFailedWorkflowRun(ctx context.Context, runID string, req client.WorkflowRunResumeRequest) (*guidedworkflows.WorkflowRun, error) {

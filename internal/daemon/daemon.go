@@ -168,6 +168,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.GuidedWorkflows = guided
 	api.WorkflowRuns = workflowRuns
 	api.WorkflowSessionVisibility = newWorkflowRunSessionVisibilitySyncService(d.stores, d.logger)
+	api.WorkflowSessionInterrupt = newWorkflowRunSessionInterruptService(d.manager, d.stores, liveCodex, d.logger)
+	api.WorkflowRunStop = newWorkflowRunStopCoordinator(api.WorkflowRuns, api.WorkflowSessionInterrupt, d.logger)
 	if metrics, ok := any(workflowRuns).(GuidedWorkflowRunMetricsService); ok {
 		api.WorkflowRunMetrics = metrics
 	}

@@ -59,6 +59,18 @@ type stubWorkflowSessionVisibilityService struct{}
 func (stubWorkflowSessionVisibilityService) SyncWorkflowRunSessionVisibility(*guidedworkflows.WorkflowRun, bool) {
 }
 
+type stubWorkflowSessionInterruptService struct{}
+
+func (stubWorkflowSessionInterruptService) InterruptWorkflowRunSessions(context.Context, *guidedworkflows.WorkflowRun) error {
+	return nil
+}
+
+type stubWorkflowRunStopCoordinator struct{}
+
+func (stubWorkflowRunStopCoordinator) StopWorkflowRun(context.Context, string) (*guidedworkflows.WorkflowRun, error) {
+	return &guidedworkflows.WorkflowRun{ID: "gwf-1"}, nil
+}
+
 type stubWorkflowPolicyResolver struct {
 	calls int
 }
@@ -82,15 +94,25 @@ func TestAPIServiceAccessors(t *testing.T) {
 	if nilAPI.workflowSessionVisibilityService() != nil {
 		t.Fatalf("expected nil session visibility service for nil API")
 	}
+	if nilAPI.workflowSessionInterruptService() != nil {
+		t.Fatalf("expected nil session interrupt service for nil API")
+	}
+	if nilAPI.workflowRunStopCoordinator() != nil {
+		t.Fatalf("expected nil run stop coordinator for nil API")
+	}
 
 	metricsService := stubWorkflowRunMetricsService{}
 	resetService := stubWorkflowRunMetricsResetService{}
 	visibilityService := stubWorkflowSessionVisibilityService{}
+	interruptService := stubWorkflowSessionInterruptService{}
+	stopCoordinator := stubWorkflowRunStopCoordinator{}
 	api := &API{
 		WorkflowRuns:              guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
 		WorkflowRunMetrics:        metricsService,
 		WorkflowRunMetricsReset:   resetService,
 		WorkflowSessionVisibility: visibilityService,
+		WorkflowSessionInterrupt:  interruptService,
+		WorkflowRunStop:           stopCoordinator,
 	}
 	if api.workflowRunService() == nil {
 		t.Fatalf("expected configured run service")
@@ -103,6 +125,17 @@ func TestAPIServiceAccessors(t *testing.T) {
 	}
 	if api.workflowSessionVisibilityService() != visibilityService {
 		t.Fatalf("expected configured session visibility service")
+	}
+	if api.workflowSessionInterruptService() != interruptService {
+		t.Fatalf("expected configured session interrupt service")
+	}
+	if api.workflowRunStopCoordinator() != stopCoordinator {
+		t.Fatalf("expected configured run stop coordinator")
+	}
+
+	api.WorkflowRunStop = nil
+	if api.workflowRunStopCoordinator() == nil {
+		t.Fatalf("expected fallback run stop coordinator when run service is configured")
 	}
 }
 

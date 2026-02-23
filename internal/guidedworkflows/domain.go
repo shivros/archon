@@ -38,6 +38,7 @@ const (
 	WorkflowRunStatusCreated   WorkflowRunStatus = "created"
 	WorkflowRunStatusRunning   WorkflowRunStatus = "running"
 	WorkflowRunStatusPaused    WorkflowRunStatus = "paused"
+	WorkflowRunStatusStopped   WorkflowRunStatus = "stopped"
 	WorkflowRunStatusCompleted WorkflowRunStatus = "completed"
 	WorkflowRunStatusFailed    WorkflowRunStatus = "failed"
 )
@@ -47,6 +48,7 @@ type PhaseRunStatus string
 const (
 	PhaseRunStatusPending   PhaseRunStatus = "pending"
 	PhaseRunStatusRunning   PhaseRunStatus = "running"
+	PhaseRunStatusStopped   PhaseRunStatus = "stopped"
 	PhaseRunStatusCompleted PhaseRunStatus = "completed"
 	PhaseRunStatusFailed    PhaseRunStatus = "failed"
 )
@@ -56,6 +58,7 @@ type StepRunStatus string
 const (
 	StepRunStatusPending   StepRunStatus = "pending"
 	StepRunStatusRunning   StepRunStatus = "running"
+	StepRunStatusStopped   StepRunStatus = "stopped"
 	StepRunStatusCompleted StepRunStatus = "completed"
 	StepRunStatusFailed    StepRunStatus = "failed"
 )

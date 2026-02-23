@@ -28,6 +28,8 @@ type API struct {
 	WorkflowPolicy            GuidedWorkflowPolicyResolver
 	WorkflowDispatchDefaults  guidedWorkflowDispatchDefaults
 	WorkflowSessionVisibility WorkflowRunSessionVisibilityService
+	WorkflowSessionInterrupt  WorkflowRunSessionInterruptService
+	WorkflowRunStop           WorkflowRunStopCoordinator
 	Logger                    logging.Logger
 }
 
@@ -105,6 +107,7 @@ type GuidedWorkflowRunService interface {
 	RenameRun(ctx context.Context, runID, name string) (*guidedworkflows.WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
+	StopRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 	ResumeFailedRun(ctx context.Context, runID string, req guidedworkflows.ResumeFailedRunRequest) (*guidedworkflows.WorkflowRun, error)
 	DismissRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
@@ -128,6 +131,14 @@ type GuidedWorkflowRunMetricsResetService interface {
 
 type WorkflowRunSessionVisibilityService interface {
 	SyncWorkflowRunSessionVisibility(run *guidedworkflows.WorkflowRun, dismissed bool)
+}
+
+type WorkflowRunSessionInterruptService interface {
+	InterruptWorkflowRunSessions(ctx context.Context, run *guidedworkflows.WorkflowRun) error
+}
+
+type WorkflowRunStopCoordinator interface {
+	StopWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error)
 }
 
 type GuidedWorkflowPolicyResolver interface {
@@ -227,4 +238,21 @@ func (a *API) workflowSessionVisibilityService() WorkflowRunSessionVisibilitySer
 		return nil
 	}
 	return a.WorkflowSessionVisibility
+}
+
+func (a *API) workflowSessionInterruptService() WorkflowRunSessionInterruptService {
+	if a == nil {
+		return nil
+	}
+	return a.WorkflowSessionInterrupt
+}
+
+func (a *API) workflowRunStopCoordinator() WorkflowRunStopCoordinator {
+	if a == nil {
+		return nil
+	}
+	if a.WorkflowRunStop != nil {
+		return a.WorkflowRunStop
+	}
+	return newWorkflowRunStopCoordinator(a.workflowRunService(), a.workflowSessionInterruptService(), a.Logger)
 }

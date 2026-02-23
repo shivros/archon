@@ -2043,6 +2043,94 @@ func TestGuidedWorkflowModeDismissHotkeyUsesActiveRunWhenSessionSelected(t *test
 	}
 }
 
+func TestGuidedWorkflowLiveStopHotkeyStopsRun(t *testing.T) {
+	now := time.Date(2026, 2, 22, 9, 0, 0, 0, time.UTC)
+	running := newWorkflowRunFixture("gwf-stop-hotkey", guidedworkflows.WorkflowRunStatusRunning, now)
+	stopped := cloneWorkflowRun(running)
+	stopped.Status = guidedworkflows.WorkflowRunStatusStopped
+	completedAt := now.Add(15 * time.Second)
+	stopped.CompletedAt = &completedAt
+	stopped.LastError = "workflow run stopped by user"
+	api := &guidedWorkflowAPIMock{
+		stopRun: stopped,
+		snapshotRuns: []*guidedworkflows.WorkflowRun{
+			cloneWorkflowRun(stopped),
+		},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_started", RunID: running.ID},
+				{At: completedAt, Type: "run_stopped", RunID: running.ID, Message: "workflow run stopped by user"},
+			},
+		},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(cloneWorkflowRun(running))
+	m.renderGuidedWorkflowContent()
+	if m.guidedWorkflow.Stage() != guidedWorkflowStageLive {
+		t.Fatalf("expected live stage before stop, got %v", m.guidedWorkflow.Stage())
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m = asModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("expected stop command from guided workflow hotkey")
+	}
+	stopMsg, ok := cmd().(workflowRunStoppedMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunStoppedMsg, got %T", cmd())
+	}
+	updated, cmd = m.Update(stopMsg)
+	m = asModel(t, updated)
+	if m.status != "guided workflow stopped" {
+		t.Fatalf("expected guided workflow stopped status, got %q", m.status)
+	}
+	if len(api.stopRunIDs) != 1 || api.stopRunIDs[0] != running.ID {
+		t.Fatalf("expected one stop request for run %q, got %#v", running.ID, api.stopRunIDs)
+	}
+	if cmd == nil {
+		t.Fatalf("expected snapshot refresh command after stop")
+	}
+	snapshotMsg := workflowRunSnapshotMsgFromCmd(t, cmd)
+	updated, _ = m.Update(snapshotMsg)
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageLive {
+		t.Fatalf("expected guided workflow to remain in live stage after stop snapshot")
+	}
+	if got := strings.TrimSpace(m.guidedWorkflow.RunID()); got != running.ID {
+		t.Fatalf("expected run id %q after stop snapshot, got %q", running.ID, got)
+	}
+}
+
+func TestStopGuidedWorkflowRunRequiresRunID(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(nil)
+
+	cmd := m.stopGuidedWorkflowRun()
+	if cmd != nil {
+		t.Fatalf("expected no stop command when run id is missing")
+	}
+	if m.status != "guided run id is missing" {
+		t.Fatalf("expected missing run id validation status, got %q", m.status)
+	}
+}
+
 func TestConfirmDismissWorkflowReturnsVisibilityCommand(t *testing.T) {
 	now := time.Date(2026, 2, 17, 14, 0, 0, 0, time.UTC)
 	run := newWorkflowRunFixture("gwf-confirm-dismiss", guidedworkflows.WorkflowRunStatusRunning, now)

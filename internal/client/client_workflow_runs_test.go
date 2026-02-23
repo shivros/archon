@@ -43,6 +43,10 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 			seen["start"] = true
 			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/stop":
+			seen["stop"] = true
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"stopped","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
+			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/resume":
 			var req WorkflowRunResumeRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -172,6 +176,14 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("expected started display prompt to round-trip, got %#v", started)
 	}
 
+	stopped, err := c.StopWorkflowRun(ctx, "gwf-1")
+	if err != nil {
+		t.Fatalf("StopWorkflowRun error: %v", err)
+	}
+	if stopped == nil || stopped.Status != guidedworkflows.WorkflowRunStatusStopped {
+		t.Fatalf("unexpected stopped run: %#v", stopped)
+	}
+
 	resumed, err := c.ResumeFailedWorkflowRun(ctx, "gwf-1", WorkflowRunResumeRequest{
 		ResumeFailed: true,
 		Message:      "resume from outage",
@@ -256,7 +268,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		t.Fatalf("unexpected metrics reset response: %#v", reset)
 	}
 
-	for _, key := range []string{"templates", "list", "create", "start", "resume_failed", "rename", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
+	for _, key := range []string{"templates", "list", "create", "start", "stop", "resume_failed", "rename", "dismiss", "undismiss", "get", "timeline", "decision", "metrics_get", "metrics_reset"} {
 		if !seen[key] {
 			t.Fatalf("expected request %q to be executed", key)
 		}

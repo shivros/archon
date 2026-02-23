@@ -347,6 +347,42 @@ func TestBuildSidebarItemsWorkflowDismissedToggle(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunStatusTextIncludesStoppedAndDismissed(t *testing.T) {
+	if got := workflowRunStatusText(nil); got != "" {
+		t.Fatalf("expected empty status for nil workflow run, got %q", got)
+	}
+	now := time.Now().UTC()
+	cases := []struct {
+		status guidedworkflows.WorkflowRunStatus
+		want   string
+	}{
+		{status: guidedworkflows.WorkflowRunStatusCreated, want: "created"},
+		{status: guidedworkflows.WorkflowRunStatusRunning, want: "running"},
+		{status: guidedworkflows.WorkflowRunStatusPaused, want: "paused"},
+		{status: guidedworkflows.WorkflowRunStatusStopped, want: "stopped"},
+		{status: guidedworkflows.WorkflowRunStatusCompleted, want: "completed"},
+		{status: guidedworkflows.WorkflowRunStatusFailed, want: "failed"},
+	}
+	for _, tc := range cases {
+		run := &guidedworkflows.WorkflowRun{
+			ID:     "gwf-1",
+			Status: tc.status,
+		}
+		if got := workflowRunStatusText(run); got != tc.want {
+			t.Fatalf("status %q: expected %q, got %q", tc.status, tc.want, got)
+		}
+	}
+	run := &guidedworkflows.WorkflowRun{ID: "gwf-1"}
+	run.Status = guidedworkflows.WorkflowRunStatus(" custom ")
+	if got := workflowRunStatusText(run); got != "custom" {
+		t.Fatalf("expected trimmed fallback workflow status text, got %q", got)
+	}
+	run.DismissedAt = &now
+	if got := workflowRunStatusText(run); got != "dismissed" {
+		t.Fatalf("expected dismissed workflow status text to take precedence, got %q", got)
+	}
+}
+
 func ptrTime(value time.Time) *time.Time {
 	ts := value.UTC()
 	return &ts

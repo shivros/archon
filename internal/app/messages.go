@@ -325,6 +325,11 @@ type workflowRunStartedMsg struct {
 	err error
 }
 
+type workflowRunStoppedMsg struct {
+	run *guidedworkflows.WorkflowRun
+	err error
+}
+
 type workflowRunResumedMsg struct {
 	run *guidedworkflows.WorkflowRun
 	err error

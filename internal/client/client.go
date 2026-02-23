@@ -438,6 +438,19 @@ func (c *Client) StartWorkflowRun(ctx context.Context, runID string) (*guidedwor
 	return &run, nil
 }
 
+func (c *Client) StopWorkflowRun(ctx context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, errors.New("run id is required")
+	}
+	var run guidedworkflows.WorkflowRun
+	path := fmt.Sprintf("/v1/workflow-runs/%s/stop", runID)
+	if err := c.doJSON(ctx, http.MethodPost, path, nil, true, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
 func (c *Client) ResumeFailedWorkflowRun(ctx context.Context, runID string, req WorkflowRunResumeRequest) (*guidedworkflows.WorkflowRun, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {

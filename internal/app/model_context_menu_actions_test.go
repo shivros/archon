@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"control/internal/guidedworkflows"
 	"control/internal/types"
@@ -425,6 +426,55 @@ func TestWorkflowContextActionRenameRequiresSelection(t *testing.T) {
 	}
 }
 
+func TestWorkflowContextActionStopReturnsCommand(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	stopRun := &guidedworkflows.WorkflowRun{
+		ID:        "gwf-1",
+		Status:    guidedworkflows.WorkflowRunStatusStopped,
+		CreatedAt: now,
+	}
+	m.guidedWorkflowAPI = &guidedWorkflowAPIMock{
+		stopRun: stopRun,
+	}
+
+	handled, cmd := m.handleWorkflowContextMenuAction(ContextMenuWorkflowStop, contextMenuTarget{workflowID: "gwf-1"})
+	if !handled {
+		t.Fatalf("expected workflow action to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected stop workflow command")
+	}
+	if m.status != "stopping workflow gwf-1" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+	msg, ok := cmd().(workflowRunStoppedMsg)
+	if !ok {
+		t.Fatalf("expected workflowRunStoppedMsg, got %T", cmd())
+	}
+	if msg.err != nil {
+		t.Fatalf("expected no stop error, got %v", msg.err)
+	}
+	if msg.run == nil || msg.run.Status != guidedworkflows.WorkflowRunStatusStopped {
+		t.Fatalf("unexpected stopped run payload: %#v", msg.run)
+	}
+}
+
+func TestWorkflowContextActionStopRequiresSelection(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.handleWorkflowContextMenuAction(ContextMenuWorkflowStop, contextMenuTarget{})
+	if !handled {
+		t.Fatalf("expected workflow action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	if m.status != "select a workflow" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
 func TestSessionContextActionOpenNotesEntersNotesMode(t *testing.T) {
 	m := NewModel(nil)
 	m.sessionMeta = map[string]*types.SessionMeta{
@@ -591,15 +641,21 @@ func TestContextMenuControllerSessionIncludesAddNoteAction(t *testing.T) {
 func TestContextMenuControllerWorkflowIncludesRenameAction(t *testing.T) {
 	c := NewContextMenuController()
 	c.OpenWorkflow("gwf-1", "Workflow", false, 0, 0)
-	found := false
+	foundRename := false
+	foundStop := false
 	for _, item := range c.items {
 		if item.Action == ContextMenuWorkflowRename {
-			found = true
-			break
+			foundRename = true
+		}
+		if item.Action == ContextMenuWorkflowStop {
+			foundStop = true
 		}
 	}
-	if !found {
+	if !foundRename {
 		t.Fatalf("expected workflow context menu to include rename action")
+	}
+	if !foundStop {
+		t.Fatalf("expected workflow context menu to include stop action")
 	}
 }
 

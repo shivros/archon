@@ -267,6 +267,10 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 					return true, m.refreshGuidedWorkflowNow("refreshing guided workflow timeline")
 				}
 			}
+		case "x":
+			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLive {
+				return true, m.stopGuidedWorkflowRun()
+			}
 		case "a":
 			if m.guidedWorkflow != nil && m.guidedWorkflow.NeedsDecision() {
 				return true, m.decideGuidedWorkflow(guidedworkflows.DecisionActionApproveContinue)
@@ -465,6 +469,20 @@ func (m *Model) decideGuidedWorkflow(action guidedworkflows.DecisionAction) tea.
 		m.setStatusMessage("pausing guided workflow run")
 	}
 	return decideWorkflowRunCmd(m.guidedWorkflowAPI, runID, m.guidedWorkflow.BuildDecisionRequest(action))
+}
+
+func (m *Model) stopGuidedWorkflowRun() tea.Cmd {
+	if m == nil || m.guidedWorkflow == nil {
+		return nil
+	}
+	runID := strings.TrimSpace(m.guidedWorkflow.RunID())
+	if runID == "" {
+		m.setValidationStatus("guided run id is missing")
+		return nil
+	}
+	m.setStatusMessage("stopping guided workflow run")
+	m.renderGuidedWorkflowContent()
+	return stopWorkflowRunCmd(m.guidedWorkflowAPI, runID)
 }
 
 func (m *Model) openGuidedWorkflowSelectedSession() tea.Cmd {

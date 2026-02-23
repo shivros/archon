@@ -947,6 +947,216 @@ func TestRunLifecycleInvalidTransitions(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleStopRunFromCreatedAndIdempotent(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	stopped, err := service.StopRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StopRun: %v", err)
+	}
+	if stopped.Status != WorkflowRunStatusStopped {
+		t.Fatalf("expected stopped status, got %q", stopped.Status)
+	}
+	if stopped.CompletedAt == nil {
+		t.Fatalf("expected completed timestamp when stopped")
+	}
+	if strings.TrimSpace(stopped.LastError) != "workflow run stopped by user" {
+		t.Fatalf("unexpected stop detail: %q", stopped.LastError)
+	}
+
+	stoppedAgain, err := service.StopRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StopRun idempotent call: %v", err)
+	}
+	if stoppedAgain.Status != WorkflowRunStatusStopped {
+		t.Fatalf("expected stopped status on idempotent call, got %q", stoppedAgain.Status)
+	}
+	timeline, err := service.GetRunTimeline(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline: %v", err)
+	}
+	runStoppedEvents := 0
+	for _, event := range timeline {
+		if event.Type == "run_stopped" {
+			runStoppedEvents++
+		}
+	}
+	if runStoppedEvents != 1 {
+		t.Fatalf("expected exactly one run_stopped timeline event, got %d (%#v)", runStoppedEvents, timeline)
+	}
+}
+
+func TestRunLifecycleStopRunFromRunningStopsActivePhaseAndStep(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "stop_running_template",
+		Name: "Stop Running Template",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "dispatch this step"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{
+				Dispatched: true,
+				SessionID:  "sess-stop",
+				TurnID:     "turn-stop",
+				Provider:   "codex",
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "stop_running_template",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	run, err = service.StartRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected running status before stop, got %q", run.Status)
+	}
+	if len(run.Phases) != 1 || len(run.Phases[0].Steps) != 1 {
+		t.Fatalf("unexpected run structure: %#v", run.Phases)
+	}
+	if run.Phases[0].Steps[0].Status != StepRunStatusRunning || !run.Phases[0].Steps[0].AwaitingTurn {
+		t.Fatalf("expected dispatched step to be running+awaiting_turn, got %#v", run.Phases[0].Steps[0])
+	}
+
+	stopped, err := service.StopRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("StopRun: %v", err)
+	}
+	if stopped.Status != WorkflowRunStatusStopped {
+		t.Fatalf("expected stopped status, got %q", stopped.Status)
+	}
+	phase := stopped.Phases[0]
+	if phase.Status != PhaseRunStatusStopped {
+		t.Fatalf("expected stopped phase, got %q", phase.Status)
+	}
+	if phase.CompletedAt == nil {
+		t.Fatalf("expected stopped phase completion timestamp")
+	}
+	step := phase.Steps[0]
+	if step.Status != StepRunStatusStopped {
+		t.Fatalf("expected stopped step, got %q", step.Status)
+	}
+	if step.AwaitingTurn {
+		t.Fatalf("expected stopped step to clear awaiting_turn")
+	}
+	if step.CompletedAt == nil {
+		t.Fatalf("expected stopped step completion timestamp")
+	}
+	if strings.TrimSpace(step.Error) != "workflow run stopped by user" {
+		t.Fatalf("expected stop reason on step error, got %q", step.Error)
+	}
+	if step.Execution == nil || step.Execution.CompletedAt == nil {
+		t.Fatalf("expected execution reference completion timestamp on stop, got %#v", step.Execution)
+	}
+	if len(step.ExecutionAttempts) == 0 || step.ExecutionAttempts[len(step.ExecutionAttempts)-1].CompletedAt == nil {
+		t.Fatalf("expected execution attempt completion timestamp on stop, got %#v", step.ExecutionAttempts)
+	}
+
+	timeline, err := service.GetRunTimeline(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline: %v", err)
+	}
+	hasRunStopped := false
+	hasPhaseStopped := false
+	hasStepStopped := false
+	for _, event := range timeline {
+		switch event.Type {
+		case "run_stopped":
+			hasRunStopped = true
+		case "phase_stopped":
+			hasPhaseStopped = true
+		case "step_stopped":
+			hasStepStopped = true
+		}
+	}
+	if !hasRunStopped || !hasPhaseStopped || !hasStepStopped {
+		t.Fatalf("expected stop timeline events (run/phase/step), got %#v", timeline)
+	}
+}
+
+func TestRunLifecycleStopRunInvalidTransitionFromCompletedAndFailed(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	completedRun, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun completed candidate: %v", err)
+	}
+	completedRun, err = service.StartRun(context.Background(), completedRun.ID)
+	if err != nil {
+		t.Fatalf("StartRun completed candidate: %v", err)
+	}
+	for i := 0; i < 16 && completedRun.Status == WorkflowRunStatusRunning; i++ {
+		completedRun, err = service.AdvanceRun(context.Background(), completedRun.ID)
+		if err != nil {
+			t.Fatalf("AdvanceRun completed candidate iteration %d: %v", i, err)
+		}
+	}
+	if completedRun.Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected completed run status, got %q", completedRun.Status)
+	}
+	if _, err := service.StopRun(context.Background(), completedRun.ID); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected invalid transition when stopping completed run, got %v", err)
+	}
+
+	engine := NewEngine(WithStepHandler("implementation", func(context.Context, *WorkflowRun, *PhaseRun, *StepRun) error {
+		return errors.New("forced failure")
+	}))
+	failedService := NewRunService(Config{Enabled: true}, WithEngine(engine))
+	failedRun, err := failedService.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun failed candidate: %v", err)
+	}
+	failedRun, err = failedService.StartRun(context.Background(), failedRun.ID)
+	if err != nil {
+		t.Fatalf("StartRun failed candidate: %v", err)
+	}
+	if _, err := failedService.AdvanceRun(context.Background(), failedRun.ID); err == nil {
+		t.Fatalf("expected advance failure to transition run to failed")
+	}
+	failedRun, err = failedService.GetRun(context.Background(), failedRun.ID)
+	if err != nil {
+		t.Fatalf("GetRun failed candidate: %v", err)
+	}
+	if failedRun.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run status, got %q", failedRun.Status)
+	}
+	if _, err := failedService.StopRun(context.Background(), failedRun.ID); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("expected invalid transition when stopping failed run, got %v", err)
+	}
+}
+
 func TestRunLifecycleCreateRunValidation(t *testing.T) {
 	disabled := NewRunService(Config{})
 	if _, err := disabled.CreateRun(context.Background(), CreateRunRequest{

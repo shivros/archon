@@ -212,6 +212,16 @@ func (a *API) workflowRunActionRoutes() map[string]workflowRunActionRoute {
 				return service.PauseRun(ctx, runID)
 			},
 		},
+		"stop": {
+			method: http.MethodPost,
+			handle: func(ctx context.Context, _ *http.Request, runID string, _ GuidedWorkflowRunService) (any, error) {
+				coordinator := a.workflowRunStopCoordinator()
+				if coordinator == nil {
+					return nil, unavailableError("guided workflow stop coordinator not available", nil)
+				}
+				return coordinator.StopWorkflowRun(ctx, runID)
+			},
+		},
 		"resume": {
 			method: http.MethodPost,
 			handle: func(ctx context.Context, r *http.Request, runID string, service GuidedWorkflowRunService) (any, error) {

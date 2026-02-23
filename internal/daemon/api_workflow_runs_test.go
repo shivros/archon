@@ -122,6 +122,79 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsStop(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:  guidedworkflows.TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	_ = postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+	stopped := postWorkflowRunAction(t, server, created.ID, "stop", http.StatusOK)
+	if stopped.Status != guidedworkflows.WorkflowRunStatusStopped {
+		t.Fatalf("expected stopped status, got %q", stopped.Status)
+	}
+	if stopped.CompletedAt == nil {
+		t.Fatalf("expected completed timestamp when stopped")
+	}
+	if !strings.Contains(strings.ToLower(stopped.LastError), "stopped") {
+		t.Fatalf("expected stop detail in last error, got %q", stopped.LastError)
+	}
+
+	timeline := getWorkflowRunTimeline(t, server, created.ID, http.StatusOK)
+	foundStopped := false
+	for _, event := range timeline {
+		if strings.TrimSpace(event.Type) == "run_stopped" {
+			foundStopped = true
+			break
+		}
+	}
+	if !foundStopped {
+		t.Fatalf("expected run_stopped event in timeline, got %#v", timeline)
+	}
+}
+
+func TestWorkflowRunEndpointsStopInterruptsSessionsBestEffort(t *testing.T) {
+	var logOut bytes.Buffer
+	interruptor := &recordWorkflowRunSessionInterruptService{
+		err: errors.New("interrupt failed"),
+	}
+	api := &API{
+		Version:                  "test",
+		WorkflowRuns:             guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		WorkflowSessionInterrupt: interruptor,
+		Logger:                   logging.New(&logOut, logging.Info),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:  guidedworkflows.TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	_ = postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+	stopped := postWorkflowRunAction(t, server, created.ID, "stop", http.StatusOK)
+	if stopped.Status != guidedworkflows.WorkflowRunStatusStopped {
+		t.Fatalf("expected stopped status, got %q", stopped.Status)
+	}
+	if interruptor.calls != 1 {
+		t.Fatalf("expected one interrupt invocation, got %d", interruptor.calls)
+	}
+	if len(interruptor.runIDs) != 1 || interruptor.runIDs[0] != created.ID {
+		t.Fatalf("expected interrupt call for run %q, got %#v", created.ID, interruptor.runIDs)
+	}
+	if !strings.Contains(logOut.String(), "msg=guided_workflow_run_session_interrupt_error") {
+		t.Fatalf("expected interrupt failure telemetry log, got %q", logOut.String())
+	}
+}
+
 func TestWorkflowRunEndpointsResolveDisplayPromptFromSessionMeta(t *testing.T) {
 	ctx := context.Background()
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
@@ -1600,6 +1673,23 @@ func waitForCondition(t *testing.T, timeout time.Duration, check func() bool, me
 type stubWorkflowTemplateService struct {
 	templates []guidedworkflows.WorkflowTemplate
 	err       error
+}
+
+type recordWorkflowRunSessionInterruptService struct {
+	calls  int
+	runIDs []string
+	err    error
+}
+
+func (r *recordWorkflowRunSessionInterruptService) InterruptWorkflowRunSessions(_ context.Context, run *guidedworkflows.WorkflowRun) error {
+	if r == nil {
+		return nil
+	}
+	r.calls++
+	if run != nil {
+		r.runIDs = append(r.runIDs, strings.TrimSpace(run.ID))
+	}
+	return r.err
 }
 
 func (s stubWorkflowTemplateService) ListTemplates(context.Context) ([]guidedworkflows.WorkflowTemplate, error) {

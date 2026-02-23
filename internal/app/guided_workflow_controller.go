@@ -761,6 +761,7 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 	lines = append(lines, "- j/down: next step details")
 	lines = append(lines, "- k/up: previous step details")
 	lines = append(lines, "- o: open selected step user turn")
+	lines = append(lines, "- x: stop run")
 	lines = append(lines, "- r: refresh timeline")
 	lines = append(lines, "- esc: close guided workflow view")
 	if c.NeedsDecision() {
@@ -808,7 +809,11 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 		lines = append(lines, fmt.Sprintf("- Completed at: %s", run.CompletedAt.UTC().Format(time.RFC3339)))
 	}
 	if strings.TrimSpace(run.LastError) != "" {
-		lines = append(lines, fmt.Sprintf("- Failure detail: %s", strings.TrimSpace(run.LastError)))
+		label := "Failure detail"
+		if run.Status == guidedworkflows.WorkflowRunStatusStopped {
+			label = "Stop detail"
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", label, strings.TrimSpace(run.LastError)))
 	}
 	if explain := c.decisionExplanation(); explain != "" {
 		lines = append(lines, fmt.Sprintf("- Final decision explanation: %s", explain))
@@ -1258,6 +1263,8 @@ func runStatusText(status guidedworkflows.WorkflowRunStatus) string {
 		return "running"
 	case guidedworkflows.WorkflowRunStatusPaused:
 		return "paused (decision needed)"
+	case guidedworkflows.WorkflowRunStatusStopped:
+		return "stopped"
 	case guidedworkflows.WorkflowRunStatusCompleted:
 		return "completed"
 	case guidedworkflows.WorkflowRunStatusFailed:
@@ -1273,6 +1280,8 @@ func stepStatusPrefix(status guidedworkflows.StepRunStatus) string {
 		return "[x]"
 	case guidedworkflows.StepRunStatusRunning:
 		return "[>]"
+	case guidedworkflows.StepRunStatusStopped:
+		return "[s]"
 	case guidedworkflows.StepRunStatusFailed:
 		return "[!]"
 	default:
@@ -1286,6 +1295,8 @@ func phaseStatusPrefix(status guidedworkflows.PhaseRunStatus) string {
 		return "[x]"
 	case guidedworkflows.PhaseRunStatusRunning:
 		return "[>]"
+	case guidedworkflows.PhaseRunStatusStopped:
+		return "[s]"
 	case guidedworkflows.PhaseRunStatusFailed:
 		return "[!]"
 	default:

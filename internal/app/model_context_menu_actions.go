@@ -276,6 +276,14 @@ func (m *Model) handleWorkflowContextMenuAction(action ContextMenuAction, target
 		}
 		m.enterRenameWorkflow(runID)
 		return true, nil
+	case ContextMenuWorkflowStop:
+		runID := strings.TrimSpace(target.workflowID)
+		if runID == "" {
+			m.setValidationStatus("select a workflow")
+			return true, nil
+		}
+		m.setStatusMessage("stopping workflow " + runID)
+		return true, stopWorkflowRunCmd(m.guidedWorkflowAPI, runID)
 	case ContextMenuWorkflowDismiss:
 		runID := strings.TrimSpace(target.workflowID)
 		if runID == "" {

@@ -26,6 +26,7 @@ type RunLifecycleService interface {
 	RenameRun(ctx context.Context, runID, name string) (*WorkflowRun, error)
 	StartRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	PauseRun(ctx context.Context, runID string) (*WorkflowRun, error)
+	StopRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	ResumeRun(ctx context.Context, runID string) (*WorkflowRun, error)
 	ResumeFailedRun(ctx context.Context, runID string, req ResumeFailedRunRequest) (*WorkflowRun, error)
 	DismissRun(ctx context.Context, runID string) (*WorkflowRun, error)
@@ -523,6 +524,29 @@ func (s *InMemoryRunService) PauseRun(ctx context.Context, runID string) (*Workf
 		return nil, invalidTransitionError("pause", run.Status)
 	}
 	s.setRunPausedLocked(run, "run_paused", "manual pause")
+	s.persistRunSnapshotLocked(ctx, run.ID)
+	return cloneWorkflowRun(run), nil
+}
+
+func (s *InMemoryRunService) StopRun(ctx context.Context, runID string) (*WorkflowRun, error) {
+	s.mu.Lock()
+	defer s.persistMetrics(ctx)
+	defer s.mu.Unlock()
+	run, err := s.mustRunLocked(runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.Status == WorkflowRunStatusStopped {
+		s.persistRunSnapshotLocked(ctx, run.ID)
+		return cloneWorkflowRun(run), nil
+	}
+	switch run.Status {
+	case WorkflowRunStatusCreated, WorkflowRunStatusRunning, WorkflowRunStatusPaused:
+		// valid stop transitions
+	default:
+		return nil, invalidTransitionError("stop", run.Status)
+	}
+	s.stopRunLocked(run, "workflow run stopped by user")
 	s.persistRunSnapshotLocked(ctx, run.ID)
 	return cloneWorkflowRun(run), nil
 }
@@ -1643,6 +1667,94 @@ func (s *InMemoryRunService) setRunPausedLocked(run *WorkflowRun, eventType, det
 		Type:  strings.TrimSpace(eventType),
 		RunID: run.ID,
 	})
+}
+
+func (s *InMemoryRunService) stopRunLocked(run *WorkflowRun, reason string) {
+	if s == nil || run == nil {
+		return
+	}
+	now := s.engine.now()
+	beforeStatus := run.Status
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "workflow run stopped"
+	}
+
+	for pIndex := range run.Phases {
+		phase := &run.Phases[pIndex]
+		phaseWasRunning := phase.Status == PhaseRunStatusRunning
+		stepStopped := false
+		for sIndex := range phase.Steps {
+			step := &phase.Steps[sIndex]
+			if step.Status != StepRunStatusRunning {
+				continue
+			}
+			markStepExecutionInterrupted(step, now)
+			step.Status = StepRunStatusStopped
+			step.AwaitingTurn = false
+			step.CompletedAt = &now
+			step.Outcome = "stopped"
+			if strings.TrimSpace(step.Error) == "" {
+				step.Error = reason
+			}
+			appendRunAudit(run, RunAuditEntry{
+				At:      now,
+				Scope:   "step",
+				Action:  "step_stopped",
+				PhaseID: phase.ID,
+				StepID:  step.ID,
+				Outcome: "stopped",
+				Detail:  reason,
+			})
+			s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+				At:      now,
+				Type:    "step_stopped",
+				RunID:   run.ID,
+				PhaseID: phase.ID,
+				StepID:  step.ID,
+				Message: reason,
+			})
+			stepStopped = true
+		}
+		if phaseWasRunning || stepStopped {
+			phase.Status = PhaseRunStatusStopped
+			phase.CompletedAt = &now
+			appendRunAudit(run, RunAuditEntry{
+				At:      now,
+				Scope:   "phase",
+				Action:  "phase_stopped",
+				PhaseID: phase.ID,
+				Outcome: "stopped",
+				Detail:  reason,
+			})
+			s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+				At:      now,
+				Type:    "phase_stopped",
+				RunID:   run.ID,
+				PhaseID: phase.ID,
+				Message: reason,
+			})
+		}
+	}
+
+	run.Status = WorkflowRunStatusStopped
+	run.PausedAt = nil
+	run.CompletedAt = &now
+	run.LastError = reason
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_stopped",
+		Outcome: "stopped",
+		Detail:  reason,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_stopped",
+		RunID:   run.ID,
+		Message: reason,
+	})
+	s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 }
 
 func (s *InMemoryRunService) appendDecisionTimelineLocked(run *WorkflowRun, eventType, decisionID, note string) {
