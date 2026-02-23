@@ -65,15 +65,15 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 		m.enterAddWorktree(target.id)
 		return true, nil
 	case ContextMenuWorkspaceStartGuidedWorkflow:
-		if target.id == "" || target.id == unassignedWorkspaceID {
-			m.setValidationStatus("select a workspace")
-			return true, nil
-		}
-		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
-			workspaceID:   target.id,
-			workspaceName: target.targetLabel,
-		})
-		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
+		return true, m.startGuidedWorkflowFromSelectionTarget(
+			SelectionTarget{
+				Kind:        SelectionKindWorkspace,
+				WorkspaceID: target.id,
+			},
+			GuidedWorkflowNameHints{
+				WorkspaceName: target.targetLabel,
+			},
+		)
 	case ContextMenuWorkspaceCopyPath:
 		if target.id == "" || target.id == unassignedWorkspaceID {
 			m.setValidationStatus("select a workspace")
@@ -133,17 +133,16 @@ func (m *Model) handleWorktreeContextMenuAction(action ContextMenuAction, target
 		}
 		return true, m.enterAddNoteForScope(scope)
 	case ContextMenuWorktreeStartGuidedWorkflow:
-		if strings.TrimSpace(target.workspaceID) == "" && strings.TrimSpace(target.worktreeID) == "" {
-			m.setValidationStatus("select a worktree")
-			return true, nil
-		}
-		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
-			workspaceID:   target.workspaceID,
-			worktreeID:    target.worktreeID,
-			worktreeName:  target.targetLabel,
-			workspaceName: strings.TrimSpace(m.workspaceNameByID(target.workspaceID)),
-		})
-		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
+		return true, m.startGuidedWorkflowFromSelectionTarget(
+			SelectionTarget{
+				Kind:        SelectionKindWorktree,
+				WorkspaceID: target.workspaceID,
+				WorktreeID:  target.worktreeID,
+			},
+			GuidedWorkflowNameHints{
+				WorktreeName: target.targetLabel,
+			},
+		)
 	case ContextMenuWorktreeCopyPath:
 		if target.worktreeID == "" {
 			m.setValidationStatus("select a worktree")
@@ -202,23 +201,17 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 		scope := m.noteScopeForSession(target.sessionID, target.workspaceID, target.worktreeID)
 		return true, m.enterAddNoteForScope(scope)
 	case ContextMenuSessionStartGuidedWorkflow:
-		if target.sessionID == "" {
-			m.setValidationStatus("select a session")
-			return true, nil
-		}
-		if strings.TrimSpace(target.workspaceID) == "" && strings.TrimSpace(target.worktreeID) == "" {
-			m.setValidationStatus("session has no workspace/worktree context")
-			return true, nil
-		}
-		m.enterGuidedWorkflow(guidedWorkflowLaunchContext{
-			workspaceID:   target.workspaceID,
-			worktreeID:    target.worktreeID,
-			sessionID:     target.sessionID,
-			sessionName:   target.targetLabel,
-			workspaceName: strings.TrimSpace(m.workspaceNameByID(target.workspaceID)),
-			worktreeName:  strings.TrimSpace(m.worktreeNameByID(target.worktreeID)),
-		})
-		return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
+		return true, m.startGuidedWorkflowFromSelectionTarget(
+			SelectionTarget{
+				Kind:        SelectionKindSession,
+				WorkspaceID: target.workspaceID,
+				WorktreeID:  target.worktreeID,
+				SessionID:   target.sessionID,
+			},
+			GuidedWorkflowNameHints{
+				SessionName: target.targetLabel,
+			},
+		)
 	case ContextMenuSessionDismiss:
 		if target.sessionID == "" {
 			m.setValidationStatus("select a session")

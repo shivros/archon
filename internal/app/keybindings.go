@@ -28,6 +28,7 @@ const (
 	KeyCommandAddWorkspace         = "ui.addWorkspace"
 	KeyCommandAddWorktree          = "ui.addWorktree"
 	KeyCommandCompose              = "ui.compose"
+	KeyCommandStartGuidedWorkflow  = "ui.startGuidedWorkflow"
 	KeyCommandOpenNotes            = "ui.openNotes"
 	KeyCommandOpenChat             = "ui.openChat"
 	KeyCommandRefresh              = "ui.refresh"
@@ -85,6 +86,7 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandAddWorkspace:         "a",
 	KeyCommandAddWorktree:          "t",
 	KeyCommandCompose:              "c",
+	KeyCommandStartGuidedWorkflow:  "w",
 	KeyCommandOpenNotes:            "O",
 	KeyCommandOpenChat:             "enter",
 	KeyCommandRefresh:              "r",

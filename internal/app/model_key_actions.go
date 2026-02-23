@@ -171,6 +171,9 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 	if m.keyMatchesCommand(msg, KeyCommandOpenChat, "enter") {
 		return m.handleSidebarEnterSelection()
 	}
+	if m.keyMatchesCommand(msg, KeyCommandStartGuidedWorkflow, "w") {
+		return true, m.startGuidedWorkflowFromSelectionTarget(m.selectionTarget(), GuidedWorkflowNameHints{})
+	}
 
 	switch m.keyString(msg) {
 	case "m":

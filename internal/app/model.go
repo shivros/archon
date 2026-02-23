@@ -273,6 +273,7 @@ type Model struct {
 	selectionOriginPolicy               SelectionOriginPolicy
 	selectionFocusPolicy                SelectionFocusPolicy
 	selectionTransitionService          SelectionTransitionService
+	guidedWorkflowStartService          GuidedWorkflowStartService
 	selectionActivationService          SelectionActivationService
 	selectionEnterActionService         SelectionEnterActionService
 	selectionOperationPlanner           SelectionOperationPlanner

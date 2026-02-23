@@ -312,6 +312,9 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "ctrl+g" {
 		t.Fatalf("expected default copy session key ctrl+g, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandStartGuidedWorkflow, ""); got != "w" {
+		t.Fatalf("expected default start guided workflow key w, got %q", got)
+	}
 	if got := bindings.KeyFor(KeyCommandInputRedo, ""); got != "ctrl+y" {
 		t.Fatalf("expected default input redo key ctrl+y, got %q", got)
 	}

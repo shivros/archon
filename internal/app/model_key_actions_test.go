@@ -718,6 +718,149 @@ func TestWorkflowSelectionStaysSidebarInteractiveUntilExplicitOpen(t *testing.T)
 	}
 }
 
+func TestStartGuidedWorkflowHotkeyFromWorkspaceSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('w'))
+	if !handled {
+		t.Fatalf("expected start guided workflow hotkey to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if got := m.guidedWorkflow.context.workspaceID; got != "ws1" {
+		t.Fatalf("expected workspace id ws1, got %q", got)
+	}
+}
+
+func TestStartGuidedWorkflowHotkeyFromWorktreeSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "feature/retry-cleanup", Path: "/tmp/ws1/wt1"},
+		},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorktree)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('w'))
+	if !handled {
+		t.Fatalf("expected start guided workflow hotkey to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if got := m.guidedWorkflow.context.workspaceID; got != "ws1" {
+		t.Fatalf("expected workspace id ws1, got %q", got)
+	}
+	if got := m.guidedWorkflow.context.worktreeID; got != "wt1" {
+		t.Fatalf("expected worktree id wt1, got %q", got)
+	}
+}
+
+func TestStartGuidedWorkflowHotkeyFromSessionSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "feature/retry-cleanup", Path: "/tmp/ws1/wt1"},
+		},
+	}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Retry policy cleanup", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1", Title: "Retry policy cleanup"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('w'))
+	if !handled {
+		t.Fatalf("expected start guided workflow hotkey to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if got := m.guidedWorkflow.context.workspaceID; got != "ws1" {
+		t.Fatalf("expected workspace id ws1, got %q", got)
+	}
+	if got := m.guidedWorkflow.context.worktreeID; got != "wt1" {
+		t.Fatalf("expected worktree id wt1, got %q", got)
+	}
+	if got := m.guidedWorkflow.context.sessionID; got != "s1" {
+		t.Fatalf("expected session id s1, got %q", got)
+	}
+}
+
+func TestStartGuidedWorkflowHotkeyOverrideWorks(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandStartGuidedWorkflow: "ctrl+w",
+	}))
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected overridden start guided workflow hotkey to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+}
+
+func TestStartGuidedWorkflowHotkeyRequiresSupportedSelection(t *testing.T) {
+	m := NewModel(nil)
+
+	handled, cmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('w'))
+	if !handled {
+		t.Fatalf("expected start guided workflow hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command without a valid selection")
+	}
+	if m.status != "select a workspace, worktree, or session to start guided workflow" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
 func TestSidebarArrowLeftRightCollapseAndExpandSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}

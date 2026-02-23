@@ -31,6 +31,27 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 	m.renderGuidedWorkflowContent()
 }
 
+func (m *Model) startGuidedWorkflowWithContext(context guidedWorkflowLaunchContext) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.enterGuidedWorkflow(context)
+	return fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
+}
+
+func (m *Model) startGuidedWorkflowFromSelectionTarget(target SelectionTarget, nameHints GuidedWorkflowNameHints) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	service := m.guidedWorkflowStartServiceOrDefault()
+	context, validation := service.ResolveLaunchContext(target, nameHints)
+	if validation != "" {
+		m.setValidationStatus(validation)
+		return nil
+	}
+	return m.startGuidedWorkflowWithContext(context)
+}
+
 func (m *Model) openGuidedWorkflowFromSidebar(item *sidebarItem) tea.Cmd {
 	if m == nil || item == nil || item.kind != sidebarWorkflow {
 		return nil

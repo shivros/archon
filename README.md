@@ -387,6 +387,7 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.addWorkspace`
 - `ui.addWorktree`
 - `ui.compose`
+- `ui.startGuidedWorkflow`
 - `ui.openNotes`
 - `ui.openChat`
 - `ui.refresh`

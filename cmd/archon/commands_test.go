@@ -584,6 +584,9 @@ func TestConfigCommandScopeKeybindingsDefault(t *testing.T) {
 	if payload["ui.toggleSidebar"] != "ctrl+b" {
 		t.Fatalf("expected top-level keybinding map, got %#v", payload["ui.toggleSidebar"])
 	}
+	if payload["ui.startGuidedWorkflow"] != "w" {
+		t.Fatalf("expected start guided workflow default key w, got %#v", payload["ui.startGuidedWorkflow"])
+	}
 	if _, ok := payload["keybindings"]; ok {
 		t.Fatalf("did not expect nested keybindings object in keybindings-only output")
 	}

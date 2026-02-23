@@ -68,3 +68,37 @@ func TestResolveHotkeysAppliesInputClearOverride(t *testing.T) {
 		t.Fatalf("expected input clear hotkey to be present")
 	}
 }
+
+func TestDefaultHotkeysUseStartGuidedWorkflowCommand(t *testing.T) {
+	hotkeys := DefaultHotkeys()
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command == KeyCommandStartGuidedWorkflow {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected start guided workflow command in default hotkeys")
+	}
+}
+
+func TestResolveHotkeysAppliesStartGuidedWorkflowOverride(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandStartGuidedWorkflow: "ctrl+w",
+	})
+	hotkeys := ResolveHotkeys(DefaultHotkeys(), bindings)
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command != KeyCommandStartGuidedWorkflow {
+			continue
+		}
+		found = true
+		if hotkey.Key != "ctrl+w" {
+			t.Fatalf("expected overridden start guided workflow key ctrl+w, got %q", hotkey.Key)
+		}
+	}
+	if !found {
+		t.Fatalf("expected start guided workflow hotkey to be present")
+	}
+}
