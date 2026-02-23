@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"time"
 
 	"control/internal/guidedworkflows"
@@ -27,7 +26,6 @@ type SessionService struct {
 	codexPool    CodexHistoryPool
 	approvalSync *ApprovalResyncService
 	guided       guidedworkflows.Orchestrator
-	migrateOnce  sync.Once
 }
 
 type SessionServiceOption func(*SessionService)
@@ -156,11 +154,6 @@ type sessionListOptions struct {
 }
 
 func (s *SessionService) listWithMeta(ctx context.Context, options sessionListOptions) ([]*types.Session, []*types.SessionMeta, error) {
-	s.migrateOnce.Do(func() {
-		s.migrateCodexDualEntries(ctx)
-		s.migrateLegacyDismissedSessions(ctx)
-	})
-
 	sessionMap := make(map[string]*types.Session)
 	sourceByID := make(map[string]string)
 	liveIDs := make(map[string]struct{})
@@ -213,7 +206,16 @@ func (s *SessionService) listWithMeta(ctx context.Context, options sessionListOp
 	}
 
 	s.normalizeSessionStatuses(ctx, sessionMap, sourceByID, liveIDs)
-	sessions := dedupeSessionsForList(sessionMap, sourceByID, liveIDs, metaBySessionID, options.includeDismissed, options.includeWorkflowOwned)
+	workflowCanonicalByRunID := s.workflowCanonicalSessionsByRunID(ctx, sessionMap, sourceByID, liveIDs, metaBySessionID)
+	sessions := dedupeSessionsForList(
+		sessionMap,
+		sourceByID,
+		liveIDs,
+		metaBySessionID,
+		workflowCanonicalByRunID,
+		options.includeDismissed,
+		options.includeWorkflowOwned,
+	)
 	sortSessionsByCreatedAt(sessions)
 	return sessions, meta, nil
 }
@@ -380,6 +382,7 @@ func dedupeSessionsForList(
 	sourceByID map[string]string,
 	liveIDs map[string]struct{},
 	metaBySessionID map[string]*types.SessionMeta,
+	workflowCanonicalByRunID map[string]string,
 	includeDismissed bool,
 	includeWorkflowOwned bool,
 ) []*types.Session {
@@ -390,10 +393,19 @@ func dedupeSessionsForList(
 			continue
 		}
 		meta := metaBySessionID[id]
+		runID := ""
+		if meta != nil {
+			runID = strings.TrimSpace(meta.WorkflowRunID)
+		}
+		if runID != "" {
+			if canonicalID := strings.TrimSpace(workflowCanonicalByRunID[runID]); canonicalID != "" && canonicalID != strings.TrimSpace(id) {
+				continue
+			}
+		}
 		if !includeDismissed && isSessionDismissed(meta, session.Status) {
 			continue
 		}
-		if !includeWorkflowOwned && meta != nil && strings.TrimSpace(meta.WorkflowRunID) != "" {
+		if !includeWorkflowOwned && runID != "" {
 			continue
 		}
 		key := listDedupKey(session, meta)
@@ -412,6 +424,70 @@ func dedupeSessionsForList(
 	out := make([]*types.Session, 0, len(chosenByKey))
 	for _, session := range chosenByKey {
 		out = append(out, session)
+	}
+	return out
+}
+
+func (s *SessionService) workflowCanonicalSessionsByRunID(
+	ctx context.Context,
+	sessionMap map[string]*types.Session,
+	sourceByID map[string]string,
+	liveIDs map[string]struct{},
+	metaBySessionID map[string]*types.SessionMeta,
+) map[string]string {
+	out := map[string]string{}
+	if len(metaBySessionID) == 0 {
+		return out
+	}
+
+	// Prefer the run service's canonical session when it exists in the list.
+	if s != nil && s.stores != nil && s.stores.WorkflowRuns != nil {
+		snapshots, err := s.stores.WorkflowRuns.ListWorkflowRuns(ctx)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("session_list_workflow_snapshot_lookup_failed", logging.F("error", err))
+			}
+		} else {
+			for _, snapshot := range snapshots {
+				if snapshot.Run == nil {
+					continue
+				}
+				runID := strings.TrimSpace(snapshot.Run.ID)
+				sessionID := strings.TrimSpace(snapshot.Run.SessionID)
+				if runID == "" || sessionID == "" {
+					continue
+				}
+				if _, ok := sessionMap[sessionID]; !ok {
+					continue
+				}
+				out[runID] = sessionID
+			}
+		}
+	}
+
+	// Fall back to the best available linked session when run snapshots are
+	// stale or missing a usable session ID.
+	for sessionID, meta := range metaBySessionID {
+		if meta == nil {
+			continue
+		}
+		runID := strings.TrimSpace(meta.WorkflowRunID)
+		if runID == "" {
+			continue
+		}
+		candidate := sessionMap[sessionID]
+		if candidate == nil {
+			continue
+		}
+		currentID := strings.TrimSpace(out[runID])
+		if currentID == "" {
+			out[runID] = strings.TrimSpace(sessionID)
+			continue
+		}
+		current := sessionMap[currentID]
+		if current == nil || preferListSession(sessionID, candidate, currentID, current, sourceByID, liveIDs, metaBySessionID) {
+			out[runID] = strings.TrimSpace(sessionID)
+		}
 	}
 	return out
 }

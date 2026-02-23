@@ -555,6 +555,51 @@ func TestRecordSyncPathMetricUsesInjectedSink(t *testing.T) {
 	}
 }
 
+func TestProcessThreadDoesNotMaterializeStandaloneCodexSession(t *testing.T) {
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	ctx := context.Background()
+
+	syncer := &CodexSyncer{
+		sessions: sessionStore,
+		meta:     metaStore,
+		policy:   &defaultThreadSyncPolicy{},
+	}
+	snapshot, err := syncer.loadSyncSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("loadSyncSnapshot() error = %v", err)
+	}
+
+	stats := &syncPathStats{}
+	err = syncer.processThread(
+		ctx,
+		codexThreadSummary{ID: "thread-1", Cwd: "/tmp/repo"},
+		"/tmp/repo",
+		"ws-1",
+		"",
+		nil,
+		snapshot,
+		map[string]struct{}{},
+		stats,
+	)
+	if err != nil {
+		t.Fatalf("processThread() error = %v", err)
+	}
+	if _, ok, err := sessionStore.GetRecord(ctx, "thread-1"); err != nil {
+		t.Fatalf("get record: %v", err)
+	} else if ok {
+		t.Fatalf("expected no standalone codex session record materialized for thread")
+	}
+	if _, ok, err := metaStore.Get(ctx, "thread-1"); err != nil {
+		t.Fatalf("get meta: %v", err)
+	} else if ok {
+		t.Fatalf("expected no standalone thread metadata entry")
+	}
+	if stats.threadsConsidered != 1 {
+		t.Fatalf("expected one considered thread, got %d", stats.threadsConsidered)
+	}
+}
+
 func TestProcessThreadLogsDismissedSkipTelemetry(t *testing.T) {
 	var logOut bytes.Buffer
 	dismissedAt := time.Now().UTC().Add(-time.Minute)

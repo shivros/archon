@@ -229,8 +229,8 @@ func TestWorkflowRunEndpointsDismissAndUndismissCascadeWorkflowSessions(t *testi
 	if err != nil {
 		t.Fatalf("list sessions before dismiss: %v", err)
 	}
-	if len(before) != 2 {
-		t.Fatalf("expected both workflow sessions visible before dismiss, got %#v", before)
+	if len(before) != 1 {
+		t.Fatalf("expected one canonical workflow session before dismiss, got %#v", before)
 	}
 
 	dismissed := postWorkflowRunAction(t, server, created.ID, "dismiss", http.StatusOK)
@@ -257,8 +257,8 @@ func TestWorkflowRunEndpointsDismissAndUndismissCascadeWorkflowSessions(t *testi
 	if err != nil {
 		t.Fatalf("list include dismissed sessions: %v", err)
 	}
-	if len(included) != 2 {
-		t.Fatalf("expected workflow sessions in include dismissed list, got %#v", included)
+	if len(included) != 1 {
+		t.Fatalf("expected one canonical workflow session in include dismissed list, got %#v", included)
 	}
 
 	undismissed := postWorkflowRunAction(t, server, created.ID, "undismiss", http.StatusOK)
@@ -278,8 +278,8 @@ func TestWorkflowRunEndpointsDismissAndUndismissCascadeWorkflowSessions(t *testi
 	if err != nil {
 		t.Fatalf("list restored sessions: %v", err)
 	}
-	if len(restored) != 2 {
-		t.Fatalf("expected both workflow sessions visible after undismiss, got %#v", restored)
+	if len(restored) != 1 {
+		t.Fatalf("expected one canonical workflow session after undismiss, got %#v", restored)
 	}
 }
 

@@ -286,80 +286,65 @@ func (s *CodexSyncer) processThread(ctx context.Context, thread codexThreadSumma
 	}
 
 	seen[thread.ID] = struct{}{}
-	if existing, ok := snapshot.record(thread.ID); ok && existing != nil && existing.Session != nil {
-		// Tombstoned sessions are user-dismissed and must only be restored
-		// through explicit undismiss; sync should never revive them.
-		// Internal sessions are authoritative and should not be overwritten.
-		if s.shouldSkipOverwrite(existing, existingMeta) {
-			s.logThreadSkipOverwrite(thread, existing, existingMeta)
-			stats.threadsSkipOverwrite++
-			if existingMeta == nil || existingMeta.DismissedAt == nil {
-				meta, err := s.upsertSyncedMeta(ctx, thread, workspaceID, worktreeID, time.Now().UTC())
-				if err != nil {
-					return err
-				}
-				snapshot.upsertMeta(meta)
-				stats.sessionMetaWritten++
-			}
-			return nil
+	ownerSessionID, ownerRecord, ownerMeta := resolveThreadOwnerSession(snapshot, thread.ID)
+	if ownerSessionID == "" {
+		// Never materialize raw codex threads as standalone sessions. Sessions
+		// are internal entities and only carry a linked thread id in metadata.
+		return nil
+	}
+	if s.shouldSkipOverwrite(ownerRecord, ownerMeta) {
+		s.logThreadSkipOverwrite(thread, ownerRecord, ownerMeta)
+		stats.threadsSkipOverwrite++
+	}
+	if ownerMeta == nil || ownerMeta.DismissedAt == nil {
+		lastActive := syncThreadLastActive(thread, time.Now().UTC())
+		meta, err := s.upsertSyncedMeta(ctx, ownerSessionID, thread.ID, workspaceID, worktreeID, lastActive)
+		if err != nil {
+			return err
 		}
+		snapshot.upsertMeta(meta)
+		stats.sessionMetaWritten++
 	}
-
-	if err := s.upsertThreadSession(ctx, thread, cwd, workspaceID, worktreeID, existingMeta, snapshot); err != nil {
-		return err
-	}
-	stats.sessionRecordsWritten++
-	stats.sessionMetaWritten++
 	return nil
 }
 
-func (s *CodexSyncer) upsertThreadSession(ctx context.Context, thread codexThreadSummary, cwd, workspaceID, worktreeID string, existingMeta *types.SessionMeta, snapshot *syncSnapshot) error {
-	createdAt := time.Unix(thread.CreatedAt, 0).UTC()
-	if thread.CreatedAt == 0 {
-		createdAt = time.Now().UTC()
+func resolveThreadOwnerSession(snapshot *syncSnapshot, threadID string) (string, *types.SessionRecord, *types.SessionMeta) {
+	threadID = strings.TrimSpace(threadID)
+	if snapshot == nil || threadID == "" {
+		return "", nil, nil
 	}
-	title := sanitizeTitle(thread.Preview)
-	titleLocked := false
-	if existingMeta != nil && existingMeta.TitleLocked && strings.TrimSpace(existingMeta.Title) != "" {
-		title = existingMeta.Title
-		titleLocked = true
+	// Fast path: session id already matches thread id (the preferred shape).
+	if record, ok := snapshot.record(threadID); ok && record != nil && record.Session != nil {
+		return threadID, record, snapshot.meta(threadID)
 	}
-	sessionCwd := cwd
-	if strings.TrimSpace(thread.Cwd) != "" {
-		sessionCwd = thread.Cwd
-	}
-	session := &types.Session{
-		ID:        thread.ID,
-		Provider:  "codex",
-		Cwd:       sessionCwd,
-		Cmd:       "codex app-server",
-		Status:    types.SessionStatusInactive,
-		CreatedAt: createdAt,
-		Title:     title,
-	}
-	if _, err := s.sessions.UpsertRecord(ctx, &types.SessionRecord{
-		Session: session,
-		Source:  sessionSourceCodex,
-	}); err != nil {
-		return err
-	}
-	snapshot.upsertRecord(&types.SessionRecord{Session: session, Source: sessionSourceCodex})
 
-	lastActive := syncThreadLastActive(thread, createdAt)
-	meta := &types.SessionMeta{
-		SessionID:    thread.ID,
-		WorkspaceID:  workspaceID,
-		WorktreeID:   worktreeID,
-		Title:        title,
-		TitleLocked:  titleLocked,
-		ThreadID:     thread.ID,
-		LastActiveAt: &lastActive,
+	var chosenSessionID string
+	var chosenRecord *types.SessionRecord
+	var chosenMeta *types.SessionMeta
+	for sessionID, meta := range snapshot.metaBySessionID {
+		if meta == nil || strings.TrimSpace(meta.ThreadID) != threadID {
+			continue
+		}
+		record, ok := snapshot.record(sessionID)
+		if !ok || record == nil || record.Session == nil {
+			continue
+		}
+		if chosenSessionID == "" {
+			chosenSessionID = sessionID
+			chosenRecord = record
+			chosenMeta = meta
+			continue
+		}
+		currentSource := strings.TrimSpace(record.Source)
+		chosenSource := strings.TrimSpace(chosenRecord.Source)
+		// Prefer internal records over codex-synced aliases.
+		if currentSource == sessionSourceInternal && chosenSource != sessionSourceInternal {
+			chosenSessionID = sessionID
+			chosenRecord = record
+			chosenMeta = meta
+		}
 	}
-	if _, err := s.meta.Upsert(ctx, meta); err != nil {
-		return err
-	}
-	snapshot.upsertMeta(meta)
-	return nil
+	return chosenSessionID, chosenRecord, chosenMeta
 }
 
 func (s *CodexSyncer) removeStale(ctx context.Context, workspaceID, worktreeID string, seen map[string]struct{}, snapshot *syncSnapshot, stats *syncPathStats) error {
@@ -423,13 +408,17 @@ func syncThreadLastActive(thread codexThreadSummary, fallback time.Time) time.Ti
 	return lastActive
 }
 
-func (s *CodexSyncer) upsertSyncedMeta(ctx context.Context, thread codexThreadSummary, workspaceID, worktreeID string, fallback time.Time) (*types.SessionMeta, error) {
-	lastActive := syncThreadLastActive(thread, fallback)
+func (s *CodexSyncer) upsertSyncedMeta(ctx context.Context, sessionID, threadID, workspaceID, worktreeID string, lastActive time.Time) (*types.SessionMeta, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	threadID = strings.TrimSpace(threadID)
+	if sessionID == "" || threadID == "" {
+		return nil, errors.New("thread/session id required for codex sync metadata update")
+	}
 	meta := &types.SessionMeta{
-		SessionID:    thread.ID,
+		SessionID:    sessionID,
 		WorkspaceID:  workspaceID,
 		WorktreeID:   worktreeID,
-		ThreadID:     thread.ID,
+		ThreadID:     threadID,
 		LastActiveAt: &lastActive,
 	}
 	_, err := s.meta.Upsert(ctx, meta)

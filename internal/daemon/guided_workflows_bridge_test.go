@@ -938,6 +938,70 @@ func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowPromptDispatcherRecoversToOwnedSessionWhenExplicitMissing(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-owned", WorkflowRunID: "gwf-1", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+		},
+		turnID: "turn-owned",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-missing",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.SessionID != "sess-owned" {
+		t.Fatalf("expected dispatch to recovered owned session, got %#v", result)
+	}
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no replacement session start request, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 1 || gateway.sendCalls[0].sessionID != "sess-owned" {
+		t.Fatalf("expected one send call to recovered session, got %#v", gateway.sendCalls)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherDoesNotStartReplacementWhenExplicitMissing(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		started: []*types.Session{
+			{ID: "sess-replacement", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-replacement",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-missing",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "continue",
+	})
+	if err == nil {
+		t.Fatalf("expected dispatch error for missing explicit session")
+	}
+	if !errors.Is(err, guidedworkflows.ErrStepDispatch) {
+		t.Fatalf("expected ErrStepDispatch, got %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatched result, got %#v", result)
+	}
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no replacement start attempts, got %d", len(gateway.startReqs))
+	}
+	if len(gateway.sendCalls) != 0 {
+		t.Fatalf("expected no send calls when explicit session is missing, got %#v", gateway.sendCalls)
+	}
+}
+
 func TestGuidedWorkflowPromptDispatcherStartsWorkflowOwnedSessionWhenUnspecified(t *testing.T) {
 	older := time.Now().UTC().Add(-2 * time.Hour)
 	newer := time.Now().UTC()

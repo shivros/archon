@@ -60,8 +60,21 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 
 		ls, err := m.ensure(ctx, session, latestMeta, codexHome)
 		if err != nil {
-			m.logger.Error("codex_live_ensure_error", logging.F("session_id", session.ID), logging.F("error", err))
-			return "", err
+			lastErr = err
+			if !isClosedPipeError(lastErr) {
+				m.logger.Error("codex_live_ensure_error", logging.F("session_id", session.ID), logging.F("error", err))
+				return "", err
+			}
+			m.dropSession(session.ID)
+			if attempt < maxAttempts {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(time.Duration(attempt*100) * time.Millisecond):
+				}
+				continue
+			}
+			break
 		}
 		startTurn := func() (string, error) {
 			ls.mu.Lock()
@@ -75,22 +88,7 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 			return turnID, nil
 		}
 		lastErr = err
-		if isCodexMissingThreadError(err) {
-			const maxInPlaceRecoveries = 3
-			for i := 0; i < maxInPlaceRecoveries && isCodexMissingThreadError(lastErr); i++ {
-				if recoverErr := m.recoverMissingThread(ctx, ls, session, latestMeta); recoverErr != nil {
-					lastErr = recoverErr
-					break
-				}
-				turnID, retryErr := reserveSessionTurn(ctx, ls, m.turnProbe, startTurn)
-				if retryErr == nil {
-					m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
-					return turnID, nil
-				}
-				lastErr = retryErr
-			}
-		}
-		if !(isClosedPipeError(lastErr) || isCodexMissingThreadError(lastErr)) {
+		if !isClosedPipeError(lastErr) {
 			m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", lastErr))
 			return "", lastErr
 		}
@@ -108,27 +106,6 @@ func (m *CodexLiveManager) StartTurn(ctx context.Context, session *types.Session
 	}
 	m.logger.Error("codex_live_start_error", logging.F("session_id", session.ID), logging.F("error", lastErr))
 	return "", lastErr
-}
-
-func (m *CodexLiveManager) recoverMissingThread(
-	ctx context.Context,
-	ls *codexLiveSession,
-	session *types.Session,
-	meta *types.SessionMeta,
-) error {
-	if m == nil || ls == nil || ls.client == nil || session == nil {
-		return errors.New("codex missing-thread recovery unavailable")
-	}
-	runtimeOptions, model := codexRuntimeConfig(meta)
-	threadID, err := ls.client.StartThread(ctx, model, session.Cwd, runtimeOptions)
-	if err != nil {
-		return err
-	}
-	ls.mu.Lock()
-	ls.threadID = strings.TrimSpace(threadID)
-	ls.mu.Unlock()
-	m.persistSessionThreadID(session.ID, threadID)
-	return nil
 }
 
 func (m *CodexLiveManager) Subscribe(session *types.Session, meta *types.SessionMeta, codexHome string) (<-chan types.CodexEvent, func(), error) {
@@ -225,21 +202,17 @@ func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, m
 	m.mu.Unlock()
 
 	latestMeta := m.refreshSessionMeta(session.ID, meta)
-	runtimeOptions, model := codexRuntimeConfig(latestMeta)
 	client, err := startCodexAppServer(ctx, session.Cwd, codexHome, m.logger)
 	if err != nil {
 		m.logger.Error("codex_start_error", logging.F("session_id", session.ID), logging.F("error", err))
 		return nil, err
 	}
-	threadID := resolveThreadID(session, latestMeta)
+	threadID := strings.TrimSpace(resolveThreadID(session, latestMeta))
 	if threadID == "" {
-		threadID, err = client.StartThread(ctx, model, session.Cwd, runtimeOptions)
-		if err != nil {
-			client.Close()
-			return nil, err
-		}
-		m.persistSessionThreadID(session.ID, threadID)
-	} else if err := client.ResumeThread(ctx, threadID); err != nil {
+		client.Close()
+		return nil, errors.New("thread id not available")
+	}
+	if err := client.ResumeThread(ctx, threadID); err != nil {
 		if !isCodexMissingThreadError(err) {
 			m.logger.Error("codex_resume_error", logging.F("session_id", session.ID), logging.F("thread_id", threadID), logging.F("error", err))
 			client.Close()
@@ -250,11 +223,10 @@ func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, m
 			logging.F("thread_id", threadID),
 			logging.F("error", err),
 		)
-		threadID, err = client.StartThread(ctx, model, session.Cwd, runtimeOptions)
-		if err != nil {
-			client.Close()
-			return nil, err
-		}
+		client.Close()
+		return nil, err
+	}
+	if latestMeta == nil || strings.TrimSpace(latestMeta.ThreadID) == "" {
 		m.persistSessionThreadID(session.ID, threadID)
 	}
 

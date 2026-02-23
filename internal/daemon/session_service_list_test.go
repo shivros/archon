@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/guidedworkflows"
 	"control/internal/store"
 	"control/internal/types"
 )
 
-func TestSessionServiceListWithMetaMigratesAndDedupesCodexAliases(t *testing.T) {
+func TestSessionServiceListWithMetaDedupesCodexAliasesWithoutStoreMutation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -76,21 +77,24 @@ func TestSessionServiceListWithMetaMigratesAndDedupesCodexAliases(t *testing.T) 
 		t.Fatalf("list sessions: %v", err)
 	}
 	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session after migration, got %d", len(sessions))
+		t.Fatalf("expected 1 deduped session, got %d", len(sessions))
 	}
-	// After migration, the dual entries are reconciled under the thread ID.
-	if sessions[0].ID != threadID {
-		t.Fatalf("expected session to be reconciled under thread ID %q, got %q", threadID, sessions[0].ID)
+	// Listing should prefer the internal canonical session without mutating IDs.
+	if sessions[0].ID != internalID {
+		t.Fatalf("expected internal session %q to win dedupe, got %q", internalID, sessions[0].ID)
 	}
-	// The internal session's title should be preserved.
 	if sessions[0].Title != "Internal session" {
 		t.Fatalf("expected internal session title to be preserved, got %q", sessions[0].Title)
 	}
 
-	// The old internal entry should be gone from the store.
-	_, oldExists, _ := sessionStore.GetRecord(ctx, internalID)
-	if oldExists {
-		t.Fatalf("old internal session record should have been migrated away")
+	// listWithMeta must not rewrite store identity.
+	_, internalExists, _ := sessionStore.GetRecord(ctx, internalID)
+	if !internalExists {
+		t.Fatalf("expected internal session record to remain")
+	}
+	_, aliasExists, _ := sessionStore.GetRecord(ctx, threadID)
+	if !aliasExists {
+		t.Fatalf("expected alias session record to remain")
 	}
 }
 
@@ -325,5 +329,155 @@ func TestSessionServiceListWithMetaIncludesDismissedWorkflowOwnedWhenRequested(t
 	}
 	if len(combinedList) != 1 || combinedList[0].ID != sessionID {
 		t.Fatalf("expected session in combined include list, got %#v", combinedList)
+	}
+}
+
+func TestSessionServiceListWithMetaHidesWorkflowCodexAliasSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+	now := time.Now().UTC()
+
+	const (
+		runID              = "gwf-1"
+		internalSessionID  = "sess-internal"
+		codexAliasThreadID = "thread-alias"
+	)
+
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        internalSessionID,
+			Provider:  "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert internal session: %v", err)
+	}
+	_, err = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        codexAliasThreadID,
+			Provider:  "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now.Add(-time.Minute),
+		},
+		Source: sessionSourceCodex,
+	})
+	if err != nil {
+		t.Fatalf("upsert codex alias session: %v", err)
+	}
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     internalSessionID,
+		WorkflowRunID: runID,
+	}); err != nil {
+		t.Fatalf("upsert internal meta: %v", err)
+	}
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     codexAliasThreadID,
+		WorkflowRunID: runID,
+		ThreadID:      codexAliasThreadID,
+	}); err != nil {
+		t.Fatalf("upsert alias meta: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+
+	includeWorkflowOwned, _, err := service.ListWithMetaIncludingWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("include workflow-owned list: %v", err)
+	}
+	if len(includeWorkflowOwned) != 1 {
+		t.Fatalf("expected one canonical session, got %#v", includeWorkflowOwned)
+	}
+	if includeWorkflowOwned[0].ID != internalSessionID {
+		t.Fatalf("expected internal canonical session %q, got %q", internalSessionID, includeWorkflowOwned[0].ID)
+	}
+}
+
+func TestSessionServiceListWithMetaUsesWorkflowRunCanonicalSessionID(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	base := t.TempDir()
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+	runStore := store.NewFileWorkflowRunStore(filepath.Join(base, "workflow_runs.json"))
+	now := time.Now().UTC()
+
+	const (
+		runID              = "gwf-canonical"
+		oldSessionID       = "sess-old"
+		canonicalSessionID = "sess-canonical"
+	)
+
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        oldSessionID,
+			Provider:  "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now.Add(-time.Minute),
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert old session: %v", err)
+	}
+	_, err = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        canonicalSessionID,
+			Provider:  "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert canonical session: %v", err)
+	}
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     oldSessionID,
+		WorkflowRunID: runID,
+	}); err != nil {
+		t.Fatalf("upsert old meta: %v", err)
+	}
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     canonicalSessionID,
+		WorkflowRunID: runID,
+	}); err != nil {
+		t.Fatalf("upsert canonical meta: %v", err)
+	}
+	if err := runStore.UpsertWorkflowRun(ctx, guidedworkflows.RunStatusSnapshot{
+		Run: &guidedworkflows.WorkflowRun{
+			ID:        runID,
+			SessionID: canonicalSessionID,
+			CreatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("upsert workflow run: %v", err)
+	}
+
+	service := NewSessionService(nil, &Stores{
+		Sessions:     sessionStore,
+		SessionMeta:  metaStore,
+		WorkflowRuns: runStore,
+	}, nil, nil)
+
+	includeWorkflowOwned, _, err := service.ListWithMetaIncludingWorkflowOwned(ctx)
+	if err != nil {
+		t.Fatalf("include workflow-owned list: %v", err)
+	}
+	if len(includeWorkflowOwned) != 1 {
+		t.Fatalf("expected one canonical workflow session, got %#v", includeWorkflowOwned)
+	}
+	if includeWorkflowOwned[0].ID != canonicalSessionID {
+		t.Fatalf("expected canonical session %q, got %q", canonicalSessionID, includeWorkflowOwned[0].ID)
 	}
 }

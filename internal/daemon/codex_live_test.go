@@ -268,7 +268,7 @@ func TestCodexLiveSessionHandleRequestPublishesApprovalNotification(t *testing.T
 	}
 }
 
-func TestCodexLiveStartTurnRecoversMissingThreadByCreatingNewThread(t *testing.T) {
+func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 	wrapper := codexLiveHelperWrapper(t)
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
@@ -307,11 +307,11 @@ func TestCodexLiveStartTurnRecoversMissingThreadByCreatingNewThread(t *testing.T
 	turnID, err := live.StartTurn(ctx, session, initialMeta, t.TempDir(), []map[string]any{
 		{"type": "text", "text": "hello"},
 	})
-	if err != nil {
-		t.Fatalf("StartTurn: %v", err)
+	if err == nil {
+		t.Fatalf("expected StartTurn error when thread cannot be resumed; turn=%q", turnID)
 	}
-	if strings.TrimSpace(turnID) == "" {
-		t.Fatalf("expected turn id")
+	if !isCodexMissingThreadError(err) {
+		t.Fatalf("expected missing-thread error, got %v", err)
 	}
 	updatedMeta, ok, err := metaStore.Get(context.Background(), session.ID)
 	if err != nil {
@@ -320,16 +320,13 @@ func TestCodexLiveStartTurnRecoversMissingThreadByCreatingNewThread(t *testing.T
 	if !ok || updatedMeta == nil {
 		t.Fatalf("expected updated session meta")
 	}
-	if strings.TrimSpace(updatedMeta.ThreadID) == "" {
-		t.Fatalf("expected recovered thread id")
-	}
-	if strings.TrimSpace(updatedMeta.ThreadID) == "thr-stale" {
-		t.Fatalf("expected recovered thread id to replace stale thread id")
+	if strings.TrimSpace(updatedMeta.ThreadID) != "thr-stale" {
+		t.Fatalf("expected stale thread id to remain unchanged, got %q", strings.TrimSpace(updatedMeta.ThreadID))
 	}
 	live.dropSession(session.ID)
 }
 
-func TestCodexLiveStartTurnRetriesTransientMissingRollout(t *testing.T) {
+func TestCodexLiveStartTurnFailsWhenThreadIDUnavailable(t *testing.T) {
 	wrapper := codexLiveHelperWrapper(t)
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
@@ -341,7 +338,7 @@ func TestCodexLiveStartTurnRetriesTransientMissingRollout(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("GO_WANT_CODEX_LIVE_HELPER_PROCESS", "1")
-	t.Setenv("ARCHON_CODEX_LIVE_HELPER_MODE", "turn_missing_twice")
+	t.Setenv("ARCHON_CODEX_LIVE_HELPER_MODE", "")
 
 	base := t.TempDir()
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "session_meta.json"))
@@ -367,11 +364,21 @@ func TestCodexLiveStartTurnRetriesTransientMissingRollout(t *testing.T) {
 	turnID, err := live.StartTurn(ctx, session, meta, t.TempDir(), []map[string]any{
 		{"type": "text", "text": "hello"},
 	})
-	if err != nil {
-		t.Fatalf("StartTurn: %v", err)
+	if err == nil {
+		t.Fatalf("expected StartTurn error when thread id is unavailable; turn=%q", turnID)
 	}
-	if strings.TrimSpace(turnID) == "" {
-		t.Fatalf("expected turn id")
+	if !isCodexMissingThreadError(err) {
+		t.Fatalf("expected missing-thread error, got %v", err)
+	}
+	updatedMeta, ok, err := metaStore.Get(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("load updated meta: %v", err)
+	}
+	if !ok || updatedMeta == nil {
+		t.Fatalf("expected session meta to remain present")
+	}
+	if strings.TrimSpace(updatedMeta.ThreadID) != "" {
+		t.Fatalf("expected missing thread id to remain unset, got %q", strings.TrimSpace(updatedMeta.ThreadID))
 	}
 	live.dropSession(session.ID)
 }
