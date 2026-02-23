@@ -417,7 +417,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 			titleStyle = sessionUnreadStyle
 		}
 
-		rendered := style.Render(fmt.Sprintf(" %s ", indicator))
+		rendered := style.Render(indent + fmt.Sprintf(" %s ", indicator))
 		if badgeText != "" {
 			badgeStyle := style.Copy().Foreground(lipgloss.Color(strings.TrimSpace(badgeConfig.Color)))
 			rendered += badgeStyle.Render(badgeText)

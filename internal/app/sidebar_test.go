@@ -1,8 +1,13 @@
 package app
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
+
+	"charm.land/bubbles/v2/list"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/guidedworkflows"
 	"control/internal/types"
@@ -345,4 +350,39 @@ func TestBuildSidebarItemsWorkflowDismissedToggle(t *testing.T) {
 func ptrTime(value time.Time) *time.Time {
 	ts := value.UTC()
 	return &ts
+}
+
+func TestSidebarDelegateRenderSessionIncludesDepthIndent(t *testing.T) {
+	now := time.Now().UTC()
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+
+	renderAtDepth := func(depth int) string {
+		var buf bytes.Buffer
+		delegate.Render(&buf, model, 0, &sidebarItem{
+			kind: sidebarSession,
+			session: &types.Session{
+				ID:        "s1",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: now,
+			},
+			meta:  &types.SessionMeta{SessionID: "s1", Title: "workflow child"},
+			depth: depth,
+		})
+		return xansi.Strip(buf.String())
+	}
+
+	plainDepthOne := renderAtDepth(1)
+	plainDepthTwo := renderAtDepth(2)
+
+	if !strings.HasPrefix(plainDepthOne, "   "+activeDot+" ") {
+		t.Fatalf("expected depth 1 session to include leading indent, got %q", plainDepthOne)
+	}
+	if !strings.HasPrefix(plainDepthTwo, "     "+activeDot+" ") {
+		t.Fatalf("expected depth 2 session to include additive leading indent, got %q", plainDepthTwo)
+	}
+	if len(plainDepthTwo) <= len(plainDepthOne) {
+		t.Fatalf("expected deeper session row to include more leading spaces")
+	}
 }
