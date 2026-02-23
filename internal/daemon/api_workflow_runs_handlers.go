@@ -36,7 +36,7 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.logWorkflowRunsListTelemetry(includeDismissed, runs)
-		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+		writeJSON(w, http.StatusOK, map[string]any{"runs": a.presentWorkflowRuns(r.Context(), runs)})
 		return
 	case http.MethodPost:
 		var req CreateWorkflowRunRequest
@@ -71,7 +71,7 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 				logging.F("effective_reasoning", settings.Reasoning),
 			)
 		}
-		writeJSON(w, http.StatusCreated, run)
+		writeJSON(w, http.StatusCreated, a.presentWorkflowRun(r.Context(), run))
 		return
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -150,7 +150,7 @@ func (a *API) WorkflowRunByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.logWorkflowRunFetchTelemetry(run)
-		writeJSON(w, http.StatusOK, run)
+		writeJSON(w, http.StatusOK, a.presentWorkflowRun(r.Context(), run))
 		return
 	}
 
@@ -173,7 +173,7 @@ func (a *API) WorkflowRunByID(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, toGuidedWorkflowServiceError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, payload)
+	writeJSON(w, http.StatusOK, a.presentWorkflowRunPayload(r.Context(), payload))
 }
 
 type workflowRunActionRoute struct {
@@ -340,6 +340,60 @@ func (a *API) syncWorkflowLinkedSessionDismissal(ctx context.Context, run *guide
 		return nil
 	}
 	return syncer.syncWorkflowLinkedSessionDismissal(ctx, run, dismissed)
+}
+
+func (a *API) presentWorkflowRunPayload(ctx context.Context, payload any) any {
+	switch typed := payload.(type) {
+	case *guidedworkflows.WorkflowRun:
+		return a.presentWorkflowRun(ctx, typed)
+	case []*guidedworkflows.WorkflowRun:
+		return a.presentWorkflowRuns(ctx, typed)
+	default:
+		return payload
+	}
+}
+
+func (a *API) presentWorkflowRuns(ctx context.Context, runs []*guidedworkflows.WorkflowRun) []*guidedworkflows.WorkflowRun {
+	if len(runs) == 0 {
+		return runs
+	}
+	resolver := a.workflowRunPromptResolver()
+	out := make([]*guidedworkflows.WorkflowRun, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, presentWorkflowRunWithResolver(ctx, run, resolver))
+	}
+	return out
+}
+
+func (a *API) presentWorkflowRun(ctx context.Context, run *guidedworkflows.WorkflowRun) *guidedworkflows.WorkflowRun {
+	return presentWorkflowRunWithResolver(ctx, run, a.workflowRunPromptResolver())
+}
+
+func (a *API) workflowRunPromptResolver() workflowRunPromptResolver {
+	if a == nil {
+		return newWorkflowRunPromptResolver(nil)
+	}
+	return newWorkflowRunPromptResolver(a.Stores)
+}
+
+func presentWorkflowRunWithResolver(ctx context.Context, run *guidedworkflows.WorkflowRun, resolver workflowRunPromptResolver) *guidedworkflows.WorkflowRun {
+	if run == nil {
+		return nil
+	}
+	out := cloneWorkflowRunForResponse(run)
+	if resolver == nil {
+		return out
+	}
+	out.DisplayUserPrompt = resolver.ResolveDisplayPrompt(ctx, out)
+	return out
+}
+
+func cloneWorkflowRunForResponse(run *guidedworkflows.WorkflowRun) *guidedworkflows.WorkflowRun {
+	if run == nil {
+		return nil
+	}
+	out := *run
+	return &out
 }
 
 func (a *API) workflowRunSessionVisibilitySyncer() *workflowRunSessionVisibilitySyncService {

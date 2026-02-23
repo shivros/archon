@@ -70,6 +70,7 @@ type WorkflowRun struct {
 	SessionID           string                    `json:"session_id,omitempty"`
 	TaskID              string                    `json:"task_id,omitempty"`
 	UserPrompt          string                    `json:"user_prompt,omitempty"`
+	DisplayUserPrompt   string                    `json:"display_user_prompt,omitempty"`
 	Mode                string                    `json:"mode"`
 	CheckpointStyle     string                    `json:"checkpoint_style"`
 	Status              WorkflowRunStatus         `json:"status"`

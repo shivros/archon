@@ -193,11 +193,17 @@ func workflowRunSnapshotMsgFromCmd(t *testing.T, cmd tea.Cmd) workflowRunSnapsho
 
 func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 	now := time.Date(2026, 2, 17, 12, 0, 0, 0, time.UTC)
+	createRun := newWorkflowRunFixture("gwf-1", guidedworkflows.WorkflowRunStatusCreated, now)
+	createRun.UserPrompt = "Fix bug in request routing"
+	startRun := newWorkflowRunFixture("gwf-1", guidedworkflows.WorkflowRunStatusRunning, now.Add(2*time.Second))
+	startRun.UserPrompt = "Fix bug in request routing"
+	snapshotRun := newWorkflowRunFixture("gwf-1", guidedworkflows.WorkflowRunStatusRunning, now.Add(3*time.Second))
+	snapshotRun.UserPrompt = "Fix bug in request routing"
 	api := &guidedWorkflowAPIMock{
-		createRun: newWorkflowRunFixture("gwf-1", guidedworkflows.WorkflowRunStatusCreated, now),
-		startRun:  newWorkflowRunFixture("gwf-1", guidedworkflows.WorkflowRunStatusRunning, now.Add(2*time.Second)),
+		createRun: createRun,
+		startRun:  startRun,
 		snapshotRuns: []*guidedworkflows.WorkflowRun{
-			newWorkflowRunFixture("gwf-1", guidedworkflows.WorkflowRunStatusRunning, now.Add(3*time.Second)),
+			snapshotRun,
 		},
 		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
 			{
@@ -273,6 +279,9 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 	}
 	if !strings.Contains(m.contentRaw, "Live Timeline") {
 		t.Fatalf("expected live timeline content, got %q", m.contentRaw)
+	}
+	if !strings.Contains(m.contentRaw, "Original prompt: Fix bug in request routing") {
+		t.Fatalf("expected original prompt in live content, got %q", m.contentRaw)
 	}
 }
 
@@ -1610,6 +1619,7 @@ func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 func TestGuidedWorkflowFailedSummaryPrimesDefaultResumeMessage(t *testing.T) {
 	now := time.Date(2026, 2, 22, 14, 0, 0, 0, time.UTC)
 	failed := newWorkflowRunFixture("gwf-failed-default-resume", guidedworkflows.WorkflowRunStatusFailed, now)
+	failed.UserPrompt = "Fix parser bug in workflow summaries"
 	failed.LastError = "workflow run interrupted by daemon restart"
 	completedAt := now.Add(3 * time.Second)
 	failed.CompletedAt = &completedAt
@@ -1629,6 +1639,9 @@ func TestGuidedWorkflowFailedSummaryPrimesDefaultResumeMessage(t *testing.T) {
 	}
 	if !strings.Contains(m.contentRaw, "Resume Failed Run") {
 		t.Fatalf("expected failed summary to render resume section, got %q", m.contentRaw)
+	}
+	if !strings.Contains(m.contentRaw, "Original prompt: "+failed.UserPrompt) {
+		t.Fatalf("expected original prompt in summary content, got %q", m.contentRaw)
 	}
 }
 

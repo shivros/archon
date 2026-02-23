@@ -53,34 +53,36 @@ type guidedWorkflowTurnLinkTarget struct {
 }
 
 type GuidedWorkflowUIController struct {
-	stage          guidedWorkflowStage
-	context        guidedWorkflowLaunchContext
-	templateID     string
-	templateName   string
-	templatePicker guidedWorkflowTemplatePicker
-	defaultPreset  guidedPolicySensitivity
-	sensitivity    guidedPolicySensitivity
-	userPrompt     string
-	resumeMessage  string
-	run            *guidedworkflows.WorkflowRun
-	timeline       []guidedworkflows.RunTimelineEvent
-	lastError      string
-	refreshQueued  bool
-	lastRefreshAt  time.Time
-	selectedPhase  int
-	selectedStep   int
-	userTurnLink   WorkflowUserTurnLinkBuilder
+	stage           guidedWorkflowStage
+	context         guidedWorkflowLaunchContext
+	templateID      string
+	templateName    string
+	templatePicker  guidedWorkflowTemplatePicker
+	defaultPreset   guidedPolicySensitivity
+	sensitivity     guidedPolicySensitivity
+	userPrompt      string
+	resumeMessage   string
+	run             *guidedworkflows.WorkflowRun
+	timeline        []guidedworkflows.RunTimelineEvent
+	lastError       string
+	refreshQueued   bool
+	lastRefreshAt   time.Time
+	selectedPhase   int
+	selectedStep    int
+	userTurnLink    WorkflowUserTurnLinkBuilder
+	promptPresenter workflowPromptPresenter
 }
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
 	return &GuidedWorkflowUIController{
-		stage:          guidedWorkflowStageLauncher,
-		templateID:     "",
-		templateName:   "",
-		templatePicker: newGuidedWorkflowTemplatePicker(),
-		defaultPreset:  guidedPolicySensitivityBalanced,
-		sensitivity:    guidedPolicySensitivityBalanced,
-		userTurnLink:   NewArchonWorkflowUserTurnLinkBuilder(),
+		stage:           guidedWorkflowStageLauncher,
+		templateID:      "",
+		templateName:    "",
+		templatePicker:  newGuidedWorkflowTemplatePicker(),
+		defaultPreset:   guidedPolicySensitivityBalanced,
+		sensitivity:     guidedPolicySensitivityBalanced,
+		userTurnLink:    NewArchonWorkflowUserTurnLinkBuilder(),
+		promptPresenter: newWorkflowPromptPresenter(),
 	}
 }
 
@@ -742,6 +744,7 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(pending)")),
 		fmt.Sprintf("- Status: %s", runStatusText(run.Status)),
 		fmt.Sprintf("- Template: %s", valueOrFallback(run.TemplateName, run.TemplateID)),
+		fmt.Sprintf("- Original prompt: %s", c.renderWorkflowPrompt(run)),
 		fmt.Sprintf("- Checkpoint style: %s", valueOrFallback(run.CheckpointStyle, guidedworkflows.DefaultCheckpointStyle)),
 		fmt.Sprintf("- Policy sensitivity: %s", c.sensitivityLabel()),
 	}
@@ -793,6 +796,7 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 		fmt.Sprintf("- Final status: %s", runStatusText(run.Status)),
 		fmt.Sprintf("- Completed steps: %d/%d", completedSteps, totalSteps),
 		fmt.Sprintf("- Decisions requested: %d", len(run.CheckpointDecisions)),
+		fmt.Sprintf("- Original prompt: %s", c.renderWorkflowPrompt(run)),
 	}
 	linkedSteps, unavailableSteps := c.traceabilityCounts()
 	lines = append(lines, fmt.Sprintf("- Traceability: %d/%d linked (%d unavailable)", linkedSteps, totalSteps, unavailableSteps))
@@ -819,6 +823,17 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 		lines = append(lines, "", "### Controls", "- enter: close summary", "- esc: close summary")
 	}
 	return joinGuidedWorkflowLines(lines)
+}
+
+func (c *GuidedWorkflowUIController) renderWorkflowPrompt(run *guidedworkflows.WorkflowRun) string {
+	if c == nil {
+		return workflowPromptUnavailable
+	}
+	presenter := c.promptPresenter
+	if presenter == nil {
+		presenter = newWorkflowPromptPresenter()
+	}
+	return presenter.Present(run)
 }
 
 func joinGuidedWorkflowLines(lines []string) string {

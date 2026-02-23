@@ -23,7 +23,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 			return
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs":
 			seen["list"] = true
-			_, _ = w.Write([]byte(`{"runs":[{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}]}`))
+			_, _ = w.Write([]byte(`{"runs":[{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}]}`))
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs":
 			var req CreateWorkflowRunRequest
@@ -37,11 +37,11 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 				t.Fatalf("unexpected create request payload: %+v", req)
 			}
 			seen["create"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"created","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"created","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/start":
 			seen["start"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/resume":
 			var req WorkflowRunResumeRequest
@@ -52,7 +52,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 				t.Fatalf("unexpected resume payload: %+v", req)
 			}
 			seen["resume_failed"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/rename":
 			var req WorkflowRunRenameRequest
@@ -63,19 +63,19 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 				t.Fatalf("unexpected rename payload: %+v", req)
 			}
 			seen["rename"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"Renamed Workflow"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"Renamed Workflow","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/dismiss":
 			seen["dismiss"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","dismissed_at":"2026-02-17T00:00:00Z","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","dismissed_at":"2026-02-17T00:00:00Z","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/workflow-runs/gwf-1/undismiss":
 			seen["undismiss"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs/gwf-1":
 			seen["get"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs/gwf-1/timeline":
 			seen["timeline"] = true
@@ -90,7 +90,7 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 				t.Fatalf("unexpected decision payload: %+v", req)
 			}
 			seen["decision"] = true
-			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workflow-runs/metrics":
 			seen["metrics_get"] = true
@@ -129,6 +129,12 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 	if created == nil || created.ID != "gwf-1" {
 		t.Fatalf("unexpected created run: %#v", created)
 	}
+	if created.UserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected created user prompt to round-trip, got %#v", created)
+	}
+	if created.DisplayUserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected created display prompt to round-trip, got %#v", created)
+	}
 
 	runs, err := c.ListWorkflowRuns(ctx)
 	if err != nil {
@@ -136,6 +142,12 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0] == nil || runs[0].ID != "gwf-1" {
 		t.Fatalf("unexpected runs list: %#v", runs)
+	}
+	if runs[0].UserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected list user prompt to round-trip, got %#v", runs[0])
+	}
+	if runs[0].DisplayUserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected list display prompt to round-trip, got %#v", runs[0])
 	}
 
 	templates, err := c.ListWorkflowTemplates(ctx)
@@ -152,6 +164,12 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 	}
 	if started == nil || started.Status != guidedworkflows.WorkflowRunStatusRunning {
 		t.Fatalf("unexpected started run: %#v", started)
+	}
+	if started.UserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected started user prompt to round-trip, got %#v", started)
+	}
+	if started.DisplayUserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected started display prompt to round-trip, got %#v", started)
 	}
 
 	resumed, err := c.ResumeFailedWorkflowRun(ctx, "gwf-1", WorkflowRunResumeRequest{
@@ -195,6 +213,12 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 	}
 	if run == nil || run.ID != "gwf-1" {
 		t.Fatalf("unexpected run payload: %#v", run)
+	}
+	if run.UserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected fetched user prompt to round-trip, got %#v", run)
+	}
+	if run.DisplayUserPrompt != "Fix workflow startup path" {
+		t.Fatalf("expected fetched display prompt to round-trip, got %#v", run)
 	}
 
 	timeline, err := c.GetWorkflowRunTimeline(ctx, "gwf-1")
@@ -265,5 +289,39 @@ func TestListWorkflowTemplatesReturnsErrorForNonOKResponse(t *testing.T) {
 	}
 	if templates != nil {
 		t.Fatalf("expected nil templates on error, got %#v", templates)
+	}
+}
+
+func TestGetWorkflowRunSupportsLegacyPayloadWithoutDisplayPrompt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/workflow-runs/gwf-1" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"gwf-1","status":"running","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"legacy prompt only"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{
+		baseURL: server.URL,
+		token:   "token",
+		http: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	}
+
+	run, err := c.GetWorkflowRun(context.Background(), "gwf-1")
+	if err != nil {
+		t.Fatalf("GetWorkflowRun error: %v", err)
+	}
+	if run == nil || run.ID != "gwf-1" {
+		t.Fatalf("unexpected run payload: %#v", run)
+	}
+	if run.UserPrompt != "legacy prompt only" {
+		t.Fatalf("expected user_prompt from legacy payload, got %#v", run)
+	}
+	if run.DisplayUserPrompt != "" {
+		t.Fatalf("expected empty display prompt for legacy payload, got %#v", run)
 	}
 }

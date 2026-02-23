@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"control/internal/guidedworkflows"
@@ -279,5 +280,53 @@ func TestGuidedWorkflowControllerTurnLinkTargets(t *testing.T) {
 	}
 	if targets[1].label != "user turn turn-2" || targets[1].sessionID != "s2" || targets[1].turnID != "turn-2" {
 		t.Fatalf("unexpected second target: %#v", targets[1])
+	}
+}
+
+func TestGuidedWorkflowControllerRenderUsesDisplayPromptFallback(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:                "gwf-1",
+		Status:            guidedworkflows.WorkflowRunStatusRunning,
+		TemplateName:      "SOLID",
+		DisplayUserPrompt: "legacy intent from session metadata",
+		Phases:            []guidedworkflows.PhaseRun{},
+	})
+
+	live := controller.renderLive()
+	if !strings.Contains(live, "Original prompt: legacy intent from session metadata") {
+		t.Fatalf("expected display prompt in live view, got %q", live)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderFallsBackToUserPromptForLegacyPayloads(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:           "gwf-1",
+		Status:       guidedworkflows.WorkflowRunStatusCompleted,
+		TemplateName: "SOLID",
+		UserPrompt:   "prompt from legacy daemon payload",
+		Phases:       []guidedworkflows.PhaseRun{},
+	})
+
+	summary := controller.renderSummary()
+	if !strings.Contains(summary, "Original prompt: prompt from legacy daemon payload") {
+		t.Fatalf("expected user prompt fallback in summary view, got %q", summary)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderWorkflowPromptNilController(t *testing.T) {
+	var controller *GuidedWorkflowUIController
+	if got := controller.renderWorkflowPrompt(&guidedworkflows.WorkflowRun{UserPrompt: "x"}); got != workflowPromptUnavailable {
+		t.Fatalf("expected unavailable fallback for nil controller, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderWorkflowPromptNilPresenterFallback(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.promptPresenter = nil
+	run := &guidedworkflows.WorkflowRun{UserPrompt: "recover prompt from default presenter"}
+	if got := controller.renderWorkflowPrompt(run); got != "recover prompt from default presenter" {
+		t.Fatalf("expected fallback presenter output, got %q", got)
 	}
 }

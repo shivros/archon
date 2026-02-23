@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,7 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 		TemplateID:  guidedworkflows.TemplateIDSolidPhaseDelivery,
 		WorkspaceID: "ws-1",
 		WorktreeID:  "wt-1",
+		UserPrompt:  "Fix parser bug in workflow summaries",
 	})
 	if created.ID == "" {
 		t.Fatalf("expected run id")
@@ -53,10 +55,22 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	if created.Status != guidedworkflows.WorkflowRunStatusCreated {
 		t.Fatalf("expected created status, got %q", created.Status)
 	}
+	if created.UserPrompt != "Fix parser bug in workflow summaries" {
+		t.Fatalf("expected user prompt on created run, got %q", created.UserPrompt)
+	}
+	if created.DisplayUserPrompt != created.UserPrompt {
+		t.Fatalf("expected display prompt on created run, got %q", created.DisplayUserPrompt)
+	}
 
 	started := postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
 	if started.Status != guidedworkflows.WorkflowRunStatusRunning {
 		t.Fatalf("expected running after start, got %q", started.Status)
+	}
+	if started.UserPrompt != created.UserPrompt {
+		t.Fatalf("expected user prompt to carry into started run, got %q", started.UserPrompt)
+	}
+	if started.DisplayUserPrompt != created.DisplayUserPrompt {
+		t.Fatalf("expected display prompt to carry into started run, got %q", started.DisplayUserPrompt)
 	}
 
 	paused := postWorkflowRunAction(t, server, created.ID, "pause", http.StatusOK)
@@ -72,6 +86,12 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	fetched := getWorkflowRun(t, server, created.ID, http.StatusOK)
 	if fetched.ID != created.ID {
 		t.Fatalf("unexpected fetched run id: %q", fetched.ID)
+	}
+	if fetched.UserPrompt != created.UserPrompt {
+		t.Fatalf("expected user prompt on fetched run, got %q", fetched.UserPrompt)
+	}
+	if fetched.DisplayUserPrompt != created.DisplayUserPrompt {
+		t.Fatalf("expected display prompt on fetched run, got %q", fetched.DisplayUserPrompt)
 	}
 
 	timeline := getWorkflowRunTimeline(t, server, created.ID, http.StatusOK)
@@ -89,10 +109,63 @@ func TestWorkflowRunEndpointsLifecycle(t *testing.T) {
 	if runs[0].ID != created.ID {
 		t.Fatalf("expected most-recent run first in list, got %q", runs[0].ID)
 	}
+	if runs[0].UserPrompt != created.UserPrompt {
+		t.Fatalf("expected user prompt on listed run, got %q", runs[0].UserPrompt)
+	}
+	if runs[0].DisplayUserPrompt != created.DisplayUserPrompt {
+		t.Fatalf("expected display prompt on listed run, got %q", runs[0].DisplayUserPrompt)
+	}
 
 	templates := getWorkflowTemplates(t, server, http.StatusOK)
 	if len(templates) == 0 {
 		t.Fatalf("expected template list to be non-empty")
+	}
+}
+
+func TestWorkflowRunEndpointsResolveDisplayPromptFromSessionMeta(t *testing.T) {
+	ctx := context.Background()
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		Stores: &Stores{
+			SessionMeta: metaStore,
+		},
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-legacy",
+	})
+	if created.DisplayUserPrompt != "" {
+		t.Fatalf("expected empty display prompt before metadata is available, got %q", created.DisplayUserPrompt)
+	}
+
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:     "sess-legacy",
+		WorkflowRunID: created.ID,
+		InitialInput:  "recover parser intent from legacy session",
+	}); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	fetched := getWorkflowRun(t, server, created.ID, http.StatusOK)
+	if fetched.UserPrompt != "" {
+		t.Fatalf("expected empty stored user prompt, got %q", fetched.UserPrompt)
+	}
+	if fetched.DisplayUserPrompt != "recover parser intent from legacy session" {
+		t.Fatalf("expected display prompt from session metadata, got %q", fetched.DisplayUserPrompt)
+	}
+
+	runs := getWorkflowRuns(t, server, http.StatusOK)
+	if len(runs) != 1 {
+		t.Fatalf("expected one workflow run, got %d", len(runs))
+	}
+	if runs[0].DisplayUserPrompt != "recover parser intent from legacy session" {
+		t.Fatalf("expected list display prompt from session metadata, got %q", runs[0].DisplayUserPrompt)
 	}
 }
 
@@ -1589,4 +1662,54 @@ func (s *staleListSessionMetaStore) Delete(ctx context.Context, sessionID string
 		return nil
 	}
 	return s.base.Delete(ctx, sessionID)
+}
+
+func TestWorkflowRunPresentationHelpersBranches(t *testing.T) {
+	ctx := context.Background()
+	run := &guidedworkflows.WorkflowRun{ID: "gwf-1", UserPrompt: "prompt from run"}
+
+	api := &API{}
+	presented := api.presentWorkflowRunPayload(ctx, run)
+	presentedRun, ok := presented.(*guidedworkflows.WorkflowRun)
+	if !ok {
+		t.Fatalf("expected workflow run payload, got %T", presented)
+	}
+	if presentedRun.DisplayUserPrompt != "prompt from run" {
+		t.Fatalf("expected display prompt from user prompt, got %q", presentedRun.DisplayUserPrompt)
+	}
+
+	presentedList := api.presentWorkflowRunPayload(ctx, []*guidedworkflows.WorkflowRun{run})
+	listRuns, ok := presentedList.([]*guidedworkflows.WorkflowRun)
+	if !ok || len(listRuns) != 1 {
+		t.Fatalf("expected one run in presented list, got %#v", presentedList)
+	}
+	if listRuns[0].DisplayUserPrompt != "prompt from run" {
+		t.Fatalf("expected list display prompt from user prompt, got %q", listRuns[0].DisplayUserPrompt)
+	}
+
+	raw := map[string]any{"unchanged": true}
+	if got := api.presentWorkflowRunPayload(ctx, raw); !reflect.DeepEqual(got, raw) {
+		t.Fatalf("expected unknown payload passthrough, got %#v", got)
+	}
+
+	var nilAPI *API
+	resolver := nilAPI.workflowRunPromptResolver()
+	if resolver == nil {
+		t.Fatalf("expected nil API to provide default resolver")
+	}
+	if got := resolver.ResolveDisplayPrompt(ctx, run); got != "prompt from run" {
+		t.Fatalf("expected nil API resolver to resolve user prompt, got %q", got)
+	}
+
+	if got := presentWorkflowRunWithResolver(ctx, nil, resolver); got != nil {
+		t.Fatalf("expected nil run to remain nil, got %#v", got)
+	}
+
+	cloned := presentWorkflowRunWithResolver(ctx, run, nil)
+	if cloned == nil || cloned == run {
+		t.Fatalf("expected cloned run even without resolver, got %#v", cloned)
+	}
+	if cloned.DisplayUserPrompt != "" {
+		t.Fatalf("expected no display prompt assignment when resolver is nil, got %q", cloned.DisplayUserPrompt)
+	}
 }
