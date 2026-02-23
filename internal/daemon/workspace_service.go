@@ -18,6 +18,10 @@ type WorkspaceService struct {
 	paths      WorkspacePathResolver
 }
 
+type WorkspaceValidator interface {
+	ValidateWorkspace(repoPath, sessionSubpath string) error
+}
+
 type CreateWorktreeRequest struct {
 	Path   string `json:"path"`
 	Branch string `json:"branch,omitempty"`
@@ -42,6 +46,17 @@ func NewWorkspaceServiceWithPathResolver(stores *Stores, paths WorkspacePathReso
 	}
 }
 
+func (s *WorkspaceService) pathResolver() WorkspacePathResolver {
+	if s.paths == nil {
+		s.paths = NewWorkspacePathResolver()
+	}
+	return s.paths
+}
+
+func (s *WorkspaceService) workspaceValidator() WorkspaceValidator {
+	return s.pathResolver()
+}
+
 func (s *WorkspaceService) List(ctx context.Context) ([]*types.Workspace, error) {
 	if s.workspaces == nil {
 		return nil, unavailableError("workspace store not available", nil)
@@ -56,7 +71,7 @@ func (s *WorkspaceService) Create(ctx context.Context, req *types.Workspace) (*t
 	if req == nil {
 		return nil, invalidError("workspace payload is required", nil)
 	}
-	if err := workspacePathResolverOrDefault(s.paths).ValidateWorkspace(req.RepoPath, req.SessionSubpath); err != nil {
+	if err := s.workspaceValidator().ValidateWorkspace(req.RepoPath, req.SessionSubpath); err != nil {
 		return nil, invalidError(err.Error(), err)
 	}
 	if err := validateWorkspaceAdditionalDirectories(req.RepoPath, req.SessionSubpath, req.AdditionalDirectories); err != nil {
@@ -88,32 +103,12 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *types.Wor
 		return nil, notFoundError("workspace not found", store.ErrWorkspaceNotFound)
 	}
 
-	merged := &types.Workspace{
-		ID:                    id,
-		Name:                  existing.Name,
-		RepoPath:              existing.RepoPath,
-		SessionSubpath:        existing.SessionSubpath,
-		AdditionalDirectories: append([]string(nil), existing.AdditionalDirectories...),
-		GroupIDs:              append([]string(nil), existing.GroupIDs...),
+	merged, shouldValidate, err := applyWorkspacePatch(id, existing, req)
+	if err != nil {
+		return nil, invalidError(err.Error(), err)
 	}
-	merged.RepoPath = resolveWorkspacePatchRepoPath(existing.RepoPath, req.RepoPath)
-	merged.Name = resolveWorkspacePatchName(existing.Name, merged.RepoPath, req.Name)
-	if req.SessionSubpath != nil {
-		merged.SessionSubpath = strings.TrimSpace(*req.SessionSubpath)
-	}
-	if req.AdditionalDirectories != nil {
-		merged.AdditionalDirectories = append([]string(nil), (*req.AdditionalDirectories)...)
-	}
-	if req.GroupIDs != nil {
-		merged.GroupIDs = append([]string(nil), (*req.GroupIDs)...)
-	}
-	if req.RepoPath != nil || req.SessionSubpath != nil || req.AdditionalDirectories != nil {
-		if err := workspacePathResolverOrDefault(s.paths).ValidateWorkspace(merged.RepoPath, merged.SessionSubpath); err != nil {
-			return nil, invalidError(err.Error(), err)
-		}
-		if err := validateWorkspaceAdditionalDirectories(merged.RepoPath, merged.SessionSubpath, merged.AdditionalDirectories); err != nil {
-			return nil, invalidError(err.Error(), err)
-		}
+	if err := validateWorkspaceUpdate(merged, shouldValidate, s.workspaceValidator()); err != nil {
+		return nil, invalidError(err.Error(), err)
 	}
 
 	ws, err := s.workspaces.Update(ctx, merged)
@@ -124,6 +119,56 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *types.Wor
 		return nil, invalidError(err.Error(), err)
 	}
 	return ws, nil
+}
+
+func applyWorkspacePatch(id string, existing *types.Workspace, req *types.WorkspacePatch) (*types.Workspace, bool, error) {
+	if existing == nil {
+		return nil, false, errors.New("workspace not found")
+	}
+	if req == nil {
+		return nil, false, errors.New("workspace payload is required")
+	}
+
+	merged := &types.Workspace{
+		ID:                    id,
+		Name:                  existing.Name,
+		RepoPath:              existing.RepoPath,
+		SessionSubpath:        existing.SessionSubpath,
+		AdditionalDirectories: append([]string(nil), existing.AdditionalDirectories...),
+		GroupIDs:              append([]string(nil), existing.GroupIDs...),
+	}
+	merged.RepoPath = resolveWorkspacePatchRepoPath(existing.RepoPath, req.RepoPath)
+	merged.Name = resolveWorkspacePatchName(existing.Name, merged.RepoPath, req.Name)
+	shouldValidate := req.RepoPath != nil || req.SessionSubpath != nil || req.AdditionalDirectories != nil
+	if req.SessionSubpath != nil {
+		merged.SessionSubpath = strings.TrimSpace(*req.SessionSubpath)
+	}
+	if req.AdditionalDirectories != nil {
+		merged.AdditionalDirectories = append([]string(nil), (*req.AdditionalDirectories)...)
+	}
+	if req.GroupIDs != nil {
+		merged.GroupIDs = append([]string(nil), (*req.GroupIDs)...)
+	}
+	return merged, shouldValidate, nil
+}
+
+func validateWorkspaceUpdate(workspace *types.Workspace, shouldValidate bool, validator WorkspaceValidator) error {
+	if !shouldValidate {
+		return nil
+	}
+	if workspace == nil {
+		return errors.New("workspace is required")
+	}
+	if validator == nil {
+		return errors.New("workspace validator is required")
+	}
+	if err := validator.ValidateWorkspace(workspace.RepoPath, workspace.SessionSubpath); err != nil {
+		return err
+	}
+	if err := validateWorkspaceAdditionalDirectories(workspace.RepoPath, workspace.SessionSubpath, workspace.AdditionalDirectories); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *WorkspaceService) Delete(ctx context.Context, id string) error {

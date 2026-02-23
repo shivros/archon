@@ -353,6 +353,9 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setStatusError("update workspace error: " + msg.err.Error())
 			return true, nil
 		}
+		if m.mode == uiModeEditWorkspace {
+			m.exitEditWorkspace("")
+		}
 		m.setStatusInfo("workspace updated")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), fetchWorkspaceGroupsCmd(m.workspaceAPI), m.fetchSessionsCmd(false))
 	case updateSessionMsg:
