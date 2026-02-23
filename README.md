@@ -200,6 +200,13 @@ Workflow templates are configurable via JSON with full replacement semantics:
 - if `~/.archon/workflow_templates.json` exists, it fully replaces built-in defaults (no merge)
 - built-in defaults are used only when no user template file exists
 
+Per-step runtime overrides (`runtime_options`) are optional on each workflow step:
+
+- supported fields: `model`, `reasoning`, `access`
+- when present, step `runtime_options` are merged over the session's current runtime options for that dispatched step
+- on successful dispatch, merged runtime options are persisted as the session defaults for later turns on the same workflow thread
+- when omitted, the step inherits whatever runtime options are currently active on the session
+
 Example `workflow_templates.json` (custom replacement file):
 
 ```json
@@ -219,7 +226,11 @@ Example `workflow_templates.json` (custom replacement file):
             {
               "id": "step_1_inventory",
               "name": "Inventory",
-              "prompt": "Audit current risk areas and produce a prioritized hardening plan."
+              "prompt": "Audit current risk areas and produce a prioritized hardening plan.",
+              "runtime_options": {
+                "model": "gpt-5.3-codex",
+                "reasoning": "extra_high"
+              }
             }
           ]
         },
@@ -230,7 +241,20 @@ Example `workflow_templates.json` (custom replacement file):
             {
               "id": "step_2_harden",
               "name": "Implement hardening",
-              "prompt": "Implement the approved hardening items with tests and clear commit messages."
+              "prompt": "Implement the approved hardening items with tests and clear commit messages.",
+              "runtime_options": {
+                "model": "gpt-5.2-codex",
+                "reasoning": "high"
+              }
+            },
+            {
+              "id": "step_3_commit",
+              "name": "Commit",
+              "prompt": "Create conventional commits with concise rationale.",
+              "runtime_options": {
+                "model": "gpt-5.3-codex-spark",
+                "reasoning": "low"
+              }
             }
           ]
         }
