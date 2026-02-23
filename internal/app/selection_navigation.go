@@ -83,7 +83,7 @@ func (defaultSelectionTransitionService) SelectionChanged(m *Model, delay time.D
 	item := m.selectedItem()
 	focusPolicy := m.selectionFocusPolicyOrDefault()
 	service.applySelectionFocusTransition(m, item, source, focusPolicy)
-	outcome := service.resolveSelectionTransitionOutcome(m, item, delay, source, focusPolicy)
+	outcome := service.resolveSelectionTransitionOutcome(m, item, delay)
 	cmd := service.withSelectionStatePersistence(m, outcome)
 	return m.batchWithNotesPanelSync(cmd)
 }
@@ -97,9 +97,9 @@ func (defaultSelectionTransitionService) applySelectionFocusTransition(m *Model,
 	}
 }
 
-func (s defaultSelectionTransitionService) resolveSelectionTransitionOutcome(m *Model, item *sidebarItem, delay time.Duration, source selectionChangeSource, focusPolicy SelectionFocusPolicy) selectionTransitionOutcome {
+func (s defaultSelectionTransitionService) resolveSelectionTransitionOutcome(m *Model, item *sidebarItem, delay time.Duration) selectionTransitionOutcome {
 	handled, stateChanged, draftChanged := m.applySelectionState(item)
-	cmd := s.resolveSelectionCommand(m, handled, item, delay, source, focusPolicy)
+	cmd := s.resolveSelectionCommand(m, handled, item, delay)
 	return selectionTransitionOutcome{
 		command:      cmd,
 		stateChanged: stateChanged,
@@ -107,10 +107,8 @@ func (s defaultSelectionTransitionService) resolveSelectionTransitionOutcome(m *
 	}
 }
 
-func (defaultSelectionTransitionService) resolveSelectionCommand(m *Model, handled bool, item *sidebarItem, delay time.Duration, source selectionChangeSource, focusPolicy SelectionFocusPolicy) tea.Cmd {
+func (defaultSelectionTransitionService) resolveSelectionCommand(m *Model, handled bool, item *sidebarItem, delay time.Duration) tea.Cmd {
 	switch {
-	case handled && focusPolicy != nil && focusPolicy.ShouldOpenWorkflowSelection(item, source):
-		return m.openGuidedWorkflowFromSidebar(item)
 	case !handled:
 		return m.scheduleSessionLoad(item, delay)
 	case m.mode == uiModeRecents:

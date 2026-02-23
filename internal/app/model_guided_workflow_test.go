@@ -21,11 +21,13 @@ type guidedWorkflowAPIMock struct {
 	listTemplatesErr  error
 	createReqs        []client.CreateWorkflowRunRequest
 	startRunIDs       []string
+	stopRunIDs        []string
 	resumeRunIDs      []string
 	decisionReqs      []client.WorkflowRunDecisionRequest
 	resumeReqs        []client.WorkflowRunResumeRequest
 	createRun         *guidedworkflows.WorkflowRun
 	startRun          *guidedworkflows.WorkflowRun
+	stopRun           *guidedworkflows.WorkflowRun
 	resumeRun         *guidedworkflows.WorkflowRun
 	decisionRun       *guidedworkflows.WorkflowRun
 	snapshotRuns      []*guidedworkflows.WorkflowRun
@@ -71,6 +73,14 @@ func (m *guidedWorkflowAPIMock) StartWorkflowRun(_ context.Context, runID string
 		return nil, nil
 	}
 	return cloneWorkflowRun(m.startRun), nil
+}
+
+func (m *guidedWorkflowAPIMock) StopWorkflowRun(_ context.Context, runID string) (*guidedworkflows.WorkflowRun, error) {
+	m.stopRunIDs = append(m.stopRunIDs, runID)
+	if m.stopRun == nil {
+		return nil, nil
+	}
+	return cloneWorkflowRun(m.stopRun), nil
 }
 
 func (m *guidedWorkflowAPIMock) ResumeFailedWorkflowRun(_ context.Context, runID string, req client.WorkflowRunResumeRequest) (*guidedworkflows.WorkflowRun, error) {
@@ -958,8 +968,11 @@ func TestDismissedWorkflowFetchedFromSidebarStaysHiddenAfterRunsRefresh(t *testi
 	if !m.sidebar.SelectByWorkflowID(run.ID) {
 		t.Fatalf("expected dismissed workflow placeholder to be selectable")
 	}
-
-	cmd := m.onSelectionChangedImmediate()
+	item := m.selectedItem()
+	if item == nil || item.kind != sidebarWorkflow {
+		t.Fatalf("expected selected workflow item")
+	}
+	cmd := fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, run.ID)
 	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ := m.Update(msg)
 	m = asModel(t, updated)
@@ -1747,7 +1760,14 @@ func TestSelectingWorkflowSidebarNodeOpensGuidedWorkflowView(t *testing.T) {
 	}
 
 	m.sidebar.Select(workflowRow)
-	cmd := m.onSelectionChangedImmediate()
+	_ = m.onSelectionChangedImmediate()
+	if m.mode == uiModeGuidedWorkflow {
+		t.Fatalf("expected workflow selection to remain passive until explicit open")
+	}
+	handled, cmd := m.activateSelectionFromSidebar()
+	if !handled {
+		t.Fatalf("expected workflow selection activation to open selected workflow")
+	}
 	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ := m.Update(msg)
 	m = asModel(t, updated)
@@ -1778,7 +1798,11 @@ func TestGuidedWorkflowModeDismissHotkeyTargetsSelectedWorkflow(t *testing.T) {
 	if !m.sidebar.SelectByWorkflowID(run.ID) {
 		t.Fatalf("expected workflow row to be selectable")
 	}
-	cmd := m.onSelectionChangedImmediate()
+	_ = m.onSelectionChangedImmediate()
+	handled, cmd := m.activateSelectionFromSidebar()
+	if !handled {
+		t.Fatalf("expected workflow selection activation to open selected workflow")
+	}
 	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ := m.Update(msg)
 	m = asModel(t, updated)
@@ -1826,7 +1850,11 @@ func TestSelectingCompletedWorkflowDoesNotRepeatCompletedToast(t *testing.T) {
 	if !m.sidebar.SelectByWorkflowID(run.ID) {
 		t.Fatalf("expected completed workflow row to be selectable")
 	}
-	cmd := m.onSelectionChangedImmediate()
+	_ = m.onSelectionChangedImmediate()
+	handled, cmd := m.activateSelectionFromSidebar()
+	if !handled {
+		t.Fatalf("expected workflow selection activation to open selected workflow")
+	}
 	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
 	updated, _ := m.Update(msg)
 	m = asModel(t, updated)
@@ -2082,8 +2110,10 @@ func TestWorkflowSnapshotDoesNotReclaimFocusAfterSelectingChildSession(t *testin
 	if !m.sidebar.SelectByWorkflowID(run.ID) {
 		t.Fatalf("expected workflow row to be selectable")
 	}
-	if cmd := m.onSelectionChangedImmediate(); cmd == nil {
-		t.Fatalf("expected guided workflow open command")
+	_ = m.onSelectionChangedImmediate()
+	handled, cmd := m.activateSelectionFromSidebar()
+	if !handled || cmd == nil {
+		t.Fatalf("expected workflow activation command")
 	}
 	if m.mode != uiModeGuidedWorkflow {
 		t.Fatalf("expected guided workflow mode before switching to session")

@@ -53,7 +53,10 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 - Selection transitions are orchestrated by `SelectionTransitionService` in `internal/app/selection_navigation.go`.
 - Selection history intent is governed by `SelectionOriginPolicy`.
 - Pane ownership rules are governed by `SelectionFocusPolicy` in `internal/app/selection_focus_policy.go`.
-- The default focus policy keeps workflow opens user-driven and makes explicit session selections leave guided workflow mode.
+- Selection activation is governed by `SelectionActivationService` and item-specific `SelectionActivator` implementations in `internal/app/selection_activation.go`.
+- `SelectionEnterActionService` owns enter-key precedence (container toggle vs selection activation) and keeps reducer key handling thin.
+- The default focus policy keeps guided workflow exits user-driven and makes explicit session selections leave guided workflow mode.
+- Workflow selection is passive; opening guided workflow UI is handled only by explicit activation.
 - Keep policy implementations deterministic and side-effect free so event and polling paths behave consistently.
 - Add a new policy when behavior needs to vary by selection source or mode without changing transition orchestration.
 - Update transition orchestration only when introducing a new lifecycle phase that cannot be represented as policy decisions.

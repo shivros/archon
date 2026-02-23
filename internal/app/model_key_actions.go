@@ -168,6 +168,10 @@ func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
+	if m.keyMatchesCommand(msg, KeyCommandOpenChat, "enter") {
+		return m.handleSidebarEnterSelection()
+	}
+
 	switch m.keyString(msg) {
 	case "m":
 		m.enterRenameForSelection()
@@ -196,32 +200,35 @@ func (m *Model) reduceComposeAndWorkspaceEntryKeys(msg tea.KeyMsg) (bool, tea.Cm
 	case "O":
 		return true, m.enterNotesForSelection()
 	case "o":
-		item := m.selectedItem()
-		if item != nil && item.kind == sidebarWorkflow {
-			return true, m.onSelectionChangedImmediate()
-		}
-		return false, nil
-	case "enter":
-		item := m.selectedItem()
-		if item != nil && (item.kind == sidebarWorkspace || item.kind == sidebarWorktree || item.kind == sidebarWorkflow) && item.collapsible {
-			if m.sidebar.ToggleSelectedContainer() {
-				return true, m.syncSidebarExpansionChange()
+		target := m.selectionTarget()
+		if target.Kind == SelectionKindWorkflow {
+			if handled, cmd := m.activateSelectionTarget(target); handled {
+				return true, cmd
 			}
 			return true, nil
 		}
-		if item != nil && item.kind == sidebarWorkflow {
-			return true, nil
-		}
-		id := m.selectedSessionID()
-		if id == "" {
-			m.setValidationStatus("select a session to chat")
-			return true, nil
-		}
-		m.enterCompose(id)
-		return true, nil
+		return false, nil
 	default:
 		return false, nil
 	}
+}
+
+func (m *Model) activateSelectionFromSidebar() (bool, tea.Cmd) {
+	return m.activateSelectionTarget(m.selectionTarget())
+}
+
+func (m *Model) selectionTarget() SelectionTarget {
+	return selectionTargetFromSidebarItem(m.selectedItem())
+}
+
+func (m *Model) handleSidebarEnterSelection() (bool, tea.Cmd) {
+	service := m.selectionEnterActionServiceOrDefault()
+	return service.HandleEnter(m.selectionTarget(), newModelSelectionEnterActionContext(m))
+}
+
+func (m *Model) activateSelectionTarget(target SelectionTarget) (bool, tea.Cmd) {
+	service := m.selectionActivationServiceOrDefault()
+	return service.ActivateSelection(target, newModelSelectionActivationContext(m))
 }
 
 func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {

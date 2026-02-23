@@ -39,7 +39,7 @@ func DefaultHotkeys() []Hotkey {
 		{Key: "a", Command: KeyCommandAddWorkspace, Label: "add workspace", Context: HotkeySidebar, Priority: 20},
 		{Key: "t", Command: KeyCommandAddWorktree, Label: "add worktree", Context: HotkeySidebar, Priority: 21},
 		{Key: "m", Command: KeyCommandRename, Label: "rename", Context: HotkeySidebar, Priority: 22},
-		{Key: "enter", Command: KeyCommandOpenChat, Label: "chat", Context: HotkeySidebar, Priority: 23},
+		{Key: "enter", Command: KeyCommandOpenChat, Label: "open", Context: HotkeySidebar, Priority: 23},
 		{Key: "c", Command: KeyCommandCompose, Label: "compose", Context: HotkeySidebar, Priority: 24},
 		{Key: "ctrl+n", Command: KeyCommandNewSession, Label: "new session", Context: HotkeySidebar, Priority: 25},
 		{Key: "O", Command: KeyCommandOpenNotes, Label: "notes", Context: HotkeySidebar, Priority: 26},

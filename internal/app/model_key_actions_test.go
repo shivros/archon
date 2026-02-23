@@ -334,7 +334,7 @@ func TestEnterTogglesWorkspaceExpansion(t *testing.T) {
 	}
 }
 
-func TestEnterTogglesWorkflowExpansion(t *testing.T) {
+func TestEnterOpensSelectedWorkflow(t *testing.T) {
 	m := NewModel(nil)
 	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
@@ -353,11 +353,11 @@ func TestEnterTogglesWorkflowExpansion(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected enter key to be handled for workflow")
 	}
-	if len(m.sidebar.Items()) != 2 {
-		t.Fatalf("expected workflow collapse to hide nested session, got %d rows", len(m.sidebar.Items()))
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
 	}
-	if expanded := m.appState.SidebarWorkflowExpanded["gwf-1"]; expanded {
-		t.Fatalf("expected persisted workflow expansion override gwf-1=false")
+	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != "gwf-1" {
+		t.Fatalf("expected selected guided workflow run gwf-1 to be opened")
 	}
 }
 
@@ -384,6 +384,34 @@ func TestWorkflowOpenShortcutUsesLowercaseO(t *testing.T) {
 	}
 	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != "gwf-1" {
 		t.Fatalf("expected selected guided workflow run gwf-1 to be opened")
+	}
+}
+
+func TestWorkflowSelectionStaysSidebarInteractiveUntilExplicitOpen(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, workflows, map[string]*types.SessionMeta{}, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+
+	_ = m.onSelectionChangedImmediate()
+	if m.mode == uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode to remain closed after workflow selection")
+	}
+
+	handled, renameCmd := m.reduceComposeAndWorkspaceEntryKeys(keyRune('m'))
+	if !handled {
+		t.Fatalf("expected rename hotkey to be handled")
+	}
+	if renameCmd != nil {
+		t.Fatalf("expected rename hotkey to avoid async command")
+	}
+	if m.mode != uiModeRenameWorkflow {
+		t.Fatalf("expected rename workflow mode, got %v", m.mode)
 	}
 }
 

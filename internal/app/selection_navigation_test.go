@@ -18,15 +18,10 @@ type stubSelectionTransitionService struct {
 }
 
 type stubSelectionFocusPolicy struct {
-	openWorkflow bool
-	exitGuided   bool
+	exitGuided bool
 }
 
 type selectionTransitionTestMsg struct{}
-
-func (s stubSelectionFocusPolicy) ShouldOpenWorkflowSelection(item *sidebarItem, _ selectionChangeSource) bool {
-	return s.openWorkflow && item != nil && item.kind == sidebarWorkflow
-}
 
 func (s stubSelectionFocusPolicy) ShouldExitGuidedWorkflowForSessionSelection(_ uiMode, _ *sidebarItem, _ selectionChangeSource) bool {
 	return s.exitGuided
@@ -129,11 +124,17 @@ func TestSessionSelectionExitsGuidedWorkflowMode(t *testing.T) {
 	if m.sidebar == nil || !m.sidebar.SelectByWorkflowID(run.ID) {
 		t.Fatalf("expected workflow row to be selectable")
 	}
-	if cmd := m.onSelectionChangedImmediate(); cmd == nil {
-		t.Fatalf("expected guided workflow open command")
+	_ = m.onSelectionChangedImmediate()
+	item := m.selectedItem()
+	if item == nil || item.kind != sidebarWorkflow {
+		t.Fatalf("expected selected workflow item")
+	}
+	openCmd := m.openGuidedWorkflowFromSidebar(item)
+	if openCmd == nil {
+		t.Fatalf("expected explicit workflow open command")
 	}
 	if m.mode != uiModeGuidedWorkflow {
-		t.Fatalf("expected guided workflow mode before session selection")
+		t.Fatalf("expected guided workflow mode after explicit open")
 	}
 
 	if !m.sidebar.SelectBySessionID("s1") {
@@ -148,7 +149,7 @@ func TestSessionSelectionExitsGuidedWorkflowMode(t *testing.T) {
 	}
 }
 
-func TestSelectionTransitionResolveSelectionCommandHonorsFocusPolicy(t *testing.T) {
+func TestSelectionTransitionResolveSelectionCommandKeepsWorkflowSelectionPassive(t *testing.T) {
 	service := defaultSelectionTransitionService{}
 	m := newPhase0ModelWithSession("codex")
 	now := time.Now().UTC()
@@ -167,11 +168,8 @@ func TestSelectionTransitionResolveSelectionCommandHonorsFocusPolicy(t *testing.
 	if item == nil || item.kind != sidebarWorkflow {
 		t.Fatalf("expected selected workflow item")
 	}
-	if cmd := service.resolveSelectionCommand(&m, true, item, 0, selectionChangeSourceUser, stubSelectionFocusPolicy{openWorkflow: false}); cmd != nil {
-		t.Fatalf("expected nil command when focus policy denies workflow open")
-	}
-	if cmd := service.resolveSelectionCommand(&m, true, item, 0, selectionChangeSourceUser, stubSelectionFocusPolicy{openWorkflow: true}); cmd == nil {
-		t.Fatalf("expected workflow command when focus policy allows workflow open")
+	if cmd := service.resolveSelectionCommand(&m, true, item, 0); cmd != nil {
+		t.Fatalf("expected workflow selection command to stay nil until explicit activation")
 	}
 }
 

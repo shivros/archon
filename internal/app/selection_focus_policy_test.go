@@ -8,39 +8,8 @@ import (
 
 type alwaysTrueSelectionFocusPolicy struct{}
 
-func (alwaysTrueSelectionFocusPolicy) ShouldOpenWorkflowSelection(_ *sidebarItem, _ selectionChangeSource) bool {
-	return true
-}
-
 func (alwaysTrueSelectionFocusPolicy) ShouldExitGuidedWorkflowForSessionSelection(_ uiMode, _ *sidebarItem, _ selectionChangeSource) bool {
 	return true
-}
-
-func TestDefaultSelectionFocusPolicyOpenWorkflowContract(t *testing.T) {
-	policy := DefaultSelectionFocusPolicy()
-	if policy.ShouldOpenWorkflowSelection(nil, selectionChangeSourceUser) {
-		t.Fatalf("expected nil item to never open workflow selection")
-	}
-	sessionItem := &sidebarItem{
-		kind:    sidebarSession,
-		session: &types.Session{ID: "s1"},
-	}
-	if policy.ShouldOpenWorkflowSelection(sessionItem, selectionChangeSourceUser) {
-		t.Fatalf("expected non-workflow item to never open workflow selection")
-	}
-	workflowItem := &sidebarItem{
-		kind:       sidebarWorkflow,
-		workflowID: "gwf-1",
-	}
-	if policy.ShouldOpenWorkflowSelection(workflowItem, selectionChangeSourceSystem) {
-		t.Fatalf("expected system source to avoid opening workflow selection")
-	}
-	if !policy.ShouldOpenWorkflowSelection(workflowItem, selectionChangeSourceUser) {
-		t.Fatalf("expected user source to open workflow selection")
-	}
-	if !policy.ShouldOpenWorkflowSelection(workflowItem, selectionChangeSourceHistory) {
-		t.Fatalf("expected history source to open workflow selection")
-	}
 }
 
 func TestDefaultSelectionFocusPolicyExitGuidedWorkflowContract(t *testing.T) {

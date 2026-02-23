@@ -371,6 +371,46 @@ func TestMouseReducerSidebarWorkflowCaretClickTogglesExpansion(t *testing.T) {
 	}
 }
 
+func TestMouseReducerSidebarWorkflowRowClickKeepsSelectionPassive(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkflow {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible workflow row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if m.mode == uiModeGuidedWorkflow {
+		t.Fatalf("expected workflow row click to remain passive before command flush")
+	}
+	flushPendingMouseCmd(t, &m)
+	if m.mode == uiModeGuidedWorkflow {
+		t.Fatalf("expected workflow row click to remain passive after command flush")
+	}
+	if item := m.selectedItem(); item == nil || item.kind != sidebarWorkflow {
+		t.Fatalf("expected workflow row to remain selected")
+	}
+}
+
 func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

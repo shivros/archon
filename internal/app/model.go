@@ -273,6 +273,8 @@ type Model struct {
 	selectionOriginPolicy               SelectionOriginPolicy
 	selectionFocusPolicy                SelectionFocusPolicy
 	selectionTransitionService          SelectionTransitionService
+	selectionActivationService          SelectionActivationService
+	selectionEnterActionService         SelectionEnterActionService
 	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
 	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
 }
@@ -482,6 +484,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		selectionOriginPolicy:               DefaultSelectionOriginPolicy(),
 		selectionFocusPolicy:                DefaultSelectionFocusPolicy(),
 		selectionTransitionService:          NewDefaultSelectionTransitionService(),
+		selectionActivationService:          NewDefaultSelectionActivationService(),
+		selectionEnterActionService:         NewDefaultSelectionEnterActionService(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
