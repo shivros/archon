@@ -209,6 +209,293 @@ func TestDeleteHotkeyRoutesWorkflowSelection(t *testing.T) {
 	}
 }
 
+func TestDeleteHotkeyBuildsBatchActionForMixedMultiSelect(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('d'))
+	if !handled {
+		t.Fatalf("expected delete hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for confirmation")
+	}
+	action, ok := m.pendingSelectionAction.(selectionBatchAction)
+	if !ok {
+		t.Fatalf("expected selectionBatchAction, got %T", m.pendingSelectionAction)
+	}
+	if len(action.operations) != 2 {
+		t.Fatalf("expected two operations for mixed selection, got %d", len(action.operations))
+	}
+}
+
+func TestInterruptHotkeyBuildsBatchActionForSessionsAndWorkflows(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('i'))
+	if !handled {
+		t.Fatalf("expected interrupt hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for confirmation")
+	}
+	action, ok := m.pendingSelectionAction.(selectionBatchAction)
+	if !ok {
+		t.Fatalf("expected selectionBatchAction, got %T", m.pendingSelectionAction)
+	}
+	if len(action.operations) != 2 {
+		t.Fatalf("expected two operations for interrupt/stop, got %d", len(action.operations))
+	}
+}
+
+func TestKillHotkeySkipsNonKillableSelections(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Title: "Running", Status: types.SessionStatusRunning},
+		{ID: "s2", Title: "Exited", Status: types.SessionStatusExited},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Running"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", Title: "Exited"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select session s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select session s2")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('x'))
+	if !handled {
+		t.Fatalf("expected kill hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command for confirmation")
+	}
+	action, ok := m.pendingSelectionAction.(selectionBatchAction)
+	if !ok {
+		t.Fatalf("expected selectionBatchAction, got %T", m.pendingSelectionAction)
+	}
+	if len(action.operations) != 1 {
+		t.Fatalf("expected one kill operation, got %d", len(action.operations))
+	}
+	if action.skippedCount != 1 {
+		t.Fatalf("expected one skipped non-killable item, got %d", action.skippedCount)
+	}
+}
+
+func TestInterruptHotkeyConfirmExecutesBatchAndClearsSelection(t *testing.T) {
+	executor := &recordingSelectionOperationExecutor{}
+	m := NewModel(nil, WithSelectionOperationExecutor(executor))
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection before interrupt confirm")
+	}
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('i'))
+	if !handled {
+		t.Fatalf("expected interrupt hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected confirmation flow (no immediate async command)")
+	}
+	if m.confirm == nil || !m.confirm.IsOpen() {
+		t.Fatalf("expected confirm modal to open")
+	}
+
+	confirmCmd := m.handleConfirmChoice(confirmChoiceConfirm)
+	if confirmCmd == nil {
+		t.Fatalf("expected command from confirmed interrupt/stop batch action")
+	}
+	if !executor.called {
+		t.Fatalf("expected injected executor to run on confirm")
+	}
+	if len(executor.plan.Operations) != 2 {
+		t.Fatalf("expected 2 operations, got %d", len(executor.plan.Operations))
+	}
+	if m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection to clear after confirm")
+	}
+}
+
+func TestSelectionBatchCancelClearsSidebarSelectionSet(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Title: "Session One", Status: types.SessionStatusRunning},
+		{ID: "s2", Title: "Session Two", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Session One"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", Title: "Session Two"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection before cancel")
+	}
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('d'))
+	if !handled {
+		t.Fatalf("expected delete hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected confirmation flow (no immediate async command)")
+	}
+	cancelCmd := m.handleConfirmChoice(confirmChoiceCancel)
+	if cancelCmd != nil {
+		t.Fatalf("expected no command on cancel")
+	}
+	if m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection to clear after cancel")
+	}
+}
+
+func TestKillHotkeyConfirmExecutesActionableSubsetAndClearsSelection(t *testing.T) {
+	executor := &recordingSelectionOperationExecutor{}
+	m := NewModel(nil, WithSelectionOperationExecutor(executor))
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Title: "Running", Status: types.SessionStatusRunning},
+		{ID: "s2", Title: "Exited", Status: types.SessionStatusExited},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Running"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", Title: "Exited"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection before kill confirm")
+	}
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('x'))
+	if !handled {
+		t.Fatalf("expected kill hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected confirmation flow (no immediate async command)")
+	}
+	confirmCmd := m.handleConfirmChoice(confirmChoiceConfirm)
+	if confirmCmd == nil {
+		t.Fatalf("expected command from confirmed kill batch action")
+	}
+	if !executor.called {
+		t.Fatalf("expected injected executor to run on confirm")
+	}
+	if len(executor.plan.Operations) != 1 {
+		t.Fatalf("expected one kill operation for actionable subset, got %d", len(executor.plan.Operations))
+	}
+	if executor.plan.Operations[0].kind != selectionOperationKillSession {
+		t.Fatalf("expected kill operation kind, got %v", executor.plan.Operations[0].kind)
+	}
+	if m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection to clear after confirm")
+	}
+}
+
+func TestInterruptAndKillHotkeysRequireActionableSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Exited", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Exited"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusStopped},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarSession)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('i'))
+	if !handled {
+		t.Fatalf("expected interrupt hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command when interrupt selection is non-actionable")
+	}
+	if m.status != "selection has no interruptible or stoppable items" {
+		t.Fatalf("unexpected interrupt validation status %q", m.status)
+	}
+
+	handled, cmd = m.reduceSessionLifecycleKeys(keyRune('x'))
+	if !handled {
+		t.Fatalf("expected kill hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command when kill selection is non-actionable")
+	}
+	if m.status != "selection has no killable items" {
+		t.Fatalf("unexpected kill validation status %q", m.status)
+	}
+}
+
 func TestRenameHotkeyRequiresSelection(t *testing.T) {
 	m := NewModel(nil)
 
@@ -286,7 +573,7 @@ func TestNotesNewOverrideWorksFromSidebarSelection(t *testing.T) {
 	}
 }
 
-func TestSpaceDoesNotEnableSessionMultiSelect(t *testing.T) {
+func TestSpaceTogglesSidebarMultiSelect(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
 	m.worktrees = map[string][]*types.Worktree{}
@@ -305,8 +592,24 @@ func TestSpaceDoesNotEnableSessionMultiSelect(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no command for space key in normal mode")
 	}
+	selected := m.sidebar.SelectedItems()
+	if len(selected) != 1 {
+		t.Fatalf("expected one selected item after first space toggle, got %d", len(selected))
+	}
 	if got := m.selectedSessionID(); got != "s1" {
 		t.Fatalf("expected focused session to remain unchanged, got %q", got)
+	}
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selected = m.sidebar.SelectedItems()
+	if len(selected) != 2 {
+		t.Fatalf("expected two selected items after second toggle, got %d", len(selected))
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selected = m.sidebar.SelectedItems()
+	if len(selected) != 1 {
+		t.Fatalf("expected one selected item after toggling focused row off, got %d", len(selected))
 	}
 }
 

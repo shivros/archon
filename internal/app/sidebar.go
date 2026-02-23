@@ -233,6 +233,7 @@ type sidebarDelegate struct {
 	activeWorkspaceID string
 	activeWorktreeID  string
 	selectedKey       string
+	selectedKeys      map[string]struct{}
 	unreadSessions    map[string]struct{}
 	providerBadges    map[string]*types.ProviderBadgeConfig
 }
@@ -255,6 +256,7 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		return
 	}
 	isSelected := d.selectedKey != "" && entry.key() == d.selectedKey
+	isMarked := d.isSelectedKey(entry.key())
 	maxWidth := m.Width()
 	switch entry.kind {
 	case sidebarRecentsAll:
@@ -266,6 +268,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		style := workspaceStyle
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		fmt.Fprint(w, style.Render(line))
 	case sidebarRecentsReady:
@@ -275,6 +279,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		style := worktreeStyle
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		fmt.Fprint(w, style.Render(line))
 	case sidebarRecentsRunning:
@@ -284,6 +290,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		style := worktreeStyle
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		fmt.Fprint(w, style.Render(line))
 	case sidebarWorkspace:
@@ -308,6 +316,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		}
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		fmt.Fprint(w, style.Render(label))
 	case sidebarWorktree:
@@ -332,6 +342,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		}
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		fmt.Fprint(w, style.Render(line))
 	case sidebarWorkflow:
@@ -360,6 +372,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		style := worktreeStyle
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		fmt.Fprint(w, style.Render(line))
 	case sidebarSession:
@@ -411,6 +425,8 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 		style := sessionStyle
 		if isSelected {
 			style = selectedStyle
+		} else if isMarked {
+			style = multiSelectStyle
 		}
 		titleStyle := style
 		if entry.session != nil && d.isUnread(entry.session.ID) && !isSelected {
@@ -434,6 +450,14 @@ func (d *sidebarDelegate) isUnread(id string) bool {
 		return false
 	}
 	_, ok := d.unreadSessions[id]
+	return ok
+}
+
+func (d *sidebarDelegate) isSelectedKey(key string) bool {
+	if d == nil || d.selectedKeys == nil || strings.TrimSpace(key) == "" {
+		return false
+	}
+	_, ok := d.selectedKeys[key]
 	return ok
 }
 

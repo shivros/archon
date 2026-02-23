@@ -64,19 +64,21 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.guidedWorkflow.MarkRefreshQueued(time.Now().UTC())
 		return true, fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
 	case workflowRunStoppedMsg:
-		if m.guidedWorkflow == nil {
-			return true, nil
-		}
 		if msg.err != nil {
-			m.guidedWorkflow.SetSnapshotError(msg.err)
+			if m.guidedWorkflow != nil {
+				m.guidedWorkflow.SetSnapshotError(msg.err)
+				m.renderGuidedWorkflowContent()
+			}
 			m.setStatusError("guided workflow stop error: " + msg.err.Error())
-			m.renderGuidedWorkflowContent()
 			return true, nil
 		}
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirty()
-		m.guidedWorkflow.SetRun(msg.run)
 		m.setStatusInfo("guided workflow stopped")
+		if m.guidedWorkflow == nil {
+			return true, fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed)
+		}
+		m.guidedWorkflow.SetRun(msg.run)
 		m.renderGuidedWorkflowContent()
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
 		if runID == "" {

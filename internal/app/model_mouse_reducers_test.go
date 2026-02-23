@@ -411,6 +411,104 @@ func TestMouseReducerSidebarWorkflowRowClickKeepsSelectionPassive(t *testing.T) 
 	}
 }
 
+func TestMouseReducerSidebarClickClearsMultiSelectionWhenTargetNotSelected(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected multi-selection before click")
+	}
+
+	workspaceRow := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkspace {
+			workspaceRow = y
+			break
+		}
+	}
+	if workspaceRow < 0 {
+		t.Fatalf("expected visible workspace row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: workspaceRow}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if m.sidebar.HasSelectedKeys() {
+		t.Fatalf("expected clicking non-selected row to clear multi-selection")
+	}
+}
+
+func TestMouseReducerSidebarClickKeepsMultiSelectionWhenTargetAlreadySelected(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.IsKeySelected("sess:s1") || !m.sidebar.IsKeySelected("sess:s2") {
+		t.Fatalf("expected both sessions selected before click")
+	}
+
+	sessionRow := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarSession && entry.session != nil && entry.session.ID == "s1" {
+			sessionRow = y
+			break
+		}
+	}
+	if sessionRow < 0 {
+		t.Fatalf("expected visible s1 row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: sessionRow}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if !m.sidebar.IsKeySelected("sess:s1") || !m.sidebar.IsKeySelected("sess:s2") {
+		t.Fatalf("expected selected-row click to preserve existing multi-selection")
+	}
+}
+
 func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

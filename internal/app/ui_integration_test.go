@@ -469,7 +469,7 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 	}
 }
 
-func TestUISpaceDoesNotEnableBulkDismiss(t *testing.T) {
+func TestUISpaceEnablesBulkDismissAcrossSelectedSessions(t *testing.T) {
 	requireUIIntegration(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -523,12 +523,13 @@ func TestUISpaceDoesNotEnableBulkDismiss(t *testing.T) {
 	h.SelectSession("sess-bulk-1")
 
 	h.SendKey(tea.KeyPressMsg{Text: " "})
+	h.SendKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	h.SendKey(tea.KeyPressMsg{Text: " "})
 	h.SendKey(tea.KeyPressMsg{Text: "d"})
 	h.SendKey(tea.KeyPressMsg{Text: "y"})
 
 	h.WaitFor(func() bool {
-		return !sidebarHasSession(h.model, "sess-bulk-1")
+		return !sidebarHasSession(h.model, "sess-bulk-1") && !sidebarHasSession(h.model, "sess-bulk-2")
 	}, 2*time.Second)
 
 	got1, err := api.GetSession(ctx, "sess-bulk-1")
@@ -543,10 +544,10 @@ func TestUISpaceDoesNotEnableBulkDismiss(t *testing.T) {
 		t.Fatalf("expected session 1 status unchanged after dismiss, got %s", got1.Status)
 	}
 	if got2.Status != types.SessionStatusInactive {
-		t.Fatalf("expected session 2 status unchanged without dismiss, got %s", got2.Status)
+		t.Fatalf("expected session 2 status unchanged after dismiss, got %s", got2.Status)
 	}
-	if !sidebarHasSession(h.model, "sess-bulk-2") {
-		t.Fatalf("expected session 2 to remain visible")
+	if sidebarHasSession(h.model, "sess-bulk-2") {
+		t.Fatalf("expected session 2 to be dismissed from sidebar")
 	}
 }
 

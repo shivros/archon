@@ -17,6 +17,7 @@ type SidebarController struct {
 	delegate              *sidebarDelegate
 	selectionDecider      sidebarSelectionDecisionService
 	selectedKey           string
+	selectedKeys          map[string]struct{}
 	scrollOffset          int
 	viewedSessionActivity map[string]string
 	unreadSessions        map[string]struct{}
@@ -58,6 +59,7 @@ func NewSidebarController() *SidebarController {
 		list:                  mlist,
 		delegate:              delegate,
 		selectionDecider:      NewDefaultSidebarSelectionDecisionService(),
+		selectedKeys:          map[string]struct{}{},
 		viewedSessionActivity: map[string]string{},
 		unreadSessions:        map[string]struct{}{},
 		expandByDefault:       true,
@@ -662,6 +664,96 @@ func (c *SidebarController) SelectedKey() string {
 	return c.selectedKey
 }
 
+func (c *SidebarController) SelectedKeys() []string {
+	if c == nil || len(c.selectedKeys) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(c.selectedKeys))
+	for _, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		key := entry.key()
+		if _, selected := c.selectedKeys[key]; !selected {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func (c *SidebarController) HasSelectedKeys() bool {
+	return c != nil && len(c.selectedKeys) > 0
+}
+
+func (c *SidebarController) IsKeySelected(key string) bool {
+	if c == nil || strings.TrimSpace(key) == "" || len(c.selectedKeys) == 0 {
+		return false
+	}
+	_, ok := c.selectedKeys[key]
+	return ok
+}
+
+func (c *SidebarController) ToggleFocusedSelection() bool {
+	if c == nil {
+		return false
+	}
+	key := strings.TrimSpace(c.SelectedKey())
+	if key == "" {
+		return false
+	}
+	if c.selectedKeys == nil {
+		c.selectedKeys = map[string]struct{}{}
+	}
+	if _, ok := c.selectedKeys[key]; ok {
+		delete(c.selectedKeys, key)
+		c.syncDelegate()
+		return true
+	}
+	c.selectedKeys[key] = struct{}{}
+	c.syncDelegate()
+	return true
+}
+
+func (c *SidebarController) ClearSelectedKeys() bool {
+	if c == nil || len(c.selectedKeys) == 0 {
+		return false
+	}
+	c.selectedKeys = map[string]struct{}{}
+	c.syncDelegate()
+	return true
+}
+
+func (c *SidebarController) SelectedItems() []*sidebarItem {
+	if c == nil || len(c.selectedKeys) == 0 {
+		return nil
+	}
+	selected := make([]*sidebarItem, 0, len(c.selectedKeys))
+	for _, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if _, ok := c.selectedKeys[entry.key()]; !ok {
+			continue
+		}
+		selected = append(selected, entry)
+	}
+	return selected
+}
+
+func (c *SidebarController) SelectedItemsOrFocused() []*sidebarItem {
+	items := c.SelectedItems()
+	if len(items) > 0 {
+		return items
+	}
+	if focused := c.SelectedItem(); focused != nil {
+		return []*sidebarItem{focused}
+	}
+	return nil
+}
+
 func (c *SidebarController) SelectedSessionID() string {
 	item := c.SelectedItem()
 	if item == nil || !item.isSession() {
@@ -860,8 +952,10 @@ func (c *SidebarController) ApplyWithReason(workspaces []*types.Workspace, workt
 	})
 	selectedKey := c.SelectedKey()
 	c.list.SetItems(items)
+	c.pruneSelectedKeys(items)
 	if len(items) == 0 {
 		c.selectedKey = ""
+		c.selectedKeys = map[string]struct{}{}
 		c.scrollOffset = 0
 		c.syncDelegate()
 		c.updateUnreadSessions(sessions, meta)
@@ -964,6 +1058,7 @@ func (c *SidebarController) syncDelegate() {
 	if c.delegate != nil {
 		c.delegate.unreadSessions = c.unreadSessions
 		c.delegate.selectedKey = c.selectedKey
+		c.delegate.selectedKeys = cloneStringSet(c.selectedKeys)
 	}
 }
 
@@ -1103,8 +1198,10 @@ func (c *SidebarController) rebuild(selectedKey string) {
 		defaultOn: c.expandByDefault,
 	})
 	c.list.SetItems(items)
+	c.pruneSelectedKeys(items)
 	if len(items) == 0 {
 		c.selectedKey = ""
+		c.selectedKeys = map[string]struct{}{}
 		c.scrollOffset = 0
 		c.syncDelegate()
 		return
@@ -1123,6 +1220,26 @@ func (c *SidebarController) rebuild(selectedKey string) {
 	}
 	c.syncDelegate()
 	c.markSelectedSessionViewed()
+}
+
+func (c *SidebarController) pruneSelectedKeys(items []list.Item) {
+	if c == nil || len(c.selectedKeys) == 0 {
+		return
+	}
+	visible := map[string]struct{}{}
+	for _, item := range items {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		visible[entry.key()] = struct{}{}
+	}
+	for key := range c.selectedKeys {
+		if _, ok := visible[key]; ok {
+			continue
+		}
+		delete(c.selectedKeys, key)
+	}
 }
 
 func (c *SidebarController) pruneExpansionOverrides(workspaces []*types.Workspace, worktrees map[string][]*types.Worktree, workflowRuns []*guidedworkflows.WorkflowRun, sessions []*types.Session, meta map[string]*types.SessionMeta) {
@@ -1218,6 +1335,24 @@ func cloneBoolMap(input map[string]bool) map[string]bool {
 			continue
 		}
 		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneStringSet(input map[string]struct{}) map[string]struct{} {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(input))
+	for key := range input {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = struct{}{}
 	}
 	if len(out) == 0 {
 		return nil

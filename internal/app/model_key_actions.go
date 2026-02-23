@@ -241,21 +241,11 @@ func (m *Model) reduceSessionLifecycleKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.setStatusMessage("refreshing")
 		return true, tea.Batch(fetchWorkspacesCmd(m.workspaceAPI), m.fetchSessionsCmd(true))
 	case "x":
-		id := m.selectedSessionID()
-		if id == "" {
-			m.setValidationStatus("no session selected")
-			return true, nil
-		}
-		m.setStatusMessage("killing " + id)
-		return true, killSessionCmd(m.sessionAPI, id)
+		m.enterKillForSelection()
+		return true, nil
 	case "i":
-		id := m.selectedSessionID()
-		if id == "" {
-			m.setValidationStatus("no session selected")
-			return true, nil
-		}
-		m.setStatusMessage("interrupting " + id)
-		return true, interruptSessionCmd(m.sessionAPI, id)
+		m.enterInterruptOrStopForSelection()
+		return true, nil
 	case "u":
 		id := m.selectedSessionID()
 		if id == "" {
@@ -320,7 +310,10 @@ func (m *Model) reduceSelectionKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	}
 	switch m.keyString(msg) {
 	case " ", "space":
-		// Session multiselect is temporarily disabled.
+		if m.sidebar == nil || !m.sidebar.ToggleFocusedSelection() {
+			m.setValidationStatus("select an item")
+			return true, nil
+		}
 		return true, nil
 	case "j":
 		m.sidebar.CursorDown()

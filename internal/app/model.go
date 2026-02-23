@@ -275,6 +275,9 @@ type Model struct {
 	selectionTransitionService          SelectionTransitionService
 	selectionActivationService          SelectionActivationService
 	selectionEnterActionService         SelectionEnterActionService
+	selectionOperationPlanner           SelectionOperationPlanner
+	selectionConfirmationPresenter      SelectionConfirmationPresenter
+	selectionOperationExecutor          SelectionOperationExecutor
 	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
 	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
 }
@@ -486,6 +489,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		selectionTransitionService:          NewDefaultSelectionTransitionService(),
 		selectionActivationService:          NewDefaultSelectionActivationService(),
 		selectionEnterActionService:         NewDefaultSelectionEnterActionService(),
+		selectionOperationPlanner:           NewDefaultSelectionOperationPlanner(),
+		selectionConfirmationPresenter:      NewDefaultSelectionConfirmationPresenter(),
+		selectionOperationExecutor:          NewDefaultSelectionOperationExecutor(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -1120,6 +1126,20 @@ func (m *Model) selectedItem() *sidebarItem {
 		return nil
 	}
 	return m.sidebar.SelectedItem()
+}
+
+func (m *Model) selectedItemsOrFocused() []*sidebarItem {
+	if m.sidebar == nil {
+		return nil
+	}
+	return m.sidebar.SelectedItemsOrFocused()
+}
+
+func (m *Model) clearSidebarSelectionSet() {
+	if m.sidebar == nil {
+		return
+	}
+	_ = m.sidebar.ClearSelectedKeys()
 }
 
 func (m *Model) selectedKey() string {
@@ -1940,8 +1960,10 @@ func (m *Model) handleConfirmChoice(choice confirmChoice) tea.Cmd {
 				m.setValidationStatus(err.Error())
 				return nil
 			}
+			m.clearSidebarSelectionSet()
 			return selectionAction.Execute(m)
 		case confirmChoiceCancel:
+			m.clearSidebarSelectionSet()
 			m.setStatusMessage("canceled")
 			return nil
 		default:
@@ -3937,7 +3959,25 @@ func (m *Model) enterRenameForSelection() {
 }
 
 func (m *Model) enterDismissOrDeleteForSelection() {
-	action, err := resolveDismissOrDeleteSelectionAction(m.selectedItem())
+	action, err := resolveDismissOrDeleteSelectionActionForItems(m.selectedItemsOrFocused())
+	if err != nil {
+		m.setValidationStatus(err.Error())
+		return
+	}
+	m.openSelectionActionConfirm(action)
+}
+
+func (m *Model) enterInterruptOrStopForSelection() {
+	action, err := resolveInterruptOrStopSelectionAction(m, m.selectedItemsOrFocused())
+	if err != nil {
+		m.setValidationStatus(err.Error())
+		return
+	}
+	m.openSelectionActionConfirm(action)
+}
+
+func (m *Model) enterKillForSelection() {
+	action, err := resolveKillSelectionAction(m, m.selectedItemsOrFocused())
 	if err != nil {
 		m.setValidationStatus(err.Error())
 		return

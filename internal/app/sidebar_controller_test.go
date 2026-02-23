@@ -112,6 +112,121 @@ func TestSidebarControllerUnreadSessions(t *testing.T) {
 	}
 }
 
+func TestSidebarControllerToggleFocusedSelection(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	if !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected toggle for focused selection")
+	}
+	if !controller.SelectBySessionID("s2") {
+		t.Fatalf("expected to select s2")
+	}
+	if !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected second toggle for focused selection")
+	}
+	selected := controller.SelectedItems()
+	if len(selected) != 2 {
+		t.Fatalf("expected two selected sidebar items, got %d", len(selected))
+	}
+	if !controller.ClearSelectedKeys() {
+		t.Fatalf("expected clear selected keys to return true")
+	}
+	if len(controller.SelectedItems()) != 0 {
+		t.Fatalf("expected no selected items after clear")
+	}
+}
+
+func TestSidebarControllerSelectedKeysAndIsKeySelected(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") || !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected s1 to be included in multi-select")
+	}
+	if !controller.SelectBySessionID("s2") || !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected s2 to be included in multi-select")
+	}
+
+	keys := controller.SelectedKeys()
+	if len(keys) != 2 {
+		t.Fatalf("expected two selected keys, got %d", len(keys))
+	}
+	if !controller.IsKeySelected("sess:s1") {
+		t.Fatalf("expected sess:s1 to be selected")
+	}
+	if !controller.IsKeySelected("sess:s2") {
+		t.Fatalf("expected sess:s2 to be selected")
+	}
+	if controller.IsKeySelected("sess:missing") {
+		t.Fatalf("did not expect sess:missing to be selected")
+	}
+
+	keys[0] = "mutated"
+	fresh := controller.SelectedKeys()
+	for _, key := range fresh {
+		if key == "mutated" {
+			t.Fatalf("expected SelectedKeys to return a defensive copy")
+		}
+	}
+}
+
+func TestSidebarControllerPrunesSelectedKeysOnApply(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	initialSessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, initialSessions, nil, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") || !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected to select s1 into multi-select")
+	}
+	if !controller.SelectBySessionID("s2") || !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected to select s2 into multi-select")
+	}
+	remaining := []*types.Session{{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now}}
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, remaining, nil, map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}, "ws1", "", false)
+	selected := controller.SelectedItems()
+	if len(selected) != 1 {
+		t.Fatalf("expected pruned selection length 1, got %d", len(selected))
+	}
+	if selected[0].session == nil || selected[0].session.ID != "s1" {
+		t.Fatalf("expected s1 to remain selected, got %#v", selected[0])
+	}
+}
+
 func TestSidebarControllerToggleSelectedContainer(t *testing.T) {
 	controller := NewSidebarController()
 	now := time.Now().UTC()

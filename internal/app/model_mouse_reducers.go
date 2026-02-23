@@ -856,6 +856,9 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 			if entry == nil {
 				return false
 			}
+			if m.sidebar.HasSelectedKeys() && !m.sidebar.IsKeySelected(entry.key()) {
+				_ = m.sidebar.ClearSelectedKeys()
+			}
 			m.sidebar.SelectByRow(mouse.Y)
 			if sidebarToggleHitboxClicked(entry, mouse.X) {
 				if m.sidebar.ToggleSelectedContainer() {
