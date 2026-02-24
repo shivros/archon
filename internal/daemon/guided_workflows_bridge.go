@@ -427,7 +427,8 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		)
 	}
 	d.linkSessionToWorkflow(ctx, sessionID, req.RunID, req.WorkspaceID, req.WorktreeID)
-	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt, req.RuntimeOptions)
+	resolvedRuntime := d.resolveDispatchRuntimeOptions(provider, req)
+	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt, resolvedRuntime)
 	if err != nil {
 		if shouldFailStepDispatchWithoutSessionReplacement(err) && d.logger != nil {
 			d.logger.Warn("guided_workflow_step_dispatch_blocked",
@@ -440,8 +441,8 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
 	}
 	effectiveModel := strings.TrimSpace(model)
-	if req.RuntimeOptions != nil {
-		if overrideModel := strings.TrimSpace(req.RuntimeOptions.Model); overrideModel != "" {
+	if resolvedRuntime != nil {
+		if overrideModel := strings.TrimSpace(resolvedRuntime.Model); overrideModel != "" {
 			effectiveModel = overrideModel
 		}
 	}
@@ -610,6 +611,10 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 	req guidedworkflows.StepPromptDispatchRequest,
 ) (string, string, string, error) {
 	explicitSessionID := strings.TrimSpace(req.SessionID)
+	selectedProvider := ""
+	if strings.TrimSpace(req.SelectedProvider) != "" {
+		selectedProvider = normalizeGuidedWorkflowDispatchProvider(strings.TrimSpace(req.SelectedProvider))
+	}
 	sessions, meta, err := d.sessions.ListWithMetaIncludingWorkflowOwned(ctx)
 	if err != nil {
 		return "", "", "", err
@@ -631,12 +636,16 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 				explicitFound = true
 				provider := strings.TrimSpace(session.Provider)
 				model := sessionModel(metaBySessionID[explicitSessionID])
-				if guidedWorkflowProviderSupportsPromptDispatch(provider) {
+				if guidedWorkflowProviderSupportsPromptDispatch(provider) &&
+					(strings.TrimSpace(selectedProvider) == "" || strings.EqualFold(provider, selectedProvider)) {
 					return explicitSessionID, provider, model, nil
 				}
-				recoveredSessionID, recoveredProvider, recoveredModel := d.resolveOwnedWorkflowSession(req, sessions, metaBySessionID)
+				recoveredSessionID, recoveredProvider, recoveredModel := d.resolveOwnedWorkflowSession(req, selectedProvider, sessions, metaBySessionID)
 				if strings.TrimSpace(recoveredSessionID) != "" && strings.TrimSpace(recoveredSessionID) != explicitSessionID {
 					return strings.TrimSpace(recoveredSessionID), strings.TrimSpace(recoveredProvider), strings.TrimSpace(recoveredModel), nil
+				}
+				if strings.TrimSpace(selectedProvider) != "" {
+					return d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
 				}
 				return "", "", "", fmt.Errorf(
 					"%w: explicit session %q uses unsupported provider %q",
@@ -647,14 +656,17 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 			}
 		}
 		if !explicitFound {
-			recoveredSessionID, recoveredProvider, recoveredModel := d.resolveOwnedWorkflowSession(req, sessions, metaBySessionID)
+			recoveredSessionID, recoveredProvider, recoveredModel := d.resolveOwnedWorkflowSession(req, selectedProvider, sessions, metaBySessionID)
 			if strings.TrimSpace(recoveredSessionID) != "" {
 				return strings.TrimSpace(recoveredSessionID), strings.TrimSpace(recoveredProvider), strings.TrimSpace(recoveredModel), nil
 			}
+			if strings.TrimSpace(selectedProvider) == "" {
+				return "", "", "", fmt.Errorf("%w: explicit session %q not found", guidedworkflows.ErrStepDispatch, explicitSessionID)
+			}
 		}
-		return "", "", "", fmt.Errorf("%w: explicit session %q not found", guidedworkflows.ErrStepDispatch, explicitSessionID)
+		return d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
 	}
-	workflowSessionID, workflowProvider, workflowModel := d.resolveOwnedWorkflowSession(req, sessions, metaBySessionID)
+	workflowSessionID, workflowProvider, workflowModel := d.resolveOwnedWorkflowSession(req, selectedProvider, sessions, metaBySessionID)
 	if workflowSessionID != "" {
 		return workflowSessionID, workflowProvider, workflowModel, nil
 	}
@@ -663,6 +675,7 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 
 func (d *guidedWorkflowPromptDispatcher) resolveOwnedWorkflowSession(
 	req guidedworkflows.StepPromptDispatchRequest,
+	targetProvider string,
 	sessions []*types.Session,
 	metaBySessionID map[string]*types.SessionMeta,
 ) (string, string, string) {
@@ -696,6 +709,9 @@ func (d *guidedWorkflowPromptDispatcher) resolveOwnedWorkflowSession(
 		}
 		provider := strings.TrimSpace(session.Provider)
 		if !guidedWorkflowProviderSupportsPromptDispatch(provider) {
+			continue
+		}
+		if strings.TrimSpace(targetProvider) != "" && !strings.EqualFold(provider, targetProvider) {
 			continue
 		}
 		candidateAt := session.CreatedAt
@@ -752,16 +768,24 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 }
 
 func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionProvider(
+	selectedProvider string,
 	workspaceID string,
 	worktreeID string,
 	sessions []*types.Session,
 	metaBySessionID map[string]*types.SessionMeta,
 ) string {
-	provider := d.preferredProviderForContext(workspaceID, worktreeID, sessions, metaBySessionID)
-	if configuredProvider := strings.TrimSpace(d.defaults.Provider); configuredProvider != "" {
-		provider = configuredProvider
+	if strings.TrimSpace(selectedProvider) != "" {
+		if provider := normalizeGuidedWorkflowDispatchProvider(selectedProvider); provider != "" {
+			return provider
+		}
 	}
-	return normalizeGuidedWorkflowDispatchProvider(provider)
+	if provider := d.preferredProviderForContext(workspaceID, worktreeID, sessions, metaBySessionID); strings.TrimSpace(provider) != "" {
+		return provider
+	}
+	if configuredProvider := strings.TrimSpace(d.defaults.Provider); configuredProvider != "" {
+		return normalizeGuidedWorkflowDispatchProvider(configuredProvider)
+	}
+	return normalizeGuidedWorkflowDispatchProvider("")
 }
 
 type guidedWorkflowSessionStartSettings struct {
@@ -779,10 +803,45 @@ func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionStartSettings(
 ) guidedWorkflowSessionStartSettings {
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	worktreeID := strings.TrimSpace(req.WorktreeID)
-	provider := d.resolveWorkflowSessionProvider(workspaceID, worktreeID, sessions, metaBySessionID)
+	provider := d.resolveWorkflowSessionProvider(req.SelectedProvider, workspaceID, worktreeID, sessions, metaBySessionID)
 	settings := guidedWorkflowEffectiveDispatchSettings(req.DefaultAccessLevel, d.defaults)
 	settings.Provider = provider
+	settings.RuntimeOptions = d.resolveSessionStartRuntimeOptions(provider, req)
+	settings.Model = guidedWorkflowDispatchModel(settings.RuntimeOptions)
+	if settings.RuntimeOptions != nil {
+		settings.Access = settings.RuntimeOptions.Access
+		settings.Reasoning = settings.RuntimeOptions.Reasoning
+	}
 	return settings
+}
+
+func (d *guidedWorkflowPromptDispatcher) resolveSessionStartRuntimeOptions(
+	provider string,
+	req guidedworkflows.StepPromptDispatchRequest,
+) *types.SessionRuntimeOptions {
+	return resolveGuidedWorkflowRuntimeOptions(
+		provider,
+		req.DefaultAccessLevel,
+		d.defaults,
+		req.SelectedRuntimeOptions,
+		nil,
+	)
+}
+
+func (d *guidedWorkflowPromptDispatcher) resolveDispatchRuntimeOptions(
+	provider string,
+	req guidedworkflows.StepPromptDispatchRequest,
+) *types.SessionRuntimeOptions {
+	if req.SelectedRuntimeOptions == nil && req.RuntimeOptions == nil {
+		return nil
+	}
+	return resolveGuidedWorkflowRuntimeOptions(
+		provider,
+		"",
+		d.defaults,
+		req.SelectedRuntimeOptions,
+		req.RuntimeOptions,
+	)
 }
 
 func (d *guidedWorkflowPromptDispatcher) logWorkflowSessionStartRequested(
@@ -954,6 +1013,221 @@ func guidedWorkflowDispatchModel(options *types.SessionRuntimeOptions) string {
 		return ""
 	}
 	return strings.TrimSpace(options.Model)
+}
+
+func resolveGuidedWorkflowRuntimeOptions(
+	provider string,
+	defaultAccessLevel types.AccessLevel,
+	defaults guidedWorkflowDispatchDefaults,
+	runSelected *types.SessionRuntimeOptions,
+	stepOverride *types.SessionRuntimeOptions,
+) *types.SessionRuntimeOptions {
+	provider = normalizeGuidedWorkflowDispatchProvider(provider)
+	catalog := providerOptionCatalog(provider)
+	base := types.CloneRuntimeOptions(runSelected)
+	step := types.CloneRuntimeOptions(stepOverride)
+
+	modelCandidate, modelProvided := fieldValue(base, step, "model")
+	accessCandidate, accessProvided := fieldValue(base, step, "access")
+	reasoningCandidate, reasoningProvided := fieldValue(base, step, "reasoning")
+
+	model := resolvedGuidedWorkflowModel(provider, catalog, modelCandidate, modelProvided, defaults.Model)
+	access := resolvedGuidedWorkflowAccess(catalog, defaultAccessLevel, accessCandidate, accessProvided, defaults.Access)
+	reasoning := resolvedGuidedWorkflowReasoning(catalog, model, reasoningCandidate, reasoningProvided, defaults.Reasoning)
+
+	out := &types.SessionRuntimeOptions{
+		Model:     model,
+		Reasoning: reasoning,
+		Access:    access,
+		Version:   1,
+	}
+	if out.Model == "" && out.Reasoning == "" && out.Access == "" {
+		return nil
+	}
+	return out
+}
+
+func fieldValue(
+	base *types.SessionRuntimeOptions,
+	step *types.SessionRuntimeOptions,
+	field string,
+) (string, bool) {
+	switch field {
+	case "model":
+		if step != nil && strings.TrimSpace(step.Model) != "" {
+			return strings.TrimSpace(step.Model), true
+		}
+		if base != nil {
+			if value := strings.TrimSpace(base.Model); value != "" {
+				return value, true
+			}
+		}
+	case "access":
+		if step != nil && strings.TrimSpace(string(step.Access)) != "" {
+			return strings.TrimSpace(string(step.Access)), true
+		}
+		if base != nil {
+			if value := strings.TrimSpace(string(base.Access)); value != "" {
+				return value, true
+			}
+		}
+	case "reasoning":
+		if step != nil && strings.TrimSpace(string(step.Reasoning)) != "" {
+			return strings.TrimSpace(string(step.Reasoning)), true
+		}
+		if base != nil {
+			if value := strings.TrimSpace(string(base.Reasoning)); value != "" {
+				return value, true
+			}
+		}
+	}
+	return "", false
+}
+
+func resolvedGuidedWorkflowModel(
+	provider string,
+	catalog *types.ProviderOptionCatalog,
+	candidate string,
+	candidateProvided bool,
+	configured string,
+) string {
+	candidate = strings.TrimSpace(candidate)
+	if guidedWorkflowModelAllowed(provider, catalog, candidate) {
+		return candidate
+	}
+	if !candidateProvided {
+		configured = strings.TrimSpace(configured)
+		if guidedWorkflowModelAllowed(provider, catalog, configured) {
+			return configured
+		}
+		return ""
+	}
+	configured = strings.TrimSpace(configured)
+	if guidedWorkflowModelAllowed(provider, catalog, configured) {
+		return configured
+	}
+	if catalog != nil && guidedWorkflowModelAllowed(provider, catalog, catalog.Defaults.Model) {
+		return strings.TrimSpace(catalog.Defaults.Model)
+	}
+	return ""
+}
+
+func guidedWorkflowModelAllowed(provider string, catalog *types.ProviderOptionCatalog, model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	if catalog == nil || len(catalog.Models) == 0 {
+		return true
+	}
+	normalizedProvider := providers.Normalize(provider)
+	if normalizedProvider == "codex" || normalizedProvider == "claude" {
+		return true
+	}
+	return containsFolded(catalog.Models, model)
+}
+
+func resolvedGuidedWorkflowAccess(
+	catalog *types.ProviderOptionCatalog,
+	defaultAccessLevel types.AccessLevel,
+	candidate string,
+	candidateProvided bool,
+	configured types.AccessLevel,
+) types.AccessLevel {
+	if level, ok := normalizeAccessLevel(types.AccessLevel(candidate)); ok && guidedWorkflowAccessAllowed(catalog, level) {
+		return level
+	}
+	if !candidateProvided {
+		if normalized, ok := guidedworkflows.NormalizeTemplateAccessLevel(defaultAccessLevel); ok && guidedWorkflowAccessAllowed(catalog, normalized) {
+			return normalized
+		}
+		if configured != "" && guidedWorkflowAccessAllowed(catalog, configured) {
+			return configured
+		}
+		return ""
+	}
+	if configured != "" && guidedWorkflowAccessAllowed(catalog, configured) {
+		return configured
+	}
+	if normalized, ok := guidedworkflows.NormalizeTemplateAccessLevel(defaultAccessLevel); ok && guidedWorkflowAccessAllowed(catalog, normalized) {
+		return normalized
+	}
+	if catalog != nil && catalog.Defaults.Access != "" && guidedWorkflowAccessAllowed(catalog, catalog.Defaults.Access) {
+		return catalog.Defaults.Access
+	}
+	return ""
+}
+
+func guidedWorkflowAccessAllowed(catalog *types.ProviderOptionCatalog, level types.AccessLevel) bool {
+	if level == "" {
+		return false
+	}
+	if catalog == nil || len(catalog.AccessLevels) == 0 {
+		return true
+	}
+	for _, allowed := range catalog.AccessLevels {
+		if allowed == level {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvedGuidedWorkflowReasoning(
+	catalog *types.ProviderOptionCatalog,
+	model string,
+	candidate string,
+	candidateProvided bool,
+	configured types.ReasoningLevel,
+) types.ReasoningLevel {
+	allowed := guidedWorkflowReasoningLevels(catalog, model)
+	if level, ok := normalizeReasoningLevel(types.ReasoningLevel(candidate)); ok && guidedWorkflowReasoningAllowed(level, allowed) {
+		return level
+	}
+	if !candidateProvided {
+		if configured != "" && guidedWorkflowReasoningAllowed(configured, allowed) {
+			return configured
+		}
+		return ""
+	}
+	if configured != "" && guidedWorkflowReasoningAllowed(configured, allowed) {
+		return configured
+	}
+	if modelLevel, ok := modelDefaultReasoningFor(catalog, model); ok && guidedWorkflowReasoningAllowed(modelLevel, allowed) {
+		return modelLevel
+	}
+	if catalog != nil && catalog.Defaults.Reasoning != "" && guidedWorkflowReasoningAllowed(catalog.Defaults.Reasoning, allowed) {
+		return catalog.Defaults.Reasoning
+	}
+	if len(allowed) > 0 {
+		return allowed[0]
+	}
+	return ""
+}
+
+func guidedWorkflowReasoningLevels(catalog *types.ProviderOptionCatalog, model string) []types.ReasoningLevel {
+	if catalog == nil {
+		return nil
+	}
+	if modelLevels, ok := modelReasoningLevelsFor(catalog, model); ok && len(modelLevels) > 0 {
+		return modelLevels
+	}
+	return append([]types.ReasoningLevel{}, catalog.ReasoningLevels...)
+}
+
+func guidedWorkflowReasoningAllowed(level types.ReasoningLevel, allowed []types.ReasoningLevel) bool {
+	if level == "" {
+		return false
+	}
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, entry := range allowed {
+		if entry == level {
+			return true
+		}
+	}
+	return false
 }
 
 func wrapStepDispatchError(err error) error {

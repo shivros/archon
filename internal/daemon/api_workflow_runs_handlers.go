@@ -11,6 +11,7 @@ import (
 
 	"control/internal/guidedworkflows"
 	"control/internal/logging"
+	"control/internal/types"
 )
 
 func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -45,13 +46,16 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		run, err := service.CreateRun(r.Context(), guidedworkflows.CreateRunRequest{
-			TemplateID:      strings.TrimSpace(req.TemplateID),
-			WorkspaceID:     strings.TrimSpace(req.WorkspaceID),
-			WorktreeID:      strings.TrimSpace(req.WorktreeID),
-			SessionID:       strings.TrimSpace(req.SessionID),
-			TaskID:          strings.TrimSpace(req.TaskID),
-			UserPrompt:      strings.TrimSpace(req.UserPrompt),
-			PolicyOverrides: a.workflowPolicyResolver().ResolvePolicyOverrides(req.PolicyOverrides),
+			TemplateID:                strings.TrimSpace(req.TemplateID),
+			WorkspaceID:               strings.TrimSpace(req.WorkspaceID),
+			WorktreeID:                strings.TrimSpace(req.WorktreeID),
+			SessionID:                 strings.TrimSpace(req.SessionID),
+			TaskID:                    strings.TrimSpace(req.TaskID),
+			UserPrompt:                strings.TrimSpace(req.UserPrompt),
+			SelectedProvider:          strings.TrimSpace(req.SelectedProvider),
+			SelectedPolicySensitivity: strings.TrimSpace(req.SelectedPolicySensitivity),
+			SelectedRuntimeOptions:    types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+			PolicyOverrides:           a.workflowPolicyResolver().ResolvePolicyOverrides(req.PolicyOverrides),
 		})
 		if err != nil {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
@@ -65,6 +69,7 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 				logging.F("workspace_id", strings.TrimSpace(run.WorkspaceID)),
 				logging.F("worktree_id", strings.TrimSpace(run.WorktreeID)),
 				logging.F("requested_session_id", strings.TrimSpace(req.SessionID)),
+				logging.F("selected_provider", strings.TrimSpace(req.SelectedProvider)),
 				logging.F("effective_provider", settings.Provider),
 				logging.F("effective_model", settings.Model),
 				logging.F("effective_access", settings.Access),
