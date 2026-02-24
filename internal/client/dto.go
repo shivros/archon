@@ -117,13 +117,16 @@ type HealthResponse struct {
 }
 
 type CreateWorkflowRunRequest struct {
-	TemplateID      string                                    `json:"template_id,omitempty"`
-	WorkspaceID     string                                    `json:"workspace_id,omitempty"`
-	WorktreeID      string                                    `json:"worktree_id,omitempty"`
-	SessionID       string                                    `json:"session_id,omitempty"`
-	TaskID          string                                    `json:"task_id,omitempty"`
-	UserPrompt      string                                    `json:"user_prompt,omitempty"`
-	PolicyOverrides *guidedworkflows.CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
+	TemplateID                string                                    `json:"template_id,omitempty"`
+	WorkspaceID               string                                    `json:"workspace_id,omitempty"`
+	WorktreeID                string                                    `json:"worktree_id,omitempty"`
+	SessionID                 string                                    `json:"session_id,omitempty"`
+	TaskID                    string                                    `json:"task_id,omitempty"`
+	UserPrompt                string                                    `json:"user_prompt,omitempty"`
+	SelectedProvider          string                                    `json:"selected_provider,omitempty"`
+	SelectedPolicySensitivity string                                    `json:"selected_policy_sensitivity,omitempty"`
+	SelectedRuntimeOptions    *types.SessionRuntimeOptions              `json:"selected_runtime_options,omitempty"`
+	PolicyOverrides           *guidedworkflows.CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
 }
 
 type WorkflowRunDecisionRequest struct {

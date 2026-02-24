@@ -27,7 +27,7 @@ func (c *ChatInputAddonController) composeControlsLine(m *Model) string {
 	if c == nil || m == nil {
 		return ""
 	}
-	if m.mode != uiModeCompose {
+	if m.mode != uiModeCompose && !(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup) {
 		if c.addon != nil {
 			c.addon.SetControlSpans(nil)
 		}

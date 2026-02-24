@@ -7,12 +7,15 @@ import (
 
 	"control/internal/client"
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 type guidedWorkflowStage int
 
 const (
 	guidedWorkflowStageLauncher guidedWorkflowStage = iota
+	guidedWorkflowStageProvider
+	guidedWorkflowStagePolicy
 	guidedWorkflowStageSetup
 	guidedWorkflowStageLive
 	guidedWorkflowStageSummary
@@ -53,24 +56,30 @@ type guidedWorkflowTurnLinkTarget struct {
 }
 
 type GuidedWorkflowUIController struct {
-	stage           guidedWorkflowStage
-	context         guidedWorkflowLaunchContext
-	templateID      string
-	templateName    string
-	templatePicker  guidedWorkflowTemplatePicker
-	defaultPreset   guidedPolicySensitivity
-	sensitivity     guidedPolicySensitivity
-	userPrompt      string
-	resumeMessage   string
-	run             *guidedworkflows.WorkflowRun
-	timeline        []guidedworkflows.RunTimelineEvent
-	lastError       string
-	refreshQueued   bool
-	lastRefreshAt   time.Time
-	selectedPhase   int
-	selectedStep    int
-	userTurnLink    WorkflowUserTurnLinkBuilder
-	promptPresenter workflowPromptPresenter
+	stage                 guidedWorkflowStage
+	context               guidedWorkflowLaunchContext
+	templateID            string
+	templateName          string
+	templatePicker        guidedWorkflowTemplatePicker
+	providerPicker        *ProviderPicker
+	policyPicker          *SelectPicker
+	defaultProvider       string
+	provider              string
+	defaultRuntimeOptions *types.SessionRuntimeOptions
+	runtimeOptions        *types.SessionRuntimeOptions
+	defaultPreset         guidedPolicySensitivity
+	sensitivity           guidedPolicySensitivity
+	userPrompt            string
+	resumeMessage         string
+	run                   *guidedworkflows.WorkflowRun
+	timeline              []guidedworkflows.RunTimelineEvent
+	lastError             string
+	refreshQueued         bool
+	lastRefreshAt         time.Time
+	selectedPhase         int
+	selectedStep          int
+	userTurnLink          WorkflowUserTurnLinkBuilder
+	promptPresenter       workflowPromptPresenter
 }
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
@@ -79,6 +88,8 @@ func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
 		templateID:      "",
 		templateName:    "",
 		templatePicker:  newGuidedWorkflowTemplatePicker(),
+		providerPicker:  NewProviderPicker(minViewportWidth, 8),
+		policyPicker:    NewSelectPicker(minViewportWidth, 8),
 		defaultPreset:   guidedPolicySensitivityBalanced,
 		sensitivity:     guidedPolicySensitivityBalanced,
 		userTurnLink:    NewArchonWorkflowUserTurnLinkBuilder(),
@@ -95,6 +106,8 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.templateID = ""
 	c.templateName = ""
 	c.templatePicker.Reset()
+	c.provider = ""
+	c.runtimeOptions = types.CloneRuntimeOptions(c.defaultRuntimeOptions)
 	c.sensitivity = c.defaultPreset
 	c.userPrompt = ""
 	c.resumeMessage = guidedworkflows.DefaultResumeFailedRunMessage
@@ -105,6 +118,8 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.lastRefreshAt = time.Time{}
 	c.selectedPhase = 0
 	c.selectedStep = 0
+	c.initProviderPicker()
+	c.initPolicyPicker()
 }
 
 func (c *GuidedWorkflowUIController) Exit() {
@@ -121,11 +136,34 @@ func (c *GuidedWorkflowUIController) Stage() guidedWorkflowStage {
 	return c.stage
 }
 
-func (c *GuidedWorkflowUIController) OpenSetup() bool {
+func (c *GuidedWorkflowUIController) OpenProvider() bool {
 	if c == nil || c.stage != guidedWorkflowStageLauncher {
 		return false
 	}
 	if c.templatePicker.Loading() || strings.TrimSpace(c.templateID) == "" {
+		return false
+	}
+	c.initProviderPicker()
+	c.stage = guidedWorkflowStageProvider
+	c.lastError = ""
+	return true
+}
+
+func (c *GuidedWorkflowUIController) OpenPolicy() bool {
+	if c == nil || c.stage != guidedWorkflowStageProvider {
+		return false
+	}
+	if strings.TrimSpace(c.provider) == "" {
+		return false
+	}
+	c.initPolicyPicker()
+	c.stage = guidedWorkflowStagePolicy
+	c.lastError = ""
+	return true
+}
+
+func (c *GuidedWorkflowUIController) OpenSetup() bool {
+	if c == nil || c.stage != guidedWorkflowStagePolicy {
 		return false
 	}
 	c.stage = guidedWorkflowStageSetup
@@ -138,6 +176,20 @@ func (c *GuidedWorkflowUIController) OpenLauncher() {
 		return
 	}
 	c.stage = guidedWorkflowStageLauncher
+}
+
+func (c *GuidedWorkflowUIController) OpenProviderStage() {
+	if c == nil {
+		return
+	}
+	c.stage = guidedWorkflowStageProvider
+}
+
+func (c *GuidedWorkflowUIController) OpenPolicyStage() {
+	if c == nil {
+		return
+	}
+	c.stage = guidedWorkflowStagePolicy
 }
 
 func (c *GuidedWorkflowUIController) BeginTemplateLoad() {
@@ -173,11 +225,37 @@ func (c *GuidedWorkflowUIController) MoveTemplateSelection(delta int) bool {
 	return true
 }
 
+func (c *GuidedWorkflowUIController) MoveProviderSelection(delta int) bool {
+	if c == nil || c.stage != guidedWorkflowStageProvider || delta == 0 || c.providerPicker == nil {
+		return false
+	}
+	c.providerPicker.Move(delta)
+	c.provider = strings.TrimSpace(c.providerPicker.Selected())
+	return true
+}
+
+func (c *GuidedWorkflowUIController) MovePolicySelection(delta int) bool {
+	if c == nil || c.stage != guidedWorkflowStagePolicy || delta == 0 || c.policyPicker == nil {
+		return false
+	}
+	if !c.policyPicker.Move(delta) {
+		return false
+	}
+	c.syncPolicySelection()
+	return true
+}
+
 func (c *GuidedWorkflowUIController) SetTemplatePickerSize(width, height int) {
 	if c == nil {
 		return
 	}
 	c.templatePicker.SetSize(width, height)
+	if c.providerPicker != nil {
+		c.providerPicker.SetSize(width, height)
+	}
+	if c.policyPicker != nil {
+		c.policyPicker.SetSize(width, height)
+	}
 }
 
 func (c *GuidedWorkflowUIController) SetUserTurnLinkBuilder(builder WorkflowUserTurnLinkBuilder) {
@@ -188,43 +266,115 @@ func (c *GuidedWorkflowUIController) SetUserTurnLinkBuilder(builder WorkflowUser
 }
 
 func (c *GuidedWorkflowUIController) Query() string {
-	if c == nil || c.stage != guidedWorkflowStageLauncher {
+	if c == nil {
 		return ""
 	}
-	return c.templatePicker.Query()
+	switch c.stage {
+	case guidedWorkflowStageLauncher:
+		return c.templatePicker.Query()
+	case guidedWorkflowStageProvider:
+		if c.providerPicker != nil {
+			return c.providerPicker.Query()
+		}
+	case guidedWorkflowStagePolicy:
+		if c.policyPicker != nil {
+			return c.policyPicker.Query()
+		}
+	}
+	return ""
 }
 
 func (c *GuidedWorkflowUIController) AppendQuery(text string) bool {
-	if c == nil || c.stage != guidedWorkflowStageLauncher {
+	if c == nil {
 		return false
 	}
-	if !c.templatePicker.AppendQuery(text) {
-		return false
+	switch c.stage {
+	case guidedWorkflowStageLauncher:
+		if !c.templatePicker.AppendQuery(text) {
+			return false
+		}
+		c.syncTemplateSelection()
+		return true
+	case guidedWorkflowStageProvider:
+		if c.providerPicker != nil {
+			if !c.providerPicker.AppendQuery(text) {
+				return false
+			}
+			c.provider = strings.TrimSpace(c.providerPicker.Selected())
+			return true
+		}
+	case guidedWorkflowStagePolicy:
+		if c.policyPicker != nil {
+			if !c.policyPicker.AppendQuery(text) {
+				return false
+			}
+			c.syncPolicySelection()
+			return true
+		}
 	}
-	c.syncTemplateSelection()
-	return true
+	return false
 }
 
 func (c *GuidedWorkflowUIController) BackspaceQuery() bool {
-	if c == nil || c.stage != guidedWorkflowStageLauncher {
+	if c == nil {
 		return false
 	}
-	if !c.templatePicker.BackspaceQuery() {
-		return false
+	switch c.stage {
+	case guidedWorkflowStageLauncher:
+		if !c.templatePicker.BackspaceQuery() {
+			return false
+		}
+		c.syncTemplateSelection()
+		return true
+	case guidedWorkflowStageProvider:
+		if c.providerPicker != nil {
+			if !c.providerPicker.BackspaceQuery() {
+				return false
+			}
+			c.provider = strings.TrimSpace(c.providerPicker.Selected())
+			return true
+		}
+	case guidedWorkflowStagePolicy:
+		if c.policyPicker != nil {
+			if !c.policyPicker.BackspaceQuery() {
+				return false
+			}
+			c.syncPolicySelection()
+			return true
+		}
 	}
-	c.syncTemplateSelection()
-	return true
+	return false
 }
 
 func (c *GuidedWorkflowUIController) ClearQuery() bool {
-	if c == nil || c.stage != guidedWorkflowStageLauncher {
+	if c == nil {
 		return false
 	}
-	if !c.templatePicker.ClearQuery() {
-		return false
+	switch c.stage {
+	case guidedWorkflowStageLauncher:
+		if !c.templatePicker.ClearQuery() {
+			return false
+		}
+		c.syncTemplateSelection()
+		return true
+	case guidedWorkflowStageProvider:
+		if c.providerPicker != nil {
+			if !c.providerPicker.ClearQuery() {
+				return false
+			}
+			c.provider = strings.TrimSpace(c.providerPicker.Selected())
+			return true
+		}
+	case guidedWorkflowStagePolicy:
+		if c.policyPicker != nil {
+			if !c.policyPicker.ClearQuery() {
+				return false
+			}
+			c.syncPolicySelection()
+			return true
+		}
 	}
-	c.syncTemplateSelection()
-	return true
+	return false
 }
 
 func (c *GuidedWorkflowUIController) SelectTemplateByRow(row int) bool {
@@ -235,6 +385,28 @@ func (c *GuidedWorkflowUIController) SelectTemplateByRow(row int) bool {
 		return false
 	}
 	c.syncTemplateSelection()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) SelectProviderByRow(row int) bool {
+	if c == nil || c.stage != guidedWorkflowStageProvider || c.providerPicker == nil {
+		return false
+	}
+	if !c.providerPicker.SelectByRow(row) {
+		return false
+	}
+	c.provider = strings.TrimSpace(c.providerPicker.Selected())
+	return true
+}
+
+func (c *GuidedWorkflowUIController) SelectPolicyByRow(row int) bool {
+	if c == nil || c.stage != guidedWorkflowStagePolicy || c.policyPicker == nil {
+		return false
+	}
+	if !c.policyPicker.HandleClick(row) {
+		return false
+	}
+	c.syncPolicySelection()
 	return true
 }
 
@@ -254,6 +426,39 @@ func (c *GuidedWorkflowUIController) LauncherTemplatePickerLayout() (guidedWorkf
 		queryLine: strings.TrimSpace(renderPickerQueryLine(c.templatePicker.Query())),
 		height:    len(lines),
 	}, true
+}
+
+func (c *GuidedWorkflowUIController) ActivePickerLayout() (guidedWorkflowLauncherTemplatePickerLayout, bool) {
+	if c == nil {
+		return guidedWorkflowLauncherTemplatePickerLayout{}, false
+	}
+	switch c.stage {
+	case guidedWorkflowStageLauncher:
+		return c.LauncherTemplatePickerLayout()
+	case guidedWorkflowStageProvider:
+		view := strings.TrimSpace(c.providerPickerView())
+		if view == "" {
+			return guidedWorkflowLauncherTemplatePickerLayout{}, false
+		}
+		return guidedWorkflowLauncherTemplatePickerLayout{
+			queryLine: strings.TrimSpace(renderPickerQueryLine(c.providerPicker.Query())),
+			height:    len(strings.Split(view, "\n")),
+		}, true
+	case guidedWorkflowStagePolicy:
+		if c.policyPicker == nil {
+			return guidedWorkflowLauncherTemplatePickerLayout{}, false
+		}
+		view := strings.TrimSpace(c.policyPicker.View())
+		if view == "" {
+			return guidedWorkflowLauncherTemplatePickerLayout{}, false
+		}
+		return guidedWorkflowLauncherTemplatePickerLayout{
+			queryLine: strings.TrimSpace(renderPickerQueryLine(c.policyPicker.Query())),
+			height:    len(strings.Split(view, "\n")),
+		}, true
+	default:
+		return guidedWorkflowLauncherTemplatePickerLayout{}, false
+	}
 }
 
 func (c *GuidedWorkflowUIController) LauncherRequiresRawANSIRender() bool {
@@ -297,13 +502,64 @@ func (c *GuidedWorkflowUIController) SetDefaultSensitivity(sensitivity guidedPol
 	default:
 		c.defaultPreset = guidedPolicySensitivityBalanced
 	}
-	if c.stage == guidedWorkflowStageLauncher || c.stage == guidedWorkflowStageSetup {
+	if c.stage == guidedWorkflowStageLauncher || c.stage == guidedWorkflowStagePolicy {
 		c.sensitivity = c.defaultPreset
 	}
 }
 
+func (c *GuidedWorkflowUIController) SetDefaultProvider(provider string) {
+	if c == nil {
+		return
+	}
+	c.defaultProvider = strings.TrimSpace(provider)
+	if c.stage == guidedWorkflowStageLauncher || c.stage == guidedWorkflowStageProvider {
+		c.initProviderPicker()
+	}
+}
+
+func (c *GuidedWorkflowUIController) SetDefaultRuntimeOptions(options *types.SessionRuntimeOptions) {
+	if c == nil {
+		return
+	}
+	c.defaultRuntimeOptions = types.CloneRuntimeOptions(options)
+	if c.runtimeOptions == nil {
+		c.runtimeOptions = types.CloneRuntimeOptions(options)
+	}
+}
+
+func (c *GuidedWorkflowUIController) Provider() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.provider)
+}
+
+func (c *GuidedWorkflowUIController) SetProvider(provider string) {
+	if c == nil {
+		return
+	}
+	c.provider = strings.TrimSpace(provider)
+	if c.providerPicker != nil && c.provider != "" {
+		c.providerPicker.Enter(c.provider)
+	}
+}
+
+func (c *GuidedWorkflowUIController) RuntimeOptions() *types.SessionRuntimeOptions {
+	if c == nil {
+		return nil
+	}
+	return types.CloneRuntimeOptions(c.runtimeOptions)
+}
+
+func (c *GuidedWorkflowUIController) SetRuntimeOptions(options *types.SessionRuntimeOptions) {
+	if c == nil {
+		return
+	}
+	c.runtimeOptions = types.CloneRuntimeOptions(options)
+}
+
 func (c *GuidedWorkflowUIController) CycleSensitivity(delta int) {
-	if c == nil || c.stage != guidedWorkflowStageSetup || delta == 0 {
+	if c == nil || c.stage != guidedWorkflowStagePolicy || delta == 0 {
 		return
 	}
 	order := []guidedPolicySensitivity{
@@ -583,11 +839,14 @@ func (c *GuidedWorkflowUIController) TurnLinkTargets() []guidedWorkflowTurnLinkT
 
 func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowRunRequest {
 	req := client.CreateWorkflowRunRequest{
-		TemplateID:  strings.TrimSpace(c.templateID),
-		WorkspaceID: strings.TrimSpace(c.context.workspaceID),
-		WorktreeID:  strings.TrimSpace(c.context.worktreeID),
-		SessionID:   strings.TrimSpace(c.context.sessionID),
-		UserPrompt:  strings.TrimSpace(c.userPrompt),
+		TemplateID:                strings.TrimSpace(c.templateID),
+		WorkspaceID:               strings.TrimSpace(c.context.workspaceID),
+		WorktreeID:                strings.TrimSpace(c.context.worktreeID),
+		SessionID:                 strings.TrimSpace(c.context.sessionID),
+		UserPrompt:                strings.TrimSpace(c.userPrompt),
+		SelectedProvider:          strings.TrimSpace(c.provider),
+		SelectedPolicySensitivity: strings.ToLower(strings.TrimSpace(c.sensitivityLabel())),
+		SelectedRuntimeOptions:    types.CloneRuntimeOptions(c.runtimeOptions),
 	}
 	if override := policyOverrideForSensitivity(c.sensitivity); override != nil {
 		req.PolicyOverrides = override
@@ -632,6 +891,10 @@ func (c *GuidedWorkflowUIController) Render() string {
 		return "Guided workflow unavailable."
 	}
 	switch c.stage {
+	case guidedWorkflowStageProvider:
+		return c.renderProvider()
+	case guidedWorkflowStagePolicy:
+		return c.renderPolicy()
 	case guidedWorkflowStageSetup:
 		return c.renderSetup()
 	case guidedWorkflowStageLive:
@@ -645,17 +908,12 @@ func (c *GuidedWorkflowUIController) Render() string {
 
 func (c *GuidedWorkflowUIController) renderLauncher() string {
 	lines := []string{
-		"# Workflow Launcher",
+		"# Workflow Template Picker",
 		"",
-		"Launch a guided workflow from the selected context.",
-		"",
-		"### Launch Context",
-		fmt.Sprintf("- Workspace: %s", c.context.workspaceDisplay()),
-		fmt.Sprintf("- Worktree: %s", c.context.worktreeDisplay()),
-		fmt.Sprintf("- Task/Session: %s", c.context.sessionDisplay()),
+		"Select a workflow template.",
 		"",
 		"### Template Picker",
-		"- Type to filter templates. Use up/down to select.",
+		"- Type to filter templates. Use up/down to select, enter to continue.",
 	}
 	options := c.templatePicker.Options()
 	switch {
@@ -687,9 +945,65 @@ func (c *GuidedWorkflowUIController) renderLauncher() string {
 		"### Controls",
 		"- up/down: choose template",
 		"- type/backspace/ctrl+u: filter templates",
-		"- enter: continue to run setup",
+		"- enter: continue to provider",
 		"- ctrl+r: reload templates",
 		"- esc: close launcher",
+	)
+	if text := strings.TrimSpace(c.lastError); text != "" {
+		lines = append(lines, "", "Error: "+text)
+	}
+	return joinGuidedWorkflowLines(lines)
+}
+
+func (c *GuidedWorkflowUIController) renderProvider() string {
+	lines := []string{
+		"# Provider Picker",
+		"",
+		"Select the provider for this workflow run.",
+	}
+	if view := strings.TrimSpace(c.providerPickerView()); view != "" {
+		lines = append(lines, "")
+		lines = append(lines, strings.Split(view, "\n")...)
+	}
+	lines = append(lines,
+		"",
+		"### Selected Provider",
+		fmt.Sprintf("- Provider: %s", valueOrFallback(c.provider, "(not selected)")),
+		"",
+		"### Controls",
+		"- up/down: choose provider",
+		"- type/backspace/ctrl+u: filter providers",
+		"- enter: continue to policy sensitivity",
+		"- esc: back to template picker",
+	)
+	if text := strings.TrimSpace(c.lastError); text != "" {
+		lines = append(lines, "", "Error: "+text)
+	}
+	return joinGuidedWorkflowLines(lines)
+}
+
+func (c *GuidedWorkflowUIController) renderPolicy() string {
+	lines := []string{
+		"# Policy Sensitivity Picker",
+		"",
+		"Select checkpoint sensitivity for this run.",
+	}
+	if c.policyPicker != nil {
+		if view := strings.TrimSpace(c.policyPicker.View()); view != "" {
+			lines = append(lines, "")
+			lines = append(lines, strings.Split(view, "\n")...)
+		}
+	}
+	lines = append(lines,
+		"",
+		"### Selected Sensitivity",
+		fmt.Sprintf("- Preset: %s", c.sensitivityLabel()),
+		"",
+		"### Controls",
+		"- up/down: choose sensitivity",
+		"- type/backspace/ctrl+u: filter presets",
+		"- enter: continue to prompt composer",
+		"- esc: back to provider",
 	)
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
@@ -701,11 +1015,12 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 	sensitivity := c.sensitivityLabel()
 	chars, linesCount := promptStats(c.userPrompt)
 	lines := []string{
-		"# Run Setup",
+		"# Prompt Composer",
 		"",
-		"### Selected Template",
+		"### Launch Selections",
 		fmt.Sprintf("- Name: %s", valueOrFallback(c.templateName, "(none selected)")),
 		fmt.Sprintf("- ID: %s", valueOrFallback(c.templateID, "(not selected)")),
+		fmt.Sprintf("- Provider: %s", valueOrFallback(c.provider, "(not selected)")),
 		fmt.Sprintf("- Policy sensitivity: %s", sensitivity),
 		"",
 		"### Workflow Prompt (Required)",
@@ -715,16 +1030,18 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 	}
 	lines = append(lines,
 		"",
-		"### Sensitivity Presets",
-		"- low: fewer pauses, higher continue tolerance",
-		"- balanced: default confidence-weighted policy",
-		"- high: stricter checkpointing and earlier pauses",
+		"### Runtime Options",
+		fmt.Sprintf("- Model: %s", c.runtimeModelLabel()),
+		fmt.Sprintf("- Reasoning: %s", c.runtimeReasoningLabel()),
+		fmt.Sprintf("- Access: %s", c.runtimeAccessLabel()),
 		"",
 		"### Controls",
 		"- type/paste: edit workflow prompt",
-		"- up/down: change sensitivity",
+		"- ctrl+1: choose model",
+		"- ctrl+2: choose reasoning",
+		"- ctrl+3: choose access",
 		"- enter: create and start run",
-		"- esc: back to launcher",
+		"- esc: back to policy sensitivity",
 	)
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
@@ -1191,6 +1508,88 @@ func (c *GuidedWorkflowUIController) syncTemplateSelection() {
 	c.templateName = strings.TrimSpace(selection.name)
 }
 
+func (c *GuidedWorkflowUIController) syncPolicySelection() {
+	if c == nil || c.policyPicker == nil {
+		return
+	}
+	selected := strings.ToLower(strings.TrimSpace(c.policyPicker.SelectedID()))
+	switch selected {
+	case "low":
+		c.sensitivity = guidedPolicySensitivityLow
+	case "high":
+		c.sensitivity = guidedPolicySensitivityHigh
+	default:
+		c.sensitivity = guidedPolicySensitivityBalanced
+	}
+}
+
+func (c *GuidedWorkflowUIController) initProviderPicker() {
+	if c == nil {
+		return
+	}
+	if c.providerPicker == nil {
+		c.providerPicker = NewProviderPicker(minViewportWidth, 8)
+	}
+	selected := strings.TrimSpace(c.provider)
+	if selected == "" {
+		selected = strings.TrimSpace(c.defaultProvider)
+	}
+	c.providerPicker.Enter(selected)
+	c.provider = strings.TrimSpace(c.providerPicker.Selected())
+}
+
+func (c *GuidedWorkflowUIController) initPolicyPicker() {
+	if c == nil {
+		return
+	}
+	if c.policyPicker == nil {
+		c.policyPicker = NewSelectPicker(minViewportWidth, 8)
+	}
+	c.policyPicker.SetQuery("")
+	c.policyPicker.SetOptions([]selectOption{
+		{id: "low", label: "Low", search: "low fewer pauses higher continue tolerance"},
+		{id: "balanced", label: "Balanced", search: "balanced default confidence weighted policy"},
+		{id: "high", label: "High", search: "high stricter checkpointing earlier pauses"},
+	})
+	switch c.sensitivity {
+	case guidedPolicySensitivityLow:
+		_ = c.policyPicker.SelectID("low")
+	case guidedPolicySensitivityHigh:
+		_ = c.policyPicker.SelectID("high")
+	default:
+		_ = c.policyPicker.SelectID("balanced")
+	}
+	c.syncPolicySelection()
+}
+
+func (c *GuidedWorkflowUIController) providerPickerView() string {
+	if c == nil || c.providerPicker == nil {
+		return ""
+	}
+	return c.providerPicker.View()
+}
+
+func (c *GuidedWorkflowUIController) runtimeModelLabel() string {
+	if c == nil || c.runtimeOptions == nil || strings.TrimSpace(c.runtimeOptions.Model) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(c.runtimeOptions.Model)
+}
+
+func (c *GuidedWorkflowUIController) runtimeReasoningLabel() string {
+	if c == nil || c.runtimeOptions == nil || strings.TrimSpace(string(c.runtimeOptions.Reasoning)) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(string(c.runtimeOptions.Reasoning))
+}
+
+func (c *GuidedWorkflowUIController) runtimeAccessLabel() string {
+	if c == nil || c.runtimeOptions == nil || strings.TrimSpace(string(c.runtimeOptions.Access)) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(string(c.runtimeOptions.Access))
+}
+
 func (c *GuidedWorkflowUIController) sensitivityLabel() string {
 	switch c.sensitivity {
 	case guidedPolicySensitivityLow:
@@ -1362,6 +1761,7 @@ func cloneWorkflowRun(run *guidedworkflows.WorkflowRun) *guidedworkflows.Workflo
 		return nil
 	}
 	cloned := *run
+	cloned.SelectedRuntimeOptions = types.CloneRuntimeOptions(run.SelectedRuntimeOptions)
 	cloned.Phases = make([]guidedworkflows.PhaseRun, len(run.Phases))
 	for i := range run.Phases {
 		phase := run.Phases[i]
@@ -1370,6 +1770,7 @@ func cloneWorkflowRun(run *guidedworkflows.WorkflowRun) *guidedworkflows.Workflo
 			cloned.Phases[i].Steps = append([]guidedworkflows.StepRun(nil), phase.Steps...)
 			for stepIdx := range cloned.Phases[i].Steps {
 				step := &cloned.Phases[i].Steps[stepIdx]
+				step.RuntimeOptions = types.CloneRuntimeOptions(step.RuntimeOptions)
 				if step.Execution != nil {
 					execution := *step.Execution
 					step.Execution = &execution

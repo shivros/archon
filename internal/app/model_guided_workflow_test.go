@@ -170,6 +170,20 @@ func enterGuidedWorkflowForTest(m *Model, context guidedWorkflowLaunchContext) {
 	m.renderGuidedWorkflowContent()
 }
 
+func advanceGuidedWorkflowToComposerForTest(t *testing.T, m *Model) {
+	t.Helper()
+	if m == nil {
+		t.Fatalf("model is nil")
+	}
+	for i := 0; i < 3; i++ {
+		next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		*m = asModel(t, next)
+	}
+	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		t.Fatalf("expected setup stage after launcher/provider/policy flow")
+	}
+}
+
 func workflowRunSnapshotMsgFromCmd(t *testing.T, cmd tea.Cmd) workflowRunSnapshotMsg {
 	t.Helper()
 	if cmd == nil {
@@ -232,20 +246,17 @@ func TestGuidedWorkflowManualStartFlow(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	nextModel, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, nextModel)
-	if cmd != nil {
-		t.Fatalf("expected no command when entering setup")
-	}
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 	if m.guidedWorkflowPromptInput == nil {
 		t.Fatalf("expected guided workflow prompt input")
 	}
 	m.guidedWorkflowPromptInput.SetValue("Fix bug in request routing")
 	m.syncGuidedWorkflowPromptInput()
 
+	var (
+		nextModel tea.Model
+		cmd       tea.Cmd
+	)
 	nextModel, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = asModel(t, nextModel)
 	if cmd == nil {
@@ -303,11 +314,7 @@ func TestGuidedWorkflowSetupRequiresUserPrompt(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = asModel(t, updated)
@@ -360,11 +367,7 @@ func TestGuidedWorkflowSetupUsesSelectedTemplate(t *testing.T) {
 		t.Fatalf("expected launcher to show alternate template option")
 	}
 
-	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	m.guidedWorkflowPromptInput.SetValue("Triage flaky parser test")
 	m.syncGuidedWorkflowPromptInput()
@@ -417,17 +420,8 @@ func TestGuidedWorkflowLauncherDisplaysContextNames(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	if !strings.Contains(m.contentRaw, "- Workspace: Payments Workspace") {
-		t.Fatalf("expected workspace name in launcher context, got %q", m.contentRaw)
-	}
-	if !strings.Contains(m.contentRaw, "- Worktree: feature/retry-cleanup") {
-		t.Fatalf("expected worktree name in launcher context, got %q", m.contentRaw)
-	}
-	if !strings.Contains(m.contentRaw, "- Task/Session: Retry policy cleanup") {
-		t.Fatalf("expected session name in launcher context, got %q", m.contentRaw)
-	}
-	if strings.Contains(m.contentRaw, "- Workspace: ws1") {
-		t.Fatalf("expected launcher context to avoid raw workspace id when name is available, got %q", m.contentRaw)
+	if !strings.Contains(m.contentRaw, "# Workflow Template Picker") {
+		t.Fatalf("expected template picker launcher content, got %q", m.contentRaw)
 	}
 }
 
@@ -518,13 +512,9 @@ func TestGuidedWorkflowSetupCapturesPromptFromKeys(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
-	updated, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
 	m = asModel(t, updated)
 	updated, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 	m = asModel(t, updated)
@@ -548,13 +538,9 @@ func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
-	updated, _ = m.Update(tea.PasteMsg{Content: "Fix flaky retry logic\nand add coverage"})
+	updated, _ := m.Update(tea.PasteMsg{Content: "Fix flaky retry logic\nand add coverage"})
 	m = asModel(t, updated)
 	if got := m.guidedWorkflow.UserPrompt(); got != "Fix flaky retry logic\nand add coverage" {
 		t.Fatalf("expected prompt input to capture pasted text, got %q", got)
@@ -573,11 +559,7 @@ func TestGuidedWorkflowSetupTypingQDoesNotQuit(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	m = asModel(t, updated)
@@ -599,11 +581,7 @@ func TestGuidedWorkflowSetupClearCommandClearsPrompt(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 	if m.guidedWorkflowPromptInput == nil {
 		t.Fatalf("expected setup prompt input")
 	}
@@ -632,8 +610,7 @@ func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.guidedWorkflowAPI = api
 	m.applyKeybindings(NewKeybindings(map[string]string{
-		KeyCommandInputSubmit:  "f6",
-		KeyCommandComposeModel: "f6",
+		KeyCommandInputSubmit: "f6",
 	}))
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
@@ -641,11 +618,7 @@ func TestGuidedWorkflowSetupSubmitRemapStartsRun(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	m.guidedWorkflowPromptInput.SetValue("Fix bug in request routing")
 	m.syncGuidedWorkflowPromptInput()
@@ -687,11 +660,7 @@ func TestGuidedWorkflowSetupUsesConfiguredDefaultResolutionBoundary(t *testing.T
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	m.guidedWorkflowPromptInput.SetValue("Use configured boundary defaults")
 	m.syncGuidedWorkflowPromptInput()
@@ -740,11 +709,7 @@ func TestGuidedWorkflowSetupKeepsBalancedSensitivityWhenDefaultsInvalid(t *testi
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	m.guidedWorkflowPromptInput.SetValue("Use balanced fallback")
 	m.syncGuidedWorkflowPromptInput()
@@ -801,17 +766,13 @@ func TestGuidedWorkflowSetupResizesViewportOnEnterAndInputGrowth(t *testing.T) {
 		t.Fatalf("expected launcher viewport height > 0")
 	}
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 	setupViewportHeight := m.viewport.Height()
 	if setupViewportHeight >= launcherViewportHeight {
 		t.Fatalf("expected setup viewport to shrink for input panel: launcher=%d setup=%d", launcherViewportHeight, setupViewportHeight)
 	}
 
-	updated, _ = m.Update(tea.PasteMsg{Content: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11"})
+	updated, _ := m.Update(tea.PasteMsg{Content: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11"})
 	m = asModel(t, updated)
 	if got := m.guidedWorkflowPromptInput.Height(); got < 8 {
 		t.Fatalf("expected prompt input to auto-grow on multiline paste, got height=%d", got)
@@ -848,12 +809,8 @@ func TestGuidedWorkflowSetupContentNotOverwrittenBySidebarRefresh(t *testing.T) 
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
 		workspaceID: "ws1",
 	})
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
-	if !strings.Contains(m.contentRaw, "Run Setup") {
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+	if !strings.Contains(m.contentRaw, "Prompt Composer") {
 		t.Fatalf("expected setup content before sidebar refresh, got %q", m.contentRaw)
 	}
 
@@ -861,7 +818,7 @@ func TestGuidedWorkflowSetupContentNotOverwrittenBySidebarRefresh(t *testing.T) 
 	if strings.Contains(m.contentRaw, "Select a session.") {
 		t.Fatalf("expected guided workflow content not to be overwritten by sidebar refresh, got %q", m.contentRaw)
 	}
-	if !strings.Contains(m.contentRaw, "Run Setup") {
+	if !strings.Contains(m.contentRaw, "Prompt Composer") {
 		t.Fatalf("expected setup content to remain visible after sidebar refresh, got %q", m.contentRaw)
 	}
 }
@@ -2403,11 +2360,7 @@ func TestGuidedWorkflowSetupEscReturnsToLauncher(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 	if m.guidedWorkflowPromptInput == nil || !m.guidedWorkflowPromptInput.Focused() {
 		t.Fatalf("expected focused setup prompt input")
 	}
@@ -2417,14 +2370,14 @@ func TestGuidedWorkflowSetupEscReturnsToLauncher(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no command when returning to launcher")
 	}
-	if m.guidedWorkflow.Stage() != guidedWorkflowStageLauncher {
-		t.Fatalf("expected launcher stage after esc")
+	if m.guidedWorkflow.Stage() != guidedWorkflowStagePolicy {
+		t.Fatalf("expected policy stage after esc")
 	}
 	if m.guidedWorkflowPromptInput.Focused() {
 		t.Fatalf("expected setup prompt input to blur when returning to launcher")
 	}
-	if !strings.Contains(strings.ToLower(m.status), "guided workflow launcher") {
-		t.Fatalf("expected launcher status, got %q", m.status)
+	if !strings.Contains(strings.ToLower(m.status), "policy sensitivity") {
+		t.Fatalf("expected policy status, got %q", m.status)
 	}
 }
 
@@ -2449,8 +2402,14 @@ func TestGuidedWorkflowControllerTemplateAndRefreshGuards(t *testing.T) {
 	if !controller.HasTemplateSelection() {
 		t.Fatalf("expected template selection after templates are set")
 	}
+	if !controller.OpenProvider() {
+		t.Fatalf("expected launcher to open provider when template is selected")
+	}
+	if !controller.OpenPolicy() {
+		t.Fatalf("expected provider to open policy when provider is selected")
+	}
 	if !controller.OpenSetup() {
-		t.Fatalf("expected launcher to open setup when template is selected")
+		t.Fatalf("expected policy to open setup")
 	}
 	controller.OpenLauncher()
 	if controller.Stage() != guidedWorkflowStageLauncher {

@@ -2,8 +2,6 @@ package app
 
 import (
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 func TestModeInputPanelComposeUsesGuidedWorkflowFrame(t *testing.T) {
@@ -50,11 +48,7 @@ func TestModeInputPanelGuidedSetupUsesSharedFramePath(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = asModel(t, updated)
-	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
-		t.Fatalf("expected guided workflow setup stage")
-	}
+	advanceGuidedWorkflowToComposerForTest(t, &m)
 
 	panel, ok := m.modeInputPanel()
 	if !ok {
@@ -65,7 +59,7 @@ func TestModeInputPanelGuidedSetupUsesSharedFramePath(t *testing.T) {
 	if got := layout.InputLineCount(); got != wantInputLines {
 		t.Fatalf("expected framed guided setup input lines %d, got %d", wantInputLines, got)
 	}
-	if _, ok := layout.FooterStartRow(); ok {
-		t.Fatalf("did not expect guided setup footer row")
+	if _, ok := layout.FooterStartRow(); !ok {
+		t.Fatalf("expected guided setup footer row")
 	}
 }

@@ -9,6 +9,9 @@ import (
 )
 
 func (m *Model) composeProvider() string {
+	if m != nil && m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+		return strings.TrimSpace(m.guidedWorkflow.Provider())
+	}
 	if m.newSession != nil {
 		return strings.TrimSpace(m.newSession.provider)
 	}
@@ -83,6 +86,17 @@ func (m *Model) composeRuntimeOptions() *types.SessionRuntimeOptions {
 	provider := m.composeProvider()
 	if provider == "" {
 		return nil
+	}
+	if m != nil && m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+		out := m.guidedWorkflow.RuntimeOptions()
+		if out == nil {
+			out = &types.SessionRuntimeOptions{}
+		}
+		if catalog := m.providerOptionCatalog(provider); catalog != nil {
+			out = types.MergeRuntimeOptions(&catalog.Defaults, out)
+		}
+		m.normalizeComposeRuntimeOptionsForModel(provider, out)
+		return out
 	}
 	var out *types.SessionRuntimeOptions
 	if catalog := m.providerOptionCatalog(provider); catalog != nil {
@@ -218,10 +232,18 @@ func (m *Model) normalizeComposeRuntimeOptionsForModel(provider string, options 
 
 func (m *Model) composeControlsRow() int {
 	start := m.viewport.Height() + 2
-	if m == nil || m.mode != uiModeCompose {
+	if m == nil {
+		return start
+	}
+	if m.mode != uiModeCompose && !(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup) {
 		return start
 	}
 	layout, ok := m.activeInputPanelLayout()
+	if !ok {
+		if m.mode == uiModeGuidedWorkflow {
+			layout, ok = m.guidedWorkflowSetupInputPanelLayout()
+		}
+	}
 	if !ok {
 		return start
 	}
@@ -229,6 +251,14 @@ func (m *Model) composeControlsRow() int {
 		return start + row
 	}
 	return start + layout.InputLineCount()
+}
+
+func (m *Model) guidedWorkflowSetupInputPanelLayout() (InputPanelLayout, bool) {
+	panel, ok := m.guidedWorkflowSetupInputPanel()
+	if !ok {
+		return InputPanelLayout{}, false
+	}
+	return BuildInputPanelLayout(panel), true
 }
 
 func (m *Model) openComposeOptionPicker(target composeOptionKind) bool {

@@ -52,6 +52,9 @@ func (m *Model) mouseOverInput(y int) bool {
 }
 
 func (m *Model) mouseOverComposeControls(y int) bool {
+	if m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+		return y == m.composeControlsRow()
+	}
 	if m.mode != uiModeCompose || m.chatInput == nil {
 		return false
 	}
@@ -118,7 +121,7 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 		return false
 	}
 	mouse := msg.Mouse()
-	if m.mode != uiModeCompose || mouse.X < layout.rightStart || !m.mouseOverComposeControls(mouse.Y) {
+	if (m.mode != uiModeCompose && !(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup)) || mouse.X < layout.rightStart || !m.mouseOverComposeControls(mouse.Y) {
 		return false
 	}
 	col := mouse.X - layout.rightStart
@@ -126,11 +129,23 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 		if col < span.start || col > span.end {
 			continue
 		}
-		if cmd := m.requestComposeOptionPicker(span.kind); cmd != nil {
+		var cmd tea.Cmd
+		if m.mode == uiModeGuidedWorkflow {
+			cmd = m.requestGuidedWorkflowComposeOptionPicker(span.kind)
+		} else {
+			cmd = m.requestComposeOptionPicker(span.kind)
+		}
+		if cmd != nil {
 			m.pendingMouseCmd = cmd
 		}
 		if m.input != nil {
-			m.input.FocusChatInput()
+			if m.mode == uiModeGuidedWorkflow {
+				if m.guidedWorkflowPromptInput != nil {
+					m.guidedWorkflowPromptInput.Focus()
+				}
+			} else {
+				m.input.FocusChatInput()
+			}
 		}
 		return true
 	}
@@ -649,7 +664,7 @@ func (m *Model) reduceGuidedWorkflowLauncherLeftPressMouse(msg tea.MouseMsg, lay
 	if m.mode != uiModeGuidedWorkflow || m.guidedWorkflow == nil {
 		return false
 	}
-	pickerLayout, ok := m.guidedWorkflow.LauncherTemplatePickerLayout()
+	pickerLayout, ok := m.guidedWorkflow.ActivePickerLayout()
 	if !ok || pickerLayout.height <= 0 {
 		return false
 	}
@@ -667,6 +682,14 @@ func (m *Model) reduceGuidedWorkflowLauncherLeftPressMouse(msg tea.MouseMsg, lay
 		return false
 	}
 	if m.guidedWorkflow.SelectTemplateByRow(row) {
+		m.renderGuidedWorkflowContent()
+		return true
+	}
+	if m.guidedWorkflow.SelectProviderByRow(row) {
+		m.renderGuidedWorkflowContent()
+		return true
+	}
+	if m.guidedWorkflow.SelectPolicyByRow(row) {
 		m.renderGuidedWorkflowContent()
 	}
 	return true
@@ -715,10 +738,27 @@ func (m *Model) guidedWorkflowLauncherPickerStartRow(layout guidedWorkflowLaunch
 		return -1
 	}
 	start := 0
-	for i, line := range rendered {
-		if strings.EqualFold(strings.TrimSpace(line), "template picker") {
-			start = i + 1
-			break
+	switch m.guidedWorkflow.Stage() {
+	case guidedWorkflowStageProvider:
+		for i, line := range rendered {
+			if strings.EqualFold(strings.TrimSpace(line), "select the provider for this workflow run.") {
+				start = i + 1
+				break
+			}
+		}
+	case guidedWorkflowStagePolicy:
+		for i, line := range rendered {
+			if strings.EqualFold(strings.TrimSpace(line), "select checkpoint sensitivity for this run.") {
+				start = i + 1
+				break
+			}
+		}
+	default:
+		for i, line := range rendered {
+			if strings.EqualFold(strings.TrimSpace(line), "template picker") {
+				start = i + 1
+				break
+			}
 		}
 	}
 	for i := start; i < len(rendered); i++ {

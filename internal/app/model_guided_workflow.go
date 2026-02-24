@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
@@ -20,6 +21,8 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 		m.guidedWorkflow = NewGuidedWorkflowUIController()
 	}
 	m.mode = uiModeGuidedWorkflow
+	m.newSession = nil
+	m.closeComposeOptionPicker()
 	m.guidedWorkflow.Enter(context)
 	m.guidedWorkflow.BeginTemplateLoad()
 	m.resetGuidedWorkflowPromptInput()
@@ -92,6 +95,8 @@ func (m *Model) exitGuidedWorkflow(status string) {
 	if m.guidedWorkflow != nil {
 		m.guidedWorkflow.Exit()
 	}
+	m.closeComposeOptionPicker()
+	m.newSession = nil
 	if m.guidedWorkflowPromptInput != nil {
 		m.guidedWorkflowPromptInput.Blur()
 	}
@@ -156,6 +161,45 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	if m.mode != uiModeGuidedWorkflow {
 		return false, nil
 	}
+	if pasteMsg, ok := msg.(tea.PasteMsg); ok && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.composeOptionPickerOpen() {
+		composePicker := composeOptionQueryPicker{model: m}
+		if m.applyPickerPaste(pasteMsg, composePicker) {
+			return true, nil
+		}
+	}
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.composeOptionPickerOpen() {
+		key := m.keyString(keyMsg)
+		switch key {
+		case "esc":
+			if m.composeOptionPickerClearQuery() {
+				m.setStatusMessage("session option filter cleared")
+				return true, nil
+			}
+			m.closeComposeOptionPicker()
+			m.setStatusMessage("session options picker closed")
+			return true, nil
+		case "enter":
+			value := m.composeOptionPickerSelectedID()
+			cmd := m.applyComposeOptionSelection(value)
+			m.syncGuidedWorkflowRuntimeOptionsFromCompose()
+			m.closeComposeOptionPicker()
+			m.renderGuidedWorkflowContent()
+			return true, cmd
+		case "j", "down":
+			m.moveComposeOptionPicker(1)
+			return true, nil
+		case "k", "up":
+			m.moveComposeOptionPicker(-1)
+			return true, nil
+		}
+		composePicker := composeOptionQueryPicker{model: m}
+		if m.applyPickerTypeAhead(keyMsg, composePicker) {
+			return true, nil
+		}
+		if pickerTypeAheadText(keyMsg) != "" {
+			return true, nil
+		}
+	}
 	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
 		return true, cmd
 	}
@@ -163,7 +207,7 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		return true, cmd
 	}
 	if pasteMsg, ok := msg.(tea.PasteMsg); ok {
-		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher {
+		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) {
 			if m.applyPickerPaste(pasteMsg, m.guidedWorkflow) {
 				m.renderGuidedWorkflowContent()
 				return true, nil
@@ -180,6 +224,8 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				m.renderGuidedWorkflowContent()
 				return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
 			}
+		}
+		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) {
 			if m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
 				m.renderGuidedWorkflowContent()
 				return true, nil
@@ -190,6 +236,16 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			if pickerTypeAheadText(keyMsg) != "" {
 				return true, nil
+			}
+		}
+		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+			switch key {
+			case "ctrl+1":
+				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionModel)
+			case "ctrl+2":
+				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionReasoning)
+			case "ctrl+3":
+				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionAccess)
 			}
 		}
 		switch {
@@ -220,12 +276,21 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		switch key {
 		case "esc":
-			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
-				m.openGuidedWorkflowLauncherFromSetup()
-				return true, nil
+			if m.guidedWorkflow != nil {
+				switch m.guidedWorkflow.Stage() {
+				case guidedWorkflowStageSetup:
+					m.openGuidedWorkflowPolicyFromSetup()
+					return true, nil
+				case guidedWorkflowStagePolicy:
+					m.openGuidedWorkflowProviderFromPolicy()
+					return true, nil
+				case guidedWorkflowStageProvider:
+					m.openGuidedWorkflowLauncherFromProvider()
+					return true, nil
+				}
 			}
-			if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher && m.guidedWorkflow.ClearQuery() {
-				m.setStatusMessage("template filter cleared")
+			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) && m.guidedWorkflow.ClearQuery() {
+				m.setStatusMessage("filter cleared")
 				m.renderGuidedWorkflowContent()
 				return true, nil
 			}
@@ -241,9 +306,17 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 						m.renderGuidedWorkflowContent()
 					}
 					return true, nil
+				case guidedWorkflowStageProvider:
+					if m.guidedWorkflow.MoveProviderSelection(1) {
+						m.renderGuidedWorkflowContent()
+					}
+					return true, nil
+				case guidedWorkflowStagePolicy:
+					if m.guidedWorkflow.MovePolicySelection(1) {
+						m.renderGuidedWorkflowContent()
+					}
+					return true, nil
 				case guidedWorkflowStageSetup:
-					m.guidedWorkflow.CycleSensitivity(1)
-					m.renderGuidedWorkflowContent()
 					return true, nil
 				case guidedWorkflowStageLive, guidedWorkflowStageSummary:
 					m.guidedWorkflow.MoveStepSelection(1)
@@ -259,9 +332,17 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 						m.renderGuidedWorkflowContent()
 					}
 					return true, nil
+				case guidedWorkflowStageProvider:
+					if m.guidedWorkflow.MoveProviderSelection(-1) {
+						m.renderGuidedWorkflowContent()
+					}
+					return true, nil
+				case guidedWorkflowStagePolicy:
+					if m.guidedWorkflow.MovePolicySelection(-1) {
+						m.renderGuidedWorkflowContent()
+					}
+					return true, nil
 				case guidedWorkflowStageSetup:
-					m.guidedWorkflow.CycleSensitivity(-1)
-					m.renderGuidedWorkflowContent()
 					return true, nil
 				case guidedWorkflowStageLive, guidedWorkflowStageSummary:
 					m.guidedWorkflow.MoveStepSelection(-1)
@@ -315,7 +396,7 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				return true, m.openGuidedWorkflowSelectedSession()
 			}
 		}
-		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher && m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
+		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) && m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
 			m.renderGuidedWorkflowContent()
 			return true, nil
 		}
@@ -371,15 +452,44 @@ func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {
 			m.renderGuidedWorkflowContent()
 			return nil
 		}
-		if !m.guidedWorkflow.OpenSetup() {
+		if !m.guidedWorkflow.OpenProvider() {
 			m.setValidationStatus("select a workflow template to continue")
 			m.renderGuidedWorkflowContent()
 			return nil
 		}
+		m.setStatusMessage("choose guided workflow provider")
+		m.reflowGuidedWorkflowLayout()
+		return nil
+	case guidedWorkflowStageProvider:
+		if strings.TrimSpace(m.guidedWorkflow.Provider()) == "" {
+			m.setValidationStatus("select a provider to continue")
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
+		if !m.guidedWorkflow.OpenPolicy() {
+			m.setValidationStatus("select a provider to continue")
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
+		m.setStatusMessage("choose policy sensitivity")
+		m.reflowGuidedWorkflowLayout()
+		provider := strings.ToLower(strings.TrimSpace(m.guidedWorkflow.Provider()))
+		if provider == "" {
+			return nil
+		}
+		ctx := m.replaceRequestScope(requestScopeProviderOption)
+		return fetchProviderOptionsCmdWithContext(m.sessionAPI, provider, ctx)
+	case guidedWorkflowStagePolicy:
+		if !m.guidedWorkflow.OpenSetup() {
+			m.setValidationStatus("select policy sensitivity to continue")
+			m.renderGuidedWorkflowContent()
+			return nil
+		}
+		m.prepareGuidedWorkflowComposerDefaults()
 		if m.guidedWorkflowPromptInput != nil {
 			m.guidedWorkflowPromptInput.Focus()
 		}
-		m.setStatusMessage("guided workflow setup")
+		m.setStatusMessage("guided workflow prompt composer")
 		m.reflowGuidedWorkflowLayout()
 		return nil
 	case guidedWorkflowStageSetup:
@@ -405,6 +515,7 @@ func (m *Model) startGuidedWorkflowRun() tea.Cmd {
 		return nil
 	}
 	m.syncGuidedWorkflowPromptInput()
+	m.syncGuidedWorkflowRuntimeOptionsFromCompose()
 	req := m.guidedWorkflow.BuildCreateRequest()
 	if strings.TrimSpace(req.WorkspaceID) == "" && strings.TrimSpace(req.WorktreeID) == "" {
 		m.setValidationStatus("guided workflow requires workspace or worktree context")
@@ -753,7 +864,7 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 		keyString:         m.keyString,
 		keyMatchesCommand: m.keyMatchesCommand,
 		onCancel: func() tea.Cmd {
-			m.openGuidedWorkflowLauncherFromSetup()
+			m.openGuidedWorkflowPolicyFromSetup()
 			return nil
 		},
 		onSubmit: func(string) tea.Cmd {
@@ -774,16 +885,12 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 					m.menu.Toggle()
 				}
 				return true, nil
-			}
-			switch key {
-			case "down":
-				m.guidedWorkflow.CycleSensitivity(1)
-				m.renderGuidedWorkflowContent()
-				return true, nil
-			case "up":
-				m.guidedWorkflow.CycleSensitivity(-1)
-				m.renderGuidedWorkflowContent()
-				return true, nil
+			case m.keyMatchesCommand(keyMsg, KeyCommandComposeModel, "ctrl+1"):
+				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionModel)
+			case m.keyMatchesCommand(keyMsg, KeyCommandComposeReasoning, "ctrl+2"):
+				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionReasoning)
+			case m.keyMatchesCommand(keyMsg, KeyCommandComposeAccess, "ctrl+3"):
+				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionAccess)
 			}
 			return false, nil
 		},
@@ -940,8 +1047,9 @@ func (m *Model) guidedWorkflowSetupInputPanel() (InputPanel, bool) {
 		return InputPanel{}, false
 	}
 	return InputPanel{
-		Input: m.guidedWorkflowPromptInput,
-		Frame: m.inputFrame(InputFrameTargetGuidedWorkflowSetup),
+		Input:  m.guidedWorkflowPromptInput,
+		Footer: InputFooterFunc(m.composeControlsLine),
+		Frame:  m.inputFrame(InputFrameTargetGuidedWorkflowSetup),
 	}, true
 }
 
@@ -968,11 +1076,102 @@ func (m *Model) openGuidedWorkflowLauncherFromSetup() {
 		return
 	}
 	m.guidedWorkflow.OpenLauncher()
+	m.closeComposeOptionPicker()
+	m.newSession = nil
 	if m.guidedWorkflowPromptInput != nil {
 		m.guidedWorkflowPromptInput.Blur()
 	}
 	m.setStatusMessage("guided workflow launcher")
 	m.reflowGuidedWorkflowLayout()
+}
+
+func (m *Model) openGuidedWorkflowLauncherFromProvider() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	m.guidedWorkflow.OpenLauncher()
+	m.setStatusMessage("guided workflow template picker")
+	m.reflowGuidedWorkflowLayout()
+}
+
+func (m *Model) openGuidedWorkflowProviderFromPolicy() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	m.guidedWorkflow.OpenProviderStage()
+	m.setStatusMessage("guided workflow provider picker")
+	m.reflowGuidedWorkflowLayout()
+}
+
+func (m *Model) openGuidedWorkflowPolicyFromSetup() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	m.guidedWorkflow.OpenPolicyStage()
+	m.closeComposeOptionPicker()
+	m.newSession = nil
+	if m.guidedWorkflowPromptInput != nil {
+		m.guidedWorkflowPromptInput.Blur()
+	}
+	m.setStatusMessage("guided workflow policy sensitivity picker")
+	m.reflowGuidedWorkflowLayout()
+}
+
+func (m *Model) prepareGuidedWorkflowComposerDefaults() {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return
+	}
+	provider := strings.TrimSpace(m.guidedWorkflow.Provider())
+	if provider == "" {
+		return
+	}
+	runtime := m.guidedWorkflow.RuntimeOptions()
+	if runtime == nil {
+		runtime = m.composeDefaultsForProvider(provider)
+	}
+	if runtime == nil {
+		if catalog := m.providerOptionCatalog(provider); catalog != nil {
+			runtime = types.CloneRuntimeOptions(&catalog.Defaults)
+		}
+	}
+	if runtime == nil {
+		runtime = &types.SessionRuntimeOptions{}
+	}
+	m.normalizeComposeRuntimeOptionsForModel(provider, runtime)
+	m.guidedWorkflow.SetRuntimeOptions(runtime)
+	m.newSession = &newSessionTarget{
+		provider:       provider,
+		runtimeOptions: types.CloneRuntimeOptions(runtime),
+	}
+}
+
+func (m *Model) syncGuidedWorkflowRuntimeOptionsFromCompose() {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return
+	}
+	if m.newSession == nil {
+		return
+	}
+	provider := strings.TrimSpace(m.guidedWorkflow.Provider())
+	runtime := types.CloneRuntimeOptions(m.newSession.runtimeOptions)
+	if runtime == nil {
+		runtime = &types.SessionRuntimeOptions{}
+	}
+	if provider != "" {
+		m.normalizeComposeRuntimeOptionsForModel(provider, runtime)
+	}
+	m.guidedWorkflow.SetRuntimeOptions(runtime)
+}
+
+func (m *Model) requestGuidedWorkflowComposeOptionPicker(target composeOptionKind) tea.Cmd {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return nil
+	}
+	m.prepareGuidedWorkflowComposerDefaults()
+	cmd := m.requestComposeOptionPicker(target)
+	m.syncGuidedWorkflowRuntimeOptionsFromCompose()
+	m.renderGuidedWorkflowContent()
+	return cmd
 }
 
 func (m *Model) reflowGuidedWorkflowLayout() {

@@ -38,8 +38,14 @@ func TestGuidedWorkflowControllerLauncherQueryEditing(t *testing.T) {
 		t.Fatalf("expected second clear query to be a no-op")
 	}
 
+	if !controller.OpenProvider() {
+		t.Fatalf("expected provider stage to open with selected template")
+	}
+	if !controller.OpenPolicy() {
+		t.Fatalf("expected policy stage to open with selected provider")
+	}
 	if !controller.OpenSetup() {
-		t.Fatalf("expected setup to open with selected template")
+		t.Fatalf("expected setup to open from policy stage")
 	}
 	if got := controller.Query(); got != "" {
 		t.Fatalf("expected query accessor to be stage-guarded, got %q", got)
@@ -65,8 +71,8 @@ func TestGuidedWorkflowControllerCycleSensitivityAndErrorSetters(t *testing.T) {
 	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
 		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
 	})
-	if !controller.OpenSetup() {
-		t.Fatalf("expected setup stage")
+	if !controller.OpenProvider() || !controller.OpenPolicy() {
+		t.Fatalf("expected provider/policy stages")
 	}
 
 	if controller.sensitivity != guidedPolicySensitivityBalanced {
@@ -88,6 +94,7 @@ func TestGuidedWorkflowControllerCycleSensitivityAndErrorSetters(t *testing.T) {
 	if controller.sensitivity != guidedPolicySensitivityHigh {
 		t.Fatalf("expected zero delta to leave sensitivity unchanged")
 	}
+	controller.OpenSetup()
 	controller.OpenLauncher()
 	controller.CycleSensitivity(1)
 	if controller.sensitivity != guidedPolicySensitivityHigh {
@@ -158,8 +165,8 @@ func TestGuidedWorkflowControllerLauncherTemplatePickerLayoutGuards(t *testing.T
 		t.Fatalf("expected invalid row to be ignored")
 	}
 
-	if !controller.OpenSetup() {
-		t.Fatalf("expected setup stage")
+	if !controller.OpenProvider() || !controller.OpenPolicy() || !controller.OpenSetup() {
+		t.Fatalf("expected provider/policy/setup stages")
 	}
 	if _, ok := controller.LauncherTemplatePickerLayout(); ok {
 		t.Fatalf("expected no launcher picker layout outside launcher stage")
@@ -189,7 +196,7 @@ func TestGuidedWorkflowControllerLauncherRequiresRawANSIRender(t *testing.T) {
 		t.Fatalf("expected loaded launcher picker to require ANSI passthrough")
 	}
 
-	controller.OpenSetup()
+	controller.OpenProvider()
 	if controller.LauncherRequiresRawANSIRender() {
 		t.Fatalf("expected non-launcher stage to disable ANSI passthrough")
 	}

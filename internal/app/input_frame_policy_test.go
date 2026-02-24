@@ -2,8 +2,6 @@ package app
 
 import (
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 type stubInputFramePolicy struct {
@@ -112,8 +110,8 @@ func TestWithInputFramePolicyInjectsGuidedSetupFrame(t *testing.T) {
 	}))
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
 
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	next := asModel(t, updated)
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+	next := m
 	panel, ok := next.modeInputPanel()
 	if !ok {
 		t.Fatalf("expected guided setup panel")

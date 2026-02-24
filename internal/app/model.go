@@ -804,6 +804,13 @@ func (m *Model) applyCoreConfig(coreCfg config.CoreConfig) {
 	}
 	preset := coreCfg.GuidedWorkflowsDefaultResolutionBoundary()
 	m.guidedWorkflow.SetDefaultSensitivity(guidedPolicySensitivityFromPreset(preset))
+	m.guidedWorkflow.SetDefaultProvider(coreCfg.GuidedWorkflowsDefaultProvider())
+	m.guidedWorkflow.SetDefaultRuntimeOptions(&types.SessionRuntimeOptions{
+		Model:     coreCfg.GuidedWorkflowsDefaultModel(),
+		Access:    coreCfg.GuidedWorkflowsDefaultAccessLevel(),
+		Reasoning: coreCfg.GuidedWorkflowsDefaultReasoningLevel(),
+		Version:   1,
+	})
 }
 
 func (m *Model) consumeInputHeightChanges(inputs ...*TextInput) bool {
