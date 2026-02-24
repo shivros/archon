@@ -1,5 +1,28 @@
 # archon
-Manage AI CLI sessions across repos and AI vendors.
+
+Archon is a TUI-based session manager for AI coding agents. It lets you run, monitor, and orchestrate multiple AI CLI sessions across repositories and providers from a single terminal interface. Features include live event streaming, approval handling, session resume, guided multi-step workflows, and configurable notifications.
+
+> **Alpha software.** Archon is under active development and changing rapidly. Feature support varies across providers and may break between releases. See the support grid below for current status.
+
+## Provider Support
+
+Codex is the primary and most thoroughly tested provider. Support for other providers is in progress.
+
+| Feature | Codex | Claude | OpenCode / Kilo Code |
+|---|:---:|:---:|:---:|
+| **Model Selection** | Full | Partial | Full |
+| **Reasoning Levels** | Full | - | - |
+| **Access Levels** | Full | Full | - |
+| **Live Events / Streaming** | Full | Partial | Partial |
+| **Approvals** | Full | - | Partial |
+| **Interrupt** | Full | - | Full |
+| **Session Resume** | Full | Full | Full |
+| **Guided Workflows** | Full | - | - |
+| **Notifications** | Full | Partial | Partial |
+
+**Full** = well-tested and reliable, **Partial** = works but incomplete or lightly tested, **-** = not supported.
+
+Gemini and Custom providers have basic exec-only support and no feature parity yet.
 
 ## Development
 This repo uses `prek` (a Rust pre-commit runner) with a standard `.pre-commit-config.yaml`.
@@ -31,7 +54,7 @@ Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD
 `color` accepts Lip Gloss-compatible terminal colors (ANSI index like `"208"` or hex like `"#ff8a3d"`).
 
 ## Configuration Files
-Archon now separates core/daemon config, UI config, and UI keybindings:
+Archon separates core/daemon config, UI config, and UI keybindings:
 
 - `~/.archon/config.toml` (core daemon/client config)
 - `~/.archon/ui.toml` (UI config)
@@ -140,8 +163,6 @@ timeout_seconds = 90
 command = "gemini"
 ```
 
-OpenCode/Kilo prompt requests are long-running by design; Archon enforces a runtime minimum of `90` seconds for these providers.
-
 ### Notifications
 
 Archon supports daemon-side notifications with layered overrides:
@@ -174,37 +195,16 @@ Enable guided workflows in `~/.archon/config.toml`:
 - optionally set `[guided_workflows.defaults].resolution_boundary` to tune default checkpoint strictness for new runs
 - tune `[guided_workflows.policy]` and `[guided_workflows.rollout]` guardrails as needed
 
-Exact precedence for guided workflow defaults:
+Workflow templates are configurable via JSON:
 
-1. Session reuse precedence (step dispatch):
-   - explicit `session_id` on the run/step request (if provider is dispatchable)
-   - existing workflow-owned session already linked to the same run
-   - otherwise, auto-create a workflow session
-2. Auto-created workflow session provider precedence:
-   - `[guided_workflows.defaults].provider` (only `codex`/`opencode`; unsupported values are ignored)
-   - most-recent dispatchable provider in the same worktree/workspace context
-   - fallback to `codex`
-3. Auto-created workflow runtime options precedence:
-   - `access`: template `default_access_level` (if valid), else `[guided_workflows.defaults].access`
-   - `model`: `[guided_workflows.defaults].model` (blank/invalid ignored)
-   - `reasoning`: `[guided_workflows.defaults].reasoning` (blank/invalid ignored)
-4. Run policy default precedence (`POST /v1/workflow-runs`):
-   - explicit `policy_overrides` in request body
-   - `[guided_workflows.defaults].resolution_boundary`
-   - built-in policy baseline (no override)
-
-Workflow templates are configurable via JSON with full replacement semantics:
-
-- built-in defaults are defined in-repo (`internal/guidedworkflows/default_workflow_templates.json`)
 - user templates live at `~/.archon/workflow_templates.json`
-- if `~/.archon/workflow_templates.json` exists, it fully replaces built-in defaults (no merge)
+- if present, user templates fully replace built-in defaults (no merge)
 - built-in defaults are used only when no user template file exists
 
 Per-step runtime overrides (`runtime_options`) are optional on each workflow step:
 
 - supported fields: `model`, `reasoning`, `access`
-- when present, step `runtime_options` are merged over the session's current runtime options for that dispatched step
-- on successful dispatch, merged runtime options are persisted as the session defaults for later turns on the same workflow thread
+- when present, step overrides take priority over the session's current runtime options
 - when omitted, the step inherits whatever runtime options are currently active on the session
 
 Example `workflow_templates.json` (custom replacement file):
@@ -276,12 +276,14 @@ When enabled, daemon exposes guided workflow lifecycle endpoints:
 - `POST /v1/workflow-runs/:id/decision`
 - `GET /v1/workflow-runs/:id`
 - `GET /v1/workflow-runs/:id/timeline`
+- `POST /v1/workflow-runs/:id/stop`
+- `POST /v1/workflow-runs/:id/rename`
+- `POST /v1/workflow-runs/:id/dismiss`
+- `POST /v1/workflow-runs/:id/undismiss`
 - `GET /v1/workflow-runs/metrics`
 - `POST /v1/workflow-runs/metrics/reset`
 
-Telemetry snapshots are persisted in daemon app state, so aggregate workflow metrics survive daemon restarts.
-Workflow run snapshots are persisted in daemon storage, so run details/timelines and dismissed visibility survive daemon restarts.
-Use `POST /v1/workflow-runs/metrics/reset` to reset aggregate counters for a fresh rollout/measurement window.
+Workflow metrics and run history survive daemon restarts.
 
 Manual start flow:
 
@@ -292,23 +294,14 @@ Manual start flow:
 
 Checkpoint behavior:
 
-- policy emits explicit decisions (`continue` or `pause`) with reasons/severity/tier metadata
+- policy emits explicit decisions (`continue` or `pause`) with reasons and severity metadata
 - pauses produce actionable decision-needed notifications (`approve_continue`, `request_revision`, `pause_run`)
-- decision payload includes `reason`, `confidence`, `risk_summary`, and `recommended_action`
 
 `POST /v1/workflow-runs/:id/decision` accepts:
 
 - `action`: `approve_continue` | `request_revision` | `pause_run`
 - `decision_id` (optional)
 - `note` (optional)
-
-When turn-completed events progress a run and policy decides `pause`, Archon emits a decision-needed notification through the existing notification pipeline (`turn.completed` trigger, `status=decision_needed`) with structured payload fields including:
-
-- `reason`
-- `confidence`
-- `risk_summary`
-- `recommended_action`
-- `actions` (available decision actions)
 
 Troubleshooting:
 
@@ -364,7 +357,7 @@ archon config --scope workflow_templates
 archon config --scope core --scope keybindings --format json
 ```
 
-`archon config --scope workflow_templates --default` returns the repo-defined default workflow templates (the contents of `internal/guidedworkflows/default_workflow_templates.json`).
+`archon config --scope workflow_templates --default` returns the built-in default workflow templates.
 
 Clipboard copy always tries the system clipboard first, then OSC52 as fallback.
 
@@ -421,6 +414,9 @@ The following command IDs are supported in `keybindings.json`:
 - `ui.approve`
 - `ui.decline`
 - `ui.notesNew`
+- `ui.rename`
+- `ui.historyBack`
+- `ui.historyForward`
 
 `ui.dismissSession` is still accepted as a legacy alias for `ui.dismissSelection`.
 `ui.composeClearInput` is still accepted as a legacy alias for `ui.inputClear`.
