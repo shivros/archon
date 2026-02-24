@@ -37,7 +37,7 @@ func TestSessionServiceDelegatesToRegisteredConversationAdapter(t *testing.T) {
 		provider:   "mock-provider",
 		sendTurnID: "turn-123",
 	}
-	service := NewSessionService(nil, &Stores{Sessions: store}, nil, nil)
+	service := NewSessionService(nil, &Stores{Sessions: store}, nil)
 	service.adapters = newConversationAdapterRegistry(adapter)
 
 	turnID, err := service.SendMessage(context.Background(), "s1", []map[string]any{
@@ -272,7 +272,7 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 	})
 
 	t.Run("missing meta store", func(t *testing.T) {
-		service := NewSessionService(nil, &Stores{}, nil, nil)
+		service := NewSessionService(nil, &Stores{}, nil)
 		err := service.persistRuntimeOptionsAfterSend(context.Background(), "s1", &types.SessionRuntimeOptions{Model: "m"})
 		if !errors.Is(err, ErrRuntimeOptionsPersistFailed) {
 			t.Fatalf("expected ErrRuntimeOptionsPersistFailed, got %v", err)
@@ -325,7 +325,7 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 
 func TestConversationAdapterContractHistoryRequiresSession(t *testing.T) {
 	registry := newConversationAdapterRegistry()
-	service := NewSessionService(nil, nil, nil, nil)
+	service := NewSessionService(nil, nil, nil)
 
 	for _, provider := range []string{"codex", "claude", "opencode", "kilocode"} {
 		t.Run(provider, func(t *testing.T) {
@@ -356,7 +356,7 @@ func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) 
 					},
 				},
 			}
-			service := NewSessionService(nil, &Stores{Sessions: store}, nil, nil)
+			service := NewSessionService(nil, &Stores{Sessions: store}, nil)
 			_, err := service.SendMessage(context.Background(), "s1", []map[string]any{
 				{"type": "text", "text": "hello"},
 			})
@@ -1033,7 +1033,7 @@ func TestOpenCodeConversationAdapterSendMessageReconcilesHistoryOnSendFailure(t 
 			},
 		},
 	}
-	service := NewSessionService(manager, &Stores{SessionMeta: metaStore}, nil, nil)
+	service := NewSessionService(manager, &Stores{SessionMeta: metaStore}, nil)
 
 	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
 		{"type": "text", "text": "hello send"},
@@ -1123,7 +1123,7 @@ func TestOpenCodeConversationAdapterSubscribeEventsRecoversMissedAssistantOnStre
 	t.Setenv("HOME", home)
 	t.Setenv("OPENCODE_BASE_URL", server.URL)
 	rememberOpenCodeRuntimeBaseURL("opencode", server.URL)
-	service := NewSessionService(nil, nil, nil, nil)
+	service := NewSessionService(nil, nil, nil)
 	adapter := openCodeConversationAdapter{providerName: "opencode"}
 	session := &types.Session{
 		ID:        sessionID,

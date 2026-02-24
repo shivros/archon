@@ -253,7 +253,20 @@ func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) erro
 	params := map[string]any{
 		"threadId": threadID,
 	}
-	return c.request(ctx, "thread/resume", params, nil)
+	err := c.request(ctx, "thread/resume", params, nil)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Warn("codex_thread_resume_error",
+				logging.F("thread_id", threadID),
+				logging.F("error", err.Error()),
+			)
+		}
+		return err
+	}
+	if c.logger != nil {
+		c.logger.Info("codex_thread_resume_ok", logging.F("thread_id", threadID))
+	}
+	return nil
 }
 
 func (c *codexAppServer) StartThread(ctx context.Context, model, cwd string, runtimeOptions *types.SessionRuntimeOptions) (string, error) {
@@ -269,16 +282,35 @@ func (c *codexAppServer) StartThread(ctx context.Context, model, cwd string, run
 			params[key] = value
 		}
 	}
+	if c.logger != nil {
+		c.logger.Info("codex_thread_start_request",
+			logging.F("model", model),
+			logging.F("cwd", cwd),
+		)
+	}
 	var result struct {
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
 	if err := c.request(ctx, "thread/start", params, &result); err != nil {
+		if c.logger != nil {
+			c.logger.Error("codex_thread_start_error",
+				logging.F("model", model),
+				logging.F("cwd", cwd),
+				logging.F("error", err.Error()),
+			)
+		}
 		return "", err
 	}
 	if strings.TrimSpace(result.Thread.ID) == "" {
 		return "", errors.New("codex thread id missing")
+	}
+	if c.logger != nil {
+		c.logger.Info("codex_thread_start_ok",
+			logging.F("model", model),
+			logging.F("thread_id", result.Thread.ID),
+		)
 	}
 	return strings.TrimSpace(result.Thread.ID), nil
 }

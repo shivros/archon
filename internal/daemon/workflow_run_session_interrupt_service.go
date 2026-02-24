@@ -45,7 +45,7 @@ func newWorkflowRunSessionInterruptService(
 	if manager == nil {
 		return nil
 	}
-	sessionService := NewSessionService(manager, stores, live, logger)
+	sessionService := NewSessionService(manager, stores, logger)
 	if sessionService == nil {
 		return nil
 	}

@@ -107,9 +107,11 @@ func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, item
 	}
 	threadID, err := controller.startThread(ctx, model, cfg.Cwd, cfg.RuntimeOptions)
 	if err != nil {
+		sink.Write("stderr", []byte(fmt.Sprintf("codex thread/start failed: model=%s error=%v\n", model, err)))
 		_ = cmd.Process.Kill()
 		return nil, err
 	}
+	sink.Write("stderr", []byte(fmt.Sprintf("codex thread/start ok: model=%s thread_id=%s\n", model, threadID)))
 
 	initialInput := strings.TrimSpace(strings.Join(cfg.Args, " "))
 	if initialInput != "" {

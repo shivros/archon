@@ -18,6 +18,7 @@ type API struct {
 	Shutdown                  func(context.Context) error
 	Syncer                    SessionSyncer
 	LiveCodex                 *CodexLiveManager
+	LiveManager               LiveManager
 	CodexHistoryPool          CodexHistoryPool
 	Notifier                  NotificationPublisher
 	GuidedWorkflows           guidedworkflows.Orchestrator
@@ -180,7 +181,10 @@ func (a *API) newSessionService() *SessionService {
 	if a != nil && a.GuidedWorkflows != nil {
 		opts = append(opts, WithGuidedWorkflowOrchestrator(a.GuidedWorkflows))
 	}
-	return NewSessionService(a.Manager, a.Stores, a.LiveCodex, a.Logger, opts...)
+	if a != nil && a.LiveManager != nil {
+		opts = append(opts, WithLiveManager(a.LiveManager))
+	}
+	return NewSessionService(a.Manager, a.Stores, a.Logger, opts...)
 }
 
 func (a *API) workflowRunService() GuidedWorkflowRunService {

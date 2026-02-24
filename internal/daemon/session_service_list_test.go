@@ -121,7 +121,7 @@ func TestSessionServiceListWithMetaNormalizesDetachedActiveSessions(t *testing.T
 		t.Fatalf("upsert active session: %v", err)
 	}
 
-	service := NewSessionService(nil, &Stores{Sessions: sessionStore}, nil, nil)
+	service := NewSessionService(nil, &Stores{Sessions: sessionStore}, nil)
 	sessions, _, err := service.ListWithMeta(ctx)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
@@ -169,7 +169,7 @@ func TestSessionServiceListWithMetaKeepsExitedVisible(t *testing.T) {
 		t.Fatalf("upsert exited session: %v", err)
 	}
 
-	service := NewSessionService(nil, &Stores{Sessions: sessionStore}, nil, nil)
+	service := NewSessionService(nil, &Stores{Sessions: sessionStore}, nil)
 	sessions, _, err := service.ListWithMeta(ctx)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)

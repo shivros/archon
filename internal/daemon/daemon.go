@@ -164,6 +164,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.manager != nil {
 		d.manager.SetNotificationPublisher(eventPublisher)
 	}
+	turnNotifier := NewTurnCompletionNotifier(eventPublisher, d.stores)
+	approvalStore := NewStoreApprovalStorage(d.stores)
+	compositeLive := NewCompositeLiveManager(
+		d.stores,
+		d.logger,
+		newCodexLiveSessionFactory(liveCodex),
+		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, d.logger),
+		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, d.logger),
+	)
 	api.Notifier = eventPublisher
 	api.GuidedWorkflows = guided
 	api.WorkflowRuns = workflowRuns
@@ -185,6 +194,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.Syncer = syncer
 	api.LiveCodex = liveCodex
 	api.LiveCodex.SetNotificationPublisher(eventPublisher)
+	compositeLive.SetNotificationPublisher(eventPublisher)
+	api.LiveManager = compositeLive
 	approvalSync := NewApprovalResyncService(d.stores, d.logger)
 
 	mux := http.NewServeMux()

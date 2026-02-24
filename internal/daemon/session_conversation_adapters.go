@@ -162,16 +162,14 @@ func (codexConversationAdapter) SendMessage(ctx context.Context, service *Sessio
 	if strings.TrimSpace(session.Cwd) == "" {
 		return "", invalidError("session cwd is required", nil)
 	}
-	if service.live == nil {
-		return "", unavailableError("live codex manager not available", nil)
+	if service.liveManager == nil {
+		return "", unavailableError("live manager not available", nil)
 	}
-	workspacePath := service.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
 	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
 	if meta != nil {
 		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
 	}
-	turnID, err := service.live.StartTurn(ctx, session, meta, codexHome, input, runtimeOptions)
+	turnID, err := service.liveManager.StartTurn(ctx, session, meta, input, runtimeOptions)
 	if err != nil {
 		return "", invalidError(err.Error(), err)
 	}
@@ -199,12 +197,10 @@ func (codexConversationAdapter) SubscribeEvents(ctx context.Context, service *Se
 	if session == nil {
 		return nil, nil, invalidError("session is required", nil)
 	}
-	if service.live == nil {
-		return nil, nil, unavailableError("live codex manager not available", nil)
+	if service.liveManager == nil {
+		return nil, nil, unavailableError("live manager not available", nil)
 	}
-	workspacePath := service.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	ch, cancel, err := service.live.Subscribe(session, meta, codexHome)
+	ch, cancel, err := service.liveManager.Subscribe(session, meta)
 	if err != nil {
 		return nil, nil, invalidError(err.Error(), err)
 	}
@@ -215,11 +211,9 @@ func (codexConversationAdapter) Approve(ctx context.Context, service *SessionSer
 	if session == nil {
 		return invalidError("session is required", nil)
 	}
-	if service.live == nil {
-		return unavailableError("live codex manager not available", nil)
+	if service.liveManager == nil {
+		return unavailableError("live manager not available", nil)
 	}
-	workspacePath := service.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
 	result := map[string]any{
 		"decision": decision,
 	}
@@ -229,7 +223,7 @@ func (codexConversationAdapter) Approve(ctx context.Context, service *SessionSer
 	if len(acceptSettings) > 0 {
 		result["acceptSettings"] = acceptSettings
 	}
-	if err := service.live.Respond(ctx, session, meta, codexHome, requestID, result); err != nil {
+	if err := service.liveManager.Respond(ctx, session, meta, requestID, result); err != nil {
 		return invalidError(err.Error(), err)
 	}
 	if service.stores != nil && service.stores.Approvals != nil {
@@ -249,12 +243,10 @@ func (codexConversationAdapter) Interrupt(ctx context.Context, service *SessionS
 	if session == nil {
 		return invalidError("session is required", nil)
 	}
-	if service.live == nil {
-		return unavailableError("live codex manager not available", nil)
+	if service.liveManager == nil {
+		return unavailableError("live manager not available", nil)
 	}
-	workspacePath := service.resolveWorkspacePath(ctx, meta)
-	codexHome := resolveCodexHome(session.Cwd, workspacePath)
-	if err := service.live.Interrupt(ctx, session, meta, codexHome); err != nil {
+	if err := service.liveManager.Interrupt(ctx, session, meta); err != nil {
 		return invalidError(err.Error(), err)
 	}
 	return nil
@@ -410,6 +402,20 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 	if service.logger != nil && service.logger.Enabled(logging.Debug) {
 		service.logger.Debug("opencode_send_start", baseFields...)
 	}
+
+	if service.liveManager != nil {
+		turnID, err := service.liveManager.StartTurn(ctx, session, meta, input, runtimeOptions)
+		if err != nil {
+			if service.logger != nil {
+				service.logger.Warn("opencode_send_turn_failed",
+					append(append(baseFields, logging.F("stage", "live_turn")), openCodeErrorLogFields(err)...)...,
+				)
+			}
+			return "", err
+		}
+		return turnID, nil
+	}
+
 	reconciler := newOpenCodeHistoryReconciler(service, session, meta)
 	payload := buildOpenCodeUserPayloadWithRuntime(text, runtimeOptions)
 	if err := service.manager.SendInput(session.ID, payload); err != nil {

@@ -122,7 +122,6 @@ func TestTailCodexThreadEmitsTimestampTelemetry(t *testing.T) {
 	service := NewSessionService(
 		&SessionManager{baseDir: t.TempDir()},
 		nil,
-		nil,
 		logging.New(&logs, logging.Info),
 		WithCodexHistoryPool(&staticCodexHistoryPool{thread: thread}),
 	)

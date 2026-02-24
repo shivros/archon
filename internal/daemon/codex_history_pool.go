@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -101,8 +102,14 @@ func (p *codexHistoryPool) readThreadWithRecovery(ctx context.Context, client co
 	if !isCodexHistoryResumeRequiredError(err) {
 		return nil, err
 	}
-	if resumeErr := client.ResumeThread(ctx, threadID); resumeErr != nil {
-		return nil, err
+	resumeErr := client.ResumeThread(ctx, threadID)
+	if resumeErr != nil {
+		p.logger.Warn("codex_history_resume_failed",
+			logging.F("thread_id", threadID),
+			logging.F("read_error", err.Error()),
+			logging.F("resume_error", resumeErr.Error()),
+		)
+		return nil, fmt.Errorf("thread read error: %v; resume error: %w", err, resumeErr)
 	}
 	return client.ReadThread(ctx, threadID)
 }

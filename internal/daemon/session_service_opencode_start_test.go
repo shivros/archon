@@ -73,7 +73,7 @@ func TestSessionServiceStartOpenCodeDoesNotBlockOnInitialPrompt(t *testing.T) {
 			rememberOpenCodeRuntimeBaseURL(tc.provider, server.URL)
 
 			manager := newTestManager(t)
-			service := NewSessionService(manager, nil, nil, nil)
+			service := NewSessionService(manager, nil, nil)
 
 			startDone := make(chan struct {
 				sessionID string

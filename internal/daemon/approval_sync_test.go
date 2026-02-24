@@ -180,7 +180,7 @@ func TestSessionServiceListApprovalsRunsResync(t *testing.T) {
 		Sessions:  sessionStore,
 		Approvals: approvalStore,
 	}
-	service := NewSessionService(nil, stores, nil, nil)
+	service := NewSessionService(nil, stores, nil)
 	service.approvalSync = NewApprovalResyncService(stores, nil, &fakeApprovalSyncProvider{
 		provider: "fake",
 		result: &ApprovalSyncResult{

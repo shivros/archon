@@ -17,7 +17,7 @@ import (
 type SessionService struct {
 	manager      *SessionManager
 	stores       *Stores
-	live         *CodexLiveManager
+	liveManager  LiveManager
 	logger       logging.Logger
 	paths        WorkspacePathResolver
 	notifier     NotificationPublisher
@@ -82,7 +82,16 @@ func WithWorkspacePathResolver(resolver WorkspacePathResolver) SessionServiceOpt
 	}
 }
 
-func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveManager, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
+func WithLiveManager(liveManager LiveManager) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || liveManager == nil {
+			return
+		}
+		s.liveManager = liveManager
+	}
+}
+
+func NewSessionService(manager *SessionManager, stores *Stores, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
 	}
@@ -92,7 +101,6 @@ func NewSessionService(manager *SessionManager, stores *Stores, live *CodexLiveM
 	svc := &SessionService{
 		manager:      manager,
 		stores:       stores,
-		live:         live,
 		logger:       logger,
 		paths:        NewWorkspacePathResolver(),
 		adapters:     newConversationAdapterRegistry(),

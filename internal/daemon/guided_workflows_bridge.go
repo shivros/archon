@@ -385,7 +385,7 @@ func newGuidedWorkflowPromptDispatcher(
 		return nil
 	}
 	return &guidedWorkflowPromptDispatcher{
-		sessions:    NewSessionService(manager, stores, live, logger),
+		sessions:    NewSessionService(manager, stores, logger),
 		sessionMeta: stores.SessionMeta,
 		defaults:    guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
 		logger:      logger,
@@ -594,7 +594,7 @@ func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Conte
 
 func guidedWorkflowProviderSupportsPromptDispatch(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex", "opencode":
+	case "codex", "opencode", "kilocode":
 		return true
 	default:
 		return false
