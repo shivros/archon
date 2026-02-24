@@ -30,9 +30,8 @@ var (
 	_ NotifiableSession  = (*openCodeLiveSession)(nil)
 )
 
-func (s *openCodeLiveSession) Events() <-chan types.CodexEvent {
-	ch, _ := s.hub.Add()
-	return ch
+func (s *openCodeLiveSession) Events() (<-chan types.CodexEvent, func()) {
+	return s.hub.Add()
 }
 
 func (s *openCodeLiveSession) SessionID() string {

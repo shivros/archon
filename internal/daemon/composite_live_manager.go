@@ -74,8 +74,8 @@ func (m *CompositeLiveManager) Subscribe(session *types.Session, meta *types.Ses
 		return nil, nil, err
 	}
 
-	ch := ls.Events()
-	return ch, func() { ls.Close() }, nil
+	ch, cancel := ls.Events()
+	return ch, cancel, nil
 }
 
 func (m *CompositeLiveManager) Respond(ctx context.Context, session *types.Session, meta *types.SessionMeta, requestID int, result map[string]any) error {

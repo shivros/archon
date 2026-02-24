@@ -7,7 +7,7 @@ import (
 )
 
 type LiveSession interface {
-	Events() <-chan types.CodexEvent
+	Events() (<-chan types.CodexEvent, func())
 	Close()
 	SessionID() string
 }

@@ -369,9 +369,8 @@ var (
 	_ NotifiableSession      = (*codexLiveSession)(nil)
 )
 
-func (s *codexLiveSession) Events() <-chan types.CodexEvent {
-	ch, _ := s.hub.Add()
-	return ch
+func (s *codexLiveSession) Events() (<-chan types.CodexEvent, func()) {
+	return s.hub.Add()
 }
 
 func (s *codexLiveSession) SessionID() string {
