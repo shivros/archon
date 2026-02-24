@@ -320,6 +320,34 @@ func (m *CodexLiveManager) persistSessionThreadID(sessionID, threadID string) {
 	})
 }
 
+func (s *codexLiveSession) StartTurn(ctx context.Context, input []map[string]any, opts *types.SessionRuntimeOptions) (string, error) {
+	s.mu.Lock()
+	threadID := s.threadID
+	s.mu.Unlock()
+	return s.client.StartTurn(ctx, threadID, input, opts, "")
+}
+
+func (s *codexLiveSession) Interrupt(ctx context.Context) error {
+	s.mu.Lock()
+	turnID := s.activeTurn
+	threadID := s.threadID
+	s.mu.Unlock()
+	if turnID == "" {
+		return errors.New("no active turn")
+	}
+	return s.client.InterruptTurn(ctx, threadID, turnID)
+}
+
+func (s *codexLiveSession) Respond(ctx context.Context, requestID int, result map[string]any) error {
+	if err := s.client.respond(requestID, result); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.lastActive = time.Now().UTC()
+	s.mu.Unlock()
+	return nil
+}
+
 type codexLiveSession struct {
 	mu         sync.Mutex
 	sessionID  string
@@ -332,6 +360,38 @@ type codexLiveSession struct {
 	starting   bool
 	lastActive time.Time
 	closed     bool
+}
+
+var (
+	_ LiveSession            = (*codexLiveSession)(nil)
+	_ TurnCapableSession     = (*codexLiveSession)(nil)
+	_ ApprovalCapableSession = (*codexLiveSession)(nil)
+	_ NotifiableSession      = (*codexLiveSession)(nil)
+)
+
+func (s *codexLiveSession) Events() <-chan types.CodexEvent {
+	ch, _ := s.hub.Add()
+	return ch
+}
+
+func (s *codexLiveSession) SessionID() string {
+	return s.sessionID
+}
+
+func (s *codexLiveSession) ActiveTurnID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeTurn
+}
+
+func (s *codexLiveSession) Close() {
+	s.close()
+}
+
+func (s *codexLiveSession) SetNotificationPublisher(notifier NotificationPublisher) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notifier = notifier
 }
 
 func (s *codexLiveSession) start() {
