@@ -56,7 +56,7 @@ func newGuidedWorkflowRunService(
 	coreCfg config.CoreConfig,
 	stores *Stores,
 	manager *SessionManager,
-	live *CodexLiveManager,
+	liveManager LiveManager,
 	logger logging.Logger,
 ) guidedworkflows.RunService {
 	controls := guidedWorkflowsExecutionControlsFromCoreConfig(coreCfg)
@@ -82,7 +82,7 @@ func newGuidedWorkflowRunService(
 			opts = append(opts, guidedworkflows.WithMissingRunContextResolver(resolver))
 		}
 	}
-	if promptDispatcher := newGuidedWorkflowPromptDispatcher(coreCfg, manager, stores, live, logger); promptDispatcher != nil {
+	if promptDispatcher := newGuidedWorkflowPromptDispatcher(coreCfg, manager, stores, liveManager, logger); promptDispatcher != nil {
 		opts = append(opts, guidedworkflows.WithStepPromptDispatcher(promptDispatcher))
 	}
 	if controls.Enabled {
@@ -378,14 +378,18 @@ func newGuidedWorkflowPromptDispatcher(
 	coreCfg config.CoreConfig,
 	manager *SessionManager,
 	stores *Stores,
-	live *CodexLiveManager,
+	liveManager LiveManager,
 	logger logging.Logger,
 ) guidedworkflows.StepPromptDispatcher {
 	if manager == nil || stores == nil {
 		return nil
 	}
+	opts := []SessionServiceOption{}
+	if liveManager != nil {
+		opts = append(opts, WithLiveManager(liveManager))
+	}
 	return &guidedWorkflowPromptDispatcher{
-		sessions:    NewSessionService(manager, stores, logger),
+		sessions:    NewSessionService(manager, stores, logger, opts...),
 		sessionMeta: stores.SessionMeta,
 		defaults:    guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
 		logger:      logger,

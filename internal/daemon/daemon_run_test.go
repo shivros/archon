@@ -38,7 +38,7 @@ func TestDaemonRunClosesWorkflowRunServiceOnShutdown(t *testing.T) {
 		config.CoreConfig,
 		*Stores,
 		*SessionManager,
-		*CodexLiveManager,
+		LiveManager,
 		logging.Logger,
 	) guidedworkflows.RunService {
 		return trackedService

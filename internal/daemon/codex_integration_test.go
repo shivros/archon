@@ -568,6 +568,7 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 		Logger:  logger,
 	}
 	api.LiveCodex = NewCodexLiveManager(stores, logger)
+	api.LiveManager = NewCompositeLiveManager(stores, logger, newCodexLiveSessionFactory(api.LiveCodex))
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)

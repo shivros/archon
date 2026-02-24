@@ -152,7 +152,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 		guidedWorkflowRunSnapshotReconciliationInputFromStores(d.stores),
 	)
 	logGuidedWorkflowRunReconciliationOutcome(d.logger, reconcileResult, reconcileErr)
-	workflowRuns := newGuidedWorkflowRunServiceFn(coreCfg, d.stores, d.manager, liveCodex, d.logger)
+	turnNotifier := NewTurnCompletionNotifier(nil, d.stores)
+	approvalStore := NewStoreApprovalStorage(d.stores)
+	compositeLive := NewCompositeLiveManager(
+		d.stores,
+		d.logger,
+		newCodexLiveSessionFactory(liveCodex),
+		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, d.logger),
+		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, d.logger),
+	)
+	workflowRuns := newGuidedWorkflowRunServiceFn(coreCfg, d.stores, d.manager, compositeLive, d.logger)
 	if closer, ok := any(workflowRuns).(guidedWorkflowRunCloser); ok {
 		defer closer.Close()
 	}
@@ -164,15 +173,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.manager != nil {
 		d.manager.SetNotificationPublisher(eventPublisher)
 	}
-	turnNotifier := NewTurnCompletionNotifier(eventPublisher, d.stores)
-	approvalStore := NewStoreApprovalStorage(d.stores)
-	compositeLive := NewCompositeLiveManager(
-		d.stores,
-		d.logger,
-		newCodexLiveSessionFactory(liveCodex),
-		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, d.logger),
-		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, d.logger),
-	)
 	api.Notifier = eventPublisher
 	api.GuidedWorkflows = guided
 	api.WorkflowRuns = workflowRuns
