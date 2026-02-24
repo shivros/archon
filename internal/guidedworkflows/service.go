@@ -379,20 +379,23 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 			}
 			return level
 		}(),
-		WorkspaceID:       strings.TrimSpace(req.WorkspaceID),
-		WorktreeID:        strings.TrimSpace(req.WorktreeID),
-		SessionID:         strings.TrimSpace(req.SessionID),
-		TaskID:            strings.TrimSpace(req.TaskID),
-		UserPrompt:        strings.TrimSpace(req.UserPrompt),
-		Mode:              s.cfg.Mode,
-		CheckpointStyle:   s.cfg.CheckpointStyle,
-		Policy:            MergeCheckpointPolicy(s.cfg.Policy, req.PolicyOverrides),
-		PolicyOverrides:   cloneCheckpointPolicyOverride(req.PolicyOverrides),
-		Status:            WorkflowRunStatusCreated,
-		CreatedAt:         now,
-		CurrentPhaseIndex: 0,
-		CurrentStepIndex:  0,
-		Phases:            instantiatePhases(template),
+		WorkspaceID:               strings.TrimSpace(req.WorkspaceID),
+		WorktreeID:                strings.TrimSpace(req.WorktreeID),
+		SessionID:                 strings.TrimSpace(req.SessionID),
+		TaskID:                    strings.TrimSpace(req.TaskID),
+		UserPrompt:                strings.TrimSpace(req.UserPrompt),
+		SelectedProvider:          strings.TrimSpace(req.SelectedProvider),
+		SelectedPolicySensitivity: strings.TrimSpace(req.SelectedPolicySensitivity),
+		SelectedRuntimeOptions:    types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+		Mode:                      s.cfg.Mode,
+		CheckpointStyle:           s.cfg.CheckpointStyle,
+		Policy:                    MergeCheckpointPolicy(s.cfg.Policy, req.PolicyOverrides),
+		PolicyOverrides:           cloneCheckpointPolicyOverride(req.PolicyOverrides),
+		Status:                    WorkflowRunStatusCreated,
+		CreatedAt:                 now,
+		CurrentPhaseIndex:         0,
+		CurrentStepIndex:          0,
+		Phases:                    instantiatePhases(template),
 	}
 	controls := s.engine.executionControls()
 	if controls.Enabled && controls.Commit.RequireApproval {
@@ -1242,16 +1245,18 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 		return false, nil
 	}
 	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
-		RunID:              strings.TrimSpace(run.ID),
-		TemplateID:         strings.TrimSpace(run.TemplateID),
-		DefaultAccessLevel: run.DefaultAccessLevel,
-		WorkspaceID:        strings.TrimSpace(run.WorkspaceID),
-		WorktreeID:         strings.TrimSpace(run.WorktreeID),
-		SessionID:          strings.TrimSpace(run.SessionID),
-		PhaseID:            strings.TrimSpace(phase.ID),
-		StepID:             strings.TrimSpace(step.ID),
-		Prompt:             dispatchPrompt,
-		RuntimeOptions:     types.CloneRuntimeOptions(step.RuntimeOptions),
+		RunID:                  strings.TrimSpace(run.ID),
+		TemplateID:             strings.TrimSpace(run.TemplateID),
+		DefaultAccessLevel:     run.DefaultAccessLevel,
+		SelectedProvider:       strings.TrimSpace(run.SelectedProvider),
+		SelectedRuntimeOptions: types.CloneRuntimeOptions(run.SelectedRuntimeOptions),
+		WorkspaceID:            strings.TrimSpace(run.WorkspaceID),
+		WorktreeID:             strings.TrimSpace(run.WorktreeID),
+		SessionID:              strings.TrimSpace(run.SessionID),
+		PhaseID:                strings.TrimSpace(phase.ID),
+		StepID:                 strings.TrimSpace(step.ID),
+		Prompt:                 dispatchPrompt,
+		RuntimeOptions:         types.CloneRuntimeOptions(step.RuntimeOptions),
 	})
 	if err != nil {
 		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(err) == DispatchErrorDispositionDeferred {
@@ -2172,6 +2177,7 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 	if in.PolicyOverrides != nil {
 		out.PolicyOverrides = cloneCheckpointPolicyOverride(in.PolicyOverrides)
 	}
+	out.SelectedRuntimeOptions = types.CloneRuntimeOptions(in.SelectedRuntimeOptions)
 	if in.LatestDecision != nil {
 		decision := *in.LatestDecision
 		decision.Metadata.Reasons = append([]CheckpointReason{}, in.LatestDecision.Metadata.Reasons...)

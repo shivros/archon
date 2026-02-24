@@ -64,33 +64,36 @@ const (
 )
 
 type WorkflowRun struct {
-	ID                  string                    `json:"id"`
-	TemplateID          string                    `json:"template_id"`
-	TemplateName        string                    `json:"template_name"`
-	DefaultAccessLevel  types.AccessLevel         `json:"default_access_level,omitempty"`
-	WorkspaceID         string                    `json:"workspace_id,omitempty"`
-	WorktreeID          string                    `json:"worktree_id,omitempty"`
-	SessionID           string                    `json:"session_id,omitempty"`
-	TaskID              string                    `json:"task_id,omitempty"`
-	UserPrompt          string                    `json:"user_prompt,omitempty"`
-	DisplayUserPrompt   string                    `json:"display_user_prompt,omitempty"`
-	Mode                string                    `json:"mode"`
-	CheckpointStyle     string                    `json:"checkpoint_style"`
-	Status              WorkflowRunStatus         `json:"status"`
-	CreatedAt           time.Time                 `json:"created_at"`
-	DismissedAt         *time.Time                `json:"dismissed_at,omitempty"`
-	StartedAt           *time.Time                `json:"started_at,omitempty"`
-	PausedAt            *time.Time                `json:"paused_at,omitempty"`
-	CompletedAt         *time.Time                `json:"completed_at,omitempty"`
-	CurrentPhaseIndex   int                       `json:"current_phase_index"`
-	CurrentStepIndex    int                       `json:"current_step_index"`
-	Policy              CheckpointPolicy          `json:"policy"`
-	PolicyOverrides     *CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
-	Phases              []PhaseRun                `json:"phases"`
-	LatestDecision      *CheckpointDecision       `json:"latest_decision,omitempty"`
-	CheckpointDecisions []CheckpointDecision      `json:"checkpoint_decisions,omitempty"`
-	AuditTrail          []RunAuditEntry           `json:"audit_trail,omitempty"`
-	LastError           string                    `json:"last_error,omitempty"`
+	ID                        string                       `json:"id"`
+	TemplateID                string                       `json:"template_id"`
+	TemplateName              string                       `json:"template_name"`
+	DefaultAccessLevel        types.AccessLevel            `json:"default_access_level,omitempty"`
+	WorkspaceID               string                       `json:"workspace_id,omitempty"`
+	WorktreeID                string                       `json:"worktree_id,omitempty"`
+	SessionID                 string                       `json:"session_id,omitempty"`
+	TaskID                    string                       `json:"task_id,omitempty"`
+	UserPrompt                string                       `json:"user_prompt,omitempty"`
+	SelectedProvider          string                       `json:"selected_provider,omitempty"`
+	SelectedPolicySensitivity string                       `json:"selected_policy_sensitivity,omitempty"`
+	SelectedRuntimeOptions    *types.SessionRuntimeOptions `json:"selected_runtime_options,omitempty"`
+	DisplayUserPrompt         string                       `json:"display_user_prompt,omitempty"`
+	Mode                      string                       `json:"mode"`
+	CheckpointStyle           string                       `json:"checkpoint_style"`
+	Status                    WorkflowRunStatus            `json:"status"`
+	CreatedAt                 time.Time                    `json:"created_at"`
+	DismissedAt               *time.Time                   `json:"dismissed_at,omitempty"`
+	StartedAt                 *time.Time                   `json:"started_at,omitempty"`
+	PausedAt                  *time.Time                   `json:"paused_at,omitempty"`
+	CompletedAt               *time.Time                   `json:"completed_at,omitempty"`
+	CurrentPhaseIndex         int                          `json:"current_phase_index"`
+	CurrentStepIndex          int                          `json:"current_step_index"`
+	Policy                    CheckpointPolicy             `json:"policy"`
+	PolicyOverrides           *CheckpointPolicyOverride    `json:"policy_overrides,omitempty"`
+	Phases                    []PhaseRun                   `json:"phases"`
+	LatestDecision            *CheckpointDecision          `json:"latest_decision,omitempty"`
+	CheckpointDecisions       []CheckpointDecision         `json:"checkpoint_decisions,omitempty"`
+	AuditTrail                []RunAuditEntry              `json:"audit_trail,omitempty"`
+	LastError                 string                       `json:"last_error,omitempty"`
 }
 
 type PhaseRun struct {
@@ -178,13 +181,16 @@ type RunAuditEntry struct {
 }
 
 type CreateRunRequest struct {
-	TemplateID      string                    `json:"template_id,omitempty"`
-	WorkspaceID     string                    `json:"workspace_id,omitempty"`
-	WorktreeID      string                    `json:"worktree_id,omitempty"`
-	SessionID       string                    `json:"session_id,omitempty"`
-	TaskID          string                    `json:"task_id,omitempty"`
-	UserPrompt      string                    `json:"user_prompt,omitempty"`
-	PolicyOverrides *CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
+	TemplateID                string                       `json:"template_id,omitempty"`
+	WorkspaceID               string                       `json:"workspace_id,omitempty"`
+	WorktreeID                string                       `json:"worktree_id,omitempty"`
+	SessionID                 string                       `json:"session_id,omitempty"`
+	TaskID                    string                       `json:"task_id,omitempty"`
+	UserPrompt                string                       `json:"user_prompt,omitempty"`
+	SelectedProvider          string                       `json:"selected_provider,omitempty"`
+	SelectedPolicySensitivity string                       `json:"selected_policy_sensitivity,omitempty"`
+	SelectedRuntimeOptions    *types.SessionRuntimeOptions `json:"selected_runtime_options,omitempty"`
+	PolicyOverrides           *CheckpointPolicyOverride    `json:"policy_overrides,omitempty"`
 }
 
 type DecisionAction string
@@ -215,16 +221,18 @@ type TurnSignal struct {
 }
 
 type StepPromptDispatchRequest struct {
-	RunID              string                       `json:"run_id"`
-	TemplateID         string                       `json:"template_id,omitempty"`
-	DefaultAccessLevel types.AccessLevel            `json:"default_access_level,omitempty"`
-	WorkspaceID        string                       `json:"workspace_id,omitempty"`
-	WorktreeID         string                       `json:"worktree_id,omitempty"`
-	SessionID          string                       `json:"session_id,omitempty"`
-	PhaseID            string                       `json:"phase_id,omitempty"`
-	StepID             string                       `json:"step_id,omitempty"`
-	Prompt             string                       `json:"prompt"`
-	RuntimeOptions     *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+	RunID                  string                       `json:"run_id"`
+	TemplateID             string                       `json:"template_id,omitempty"`
+	DefaultAccessLevel     types.AccessLevel            `json:"default_access_level,omitempty"`
+	SelectedProvider       string                       `json:"selected_provider,omitempty"`
+	SelectedRuntimeOptions *types.SessionRuntimeOptions `json:"selected_runtime_options,omitempty"`
+	WorkspaceID            string                       `json:"workspace_id,omitempty"`
+	WorktreeID             string                       `json:"worktree_id,omitempty"`
+	SessionID              string                       `json:"session_id,omitempty"`
+	PhaseID                string                       `json:"phase_id,omitempty"`
+	StepID                 string                       `json:"step_id,omitempty"`
+	Prompt                 string                       `json:"prompt"`
+	RuntimeOptions         *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
 }
 
 type StepPromptDispatchResult struct {
