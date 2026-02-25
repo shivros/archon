@@ -737,31 +737,7 @@ func (m *Model) guidedWorkflowLauncherPickerStartRow(layout guidedWorkflowLaunch
 	if target == "" {
 		return -1
 	}
-	start := 0
-	switch m.guidedWorkflow.Stage() {
-	case guidedWorkflowStageProvider:
-		for i, line := range rendered {
-			if strings.EqualFold(strings.TrimSpace(line), "select the provider for this workflow run.") {
-				start = i + 1
-				break
-			}
-		}
-	case guidedWorkflowStagePolicy:
-		for i, line := range rendered {
-			if strings.EqualFold(strings.TrimSpace(line), "select checkpoint sensitivity for this run.") {
-				start = i + 1
-				break
-			}
-		}
-	default:
-		for i, line := range rendered {
-			if strings.EqualFold(strings.TrimSpace(line), "template picker") {
-				start = i + 1
-				break
-			}
-		}
-	}
-	for i := start; i < len(rendered); i++ {
+	for i := 0; i < len(rendered); i++ {
 		if strings.ToLower(strings.TrimSpace(rendered[i])) == target {
 			return i
 		}
