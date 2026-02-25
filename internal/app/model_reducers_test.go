@@ -292,6 +292,36 @@ func TestComposeReducerNotesNewOverrideOpensAddNote(t *testing.T) {
 	}
 }
 
+func TestComposeReducerCtrlDTogglesDebugStreamsWithToast(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.enterCompose("s1")
+	m.resize(180, 40)
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.Focus()
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+d to be handled from compose input")
+	}
+	if cmd == nil {
+		t.Fatalf("expected debug toggle command batch")
+	}
+	if !m.appState.DebugStreamsEnabled {
+		t.Fatalf("expected debug streams to be enabled")
+	}
+	if !m.debugPanelVisible {
+		t.Fatalf("expected debug panel to be visible")
+	}
+	if m.toastText != "debug streams enabled" {
+		t.Fatalf("expected toggle toast, got %q", m.toastText)
+	}
+}
+
 func TestUpdateComposeModePasteUpdatesInput(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("s1")

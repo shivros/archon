@@ -601,6 +601,8 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 			switch key {
 			case "ctrl+o":
 				return true, m.toggleNotesPanel()
+			case "ctrl+d":
+				return true, m.toggleDebugStreams()
 			case "ctrl+1":
 				return true, m.requestComposeOptionPicker(composeOptionModel)
 			case "ctrl+2":
