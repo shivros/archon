@@ -95,7 +95,7 @@ checkpoint_style = "confidence_weighted"
 mode = "guarded_autopilot"
 
 [guided_workflows.defaults]
-provider = "codex" # codex | opencode (unsupported values fall back to codex)
+provider = "codex" # codex | opencode | kilocode (unsupported values fail explicitly)
 model = "gpt-5.1-codex"
 access = "on_request" # read_only | on_request | full_access
 reasoning = "medium" # low | medium | high | extra_high

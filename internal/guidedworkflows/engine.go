@@ -16,6 +16,7 @@ var (
 	ErrRunNotRunning        = errors.New("workflow run is not running")
 	ErrNoPendingSteps       = errors.New("workflow run has no pending steps")
 	ErrRunLimitExceeded     = errors.New("workflow active run limit exceeded")
+	ErrUnsupportedProvider  = errors.New("workflow provider is not dispatchable")
 	ErrCapabilityDenied     = errors.New("workflow capability denied")
 	ErrCommandFailed        = errors.New("workflow command failed")
 	ErrStepDispatch         = errors.New("workflow step prompt dispatch unavailable")

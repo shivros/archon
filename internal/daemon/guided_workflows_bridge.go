@@ -361,10 +361,11 @@ type guidedWorkflowSessionStarter interface {
 }
 
 type guidedWorkflowPromptDispatcher struct {
-	sessions    guidedWorkflowSessionGateway
-	sessionMeta SessionMetaStore
-	defaults    guidedWorkflowDispatchDefaults
-	logger      logging.Logger
+	sessions               guidedWorkflowSessionGateway
+	sessionMeta            SessionMetaStore
+	defaults               guidedWorkflowDispatchDefaults
+	dispatchProviderPolicy guidedworkflows.DispatchProviderPolicy
+	logger                 logging.Logger
 }
 
 type guidedWorkflowDispatchDefaults struct {
@@ -389,10 +390,11 @@ func newGuidedWorkflowPromptDispatcher(
 		opts = append(opts, WithLiveManager(liveManager))
 	}
 	return &guidedWorkflowPromptDispatcher{
-		sessions:    NewSessionService(manager, stores, logger, opts...),
-		sessionMeta: stores.SessionMeta,
-		defaults:    guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
-		logger:      logger,
+		sessions:               NewSessionService(manager, stores, logger, opts...),
+		sessionMeta:            stores.SessionMeta,
+		defaults:               guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
+		dispatchProviderPolicy: guidedworkflows.DefaultDispatchProviderPolicy(),
+		logger:                 logger,
 	}
 }
 
@@ -598,12 +600,28 @@ func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Conte
 }
 
 func guidedWorkflowProviderSupportsPromptDispatch(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex", "opencode", "kilocode":
-		return true
-	default:
-		return false
+	return guidedworkflows.SupportsDispatchProvider(provider)
+}
+
+func (d *guidedWorkflowPromptDispatcher) dispatchProviderPolicyOrDefault() guidedworkflows.DispatchProviderPolicy {
+	if d == nil || d.dispatchProviderPolicy == nil {
+		return guidedworkflows.DefaultDispatchProviderPolicy()
 	}
+	return d.dispatchProviderPolicy
+}
+
+func (d *guidedWorkflowPromptDispatcher) validateDispatchProvider(provider string, source string) error {
+	policy := d.dispatchProviderPolicyOrDefault()
+	if err := policy.Validate(provider); err != nil {
+		if normalized, ok := guidedworkflows.UnsupportedDispatchProvider(err); ok {
+			if strings.TrimSpace(source) == "" {
+				source = "provider"
+			}
+			return fmt.Errorf("%w: %s %q is not dispatchable for guided workflows", guidedworkflows.ErrUnsupportedProvider, source, normalized)
+		}
+		return err
+	}
+	return nil
 }
 
 func (d *guidedWorkflowPromptDispatcher) resolveSession(
@@ -612,8 +630,11 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 ) (string, string, string, error) {
 	explicitSessionID := strings.TrimSpace(req.SessionID)
 	selectedProvider := ""
-	if strings.TrimSpace(req.SelectedProvider) != "" {
-		selectedProvider = normalizeGuidedWorkflowDispatchProvider(strings.TrimSpace(req.SelectedProvider))
+	if raw := strings.TrimSpace(req.SelectedProvider); raw != "" {
+		if err := d.validateDispatchProvider(raw, "selected_provider"); err != nil {
+			return "", "", "", err
+		}
+		selectedProvider = d.dispatchProviderPolicyOrDefault().Normalize(raw)
 	}
 	sessions, meta, err := d.sessions.ListWithMetaIncludingWorkflowOwned(ctx)
 	if err != nil {
@@ -746,7 +767,10 @@ func (d *guidedWorkflowPromptDispatcher) startWorkflowSession(
 	if workspaceID == "" && worktreeID == "" {
 		return "", "", "", nil
 	}
-	settings := d.resolveWorkflowSessionStartSettings(req, sessions, metaBySessionID)
+	settings, err := d.resolveWorkflowSessionStartSettings(req, sessions, metaBySessionID)
+	if err != nil {
+		return "", "", "", err
+	}
 	d.logWorkflowSessionStartRequested(req, settings)
 	session, err := starter.Start(ctx, StartSessionRequest{
 		Provider:       settings.Provider,
@@ -773,19 +797,23 @@ func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionProvider(
 	worktreeID string,
 	sessions []*types.Session,
 	metaBySessionID map[string]*types.SessionMeta,
-) string {
+) (string, error) {
 	if strings.TrimSpace(selectedProvider) != "" {
-		if provider := normalizeGuidedWorkflowDispatchProvider(selectedProvider); provider != "" {
-			return provider
+		if err := d.validateDispatchProvider(selectedProvider, "selected_provider"); err != nil {
+			return "", err
 		}
+		return d.dispatchProviderPolicyOrDefault().Normalize(selectedProvider), nil
 	}
 	if provider := d.preferredProviderForContext(workspaceID, worktreeID, sessions, metaBySessionID); strings.TrimSpace(provider) != "" {
-		return provider
+		return provider, nil
 	}
 	if configuredProvider := strings.TrimSpace(d.defaults.Provider); configuredProvider != "" {
-		return normalizeGuidedWorkflowDispatchProvider(configuredProvider)
+		if err := d.validateDispatchProvider(configuredProvider, "guided_workflows.defaults.provider"); err != nil {
+			return "", err
+		}
+		return d.dispatchProviderPolicyOrDefault().Normalize(configuredProvider), nil
 	}
-	return normalizeGuidedWorkflowDispatchProvider("")
+	return "codex", nil
 }
 
 type guidedWorkflowSessionStartSettings struct {
@@ -800,10 +828,13 @@ func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionStartSettings(
 	req guidedworkflows.StepPromptDispatchRequest,
 	sessions []*types.Session,
 	metaBySessionID map[string]*types.SessionMeta,
-) guidedWorkflowSessionStartSettings {
+) (guidedWorkflowSessionStartSettings, error) {
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	worktreeID := strings.TrimSpace(req.WorktreeID)
-	provider := d.resolveWorkflowSessionProvider(req.SelectedProvider, workspaceID, worktreeID, sessions, metaBySessionID)
+	provider, err := d.resolveWorkflowSessionProvider(req.SelectedProvider, workspaceID, worktreeID, sessions, metaBySessionID)
+	if err != nil {
+		return guidedWorkflowSessionStartSettings{}, err
+	}
 	settings := guidedWorkflowEffectiveDispatchSettings(req.DefaultAccessLevel, d.defaults)
 	settings.Provider = provider
 	settings.RuntimeOptions = d.resolveSessionStartRuntimeOptions(provider, req)
@@ -812,7 +843,7 @@ func (d *guidedWorkflowPromptDispatcher) resolveWorkflowSessionStartSettings(
 		settings.Access = settings.RuntimeOptions.Access
 		settings.Reasoning = settings.RuntimeOptions.Reasoning
 	}
-	return settings
+	return settings, nil
 }
 
 func (d *guidedWorkflowPromptDispatcher) resolveSessionStartRuntimeOptions(
@@ -959,27 +990,21 @@ func guidedWorkflowDispatchDefaultsFromCoreConfig(cfg config.CoreConfig) guidedW
 		Access:    cfg.GuidedWorkflowsDefaultAccessLevel(),
 		Reasoning: cfg.GuidedWorkflowsDefaultReasoningLevel(),
 	}
-	if !guidedWorkflowProviderSupportsPromptDispatch(out.Provider) {
-		out.Provider = ""
-	}
 	return out
 }
 
 func normalizeGuidedWorkflowDispatchProvider(provider string) string {
-	normalized := providers.Normalize(provider)
-	if normalized == "" {
-		return "codex"
-	}
-	if !guidedWorkflowProviderSupportsPromptDispatch(normalized) {
-		return "codex"
-	}
-	return normalized
+	return guidedworkflows.NormalizeDispatchProvider(provider)
 }
 
 func guidedWorkflowEffectiveDispatchSettings(level types.AccessLevel, defaults guidedWorkflowDispatchDefaults) guidedWorkflowSessionStartSettings {
 	runtimeOptions := guidedWorkflowRuntimeOptionsForDispatch(level, defaults)
+	provider := normalizeGuidedWorkflowDispatchProvider(defaults.Provider)
+	if provider == "" {
+		provider = "codex"
+	}
 	settings := guidedWorkflowSessionStartSettings{
-		Provider:       normalizeGuidedWorkflowDispatchProvider(defaults.Provider),
+		Provider:       provider,
 		Model:          guidedWorkflowDispatchModel(runtimeOptions),
 		RuntimeOptions: runtimeOptions,
 	}
@@ -1235,6 +1260,9 @@ func wrapStepDispatchError(err error) error {
 		return nil
 	}
 	if errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
+		return err
+	}
+	if errors.Is(err, guidedworkflows.ErrUnsupportedProvider) {
 		return err
 	}
 	if errors.Is(err, guidedworkflows.ErrStepDispatch) {

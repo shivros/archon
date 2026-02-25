@@ -97,6 +97,7 @@ type InMemoryRunService struct {
 	templates              map[string]WorkflowTemplate
 	templateProvider       TemplateProvider
 	stepDispatcher         StepPromptDispatcher
+	dispatchProviderPolicy DispatchProviderPolicy
 	turnMatcher            TurnSignalMatcher
 	dispatchClassifier     DispatchErrorClassifier
 	dispatchRetryPolicy    DispatchRetryPolicy
@@ -166,6 +167,15 @@ func WithStepPromptDispatcher(dispatcher StepPromptDispatcher) RunServiceOption 
 			return
 		}
 		s.stepDispatcher = dispatcher
+	}
+}
+
+func WithDispatchProviderPolicy(policy DispatchProviderPolicy) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || policy == nil {
+			return
+		}
+		s.dispatchProviderPolicy = policy
 	}
 }
 
@@ -292,18 +302,19 @@ func WithMissingRunTombstoneFactory(factory MissingRunTombstoneFactory) RunServi
 
 func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	service := &InMemoryRunService{
-		cfg:                 NormalizeConfig(cfg),
-		engine:              NewEngine(),
-		templates:           BuiltinTemplates(),
-		runs:                map[string]*WorkflowRun{},
-		timelines:           map[string][]RunTimelineEvent{},
-		turnSeen:            map[string]struct{}{},
-		actions:             map[string]struct{}{},
-		telemetryEnabled:    true,
-		tombstoneFactory:    defaultMissingRunTombstoneFactory{},
-		turnMatcher:         StrictSessionTurnSignalMatcher{},
-		dispatchClassifier:  defaultDispatchErrorClassifier{},
-		dispatchRetryPolicy: defaultDispatchRetryPolicy(),
+		cfg:                    NormalizeConfig(cfg),
+		engine:                 NewEngine(),
+		templates:              BuiltinTemplates(),
+		runs:                   map[string]*WorkflowRun{},
+		timelines:              map[string][]RunTimelineEvent{},
+		turnSeen:               map[string]struct{}{},
+		actions:                map[string]struct{}{},
+		telemetryEnabled:       true,
+		tombstoneFactory:       defaultMissingRunTombstoneFactory{},
+		turnMatcher:            StrictSessionTurnSignalMatcher{},
+		dispatchClassifier:     defaultDispatchErrorClassifier{},
+		dispatchRetryPolicy:    defaultDispatchRetryPolicy(),
+		dispatchProviderPolicy: registryDispatchProviderPolicy{},
 		metrics: runServiceMetrics{
 			interventionCauses: map[string]int{},
 		},
@@ -321,6 +332,9 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	}
 	if service.dispatchRetryScheduler == nil {
 		service.dispatchRetryScheduler = NewDispatchRetryScheduler(service.dispatchRetryPolicy, service.retryDeferredDispatch)
+	}
+	if service.dispatchProviderPolicy == nil {
+		service.dispatchProviderPolicy = registryDispatchProviderPolicy{}
 	}
 	service.restoreMetrics(context.Background())
 	service.restoreRuns(context.Background())
@@ -349,6 +363,14 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 	}
 	if strings.TrimSpace(req.WorkspaceID) == "" && strings.TrimSpace(req.WorktreeID) == "" {
 		return nil, ErrMissingContext
+	}
+	policy := s.dispatchProviderPolicyOrDefault()
+	selectedProvider := strings.TrimSpace(req.SelectedProvider)
+	if err := policy.Validate(selectedProvider); err != nil {
+		if provider, ok := UnsupportedDispatchProvider(err); ok {
+			return nil, fmt.Errorf("%w: selected_provider %q is not dispatchable for guided workflows", ErrUnsupportedProvider, provider)
+		}
+		return nil, err
 	}
 	templates := s.resolveTemplates(ctx)
 	templateID := strings.TrimSpace(req.TemplateID)
@@ -384,7 +406,7 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		SessionID:                 strings.TrimSpace(req.SessionID),
 		TaskID:                    strings.TrimSpace(req.TaskID),
 		UserPrompt:                strings.TrimSpace(req.UserPrompt),
-		SelectedProvider:          strings.TrimSpace(req.SelectedProvider),
+		SelectedProvider:          policy.Normalize(selectedProvider),
 		SelectedPolicySensitivity: strings.TrimSpace(req.SelectedPolicySensitivity),
 		SelectedRuntimeOptions:    types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
 		Mode:                      s.cfg.Mode,
@@ -419,6 +441,13 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 	})
 	s.persistRunSnapshotLocked(ctx, runID)
 	return cloneWorkflowRun(run), nil
+}
+
+func (s *InMemoryRunService) dispatchProviderPolicyOrDefault() DispatchProviderPolicy {
+	if s == nil || s.dispatchProviderPolicy == nil {
+		return registryDispatchProviderPolicy{}
+	}
+	return s.dispatchProviderPolicy
 }
 
 func (s *InMemoryRunService) ListTemplates(ctx context.Context) ([]WorkflowTemplate, error) {

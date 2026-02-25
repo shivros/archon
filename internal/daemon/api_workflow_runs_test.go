@@ -949,6 +949,37 @@ func TestWorkflowRunEndpointsDisabled(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunCreateRejectsUnsupportedProvider(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	body, _ := json.Marshal(CreateWorkflowRunRequest{
+		WorkspaceID:      "ws-1",
+		WorktreeID:       "wt-1",
+		SelectedProvider: "claude",
+	})
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workflow-runs", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create run request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	payload, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(strings.ToLower(string(payload)), "not dispatchable") {
+		t.Fatalf("expected unsupported provider error payload, got %s", strings.TrimSpace(string(payload)))
+	}
+}
+
 func TestWorkflowTemplateEndpointMethodNotAllowed(t *testing.T) {
 	api := &API{
 		Version:      "test",
@@ -1402,6 +1433,7 @@ func TestToGuidedWorkflowServiceErrorMappings(t *testing.T) {
 	check(guidedworkflows.ErrRunNotFound, ServiceErrorNotFound)
 	check(guidedworkflows.ErrTemplateNotFound, ServiceErrorInvalid)
 	check(guidedworkflows.ErrMissingContext, ServiceErrorInvalid)
+	check(guidedworkflows.ErrUnsupportedProvider, ServiceErrorInvalid)
 	check(guidedworkflows.ErrInvalidTransition, ServiceErrorConflict)
 	check(guidedworkflows.ErrRunLimitExceeded, ServiceErrorConflict)
 	check(guidedworkflows.ErrDisabled, ServiceErrorUnavailable)

@@ -68,6 +68,11 @@ type countingDispatchRetryPolicy struct {
 	calls atomic.Int32
 }
 
+type stubDispatchProviderPolicy struct {
+	normalized  string
+	validateErr error
+}
+
 func (s stubDispatchErrorClassifier) Classify(error) DispatchErrorDisposition {
 	return s.disposition
 }
@@ -96,6 +101,21 @@ func (p *countingDispatchRetryPolicy) NextDelay(_ int) (time.Duration, bool) {
 		delay = 1 * time.Millisecond
 	}
 	return delay, true
+}
+
+func (s stubDispatchProviderPolicy) Normalize(provider string) string {
+	if strings.TrimSpace(s.normalized) != "" {
+		return strings.TrimSpace(s.normalized)
+	}
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func (s stubDispatchProviderPolicy) SupportsDispatch(provider string) bool {
+	return strings.TrimSpace(provider) != ""
+}
+
+func (s stubDispatchProviderPolicy) Validate(string) error {
+	return s.validateErr
 }
 
 func (s *stubTemplateProvider) ListWorkflowTemplates(context.Context) ([]WorkflowTemplate, error) {
@@ -1180,6 +1200,79 @@ func TestRunLifecycleCreateRunValidation(t *testing.T) {
 	}); !errors.Is(err, ErrTemplateNotFound) {
 		t.Fatalf("expected ErrTemplateNotFound, got %v", err)
 	}
+	if _, err := enabled.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:       TemplateIDSolidPhaseDelivery,
+		WorkspaceID:      "ws-1",
+		SelectedProvider: "claude",
+	}); !errors.Is(err, ErrUnsupportedProvider) {
+		t.Fatalf("expected ErrUnsupportedProvider, got %v", err)
+	}
+	run, err := enabled.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:       TemplateIDSolidPhaseDelivery,
+		WorkspaceID:      "ws-1",
+		SelectedProvider: "opencode",
+	})
+	if err != nil {
+		t.Fatalf("expected valid selected provider to create run, got %v", err)
+	}
+	if run.SelectedProvider != "opencode" {
+		t.Fatalf("expected normalized selected provider opencode, got %q", run.SelectedProvider)
+	}
+}
+
+func TestWithDispatchProviderPolicyOverridesNormalization(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithDispatchProviderPolicy(stubDispatchProviderPolicy{normalized: "kilocode"}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:       TemplateIDSolidPhaseDelivery,
+		WorkspaceID:      "ws-1",
+		SelectedProvider: "codex",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if run.SelectedProvider != "kilocode" {
+		t.Fatalf("expected policy normalization override, got %q", run.SelectedProvider)
+	}
+}
+
+func TestWithDispatchProviderPolicyValidationErrorPropagates(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithDispatchProviderPolicy(stubDispatchProviderPolicy{
+			validateErr: errors.New("policy unavailable"),
+		}),
+	)
+	if _, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:       TemplateIDSolidPhaseDelivery,
+		WorkspaceID:      "ws-1",
+		SelectedProvider: "codex",
+	}); err == nil || !strings.Contains(err.Error(), "policy unavailable") {
+		t.Fatalf("expected custom policy error, got %v", err)
+	}
+}
+
+func TestDispatchProviderPolicyOrDefaultHandlesNil(t *testing.T) {
+	var service *InMemoryRunService
+	policy := service.dispatchProviderPolicyOrDefault()
+	if policy == nil {
+		t.Fatalf("expected default policy for nil service receiver")
+	}
+}
+
+func TestWithDispatchProviderPolicyNilGuards(t *testing.T) {
+	opt := WithDispatchProviderPolicy(nil)
+	service := &InMemoryRunService{}
+	opt(service)
+	if service.dispatchProviderPolicy != nil {
+		t.Fatalf("expected nil policy option to no-op")
+	}
+
+	var nilService *InMemoryRunService
+	opt = WithDispatchProviderPolicy(stubDispatchProviderPolicy{normalized: "codex"})
+	opt(nilService)
 }
 
 func TestRunLifecycleStepHandlerFailureTransitionsToFailed(t *testing.T) {

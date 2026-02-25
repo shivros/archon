@@ -73,6 +73,26 @@ type guidedWorkflowMissingRunSnapshotPolicyFunc func(
 	now time.Time,
 ) (guidedworkflows.RunStatusSnapshot, bool)
 
+type stubDispatchProviderPolicy struct {
+	normalizeValue string
+	validateErr    error
+}
+
+func (s stubDispatchProviderPolicy) Normalize(provider string) string {
+	if strings.TrimSpace(s.normalizeValue) != "" {
+		return strings.TrimSpace(s.normalizeValue)
+	}
+	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func (s stubDispatchProviderPolicy) SupportsDispatch(provider string) bool {
+	return strings.TrimSpace(provider) != ""
+}
+
+func (s stubDispatchProviderPolicy) Validate(string) error {
+	return s.validateErr
+}
+
 func setStableWorkflowTemplatesHome(t *testing.T) string {
 	t.Helper()
 	home := filepath.Join(t.TempDir(), "home")
@@ -899,7 +919,7 @@ func TestGuidedWorkflowDispatchDefaultsFromCoreConfig(t *testing.T) {
 	}
 }
 
-func TestGuidedWorkflowDispatchDefaultsFromCoreConfigClearsUnsupportedProvider(t *testing.T) {
+func TestGuidedWorkflowDispatchDefaultsFromCoreConfigPreservesUnsupportedProviderForValidation(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
 	cfg.GuidedWorkflows.Defaults.Provider = "claude"
 	cfg.GuidedWorkflows.Defaults.Model = "gpt-5.3-codex"
@@ -907,8 +927,8 @@ func TestGuidedWorkflowDispatchDefaultsFromCoreConfigClearsUnsupportedProvider(t
 	cfg.GuidedWorkflows.Defaults.Reasoning = "low"
 
 	defaults := guidedWorkflowDispatchDefaultsFromCoreConfig(cfg)
-	if defaults.Provider != "" {
-		t.Fatalf("expected unsupported provider to be cleared, got %q", defaults.Provider)
+	if defaults.Provider != "claude" {
+		t.Fatalf("expected unsupported provider to be preserved for validation, got %q", defaults.Provider)
 	}
 	if defaults.Model != "gpt-5.3-codex" {
 		t.Fatalf("expected model to remain configured when provider unsupported, got %q", defaults.Model)
@@ -1462,6 +1482,40 @@ func TestGuidedWorkflowPromptDispatcherSkipsUnsupportedProvider(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowPromptDispatcherRejectsSelectedProviderWithoutCodexCoercion(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "sess-1", WorkspaceID: "ws-1"},
+		},
+		turnID: "turn-3",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:            "gwf-1",
+		WorkspaceID:      "ws-1",
+		Prompt:           "hello",
+		SelectedProvider: "claude",
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported selected provider to fail dispatch")
+	}
+	if !errors.Is(err, guidedworkflows.ErrUnsupportedProvider) {
+		t.Fatalf("expected ErrUnsupportedProvider, got %v", err)
+	}
+	if result.Dispatched {
+		t.Fatalf("expected selected unsupported provider to skip dispatch, got %#v", result)
+	}
+	if len(gateway.sendCalls) != 0 {
+		t.Fatalf("expected no send calls, got %#v", gateway.sendCalls)
+	}
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no fallback start attempts, got %d", len(gateway.startReqs))
+	}
+}
+
 func TestGuidedWorkflowPromptDispatcherFallsBackToSupportedSession(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
@@ -1849,12 +1903,12 @@ func TestGuidedWorkflowPromptDispatcherAppliesPartialDefaultsReasoningOnly(t *te
 	}
 }
 
-func TestGuidedWorkflowEffectiveDispatchSettingsUsesCodexFallback(t *testing.T) {
+func TestGuidedWorkflowEffectiveDispatchSettingsPreservesConfiguredProvider(t *testing.T) {
 	settings := guidedWorkflowEffectiveDispatchSettings("", guidedWorkflowDispatchDefaults{
 		Provider: "claude",
 	})
-	if settings.Provider != "codex" {
-		t.Fatalf("expected provider fallback to codex, got %q", settings.Provider)
+	if settings.Provider != "claude" {
+		t.Fatalf("expected configured provider to be preserved, got %q", settings.Provider)
 	}
 	if settings.Model != "" || settings.Access != "" || settings.Reasoning != "" {
 		t.Fatalf("expected empty runtime details without defaults, got %+v", settings)
@@ -1871,8 +1925,8 @@ func TestGuidedWorkflowDispatchDefaultsFromCoreConfigInvalidValuesFallbackGracef
 	cfg.GuidedWorkflows.Defaults.Access = "invalid_access"
 	cfg.GuidedWorkflows.Defaults.Reasoning = "invalid_reasoning"
 	defaults := guidedWorkflowDispatchDefaultsFromCoreConfig(cfg)
-	if defaults.Provider != "" {
-		t.Fatalf("expected unsupported provider to normalize to empty, got %q", defaults.Provider)
+	if defaults.Provider != "claude" {
+		t.Fatalf("expected unsupported provider to remain for explicit validation, got %q", defaults.Provider)
 	}
 	if defaults.Model != "" {
 		t.Fatalf("expected blank model to normalize to empty, got %q", defaults.Model)
@@ -1885,7 +1939,7 @@ func TestGuidedWorkflowDispatchDefaultsFromCoreConfigInvalidValuesFallbackGracef
 	}
 }
 
-func TestGuidedWorkflowPromptDispatcherFallsBackGracefullyWhenDefaultsInvalid(t *testing.T) {
+func TestGuidedWorkflowPromptDispatcherFailsExplicitlyWhenDefaultsProviderUnsupported(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
 	cfg.GuidedWorkflows.Defaults.Provider = "claude"
 	cfg.GuidedWorkflows.Defaults.Model = "   "
@@ -1909,32 +1963,79 @@ func TestGuidedWorkflowPromptDispatcherFallsBackGracefullyWhenDefaultsInvalid(t 
 		WorktreeID:  "wt-1",
 		Prompt:      "hello",
 	})
-	if err != nil {
-		t.Fatalf("DispatchStepPrompt: %v", err)
+	if err == nil {
+		t.Fatalf("expected dispatch error for unsupported configured provider")
 	}
-	if !result.Dispatched || result.SessionID != "sess-codex" {
-		t.Fatalf("expected dispatch to fallback codex session, got %#v", result)
+	if !errors.Is(err, guidedworkflows.ErrUnsupportedProvider) {
+		t.Fatalf("expected ErrUnsupportedProvider, got %v", err)
 	}
-	if len(gateway.startReqs) != 1 {
-		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result, got %#v", result)
 	}
-	if gateway.startReqs[0].Provider != "codex" {
-		t.Fatalf("expected invalid provider default to fallback to codex, got %q", gateway.startReqs[0].Provider)
-	}
-	if gateway.startReqs[0].RuntimeOptions != nil {
-		t.Fatalf("expected invalid defaults to produce nil runtime options, got %+v", gateway.startReqs[0].RuntimeOptions)
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no session start attempts for unsupported configured provider, got %d", len(gateway.startReqs))
 	}
 }
 
 func TestNormalizeGuidedWorkflowDispatchProvider(t *testing.T) {
-	if got := normalizeGuidedWorkflowDispatchProvider(""); got != "codex" {
-		t.Fatalf("expected empty provider to default to codex, got %q", got)
+	if got := normalizeGuidedWorkflowDispatchProvider(""); got != "" {
+		t.Fatalf("expected empty provider to remain empty, got %q", got)
 	}
 	if got := normalizeGuidedWorkflowDispatchProvider("opencode"); got != "opencode" {
 		t.Fatalf("expected supported provider to be preserved, got %q", got)
 	}
-	if got := normalizeGuidedWorkflowDispatchProvider("claude"); got != "codex" {
-		t.Fatalf("expected unsupported provider to fallback to codex, got %q", got)
+	if got := normalizeGuidedWorkflowDispatchProvider("claude"); got != "claude" {
+		t.Fatalf("expected normalized provider value to be preserved, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowDispatcherPolicyFallbackHandlesNilReceiver(t *testing.T) {
+	var dispatcher *guidedWorkflowPromptDispatcher
+	policy := dispatcher.dispatchProviderPolicyOrDefault()
+	if policy == nil {
+		t.Fatalf("expected default dispatch provider policy")
+	}
+}
+
+func TestGuidedWorkflowValidateDispatchProviderUsesDefaultSourceName(t *testing.T) {
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		dispatchProviderPolicy: stubDispatchProviderPolicy{
+			validateErr: &guidedworkflows.DispatchProviderValidationError{Provider: "claude"},
+		},
+	}
+	err := dispatcher.validateDispatchProvider("claude", "")
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !errors.Is(err, guidedworkflows.ErrUnsupportedProvider) {
+		t.Fatalf("expected ErrUnsupportedProvider, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `provider "claude" is not dispatchable`) {
+		t.Fatalf("expected default source label in error, got %v", err)
+	}
+}
+
+func TestGuidedWorkflowValidateDispatchProviderPassesThroughNonTypedError(t *testing.T) {
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		dispatchProviderPolicy: stubDispatchProviderPolicy{
+			validateErr: errors.New("policy backend unavailable"),
+		},
+	}
+	err := dispatcher.validateDispatchProvider("codex", "selected_provider")
+	if err == nil || !strings.Contains(err.Error(), "policy backend unavailable") {
+		t.Fatalf("expected raw policy error to propagate, got %v", err)
+	}
+}
+
+func TestGuidedWorkflowResolveWorkflowSessionProviderPropagatesPolicyError(t *testing.T) {
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		dispatchProviderPolicy: stubDispatchProviderPolicy{
+			validateErr: errors.New("policy rejected"),
+		},
+	}
+	_, err := dispatcher.resolveWorkflowSessionProvider("codex", "ws-1", "wt-1", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "policy rejected") {
+		t.Fatalf("expected policy error from selected provider validation, got %v", err)
 	}
 }
 
@@ -1978,7 +2079,7 @@ func TestGuidedWorkflowPromptDispatcherTemplateAccessOverridesConfiguredDefaultA
 	}
 }
 
-func TestGuidedWorkflowPromptDispatcherFallsBackToCodexWhenConfiguredProviderUnsupported(t *testing.T) {
+func TestGuidedWorkflowPromptDispatcherFailsWhenConfiguredProviderUnsupported(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		started: []*types.Session{
 			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
@@ -1997,14 +2098,14 @@ func TestGuidedWorkflowPromptDispatcherFallsBackToCodexWhenConfiguredProviderUns
 		WorktreeID:  "wt-1",
 		Prompt:      "hello",
 	})
-	if err != nil {
-		t.Fatalf("DispatchStepPrompt: %v", err)
+	if err == nil {
+		t.Fatalf("expected dispatch error for unsupported configured provider")
 	}
-	if len(gateway.startReqs) != 1 {
-		t.Fatalf("expected one start request, got %d", len(gateway.startReqs))
+	if !errors.Is(err, guidedworkflows.ErrUnsupportedProvider) {
+		t.Fatalf("expected ErrUnsupportedProvider, got %v", err)
 	}
-	if gateway.startReqs[0].Provider != "codex" {
-		t.Fatalf("expected codex fallback provider for unsupported configured provider, got %q", gateway.startReqs[0].Provider)
+	if len(gateway.startReqs) != 0 {
+		t.Fatalf("expected no session start request, got %d", len(gateway.startReqs))
 	}
 }
 

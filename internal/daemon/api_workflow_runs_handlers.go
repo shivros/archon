@@ -567,6 +567,8 @@ func toGuidedWorkflowServiceError(err error) error {
 		return invalidError("workflow template not found", err)
 	case errors.Is(err, guidedworkflows.ErrMissingContext):
 		return invalidError("workspace_id or worktree_id is required", err)
+	case errors.Is(err, guidedworkflows.ErrUnsupportedProvider):
+		return invalidError("workflow provider is not dispatchable for guided workflows", err)
 	case errors.Is(err, guidedworkflows.ErrInvalidTransition):
 		return conflictError("invalid workflow run transition", err)
 	case errors.Is(err, guidedworkflows.ErrRunLimitExceeded):
