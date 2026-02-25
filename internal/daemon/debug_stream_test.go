@@ -41,3 +41,14 @@ func TestDebugBufferSnapshotAndRollover(t *testing.T) {
 		t.Fatalf("expected one trailing event, got %#v", lastOne)
 	}
 }
+
+func TestDebugBufferSnapshotTrimsByBytes(t *testing.T) {
+	buf := newDebugBufferWithBytes(10, 5)
+	buf.Append(types.DebugEvent{Seq: 1, Chunk: "abcd"})
+	buf.Append(types.DebugEvent{Seq: 2, Chunk: "ef"})
+
+	all := buf.Snapshot(0)
+	if len(all) != 1 || all[0].Seq != 2 {
+		t.Fatalf("expected byte trimming to retain newest event, got %#v", all)
+	}
+}

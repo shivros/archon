@@ -7,7 +7,7 @@ import (
 )
 
 func TestDebugStreamControllerConsumeTickAccumulatesAndCloses(t *testing.T) {
-	controller := NewDebugStreamController(2, 10)
+	controller := NewDebugStreamController(DebugStreamRetentionPolicy{MaxLines: 2, MaxBytes: 1024}, 10)
 	ch := make(chan types.DebugEvent, 4)
 	controller.SetStream(ch, nil)
 
@@ -49,7 +49,7 @@ func TestDebugStreamControllerConsumeTickAccumulatesAndCloses(t *testing.T) {
 }
 
 func TestDebugStreamControllerResetCancelsAndClearsState(t *testing.T) {
-	controller := NewDebugStreamController(10, 10)
+	controller := NewDebugStreamController(DebugStreamRetentionPolicy{MaxLines: 10, MaxBytes: 1024}, 10)
 	called := 0
 	controller.lines = []string{"line"}
 	controller.pending = "partial"
@@ -70,5 +70,23 @@ func TestDebugStreamControllerResetCancelsAndClearsState(t *testing.T) {
 	}
 	if controller.pending != "" {
 		t.Fatalf("expected pending buffer to be cleared, got %q", controller.pending)
+	}
+}
+
+func TestDebugStreamControllerTrimsByBytes(t *testing.T) {
+	controller := NewDebugStreamController(DebugStreamRetentionPolicy{MaxLines: 10, MaxBytes: 7}, 10)
+	ch := make(chan types.DebugEvent, 1)
+	controller.SetStream(ch, nil)
+
+	ch <- types.DebugEvent{Chunk: "abcd\nefgh\n"}
+	lines, changed, _ := controller.ConsumeTick()
+	if !changed {
+		t.Fatalf("expected changed=true on chunk consumption")
+	}
+	if len(lines) != 1 || lines[0] != "efgh" {
+		t.Fatalf("expected byte-bound trimming to retain latest line, got %#v", lines)
+	}
+	if got := controller.Content(); got != "efgh" {
+		t.Fatalf("expected cached content to match trimmed lines, got %q", got)
 	}
 }

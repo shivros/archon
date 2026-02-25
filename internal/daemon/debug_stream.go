@@ -7,6 +7,7 @@ import (
 )
 
 const debugMaxEvents = 2048
+const debugMaxBufferedBytes = 512 * 1024
 
 type debugSubscriber struct {
 	id int
@@ -58,29 +59,52 @@ func (h *debugHub) Broadcast(event types.DebugEvent) {
 }
 
 type debugBuffer struct {
-	mu     sync.Mutex
-	events []types.DebugEvent
-	max    int
+	mu         sync.Mutex
+	events     []types.DebugEvent
+	eventBytes []int
+	max        int
+	maxBytes   int
+	totalBytes int
 }
 
 func newDebugBuffer(max int) *debugBuffer {
-	if max <= 0 {
-		max = debugMaxEvents
-	}
+	return newDebugBufferWithPolicy(DebugRetentionPolicy{MaxEvents: max, MaxBytes: debugMaxBufferedBytes})
+}
+
+func newDebugBufferWithBytes(max, maxBytes int) *debugBuffer {
+	return newDebugBufferWithPolicy(DebugRetentionPolicy{MaxEvents: max, MaxBytes: maxBytes})
+}
+
+func newDebugBufferWithPolicy(policy DebugRetentionPolicy) *debugBuffer {
+	policy = policy.normalize()
 	return &debugBuffer{
-		events: make([]types.DebugEvent, 0, max),
-		max:    max,
+		events:     make([]types.DebugEvent, 0, policy.MaxEvents),
+		eventBytes: make([]int, 0, policy.MaxEvents),
+		max:        policy.MaxEvents,
+		maxBytes:   policy.MaxBytes,
 	}
 }
 
 func (b *debugBuffer) Append(event types.DebugEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.events) == b.max {
-		copy(b.events, b.events[1:])
-		b.events = b.events[:b.max-1]
-	}
+	eventBytes := len(event.Chunk)
 	b.events = append(b.events, event)
+	b.eventBytes = append(b.eventBytes, eventBytes)
+	b.totalBytes += eventBytes
+	for {
+		trimEvents := len(b.events) > b.max
+		trimBytes := b.maxBytes > 0 && b.totalBytes > b.maxBytes
+		if !trimEvents && !trimBytes {
+			break
+		}
+		if len(b.events) == 0 {
+			break
+		}
+		b.totalBytes -= b.eventBytes[0]
+		b.events = b.events[1:]
+		b.eventBytes = b.eventBytes[1:]
+	}
 }
 
 func (b *debugBuffer) Snapshot(lines int) []types.DebugEvent {

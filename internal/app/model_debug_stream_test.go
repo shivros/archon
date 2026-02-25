@@ -24,6 +24,9 @@ func TestToggleDebugStreamsEnablesAndStartsActiveSessionStream(t *testing.T) {
 	if m.status != "debug streams enabled" {
 		t.Fatalf("unexpected status %q", m.status)
 	}
+	if m.toastText != "debug streams enabled" {
+		t.Fatalf("expected toggle toast, got %q", m.toastText)
+	}
 	if !m.debugPanelVisible {
 		t.Fatalf("expected debug panel to become visible")
 	}
@@ -36,10 +39,15 @@ func TestToggleDebugStreamsDisableResetsController(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.appState.DebugStreamsEnabled = true
 	cancelCalls := 0
-	m.debugStream.SetStream(make(chan types.DebugEvent), func() {
+	ch := make(chan types.DebugEvent, 1)
+	m.debugStream.SetStream(ch, func() {
 		cancelCalls++
 	})
-	m.debugStream.lines = []string{"existing"}
+	ch <- types.DebugEvent{Chunk: "existing\n"}
+	_, changed, _ := m.debugStream.ConsumeTick()
+	if !changed {
+		t.Fatalf("expected debug stream to consume seeded line")
+	}
 
 	cmd := m.toggleDebugStreams()
 	if m.appState.DebugStreamsEnabled {
@@ -47,6 +55,9 @@ func TestToggleDebugStreamsDisableResetsController(t *testing.T) {
 	}
 	if m.status != "debug streams disabled" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+	if m.toastText != "debug streams disabled" {
+		t.Fatalf("expected toggle toast, got %q", m.toastText)
 	}
 	_ = cmd
 	if cancelCalls != 1 {
@@ -117,8 +128,9 @@ func TestRenderDebugPanelViewShowsFallbackAndStreamLines(t *testing.T) {
 	m := NewModel(nil)
 	m.debugPanelWidth = 36
 
-	fallback := xansi.Strip(m.renderDebugPanelView())
-	if !strings.Contains(fallback, "Debug") || !strings.Contains(fallback, "Waiting for debug stream...") {
+	fallbackView, _ := m.renderDebugPanelView()
+	fallback := xansi.Strip(fallbackView)
+	if !strings.Contains(fallback, "Debug") || !strings.Contains(fallback, "Waiting for debug") {
 		t.Fatalf("unexpected fallback panel: %q", fallback)
 	}
 
@@ -130,7 +142,8 @@ func TestRenderDebugPanelViewShowsFallbackAndStreamLines(t *testing.T) {
 		t.Fatalf("expected debug stream tick to change lines")
 	}
 
-	panel := xansi.Strip(m.renderDebugPanelView())
+	panelView, _ := m.renderDebugPanelView()
+	panel := xansi.Strip(panelView)
 	if !strings.Contains(panel, "line one") || !strings.Contains(panel, "line two") {
 		t.Fatalf("expected stream lines in panel, got %q", panel)
 	}

@@ -25,6 +25,8 @@ import (
 const (
 	defaultTailLines           = 200
 	maxViewportLines           = 2000
+	maxDebugViewportLines      = 600
+	maxDebugViewportBytes      = 256 * 1024
 	maxEventsPerTick           = 64
 	tickInterval               = 100 * time.Millisecond
 	sidebarWheelCooldown       = 30 * time.Millisecond
@@ -154,7 +156,7 @@ type Model struct {
 	stream                              *StreamController
 	codexStream                         *CodexStreamController
 	itemStream                          *ItemStreamController
-	debugStream                         *DebugStreamController
+	debugStream                         debugStreamViewModel
 	input                               *InputController
 	chat                                *SessionChatController
 	pendingApproval                     *ApprovalRequest
@@ -249,6 +251,7 @@ type Model struct {
 	debugPanelVisible                   bool
 	debugPanelWidth                     int
 	debugPanelMainWidth                 int
+	debugPanel                          debugPanelView
 	notesPanelPendingScopes             map[types.NoteScope]struct{}
 	notesPanelLoadErrors                int
 	notesPanelBlocks                    []ChatBlock
@@ -386,7 +389,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
 	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
 	itemStream := NewItemStreamController(maxViewportLines, maxEventsPerTick)
-	debugStream := NewDebugStreamController(maxViewportLines, maxEventsPerTick)
+	debugStream := NewDebugStreamController(defaultDebugStreamRetentionPolicy(), maxEventsPerTick)
+	debugPanel := NewDebugPanelController(minViewportWidth, minContentHeight-1, nil)
 	loader := spinner.New()
 	loader.Spinner = spinner.Line
 	loader.Style = lipgloss.NewStyle()
@@ -413,6 +417,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		codexStream:                         codexStream,
 		itemStream:                          itemStream,
 		debugStream:                         debugStream,
+		debugPanel:                          debugPanel,
 		input:                               NewInputController(),
 		chat:                                NewSessionChatController(api, codexStream),
 		mode:                                uiModeNormal,
@@ -898,6 +903,13 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	} else {
 		m.notesPanelViewport.SetWidth(0)
 		m.notesPanelViewport.SetHeight(0)
+	}
+	if m.debugPanel != nil {
+		if panelMode == sidePanelModeDebug && layout.panelVisible {
+			m.debugPanel.Resize(layout.panelWidth, max(1, contentHeight-1))
+		} else {
+			m.debugPanel.Resize(0, 0)
+		}
 	}
 	if m.addWorkspace != nil {
 		m.addWorkspace.Resize(mainViewportWidth)
@@ -2478,6 +2490,7 @@ func (m *Model) consumeDebugTick(now time.Time) {
 		m.setBackgroundStatus("debug stream closed")
 	}
 	if changed {
+		m.refreshDebugPanelContent()
 		if m.transcriptViewportVisible() && m.appState.DebugStreamsEnabled {
 			m.requestStreamRender(now)
 		}
@@ -3650,10 +3663,16 @@ func (m *Model) toggleDebugStreams() tea.Cmd {
 		if m.debugStream != nil {
 			m.debugStream.Reset()
 		}
-		m.setStatusInfo("debug streams disabled")
+		m.refreshDebugPanelContent()
+		message := "debug streams disabled"
+		m.status = message
+		m.showToast(toastLevelInfo, message)
 		return m.requestAppStateSaveCmd()
 	}
-	m.setStatusInfo("debug streams enabled")
+	m.refreshDebugPanelContent()
+	message := "debug streams enabled"
+	m.status = message
+	m.showToast(toastLevelInfo, message)
 	if strings.TrimSpace(sessionID) == "" {
 		return m.requestAppStateSaveCmd()
 	}

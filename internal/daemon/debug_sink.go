@@ -1,8 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -11,67 +9,86 @@ import (
 )
 
 type debugSink struct {
-	file      *os.File
-	sessionID string
-	provider  string
-	mu        sync.Mutex
-	seq       uint64
-	hub       *debugHub
-	buffer    *debugBuffer
+	mu      sync.Mutex
+	batcher *debugBatcher
+	factory *debugEventFactory
+	writer  debugEventWriter
+	store   debugEventStore
+	bus     debugEventBus
 }
 
-func newDebugSink(path, sessionID, provider string, hub *debugHub, buffer *debugBuffer) (*debugSink, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil, nil
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+func newDebugSink(path, sessionID, provider string, hub debugEventBus, buffer debugEventStore) (*debugSink, error) {
+	return newDebugSinkWithPolicy(path, sessionID, provider, hub, buffer, defaultDebugBatchPolicy())
+}
+
+func newDebugSinkWithPolicy(path, sessionID, provider string, hub debugEventBus, buffer debugEventStore, policy DebugBatchPolicy) (*debugSink, error) {
+	writer, err := newDebugJSONLWriter(path)
 	if err != nil {
 		return nil, err
 	}
+	if writer == nil {
+		return nil, nil
+	}
 	return &debugSink{
-		file:      file,
-		sessionID: strings.TrimSpace(sessionID),
-		provider:  strings.TrimSpace(provider),
-		hub:       hub,
-		buffer:    buffer,
+		batcher: newDebugBatcher(policy),
+		factory: newDebugEventFactory(sessionID, provider),
+		writer:  writer,
+		store:   buffer,
+		bus:     hub,
 	}, nil
 }
 
 func (s *debugSink) Write(stream string, data []byte) {
-	if s == nil || s.file == nil || len(data) == 0 {
+	if s == nil || len(data) == 0 {
 		return
 	}
+	now := time.Now().UTC()
 	s.mu.Lock()
-	s.seq++
-	event := types.DebugEvent{
-		Type:      "debug",
-		SessionID: s.sessionID,
-		Provider:  s.provider,
-		Stream:    normalizeDebugStream(stream),
-		Chunk:     string(data),
-		TS:        time.Now().UTC().Format(time.RFC3339Nano),
-		Seq:       s.seq,
-	}
-	encoded, err := json.Marshal(event)
-	if err == nil {
-		_, _ = s.file.Write(encoded)
-		_, _ = s.file.Write([]byte("\n"))
-	}
+	batches := s.batcher.Append(stream, data, now)
+	events := s.emitLocked(batches, now)
 	s.mu.Unlock()
-	if s.buffer != nil {
-		s.buffer.Append(event)
-	}
-	if s.hub != nil {
-		s.hub.Broadcast(event)
-	}
+	s.publish(events)
 }
 
 func (s *debugSink) Close() {
-	if s == nil || s.file == nil {
+	if s == nil {
 		return
 	}
-	_ = s.file.Close()
+	now := time.Now().UTC()
+	s.mu.Lock()
+	events := s.emitLocked(s.batcher.Flush(now), now)
+	if s.writer != nil {
+		_ = s.writer.Close()
+	}
+	s.mu.Unlock()
+	s.publish(events)
+}
+
+func (s *debugSink) emitLocked(batches []debugBatch, now time.Time) []types.DebugEvent {
+	if len(batches) == 0 {
+		return nil
+	}
+	events := make([]types.DebugEvent, 0, len(batches))
+	for i := range batches {
+		event := s.factory.Next(batches[i].stream, batches[i].data, now)
+		if s.writer != nil {
+			_ = s.writer.WriteEvent(event)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func (s *debugSink) publish(events []types.DebugEvent) {
+	for i := range events {
+		event := events[i]
+		if s.store != nil {
+			s.store.Append(event)
+		}
+		if s.bus != nil {
+			s.bus.Broadcast(event)
+		}
+	}
 }
 
 func normalizeDebugStream(stream string) string {

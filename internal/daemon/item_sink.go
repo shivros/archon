@@ -12,10 +12,10 @@ type itemSink struct {
 	mu      sync.Mutex
 	hub     *itemHub
 	metrics itemTimestampMetricsSink
-	debug   *debugSink
+	debug   debugChunkSink
 }
 
-func newItemSink(path string, hub *itemHub, metrics itemTimestampMetricsSink, debug *debugSink) (*itemSink, error) {
+func newItemSink(path string, hub *itemHub, metrics itemTimestampMetricsSink, debug debugChunkSink) (*itemSink, error) {
 	if path == "" {
 		return nil, nil
 	}

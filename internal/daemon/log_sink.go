@@ -13,11 +13,11 @@ type logSink struct {
 	stderrFile *os.File
 	stdoutBuf  *logBuffer
 	stderrBuf  *logBuffer
-	debug      *debugSink
+	debug      debugChunkSink
 	mu         sync.Mutex
 }
 
-func newLogSink(stdoutFile, stderrFile *os.File, stdoutBuf, stderrBuf *logBuffer, debug *debugSink) *logSink {
+func newLogSink(stdoutFile, stderrFile *os.File, stdoutBuf, stderrBuf *logBuffer, debug debugChunkSink) *logSink {
 	return &logSink{
 		stdoutFile: stdoutFile,
 		stderrFile: stderrFile,
@@ -75,7 +75,7 @@ func (s *logSink) WriteDebug(stream string, data []byte) {
 }
 
 type debugBufferWriter struct {
-	sink   *debugSink
+	sink   debugChunkSink
 	stream string
 }
 

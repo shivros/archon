@@ -10,15 +10,21 @@ type DebugStreamController struct {
 	events           <-chan types.DebugEvent
 	cancel           func()
 	lines            []string
+	lineBytes        []int
+	totalBytes       int
 	pending          string
-	maxLines         int
+	contentCache     string
+	contentDirty     bool
+	retention        DebugStreamRetentionPolicy
 	maxEventsPerTick int
 }
 
-func NewDebugStreamController(maxLines, maxEventsPerTick int) *DebugStreamController {
+func NewDebugStreamController(retention DebugStreamRetentionPolicy, maxEventsPerTick int) *DebugStreamController {
+	retention = retention.normalize()
 	return &DebugStreamController{
-		maxLines:         maxLines,
+		retention:        retention,
 		maxEventsPerTick: maxEventsPerTick,
+		contentDirty:     true,
 	}
 }
 
@@ -32,7 +38,11 @@ func (c *DebugStreamController) Reset() {
 	c.cancel = nil
 	c.events = nil
 	c.lines = nil
+	c.lineBytes = nil
+	c.totalBytes = 0
 	c.pending = ""
+	c.contentCache = ""
+	c.contentDirty = true
 }
 
 func (c *DebugStreamController) SetStream(ch <-chan types.DebugEvent, cancel func()) {
@@ -52,6 +62,17 @@ func (c *DebugStreamController) Lines() []string {
 
 func (c *DebugStreamController) HasStream() bool {
 	return c != nil && c.events != nil
+}
+
+func (c *DebugStreamController) Content() string {
+	if c == nil {
+		return ""
+	}
+	if c.contentDirty {
+		c.contentCache = strings.Join(c.lines, "\n")
+		c.contentDirty = false
+	}
+	return c.contentCache
 }
 
 func (c *DebugStreamController) ConsumeTick() (lines []string, changed bool, closed bool) {
@@ -93,8 +114,24 @@ func (c *DebugStreamController) appendText(text string) {
 		return
 	}
 	c.pending = parts[len(parts)-1]
-	c.lines = append(c.lines, parts[:len(parts)-1]...)
-	if c.maxLines > 0 && len(c.lines) > c.maxLines {
-		c.lines = c.lines[len(c.lines)-c.maxLines:]
+	for _, line := range parts[:len(parts)-1] {
+		c.lines = append(c.lines, line)
+		lineBytes := len(line)
+		c.lineBytes = append(c.lineBytes, lineBytes)
+		c.totalBytes += lineBytes
 	}
+	for {
+		trimLines := c.retention.MaxLines > 0 && len(c.lines) > c.retention.MaxLines
+		trimBytes := c.retention.MaxBytes > 0 && c.totalBytes > c.retention.MaxBytes
+		if !trimLines && !trimBytes {
+			break
+		}
+		if len(c.lines) == 0 {
+			break
+		}
+		c.totalBytes -= c.lineBytes[0]
+		c.lines = c.lines[1:]
+		c.lineBytes = c.lineBytes[1:]
+	}
+	c.contentDirty = true
 }

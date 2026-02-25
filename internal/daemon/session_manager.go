@@ -65,7 +65,7 @@ type sessionRuntime struct {
 	debugHub  *debugHub
 	debugBuf  *debugBuffer
 	sink      *logSink
-	debug     *debugSink
+	debug     debugChunkSink
 	items     *itemSink
 	itemsHub  *itemHub
 	send      func([]byte) error
@@ -96,7 +96,7 @@ func (m *SessionManager) buildSessionRuntime(sessionID, provider string) (*sessi
 		return nil, err
 	}
 	debugHub := newDebugHub()
-	debugBuf := newDebugBuffer(debugMaxEvents)
+	debugBuf := newDebugBufferWithPolicy(defaultDebugRetentionPolicy())
 	debugSink, err := newDebugSink(debugPath, sessionID, provider, debugHub, debugBuf)
 	if err != nil {
 		_ = stdoutFile.Close()

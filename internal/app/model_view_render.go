@@ -39,12 +39,14 @@ func (m *Model) renderRightPaneView() string {
 		return mainView
 	}
 	panelView := ""
+	panelHeight := 0
 	if m.appState.DebugStreamsEnabled {
-		panelView = m.renderDebugPanelView()
+		panelView, panelHeight = m.renderDebugPanelView()
 	} else {
 		panelView = m.renderNotesPanelView()
+		panelHeight = lipgloss.Height(panelView)
 	}
-	height := max(lipgloss.Height(mainView), lipgloss.Height(panelView))
+	height := max(lipgloss.Height(mainView), panelHeight)
 	if height < 1 {
 		height = 1
 	}
@@ -83,17 +85,25 @@ func normalizeBlockWidth(block string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) renderDebugPanelView() string {
-	header := headerStyle.Render("Debug")
-	body := "Waiting for debug stream..."
+func (m *Model) refreshDebugPanelContent() {
+	if m == nil || m.debugPanel == nil {
+		return
+	}
+	body := debugPanelWaitingMessage
 	if m.debugStream != nil {
-		lines := m.debugStream.Lines()
-		if len(lines) > 0 {
-			body = strings.Join(lines, "\n")
+		if content := m.debugStream.Content(); strings.TrimSpace(content) != "" {
+			body = content
 		}
 	}
-	body = normalizeBlockWidth(body, m.debugPanelWidth)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	m.debugPanel.SetContent(body)
+}
+
+func (m *Model) renderDebugPanelView() (string, int) {
+	if m.debugPanel == nil {
+		m.debugPanel = NewDebugPanelController(max(1, m.debugPanelWidth), max(1, m.height-1), nil)
+	}
+	m.refreshDebugPanelContent()
+	return m.debugPanel.View()
 }
 
 func (m *Model) renderStatusLineView() string {
