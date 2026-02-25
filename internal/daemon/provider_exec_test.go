@@ -6,29 +6,62 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
 type testProviderLogSink struct {
+	mu     sync.Mutex
 	stdout bytes.Buffer
 	stderr bytes.Buffer
 }
 
 func (s *testProviderLogSink) StdoutWriter() io.Writer {
-	return &s.stdout
+	return &lockedBufferWriter{
+		mu:  &s.mu,
+		buf: &s.stdout,
+	}
 }
 
 func (s *testProviderLogSink) StderrWriter() io.Writer {
-	return &s.stderr
+	return &lockedBufferWriter{
+		mu:  &s.mu,
+		buf: &s.stderr,
+	}
 }
 
 func (s *testProviderLogSink) Write(stream string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	switch stream {
 	case "stdout":
 		_, _ = s.stdout.Write(data)
 	case "stderr":
 		_, _ = s.stderr.Write(data)
 	}
+}
+
+func (s *testProviderLogSink) stdoutString() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stdout.String()
+}
+
+func (s *testProviderLogSink) stderrString() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stderr.String()
+}
+
+type lockedBufferWriter struct {
+	mu  *sync.Mutex
+	buf *bytes.Buffer
+}
+
+func (w *lockedBufferWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
 }
 
 func TestNewExecProviderValidation(t *testing.T) {
@@ -65,11 +98,11 @@ func TestExecProviderStartRunsProcessAndStreamsOutput(t *testing.T) {
 	if err := proc.Wait(); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if !strings.Contains(sink.stdout.String(), "hello") {
-		t.Fatalf("expected stdout output, got %q", sink.stdout.String())
+	if !strings.Contains(sink.stdoutString(), "hello") {
+		t.Fatalf("expected stdout output, got %q", sink.stdoutString())
 	}
-	if !strings.Contains(sink.stderr.String(), "oops") {
-		t.Fatalf("expected stderr output, got %q", sink.stderr.String())
+	if !strings.Contains(sink.stderrString(), "oops") {
+		t.Fatalf("expected stderr output, got %q", sink.stderrString())
 	}
 }
 
