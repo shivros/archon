@@ -405,6 +405,12 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 
 	if service.liveManager != nil {
 		turnID, err := service.liveManager.StartTurn(ctx, session, meta, input, runtimeOptions)
+		if err != nil && errors.Is(err, ErrSessionNotFound) {
+			if resumeErr := openCodeResumeSessionForTurn(ctx, service, session, meta, runtimeOptions, baseFields); resumeErr != nil {
+				return "", resumeErr
+			}
+			turnID, err = service.liveManager.StartTurn(ctx, session, meta, input, runtimeOptions)
+		}
 		if err != nil {
 			if service.logger != nil {
 				service.logger.Warn("opencode_send_turn_failed",
@@ -412,6 +418,16 @@ func (a openCodeConversationAdapter) SendMessage(ctx context.Context, service *S
 				)
 			}
 			return "", err
+		}
+		if service.logger != nil && service.logger.Enabled(logging.Debug) {
+			service.logger.Debug("opencode_send_ok", append(baseFields, logging.F("stage", "live_turn"), logging.F("turn_id", turnID))...)
+		}
+		now := time.Now().UTC()
+		if service.stores != nil && service.stores.SessionMeta != nil {
+			_, _ = service.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+				SessionID:    session.ID,
+				LastActiveAt: &now,
+			})
 		}
 		return turnID, nil
 	}
@@ -527,6 +543,47 @@ func openCodeSchedulePostSendReconcile(service *SessionService, session *types.S
 			)
 		}
 	}()
+}
+
+func openCodeResumeSessionForTurn(
+	ctx context.Context,
+	service *SessionService,
+	session *types.Session,
+	meta *types.SessionMeta,
+	runtimeOptions *types.SessionRuntimeOptions,
+	baseFields []logging.Field,
+) error {
+	if service == nil || service.manager == nil {
+		return unavailableError("session manager not available", nil)
+	}
+	providerSessionID := ""
+	if meta != nil {
+		providerSessionID = strings.TrimSpace(meta.ProviderSessionID)
+	}
+	if providerSessionID == "" {
+		return invalidError("provider session id not available", nil)
+	}
+	additionalDirectories, dirsErr := service.resolveAdditionalDirectoriesForSession(ctx, session, meta)
+	if dirsErr != nil {
+		return invalidError(dirsErr.Error(), dirsErr)
+	}
+	if _, resumeErr := service.manager.ResumeSession(StartSessionConfig{
+		Provider:              session.Provider,
+		Cwd:                   session.Cwd,
+		AdditionalDirectories: additionalDirectories,
+		Env:                   session.Env,
+		RuntimeOptions:        runtimeOptions,
+		Resume:                true,
+		ProviderSessionID:     providerSessionID,
+	}, session); resumeErr != nil {
+		if service.logger != nil {
+			service.logger.Warn("opencode_send_resume_failed",
+				append(append(baseFields, logging.F("stage", "resume_live_turn")), openCodeErrorLogFields(resumeErr)...)...,
+			)
+		}
+		return invalidError(resumeErr.Error(), resumeErr)
+	}
+	return nil
 }
 
 func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {

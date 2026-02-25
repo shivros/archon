@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"control/internal/logging"
@@ -57,6 +58,11 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 
 	_, err := s.client.Prompt(ctx, s.providerID, text, opts, s.directory)
 	if err != nil {
+		if errors.Is(err, errOpenCodePromptPending) {
+			// The upstream may continue processing after client timeout; keep
+			// the active turn open so completion can arrive through events/recovery.
+			return turnID, nil
+		}
 		s.mu.Lock()
 		s.activeTurn = ""
 		s.mu.Unlock()

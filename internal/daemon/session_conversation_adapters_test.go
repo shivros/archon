@@ -1062,6 +1062,62 @@ func TestOpenCodeConversationAdapterSendMessageReconcilesHistoryOnSendFailure(t 
 	}
 }
 
+func TestOpenCodeConversationAdapterLiveTurnResumesOnSessionNotFound(t *testing.T) {
+	ctx := context.Background()
+	session := &types.Session{
+		ID:        "s-open-live-resume",
+		Provider:  "opencode",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			session.ID: {
+				Session: session,
+				Source:  sessionSourceInternal,
+			},
+		},
+	}
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:         session.ID,
+		ProviderSessionID: "remote-live-resume",
+	}); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+	manager := &SessionManager{
+		baseDir: t.TempDir(),
+		sessions: map[string]*sessionRuntime{
+			session.ID: {session: session},
+		},
+	}
+	live := &stubLiveManager{
+		startTurnResults: []stubLiveTurnResult{
+			{err: ErrSessionNotFound},
+			{turnID: "turn-live-recovered"},
+		},
+	}
+	service := NewSessionService(manager, &Stores{
+		Sessions:    sessionStore,
+		SessionMeta: metaStore,
+	}, nil, nil)
+	service.liveManager = live
+
+	turnID, err := service.SendMessage(ctx, session.ID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if turnID != "turn-live-recovered" {
+		t.Fatalf("expected recovered turn id, got %q", turnID)
+	}
+	if live.startTurnCalls != 2 {
+		t.Fatalf("expected two live start attempts, got %d", live.startTurnCalls)
+	}
+}
+
 func TestOpenCodeConversationAdapterSubscribeEventsRecoversMissedAssistantOnStreamClose(t *testing.T) {
 	const (
 		sessionID         = "s-open-event-reconcile"
@@ -1233,6 +1289,41 @@ type testConversationAdapter struct {
 	lastRuntimeOptions   *types.SessionRuntimeOptions
 	runtimeOptionsBySend []*types.SessionRuntimeOptions
 }
+
+type stubLiveTurnResult struct {
+	turnID string
+	err    error
+}
+
+type stubLiveManager struct {
+	startTurnResults []stubLiveTurnResult
+	startTurnCalls   int
+}
+
+func (s *stubLiveManager) StartTurn(_ context.Context, _ *types.Session, _ *types.SessionMeta, _ []map[string]any, _ *types.SessionRuntimeOptions) (string, error) {
+	if s.startTurnCalls >= len(s.startTurnResults) {
+		return "", nil
+	}
+	result := s.startTurnResults[s.startTurnCalls]
+	s.startTurnCalls++
+	return result.turnID, result.err
+}
+
+func (s *stubLiveManager) Subscribe(_ *types.Session, _ *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+	ch := make(chan types.CodexEvent)
+	close(ch)
+	return ch, func() {}, nil
+}
+
+func (s *stubLiveManager) Respond(context.Context, *types.Session, *types.SessionMeta, int, map[string]any) error {
+	return nil
+}
+
+func (s *stubLiveManager) Interrupt(context.Context, *types.Session, *types.SessionMeta) error {
+	return nil
+}
+
+func (s *stubLiveManager) SetNotificationPublisher(NotificationPublisher) {}
 
 type failingSessionMetaStore struct {
 	entry     *types.SessionMeta
