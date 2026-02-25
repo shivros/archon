@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"control/internal/types"
+
 	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -114,6 +116,45 @@ func TestMessageSelectionExitUsesRemappedToggleCommand(t *testing.T) {
 	}
 	if m.messageSelectActive {
 		t.Fatalf("expected message selection to deactivate")
+	}
+}
+
+func TestMessageSelectionEnterExitsToCompose(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	if m.sidebar != nil {
+		m.sidebar.SelectBySessionID("s1")
+	}
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleUser, Text: "one"},
+		{Role: ChatRoleAgent, Text: "two"},
+	})
+	m.enterMessageSelection()
+	if !m.messageSelectActive {
+		t.Fatalf("expected message selection to be active")
+	}
+	sessionID := m.selectedSessionID()
+	if sessionID != "s1" {
+		t.Fatalf("expected selected session s1, got %q", sessionID)
+	}
+
+	handled, _ := m.reduceMessageSelectionKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled")
+	}
+	if m.messageSelectActive {
+		t.Fatalf("expected message selection to be deactivated")
+	}
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected compose mode after enter, got %d", m.mode)
 	}
 }
 

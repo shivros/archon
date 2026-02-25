@@ -1070,6 +1070,7 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 			m.updateDelegate()
 			stateChanged = true
 		}
+		m.renderWorkflowPreview(item)
 		return true, stateChanged, false
 	default:
 		if !item.isSession() {

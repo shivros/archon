@@ -871,7 +871,7 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 	mouse := msg.Mouse()
 	if layout.listWidth > 0 && mouse.X < layout.listWidth {
 		if m.sidebar != nil {
-			if m.input != nil {
+			if m.input != nil && m.mode != uiModeCompose {
 				m.input.FocusSidebar()
 			}
 			if layout.barWidth > 0 && mouse.X >= layout.barStart {

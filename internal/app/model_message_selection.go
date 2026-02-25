@@ -23,6 +23,16 @@ func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.keyMatchesCommand(msg, KeyCommandQuit, "q") {
 		return true, tea.Quit
 	}
+	if m.keyMatchesCommand(msg, KeyCommandOpenChat, "enter") {
+		sessionID := m.selectedSessionID()
+		if sessionID == "" {
+			m.exitMessageSelection("no session selected")
+			return true, nil
+		}
+		m.exitMessageSelection("")
+		m.enterCompose(sessionID)
+		return true, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.exitMessageSelection("message selection cleared")
@@ -43,7 +53,7 @@ func (m *Model) reduceMessageSelectionKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, m.copySelectedMessageCmd()
 	case "p":
 		return true, m.pinSelectedMessage()
-	case "enter":
+	case "e":
 		if m.toggleReasoningByIndex(m.messageSelectIndex) {
 			m.setMessageSelectionStatus()
 		}

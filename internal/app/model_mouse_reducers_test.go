@@ -1767,6 +1767,53 @@ func findVisualTokenInBody(t *testing.T, m *Model, token string) (int, int) {
 	return 0, 0
 }
 
+func TestMouseReducerSidebarClickPreservesFocusInComposeMode(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	m.enterCompose("s1")
+	if m.input == nil || m.chatInput == nil {
+		t.Fatalf("expected input controllers")
+	}
+	if !m.input.IsChatFocused() {
+		t.Fatalf("expected chat focused after enterCompose")
+	}
+	layout := m.resolveMouseLayout()
+
+	sessionRow := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarSession && entry.session != nil && entry.session.ID == "s2" {
+			sessionRow = y
+			break
+		}
+	}
+	if sessionRow < 0 {
+		t.Fatalf("expected visible s2 row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 6, Y: sessionRow}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar click to be handled")
+	}
+	if !m.input.IsChatFocused() {
+		t.Fatalf("expected chat input to remain focused after sidebar click in compose mode")
+	}
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected mode to remain compose, got %d", m.mode)
+	}
+}
+
 func selectedGroupIDsContain(ids []string, want string) bool {
 	for _, id := range ids {
 		if id == want {

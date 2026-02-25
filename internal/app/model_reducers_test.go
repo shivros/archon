@@ -810,3 +810,47 @@ func TestReduceComposeInputKeySupportsRemappedClearCommand(t *testing.T) {
 		t.Fatalf("expected input cleared status, got %q", m.status)
 	}
 }
+
+func TestComposeCtrlPassthroughExitsComposeForNonInputCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandAddWorkspace: "ctrl+shift+y",
+	}))
+	m.enterCompose("s1")
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected compose mode")
+	}
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello")
+
+	handled, _ := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl | tea.ModShift})
+	if handled {
+		t.Fatalf("expected compose reducer to release ctrl+shift+y for passthrough")
+	}
+	if m.mode == uiModeCompose {
+		t.Fatalf("expected compose mode to be exited after passthrough")
+	}
+}
+
+func TestComposeCtrlPassthroughKeepsComposeForInputCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected compose mode")
+	}
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello world")
+
+	// ctrl+a is bound to ui.inputSelectAll — should NOT passthrough
+	handled, _ := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle ctrl+a as select-all")
+	}
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected compose mode to be preserved for input command")
+	}
+}

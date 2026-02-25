@@ -15,6 +15,7 @@ type textInputModeController struct {
 	onClear           func() tea.Cmd
 	beforeInputUpdate func()
 	preHandle         func(key string, msg tea.KeyMsg) (bool, tea.Cmd)
+	shouldPassthrough func(tea.KeyMsg) bool
 }
 
 func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
@@ -89,6 +90,9 @@ func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 			return true, c.onSubmit(strings.TrimSpace(c.input.Value()))
 		}
 		return true, nil
+	}
+	if c.shouldPassthrough != nil && c.shouldPassthrough(keyMsg) {
+		return false, nil
 	}
 	if c.beforeInputUpdate != nil {
 		c.beforeInputUpdate()

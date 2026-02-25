@@ -555,6 +555,7 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 			return nil
 		},
 		beforeInputUpdate: m.resetComposeHistoryCursor,
+		shouldPassthrough: m.shouldComposePassthrough,
 		preHandle: func(key string, msg tea.KeyMsg) (bool, tea.Cmd) {
 			if m.composeOptionPickerOpen() {
 				switch msg.String() {
@@ -639,6 +640,49 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 func isTextInputMsg(msg tea.Msg) bool {
 	switch msg.(type) {
 	case tea.KeyMsg, tea.PasteMsg:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) shouldComposePassthrough(msg tea.KeyMsg) bool {
+	key := msg.Key()
+	if !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModSuper) {
+		return false
+	}
+	if m.keybindings == nil {
+		return false
+	}
+	keyStr := strings.TrimSpace(msg.String())
+	bindings := m.keybindings.Bindings()
+	matchesNonInput := false
+	for command, bound := range bindings {
+		if bound != keyStr {
+			continue
+		}
+		if isComposeInputCommand(command) {
+			return false
+		}
+		matchesNonInput = true
+	}
+	if !matchesNonInput {
+		return false
+	}
+	m.exitCompose("")
+	return true
+}
+
+func isComposeInputCommand(command string) bool {
+	switch command {
+	case KeyCommandInputSubmit, KeyCommandInputNewline, KeyCommandInputClear,
+		KeyCommandInputSelectAll, KeyCommandInputUndo, KeyCommandInputRedo,
+		KeyCommandInputLineUp, KeyCommandInputLineDown,
+		KeyCommandInputWordLeft, KeyCommandInputWordRight,
+		KeyCommandInputDeleteWordLeft, KeyCommandInputDeleteWordRight,
+		KeyCommandComposeModel, KeyCommandComposeReasoning, KeyCommandComposeAccess,
+		KeyCommandCopySessionID,
+		KeyCommandToggleNotesPanel, KeyCommandToggleDebugStreams:
 		return true
 	default:
 		return false

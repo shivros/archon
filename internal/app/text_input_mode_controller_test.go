@@ -442,6 +442,57 @@ func TestTextInputConfigAutoGrowRespectsCustomBounds(t *testing.T) {
 	}
 }
 
+func TestTextInputModeControllerShouldPassthroughReleasesKey(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("hello")
+
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		shouldPassthrough: func(msg tea.KeyMsg) bool {
+			return msg.String() == "ctrl+t"
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if handled {
+		t.Fatalf("expected ctrl+t to be released by shouldPassthrough")
+	}
+	if got := input.Value(); got != "hello" {
+		t.Fatalf("expected input unchanged, got %q", got)
+	}
+}
+
+func TestTextInputModeControllerShouldPassthroughNotCalledForInputCommands(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("hello world")
+
+	passthroughCalled := false
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		shouldPassthrough: func(msg tea.KeyMsg) bool {
+			passthroughCalled = true
+			return true
+		},
+	}
+
+	// ctrl+a matches InputSelectAll which is handled before shouldPassthrough
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+a to be handled as select all")
+	}
+	if passthroughCalled {
+		t.Fatalf("expected shouldPassthrough not to be called for recognized input commands")
+	}
+}
+
 func assertHasKeyBinding(t *testing.T, keys []string, want string) {
 	t.Helper()
 	for _, key := range keys {

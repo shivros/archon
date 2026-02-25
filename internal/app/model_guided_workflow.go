@@ -88,6 +88,32 @@ func (m *Model) openGuidedWorkflowFromSidebar(item *sidebarItem) tea.Cmd {
 	return fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
 }
 
+func (m *Model) renderWorkflowPreview(item *sidebarItem) {
+	if m == nil || item == nil || item.kind != sidebarWorkflow {
+		return
+	}
+	if m.mode == uiModeGuidedWorkflow {
+		return
+	}
+	run := item.workflow
+	if run == nil {
+		m.setContentText("Workflow selected. Press enter to open.")
+		return
+	}
+	if m.guidedWorkflow == nil {
+		m.guidedWorkflow = NewGuidedWorkflowUIController()
+	}
+	m.guidedWorkflow.SetRun(run)
+	pickerWidth := max(minViewportWidth, m.viewport.Width())
+	pickerHeight := clamp(m.viewport.Height()/2, 6, 10)
+	m.guidedWorkflow.SetTemplatePickerSize(pickerWidth, pickerHeight)
+	content := m.guidedWorkflow.Render()
+	if content == "" {
+		content = "Workflow selected. Press enter to open."
+	}
+	m.setContentText(content)
+}
+
 func (m *Model) exitGuidedWorkflow(status string) {
 	if m == nil {
 		return
