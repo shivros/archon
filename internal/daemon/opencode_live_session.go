@@ -84,6 +84,12 @@ func (s *openCodeLiveSession) Close() {
 	}
 }
 
+func (s *openCodeLiveSession) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+
 func (s *openCodeLiveSession) SetNotificationPublisher(notifier NotificationPublisher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
