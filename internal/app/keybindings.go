@@ -18,6 +18,8 @@ const (
 	KeyCommandToggleNotesPanel     = "ui.toggleNotesPanel"
 	KeyCommandCopySessionID        = "ui.copySessionID"
 	KeyCommandOpenSearch           = "ui.openSearch"
+	KeyCommandSidebarFilter        = "ui.sidebarFilter"
+	KeyCommandSidebarSortReverse   = "ui.sidebarSortReverse"
 	KeyCommandViewportTop          = "ui.viewportTop"
 	KeyCommandViewportBottom       = "ui.viewportBottom"
 	KeyCommandSectionPrev          = "ui.sectionPrev"
@@ -76,6 +78,8 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandToggleNotesPanel:     "ctrl+o",
 	KeyCommandCopySessionID:        "ctrl+g",
 	KeyCommandOpenSearch:           "/",
+	KeyCommandSidebarFilter:        "ctrl+f",
+	KeyCommandSidebarSortReverse:   "alt+r",
 	KeyCommandViewportTop:          "g",
 	KeyCommandViewportBottom:       "G",
 	KeyCommandSectionPrev:          "{",
@@ -248,6 +252,7 @@ func (m *Model) applyKeybindings(bindings *Keybindings) {
 	}
 	m.keybindings = bindings
 	m.hotkeys = NewHotkeyRenderer(ResolveHotkeys(DefaultHotkeys(), bindings), DefaultHotkeyResolver{})
+	m.updateDelegate()
 }
 
 func (m *Model) keyString(msg tea.KeyMsg) string {

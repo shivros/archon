@@ -214,3 +214,28 @@ func TestAppStateSavedMsgDoesNotRollbackLiveRecentsDomain(t *testing.T) {
 		t.Fatalf("expected save response not to overwrite recents domain state")
 	}
 }
+
+func TestSaveAppStateCmdPersistsSidebarSortSettings(t *testing.T) {
+	m := NewModel(nil)
+	m.stateAPI = &appStateSyncStub{}
+	m.hasAppState = true
+	m.sidebarSort = sidebarSortState{Key: sidebarSortKeyActivity, Reverse: true}
+
+	cmd := m.saveAppStateCmd()
+	if cmd == nil {
+		t.Fatalf("expected save command")
+	}
+	msg, ok := cmd().(appStateSavedMsg)
+	if !ok {
+		t.Fatalf("expected appStateSavedMsg, got %T", cmd())
+	}
+	if msg.state == nil {
+		t.Fatalf("expected persisted state")
+	}
+	if got := msg.state.SidebarSortKey; got != string(sidebarSortKeyActivity) {
+		t.Fatalf("expected activity sort key, got %q", got)
+	}
+	if !msg.state.SidebarSortReverse {
+		t.Fatalf("expected reverse sort flag to persist")
+	}
+}

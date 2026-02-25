@@ -868,6 +868,18 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 	mouse := msg.Mouse()
 	if layout.listWidth > 0 && mouse.X < layout.listWidth {
 		if m.sidebar != nil {
+			if m.input != nil {
+				m.input.FocusSidebar()
+			}
+			if layout.barWidth > 0 && mouse.X >= layout.barStart {
+				return false
+			}
+			if action, ok := m.sidebar.SortStripHit(mouse.Y, mouse.X); ok {
+				if cmd := m.applySidebarSortStripAction(action); cmd != nil {
+					m.pendingMouseCmd = cmd
+				}
+				return true
+			}
 			entry := m.sidebar.ItemAtRow(mouse.Y)
 			if entry == nil {
 				return false

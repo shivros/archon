@@ -55,6 +55,7 @@ func (m *Model) renderBodyWithSidebar(rightView string) string {
 	}
 	listView := ""
 	if m.sidebar != nil {
+		m.sidebar.SetSidebarFocused(m.input != nil && m.input.IsSidebarFocused())
 		listView = m.sidebar.View()
 		listView = normalizeBlockWidth(listView, frame.sidebarWidth)
 	}

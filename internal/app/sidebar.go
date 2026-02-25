@@ -576,6 +576,30 @@ func buildSidebarItemsWithRecents(
 	recents sidebarRecentsState,
 	expansion sidebarExpansionResolver,
 ) []list.Item {
+	return buildSidebarItemsWithOptions(workspaces, worktrees, sessions, workflows, meta, showDismissed, sidebarBuildOptions{
+		recents:     recents,
+		expansion:   expansion,
+		sort:        defaultSidebarSortState(),
+		filterQuery: "",
+	})
+}
+
+type sidebarBuildOptions struct {
+	recents     sidebarRecentsState
+	expansion   sidebarExpansionResolver
+	sort        sidebarSortState
+	filterQuery string
+}
+
+func buildSidebarItemsWithOptions(
+	workspaces []*types.Workspace,
+	worktrees map[string][]*types.Worktree,
+	sessions []*types.Session,
+	workflows []*guidedworkflows.WorkflowRun,
+	meta map[string]*types.SessionMeta,
+	showDismissed bool,
+	options sidebarBuildOptions,
+) []list.Item {
 	visibleSessions := filterVisibleSessions(sessions, meta, showDismissed)
 	workflowByID := make(map[string]*guidedworkflows.WorkflowRun, len(workflows))
 	hiddenDismissedWorkflowIDs := map[string]struct{}{}
@@ -611,7 +635,8 @@ func buildSidebarItemsWithRecents(
 		workflowSessionBuckets[workflowID] = append(workflowSessionBuckets[workflowID], session)
 	}
 	knownWorkspaces := make(map[string]struct{}, len(workspaces))
-	for _, workspace := range workspaces {
+	sortedWorkspaces := sortSidebarWorkspaces(workspaces, worktrees, visibleSessions, workflowMapValues(workflowByID), meta, options.sort)
+	for _, workspace := range sortedWorkspaces {
 		if workspace == nil {
 			continue
 		}
@@ -666,7 +691,7 @@ func buildSidebarItemsWithRecents(
 				worktreeID = ""
 			}
 		}
-		workflowItem := buildWorkflowSidebarItem(runID, run, len(workflowSessionBuckets[runID]), expansion)
+		workflowItem := buildWorkflowSidebarItem(runID, run, len(workflowSessionBuckets[runID]), options.expansion)
 		if worktreeID != "" {
 			workflowItem.depth = 2
 			workflowByWorktree[worktreeID] = append(workflowByWorktree[worktreeID], workflowItem)
@@ -710,7 +735,7 @@ func buildSidebarItemsWithRecents(
 				worktreeID = ""
 			}
 		}
-		workflowItem := buildWorkflowSidebarItem(runID, nil, len(bucket), expansion)
+		workflowItem := buildWorkflowSidebarItem(runID, nil, len(bucket), options.expansion)
 		if worktreeID != "" {
 			workflowItem.depth = 2
 			workflowByWorktree[worktreeID] = append(workflowByWorktree[worktreeID], workflowItem)
@@ -732,9 +757,9 @@ func buildSidebarItemsWithRecents(
 			depth:   max(0, depth),
 		})
 	}
-	if recents.Enabled {
-		readyCount := max(0, recents.ReadyCount)
-		runningCount := max(0, recents.RunningCount)
+	if options.recents.Enabled {
+		readyCount := max(0, options.recents.ReadyCount)
+		runningCount := max(0, options.recents.RunningCount)
 		items = append(items,
 			&sidebarItem{
 				kind:         sidebarRecentsAll,
@@ -753,7 +778,7 @@ func buildSidebarItemsWithRecents(
 			},
 		)
 	}
-	for _, workspace := range workspaces {
+	for _, workspace := range sortedWorkspaces {
 		if workspace == nil {
 			continue
 		}
@@ -783,7 +808,7 @@ func buildSidebarItemsWithRecents(
 			}
 		}
 		workspaceHasChildren := len(sessionsForWorkspace) > 0 || worktreeCount > 0 || len(workflowItemsForWorkspace) > 0
-		workspaceExpanded := !workspaceHasChildren || expansion.workspaceExpanded(wsID)
+		workspaceExpanded := !workspaceHasChildren || options.expansion.workspaceExpanded(wsID)
 		items = append(items, &sidebarItem{
 			kind:         sidebarWorkspace,
 			workspace:    workspace,
@@ -814,7 +839,7 @@ func buildSidebarItemsWithRecents(
 				wtSessions := groupedWorktrees[wt.ID]
 				wtWorkflowItems := sortWorkflowSidebarItemsDesc(workflowByWorktree[wt.ID])
 				worktreeHasChildren := len(wtSessions) > 0 || len(wtWorkflowItems) > 0
-				worktreeExpanded := !worktreeHasChildren || expansion.worktreeExpanded(wt.ID)
+				worktreeExpanded := !worktreeHasChildren || options.expansion.worktreeExpanded(wt.ID)
 				items = append(items, &sidebarItem{
 					kind:         sidebarWorktree,
 					worktree:     wt,
@@ -858,7 +883,7 @@ func buildSidebarItemsWithRecents(
 			}
 			totalSessions += workflowItem.sessionCount
 		}
-		workspaceExpanded := !workspaceHasChildren || expansion.workspaceExpanded(unassignedWorkspaceID)
+		workspaceExpanded := !workspaceHasChildren || options.expansion.workspaceExpanded(unassignedWorkspaceID)
 		items = append(items, &sidebarItem{
 			kind:         sidebarWorkspace,
 			workspace:    ws,
@@ -885,7 +910,7 @@ func buildSidebarItemsWithRecents(
 		}
 	}
 
-	return items
+	return filterSidebarItems(items, options.filterQuery)
 }
 
 func buildWorkflowSidebarItem(runID string, run *guidedworkflows.WorkflowRun, sessionCount int, expansion sidebarExpansionResolver) *sidebarItem {
@@ -948,6 +973,181 @@ func workflowRunLastActivityAt(run *guidedworkflows.WorkflowRun) time.Time {
 		}
 	}
 	return latest
+}
+
+func workflowMapValues(byID map[string]*guidedworkflows.WorkflowRun) []*guidedworkflows.WorkflowRun {
+	if len(byID) == 0 {
+		return nil
+	}
+	out := make([]*guidedworkflows.WorkflowRun, 0, len(byID))
+	for _, run := range byID {
+		if run == nil {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
+}
+
+func sortSidebarWorkspaces(
+	workspaces []*types.Workspace,
+	worktrees map[string][]*types.Worktree,
+	sessions []*types.Session,
+	workflows []*guidedworkflows.WorkflowRun,
+	meta map[string]*types.SessionMeta,
+	sortState sidebarSortState,
+) []*types.Workspace {
+	if len(workspaces) == 0 {
+		return nil
+	}
+	sortState.Key = parseSidebarSortKey(string(sortState.Key))
+	out := make([]*types.Workspace, 0, len(workspaces))
+	for _, ws := range workspaces {
+		if ws == nil {
+			continue
+		}
+		out = append(out, ws)
+	}
+	if len(out) < 2 {
+		return out
+	}
+	worktreeToWorkspace := map[string]string{}
+	for wsID, entries := range worktrees {
+		for _, wt := range entries {
+			if wt == nil {
+				continue
+			}
+			worktreeToWorkspace[strings.TrimSpace(wt.ID)] = strings.TrimSpace(wsID)
+		}
+	}
+	activity := map[string]time.Time{}
+	for _, ws := range out {
+		if ws == nil {
+			continue
+		}
+		activity[ws.ID] = ws.UpdatedAt
+	}
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		entry := meta[session.ID]
+		workspaceID := ""
+		if entry != nil {
+			workspaceID = strings.TrimSpace(entry.WorkspaceID)
+			if workspaceID == "" {
+				workspaceID = strings.TrimSpace(worktreeToWorkspace[strings.TrimSpace(entry.WorktreeID)])
+			}
+		}
+		if workspaceID == "" {
+			continue
+		}
+		last := sessionLastActive(session, entry)
+		if last == nil {
+			continue
+		}
+		if last.After(activity[workspaceID]) {
+			activity[workspaceID] = *last
+		}
+	}
+	for _, run := range workflows {
+		if run == nil {
+			continue
+		}
+		workspaceID := strings.TrimSpace(run.WorkspaceID)
+		if workspaceID == "" {
+			workspaceID = strings.TrimSpace(worktreeToWorkspace[strings.TrimSpace(run.WorktreeID)])
+		}
+		if workspaceID == "" {
+			continue
+		}
+		last := workflowRunLastActivityAt(run)
+		if last.After(activity[workspaceID]) {
+			activity[workspaceID] = last
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		wi := out[i]
+		wj := out[j]
+		if wi == nil || wj == nil {
+			return wi != nil
+		}
+		ctx := sidebarSortWorkspaceContext{ActivityByWorkspaceID: activity}
+		less := sidebarSortLess(sortState.Key, ctx, wi, wj)
+		if sortState.Reverse {
+			return sidebarSortLess(sortState.Key, ctx, wj, wi)
+		}
+		return less
+	})
+	return out
+}
+
+func filterSidebarItems(items []list.Item, query string) []list.Item {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || len(items) == 0 {
+		return items
+	}
+	entries := make([]*sidebarItem, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return items[:0]
+	}
+	include := make([]bool, len(entries))
+	for i, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if entry.kind == sidebarRecentsAll || entry.kind == sidebarRecentsReady || entry.kind == sidebarRecentsRunning {
+			include[i] = true
+			continue
+		}
+		title := strings.ToLower(strings.TrimSpace(entry.Title()))
+		if strings.Contains(title, query) {
+			include[i] = true
+		}
+	}
+	for i, entry := range entries {
+		if entry == nil || !include[i] {
+			continue
+		}
+		for j := i - 1; j >= 0; j-- {
+			prev := entries[j]
+			if prev == nil {
+				continue
+			}
+			if prev.depth < entry.depth {
+				include[j] = true
+				entry = prev
+				if entry.depth == 0 {
+					break
+				}
+			}
+		}
+		if !entry.collapsible {
+			continue
+		}
+		for j := i + 1; j < len(entries); j++ {
+			next := entries[j]
+			if next == nil || next.depth <= entry.depth {
+				break
+			}
+			include[j] = true
+		}
+	}
+	out := make([]list.Item, 0, len(entries))
+	for i, entry := range entries {
+		if !include[i] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func filterVisibleSessions(sessions []*types.Session, meta map[string]*types.SessionMeta, showDismissed bool) []*types.Session {

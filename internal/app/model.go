@@ -131,6 +131,9 @@ type Model struct {
 	follow                              bool
 	showDismissed                       bool
 	showRecents                         bool
+	sidebarSort                         sidebarSortState
+	sidebarFilterActive                 bool
+	sidebarFilterQuery                  string
 	workspaces                          []*types.Workspace
 	groups                              []*types.WorkspaceGroup
 	worktrees                           map[string][]*types.Worktree
@@ -255,6 +258,9 @@ type Model struct {
 	historyLoadPolicy                   SessionHistoryLoadPolicy
 	inputFramePolicy                    InputFramePolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
+	sidebarSortPolicy                   SidebarSortPolicy
+	sortStripHintPolicy                 SortStripHintPolicy
+	sortStripVisibilityPolicy           SortStripVisibilityPolicy
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
 	sessionProjectionPolicy             SessionProjectionPolicy
 	sessionProjectionPostProcessor      SessionProjectionPostProcessor
@@ -426,6 +432,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		status:                              "",
 		toastLevel:                          toastLevelInfo,
 		follow:                              true,
+		sidebarSort:                         defaultSidebarSortState(),
 		groups:                              []*types.WorkspaceGroup{},
 		worktrees:                           map[string][]*types.Worktree{},
 		sessionMeta:                         map[string]*types.SessionMeta{},
@@ -471,6 +478,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
 		inputFramePolicy:                    NewDefaultInputFramePolicy(),
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
+		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
+		sortStripHintPolicy:                 defaultSortStripHintPolicy{},
+		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
 		sessionProjectionPostProcessor:      NewDefaultSessionProjectionPostProcessor(),
@@ -499,6 +509,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 			opt(&model)
 		}
 	}
+	model.updateDelegate()
 	return model
 }
 
@@ -691,6 +702,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if handled, cmd := m.reduceComposeInputKey(msg); handled {
+			return m, cmd
+		}
+		if handled, cmd := m.reduceSidebarFilterInput(msg); handled {
+			return m, cmd
+		}
+		if handled, cmd := m.reduceSidebarSortStripKeys(msg); handled {
 			return m, cmd
 		}
 		if handled, cmd := m.reduceSidebarArrowKey(msg); handled {
@@ -3581,6 +3598,12 @@ func (m *Model) applyAppState(state *types.AppState) {
 		return
 	}
 	m.appState = *state
+	m.sidebarSort = m.sidebarSortPolicyOrDefault().Normalize(sidebarSortState{
+		Key:     parseSidebarSortKey(state.SidebarSortKey),
+		Reverse: state.SidebarSortReverse,
+	})
+	m.sidebarFilterActive = false
+	m.sidebarFilterQuery = ""
 	m.composeHistory = importComposeHistory(state.ComposeHistory)
 	m.composeDrafts = importDraftMap(state.ComposeDrafts, composeHistoryMaxSessions)
 	m.noteDrafts = importDraftMap(state.NoteDrafts, composeHistoryMaxSessions)
@@ -3602,7 +3625,15 @@ func (m *Model) updateDelegate() {
 	if m.sidebar != nil {
 		m.sidebar.SetActive(m.appState.ActiveWorkspaceID, m.appState.ActiveWorktreeID)
 		m.sidebar.SetProviderBadges(m.appState.ProviderBadges)
+		m.sidebar.SetSortState(m.sidebarSortPolicyOrDefault().Normalize(m.sidebarSort))
+		m.sidebar.SetFilterState(m.sidebarFilterActive, m.sidebarFilterQuery)
+		m.sidebar.SetSidebarFocused(m.input != nil && m.input.IsSidebarFocused())
+		m.sidebar.SetSortStripKeyHints(m.sidebarCommandBadge(KeyCommandSidebarFilter, ""), m.sidebarCommandBadge(KeyCommandSidebarSortReverse, ""))
 	}
+}
+
+func (m *Model) sidebarCommandBadge(command, fallback string) string {
+	return m.sortStripHintPolicyOrDefault().BadgeFor(command, fallback, m.keybindings)
 }
 
 func (m *Model) syncSidebarExpansionFromAppState() {
@@ -3629,6 +3660,20 @@ func (m *Model) syncAppStateSidebarExpansion() bool {
 	return true
 }
 
+func (m *Model) syncAppStateSidebarSort() bool {
+	if m == nil {
+		return false
+	}
+	key := string(m.sidebarSort.Key)
+	if m.appState.SidebarSortKey == key && m.appState.SidebarSortReverse == m.sidebarSort.Reverse {
+		return false
+	}
+	m.appState.SidebarSortKey = key
+	m.appState.SidebarSortReverse = m.sidebarSort.Reverse
+	m.hasAppState = true
+	return true
+}
+
 func (m *Model) saveAppStateCmd() tea.Cmd {
 	if m.stateAPI == nil || !m.hasAppState {
 		return nil
@@ -3636,6 +3681,7 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 	m.syncAppStateComposeHistory()
 	m.syncAppStateInputDrafts()
 	m.syncAppStateRecents()
+	m.syncAppStateSidebarSort()
 	m.appStateSaveSeq++
 	requestSeq := m.appStateSaveSeq
 	state := m.appState

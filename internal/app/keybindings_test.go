@@ -336,6 +336,12 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandHistoryForward, ""); got != "alt+right" {
 		t.Fatalf("expected default history forward key alt+right, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandSidebarFilter, ""); got != "ctrl+f" {
+		t.Fatalf("expected default sidebar filter key ctrl+f, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandSidebarSortReverse, ""); got != "alt+r" {
+		t.Fatalf("expected default sidebar reverse key alt+r, got %q", got)
+	}
 }
 
 func TestMenuOverrideRemapsToCanonicalCtrlM(t *testing.T) {

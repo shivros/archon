@@ -422,3 +422,74 @@ func TestSidebarDelegateRenderSessionIncludesDepthIndent(t *testing.T) {
 		t.Fatalf("expected deeper session row to include more leading spaces")
 	}
 }
+
+func TestBuildSidebarItemsWithOptionsSortsWorkspacesByActivity(t *testing.T) {
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws-old", Name: "Old", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour)},
+		{ID: "ws-new", Name: "New", CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour)},
+	}
+	sessions := []*types.Session{
+		{ID: "s-old", CreatedAt: now.Add(-80 * time.Minute), Status: types.SessionStatusRunning},
+		{ID: "s-new", CreatedAt: now.Add(-10 * time.Minute), Status: types.SessionStatusRunning},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s-old": {SessionID: "s-old", WorkspaceID: "ws-old"},
+		"s-new": {SessionID: "s-new", WorkspaceID: "ws-new"},
+	}
+
+	items := buildSidebarItemsWithOptions(
+		workspaces,
+		map[string][]*types.Worktree{},
+		sessions,
+		nil,
+		meta,
+		false,
+		sidebarBuildOptions{
+			expansion: sidebarExpansionResolver{defaultOn: true},
+			sort:      sidebarSortState{Key: sidebarSortKeyActivity},
+		},
+	)
+	if len(items) < 1 {
+		t.Fatalf("expected workspace rows")
+	}
+	first := items[0].(*sidebarItem)
+	if first.kind != sidebarWorkspace || first.workspace == nil || first.workspace.ID != "ws-new" {
+		t.Fatalf("expected ws-new first by activity, got %#v", first)
+	}
+}
+
+func TestBuildSidebarItemsWithOptionsFiltersByQueryAndKeepsAncestors(t *testing.T) {
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Payments"},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", CreatedAt: now, Status: types.SessionStatusRunning},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Retry cleanup"},
+	}
+	items := buildSidebarItemsWithOptions(
+		workspaces,
+		map[string][]*types.Worktree{},
+		sessions,
+		nil,
+		meta,
+		false,
+		sidebarBuildOptions{
+			expansion:   sidebarExpansionResolver{defaultOn: true},
+			sort:        defaultSidebarSortState(),
+			filterQuery: "retry",
+		},
+	)
+	if len(items) != 2 {
+		t.Fatalf("expected workspace + matching session, got %d", len(items))
+	}
+	if got := items[0].(*sidebarItem).kind; got != sidebarWorkspace {
+		t.Fatalf("expected ancestor workspace to be retained, got %v", got)
+	}
+	if got := items[1].(*sidebarItem).kind; got != sidebarSession {
+		t.Fatalf("expected filtered session row, got %v", got)
+	}
+}

@@ -10,6 +10,8 @@ type AppState struct {
 	SidebarWorkspaceExpanded       map[string]bool                   `json:"sidebar_workspace_expanded,omitempty"`
 	SidebarWorktreeExpanded        map[string]bool                   `json:"sidebar_worktree_expanded,omitempty"`
 	SidebarWorkflowExpanded        map[string]bool                   `json:"sidebar_workflow_expanded,omitempty"`
+	SidebarSortKey                 string                            `json:"sidebar_sort_key,omitempty"`
+	SidebarSortReverse             bool                              `json:"sidebar_sort_reverse,omitempty"`
 	DismissedMissingWorkflowRunIDs []string                          `json:"dismissed_missing_workflow_run_ids,omitempty"`
 	ComposeHistory                 map[string][]string               `json:"compose_history,omitempty"`
 	ComposeDrafts                  map[string]string                 `json:"compose_drafts,omitempty"`

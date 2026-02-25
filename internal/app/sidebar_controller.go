@@ -34,6 +34,14 @@ type SidebarController struct {
 	showDismissedSnapshot bool
 	sessionParents        map[string]sessionSidebarParent
 	recentsState          sidebarRecentsState
+	sortState             sidebarSortState
+	filterQuery           string
+	filterActive          bool
+	sidebarFocused        bool
+	sortStripFocus        sidebarSortStripSegment
+	filterKeyBadge        string
+	reverseKeyBadge       string
+	sortStripPresenter    *SidebarSortStripPresenter
 }
 
 type sessionSidebarParent struct {
@@ -41,6 +49,25 @@ type sessionSidebarParent struct {
 	worktreeID  string
 	workflowID  string
 }
+
+type sidebarSortStripSegment int
+
+const (
+	sidebarSortStripSegmentNone sidebarSortStripSegment = iota
+	sidebarSortStripSegmentFilter
+	sidebarSortStripSegmentReverse
+	sidebarSortStripSegmentSortKey
+)
+
+type sidebarSortStripAction int
+
+const (
+	sidebarSortStripActionNone sidebarSortStripAction = iota
+	sidebarSortStripActionFilter
+	sidebarSortStripActionReverse
+	sidebarSortStripActionSortPrev
+	sidebarSortStripActionSortNext
+)
 
 const sidebarScrollbarWidth = 1
 const sidebarScrollingEnabled = true
@@ -67,6 +94,9 @@ func NewSidebarController() *SidebarController {
 		worktreeExpanded:      map[string]bool{},
 		workflowExpanded:      map[string]bool{},
 		sessionParents:        map[string]sessionSidebarParent{},
+		sortState:             defaultSidebarSortState(),
+		sortStripFocus:        sidebarSortStripSegmentNone,
+		sortStripPresenter:    NewSidebarSortStripPresenter(),
 	}
 }
 
@@ -627,7 +657,40 @@ func (c *SidebarController) headerRows() int {
 	if c.list.ShowHelp() {
 		rows += 1 + c.list.Styles.HelpStyle.GetPaddingTop() + c.list.Styles.HelpStyle.GetPaddingBottom()
 	}
+	rows += c.sortStripLayout().height()
 	return rows
+}
+
+func (c *SidebarController) sortStripViewModel() sidebarSortStripViewModel {
+	width := c.list.Width()
+	if width <= 0 {
+		width = minListWidth
+	}
+	return sidebarSortStripViewModel{
+		Width:          width,
+		RowStart:       boolToInt(c.list.ShowTitle()),
+		SortState:      c.sortState,
+		FilterActive:   c.filterActive,
+		SidebarFocused: c.sidebarFocused,
+		FocusedSegment: c.sortStripFocus,
+		FilterBadge:    c.filterKeyBadge,
+		ReverseBadge:   c.reverseKeyBadge,
+	}
+}
+
+func (c *SidebarController) sortStripPresenterOrDefault() *SidebarSortStripPresenter {
+	if c == nil || c.sortStripPresenter == nil {
+		return NewSidebarSortStripPresenter()
+	}
+	return c.sortStripPresenter
+}
+
+func (c *SidebarController) renderSortStrip() string {
+	return c.sortStripPresenterOrDefault().Render(c.sortStripViewModel())
+}
+
+func (c *SidebarController) sortStripLayout() sidebarSortStripLayout {
+	return c.sortStripPresenterOrDefault().Layout(c.sortStripViewModel())
 }
 
 func (c *SidebarController) Index() int {
@@ -944,11 +1007,16 @@ func (c *SidebarController) ApplyWithReason(workspaces []*types.Workspace, workt
 	c.sessionParents = buildSessionSidebarParents(sessions, meta)
 	c.pruneExpansionOverrides(workspaces, worktrees, workflowRuns, sessions, meta)
 
-	items := buildSidebarItemsWithRecents(workspaces, worktrees, sessions, workflowRuns, meta, showDismissed, c.recentsState, sidebarExpansionResolver{
-		workspace: c.workspaceExpanded,
-		worktree:  c.worktreeExpanded,
-		workflow:  c.workflowExpanded,
-		defaultOn: c.expandByDefault,
+	items := buildSidebarItemsWithOptions(workspaces, worktrees, sessions, workflowRuns, meta, showDismissed, sidebarBuildOptions{
+		recents: c.recentsState,
+		expansion: sidebarExpansionResolver{
+			workspace: c.workspaceExpanded,
+			worktree:  c.worktreeExpanded,
+			workflow:  c.workflowExpanded,
+			defaultOn: c.expandByDefault,
+		},
+		sort:        c.sortState,
+		filterQuery: c.filterQuery,
 	})
 	selectedKey := c.SelectedKey()
 	c.list.SetItems(items)
@@ -997,6 +1065,63 @@ func (c *SidebarController) SetRecentsState(state sidebarRecentsState) bool {
 	c.recentsState = state
 	c.rebuild(c.SelectedKey())
 	return true
+}
+
+func (c *SidebarController) SetSortState(state sidebarSortState) bool {
+	if c == nil {
+		return false
+	}
+	state.Key = parseSidebarSortKey(string(state.Key))
+	if c.sortState == state {
+		return false
+	}
+	c.sortState = state
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
+func (c *SidebarController) SetFilterState(active bool, query string) bool {
+	if c == nil {
+		return false
+	}
+	normalized := strings.TrimSpace(query)
+	if c.filterActive == active && c.filterQuery == normalized {
+		return false
+	}
+	c.filterActive = active
+	c.filterQuery = normalized
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
+func (c *SidebarController) SetSidebarFocused(focused bool) {
+	if c == nil {
+		return
+	}
+	c.sidebarFocused = focused
+}
+
+func (c *SidebarController) SetSortStripKeyHints(filterBadge, reverseBadge string) {
+	if c == nil {
+		return
+	}
+	c.filterKeyBadge = strings.TrimSpace(filterBadge)
+	c.reverseKeyBadge = strings.TrimSpace(reverseBadge)
+}
+
+func (c *SidebarController) MarkSortStripFocus(segment sidebarSortStripSegment) {
+	if c == nil {
+		return
+	}
+	c.sortStripFocus = segment
+}
+
+func (c *SidebarController) SortStripHit(row, col int) (sidebarSortStripAction, bool) {
+	if c == nil {
+		return sidebarSortStripActionNone, false
+	}
+	layout := c.sortStripLayout()
+	return c.sortStripPresenterOrDefault().Hit(layout, row, col)
 }
 
 func (c *SidebarController) selectionDecisionServiceOrDefault() sidebarSelectionDecisionService {
@@ -1191,11 +1316,16 @@ func (c *SidebarController) rebuild(selectedKey string) {
 	}
 	viewAnchorKey := c.viewAnchorKey()
 	viewAnchorOffset := c.scrollOffset
-	items := buildSidebarItemsWithRecents(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.workflowRunsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, c.recentsState, sidebarExpansionResolver{
-		workspace: c.workspaceExpanded,
-		worktree:  c.worktreeExpanded,
-		workflow:  c.workflowExpanded,
-		defaultOn: c.expandByDefault,
+	items := buildSidebarItemsWithOptions(c.workspacesSnapshot, c.worktreesSnapshot, c.sessionsSnapshot, c.workflowRunsSnapshot, c.metaSnapshot, c.showDismissedSnapshot, sidebarBuildOptions{
+		recents: c.recentsState,
+		expansion: sidebarExpansionResolver{
+			workspace: c.workspaceExpanded,
+			worktree:  c.worktreeExpanded,
+			workflow:  c.workflowExpanded,
+			defaultOn: c.expandByDefault,
+		},
+		sort:        c.sortState,
+		filterQuery: c.filterQuery,
 	})
 	c.list.SetItems(items)
 	c.pruneSelectedKeys(items)
@@ -1360,26 +1490,37 @@ func cloneStringSet(input map[string]struct{}) map[string]struct{} {
 	return out
 }
 
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func (c *SidebarController) view() string {
 	if c == nil {
 		return ""
 	}
-	title := ""
+	blocks := make([]string, 0, 3)
+	titleHeight := 0
 	if c.list.ShowTitle() {
-		title = c.list.Styles.TitleBar.Render(c.list.Styles.Title.Render(c.list.Title))
+		title := c.list.Styles.TitleBar.Render(c.list.Styles.Title.Render(c.list.Title))
+		if title != "" {
+			blocks = append(blocks, title)
+			titleHeight = lipgloss.Height(title)
+		}
 	}
-	contentHeight := c.list.Height()
-	if title != "" {
-		contentHeight -= lipgloss.Height(title)
+	strip := c.renderSortStrip()
+	stripHeight := lipgloss.Height(strip)
+	if strip != "" {
+		blocks = append(blocks, strip)
 	}
+	contentHeight := c.list.Height() - titleHeight - stripHeight
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	body := c.renderItems(contentHeight)
-	if title == "" {
-		return body
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, title, body)
+	blocks = append(blocks, c.renderItems(contentHeight))
+	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
 }
 
 func (c *SidebarController) renderItems(contentHeight int) string {
