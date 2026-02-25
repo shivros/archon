@@ -262,6 +262,9 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 			return true
 		}
 	}
+	if m.reduceDebugPanelWheelMouse(msg, layout, delta) {
+		return true
+	}
 	if m.reduceNotesPanelWheelMouse(msg, layout, delta) {
 		return true
 	}

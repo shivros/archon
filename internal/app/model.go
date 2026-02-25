@@ -3174,6 +3174,9 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeRecents && m.mode != uiModeNotes && m.mode != uiModeAddNote && m.mode != uiModeGuidedWorkflow {
 		return false
 	}
+	if m.handleDebugPanelScrollKey(msg) {
+		return true
+	}
 	wasFollowing := m.follow
 	scrolledDown := false
 	switch msg.String() {

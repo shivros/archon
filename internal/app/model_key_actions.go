@@ -123,6 +123,9 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case "esc":
 		return true, nil
 	case "q":
+		if m.debugStream != nil {
+			m.debugStream.Close()
+		}
 		return true, tea.Quit
 	default:
 		return false, nil

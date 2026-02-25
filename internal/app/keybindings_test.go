@@ -342,6 +342,18 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandSidebarSortReverse, ""); got != "alt+r" {
 		t.Fatalf("expected default sidebar reverse key alt+r, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandDebugPanelUp, ""); got != "J" {
+		t.Fatalf("expected default debug panel up key J, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandDebugPanelDown, ""); got != "K" {
+		t.Fatalf("expected default debug panel down key K, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandDebugPanelLeft, ""); got != "H" {
+		t.Fatalf("expected default debug panel left key H, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandDebugPanelRight, ""); got != "L" {
+		t.Fatalf("expected default debug panel right key L, got %q", got)
+	}
 }
 
 func TestMenuOverrideRemapsToCanonicalCtrlM(t *testing.T) {

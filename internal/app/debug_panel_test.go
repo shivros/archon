@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 type testDebugPanelHeaderRenderer struct{}
@@ -60,5 +62,50 @@ func TestDebugPanelControllerNormalizesEmptyContent(t *testing.T) {
 	view, _ := panel.View()
 	if !strings.Contains(view, "Waiting for debug stream") {
 		t.Fatalf("expected empty content to normalize to waiting message, got %q", view)
+	}
+}
+
+func TestDebugPanelControllerScrollsVerticallyAndHorizontally(t *testing.T) {
+	panel := NewDebugPanelController(14, 3, testDebugPanelHeaderRenderer{})
+	panel.SetContent("line-1\nline-2\nline-3\nline-4\nline-5")
+	if !panel.ScrollDown(2) {
+		t.Fatalf("expected vertical scroll down to move viewport")
+	}
+	if !panel.ScrollUp(1) {
+		t.Fatalf("expected vertical scroll up to move viewport")
+	}
+
+	panel.SetContent("abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	before, _ := panel.View()
+	if !panel.ScrollRight(8) {
+		t.Fatalf("expected horizontal scroll right to move viewport")
+	}
+	after, _ := panel.View()
+	if xansi.Strip(before) == xansi.Strip(after) {
+		t.Fatalf("expected horizontal scroll to change rendered body")
+	}
+	if !panel.ScrollLeft(8) {
+		t.Fatalf("expected horizontal scroll left to move viewport")
+	}
+}
+
+func TestDebugPanelControllerPageAndGotoNavigation(t *testing.T) {
+	panel := NewDebugPanelController(20, 3, testDebugPanelHeaderRenderer{})
+	panel.SetContent("a\nb\nc\nd\ne\nf")
+
+	if !panel.PageDown() {
+		t.Fatalf("expected page down to move viewport")
+	}
+	if !panel.PageUp() {
+		t.Fatalf("expected page up to move viewport")
+	}
+	if !panel.GotoBottom() {
+		t.Fatalf("expected goto bottom to move viewport")
+	}
+	if !panel.GotoTop() {
+		t.Fatalf("expected goto top to move viewport")
+	}
+	if panel.Height() != 3 {
+		t.Fatalf("expected viewport height 3, got %d", panel.Height())
 	}
 }

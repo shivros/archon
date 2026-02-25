@@ -17,6 +17,14 @@ const (
 	KeyCommandToggleSidebar        = "ui.toggleSidebar"
 	KeyCommandToggleNotesPanel     = "ui.toggleNotesPanel"
 	KeyCommandToggleDebugStreams   = "ui.toggleDebugStreams"
+	KeyCommandDebugPanelUp         = "ui.debugPanelUp"
+	KeyCommandDebugPanelDown       = "ui.debugPanelDown"
+	KeyCommandDebugPanelLeft       = "ui.debugPanelLeft"
+	KeyCommandDebugPanelRight      = "ui.debugPanelRight"
+	KeyCommandDebugPanelPageUp     = "ui.debugPanelPageUp"
+	KeyCommandDebugPanelPageDown   = "ui.debugPanelPageDown"
+	KeyCommandDebugPanelTop        = "ui.debugPanelTop"
+	KeyCommandDebugPanelBottom     = "ui.debugPanelBottom"
 	KeyCommandCopySessionID        = "ui.copySessionID"
 	KeyCommandOpenSearch           = "ui.openSearch"
 	KeyCommandSidebarFilter        = "ui.sidebarFilter"
@@ -78,6 +86,14 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandToggleSidebar:        "ctrl+b",
 	KeyCommandToggleNotesPanel:     "ctrl+o",
 	KeyCommandToggleDebugStreams:   "ctrl+d",
+	KeyCommandDebugPanelUp:         "J",
+	KeyCommandDebugPanelDown:       "K",
+	KeyCommandDebugPanelLeft:       "H",
+	KeyCommandDebugPanelRight:      "L",
+	KeyCommandDebugPanelPageUp:     "shift+pgup",
+	KeyCommandDebugPanelPageDown:   "shift+pgdown",
+	KeyCommandDebugPanelTop:        "shift+home",
+	KeyCommandDebugPanelBottom:     "shift+end",
 	KeyCommandCopySessionID:        "ctrl+g",
 	KeyCommandOpenSearch:           "/",
 	KeyCommandSidebarFilter:        "ctrl+f",

@@ -33,6 +33,7 @@ func NewDebugPanelController(width, height int, renderer DebugPanelHeaderRendere
 		renderer = defaultDebugPanelHeaderRenderer{}
 	}
 	vp := viewport.New(viewport.WithWidth(max(1, width)), viewport.WithHeight(max(1, height)))
+	vp.SoftWrap = false
 	vp.SetContent(debugPanelWaitingMessage)
 	return &DebugPanelController{
 		viewport:     vp,
@@ -42,6 +43,117 @@ func NewDebugPanelController(width, height int, renderer DebugPanelHeaderRendere
 		cachedHeight: 2,
 		dirty:        true,
 	}
+}
+
+func (c *DebugPanelController) ScrollUp(lines int) bool {
+	if c == nil || lines <= 0 {
+		return false
+	}
+	before := c.viewport.YOffset()
+	c.viewport.ScrollUp(lines)
+	if c.viewport.YOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) ScrollDown(lines int) bool {
+	if c == nil || lines <= 0 {
+		return false
+	}
+	before := c.viewport.YOffset()
+	c.viewport.ScrollDown(lines)
+	if c.viewport.YOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) PageUp() bool {
+	if c == nil {
+		return false
+	}
+	before := c.viewport.YOffset()
+	c.viewport.PageUp()
+	if c.viewport.YOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) PageDown() bool {
+	if c == nil {
+		return false
+	}
+	before := c.viewport.YOffset()
+	c.viewport.PageDown()
+	if c.viewport.YOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) ScrollLeft(cols int) bool {
+	if c == nil || cols <= 0 {
+		return false
+	}
+	before := c.viewport.XOffset()
+	c.viewport.ScrollLeft(cols)
+	if c.viewport.XOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) ScrollRight(cols int) bool {
+	if c == nil || cols <= 0 {
+		return false
+	}
+	before := c.viewport.XOffset()
+	c.viewport.ScrollRight(cols)
+	if c.viewport.XOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) GotoTop() bool {
+	if c == nil {
+		return false
+	}
+	before := c.viewport.YOffset()
+	c.viewport.GotoTop()
+	if c.viewport.YOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) GotoBottom() bool {
+	if c == nil {
+		return false
+	}
+	before := c.viewport.YOffset()
+	c.viewport.GotoBottom()
+	if c.viewport.YOffset() == before {
+		return false
+	}
+	c.dirty = true
+	return true
+}
+
+func (c *DebugPanelController) Height() int {
+	if c == nil {
+		return 0
+	}
+	return c.viewport.Height()
 }
 
 func (c *DebugPanelController) Resize(width, height int) {
