@@ -71,6 +71,7 @@ const (
 
 const sidebarScrollbarWidth = 1
 const sidebarScrollingEnabled = true
+const sidebarSortStripContentGapRows = 1
 
 func NewSidebarController() *SidebarController {
 	items := []list.Item{}
@@ -82,6 +83,7 @@ func NewSidebarController() *SidebarController {
 	mlist.SetShowPagination(false)
 	mlist.SetShowStatusBar(false)
 	mlist.Styles.Title = headerStyle
+	mlist.Styles.TitleBar = mlist.Styles.TitleBar.Padding(0, 0)
 	return &SidebarController{
 		list:                  mlist,
 		delegate:              delegate,
@@ -657,7 +659,11 @@ func (c *SidebarController) headerRows() int {
 	if c.list.ShowHelp() {
 		rows += 1 + c.list.Styles.HelpStyle.GetPaddingTop() + c.list.Styles.HelpStyle.GetPaddingBottom()
 	}
-	rows += c.sortStripLayout().height()
+	stripRows := c.sortStripLayout().height()
+	rows += stripRows
+	if stripRows > 0 {
+		rows += sidebarSortStripContentGapRows
+	}
 	return rows
 }
 
@@ -1514,8 +1520,14 @@ func (c *SidebarController) view() string {
 	stripHeight := lipgloss.Height(strip)
 	if strip != "" {
 		blocks = append(blocks, strip)
+		if sidebarSortStripContentGapRows > 0 {
+			blocks = append(blocks, lipgloss.NewStyle().Height(sidebarSortStripContentGapRows).Render(""))
+		}
 	}
 	contentHeight := c.list.Height() - titleHeight - stripHeight
+	if strip != "" {
+		contentHeight -= sidebarSortStripContentGapRows
+	}
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
