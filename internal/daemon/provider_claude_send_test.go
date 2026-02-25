@@ -88,7 +88,7 @@ func TestReadClaudeStreamParseErrorAndSessionID(t *testing.T) {
 
 	stream := strings.NewReader("not-json\n" +
 		"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abc123\"}\n")
-	if err := readClaudeStream(stream, logSink, itemSink, func(id string) {
+	if err := readClaudeStream(stream, "provider_stdout_raw", logSink, itemSink, func(id string) {
 		sessionID = id
 	}); err != nil {
 		t.Fatalf("readClaudeStream: %v", err)

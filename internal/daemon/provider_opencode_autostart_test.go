@@ -46,7 +46,7 @@ func TestMaybeAutoStartOpenCodeServerLaunchesLocalServer(t *testing.T) {
 		gotArgs []string
 		gotEnv  []string
 	)
-	startOpenCodeServeProcess = func(cmdName string, args []string, env []string, _ ProviderLogSink) error {
+	startOpenCodeServeProcess = func(cmdName string, args []string, env []string, _ ProviderBaseSink) error {
 		called = true
 		gotCmd = cmdName
 		gotArgs = append([]string{}, args...)
@@ -118,7 +118,7 @@ func TestMaybeAutoStartOpenCodeServerFallsBackToAlternatePort(t *testing.T) {
 	})
 
 	startArgs := make([][]string, 0, 2)
-	startOpenCodeServeProcess = func(_ string, args []string, _ []string, _ ProviderLogSink) error {
+	startOpenCodeServeProcess = func(_ string, args []string, _ []string, _ ProviderBaseSink) error {
 		startArgs = append(startArgs, append([]string{}, args...))
 		return nil
 	}
@@ -182,7 +182,7 @@ func TestMaybeAutoStartOpenCodeServerCleansMatchedStaleProcess(t *testing.T) {
 		return errors.New("timeout")
 	}
 	startCalled := false
-	startOpenCodeServeProcess = func(string, []string, []string, ProviderLogSink) error {
+	startOpenCodeServeProcess = func(string, []string, []string, ProviderBaseSink) error {
 		startCalled = true
 		return nil
 	}
@@ -238,7 +238,7 @@ func TestMaybeAutoStartOpenCodeServerDoesNotTerminateUnmatchedProcess(t *testing
 
 	probeOpenCodeServer = func(string) error { return errors.New("timeout") }
 	startCalled := false
-	startOpenCodeServeProcess = func(string, []string, []string, ProviderLogSink) error {
+	startOpenCodeServeProcess = func(string, []string, []string, ProviderBaseSink) error {
 		startCalled = true
 		return nil
 	}

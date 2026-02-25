@@ -28,7 +28,7 @@ var openCodeAutoStartState = struct {
 	runtimeURL:  map[string]string{},
 }
 
-var startOpenCodeServeProcess = func(cmdName string, args []string, env []string, sink ProviderLogSink) error {
+var startOpenCodeServeProcess = func(cmdName string, args []string, env []string, sink ProviderBaseSink) error {
 	cmd := exec.Command(cmdName, args...)
 	cmd.Env = env
 	if sink != nil {
@@ -55,7 +55,7 @@ var readOpenCodeProcessCmdline = readOpenCodeProcessCmdlineImpl
 var waitForOpenCodePortClosed = waitForOpenCodePortClosedImpl
 var terminateOpenCodeProcess = terminateOpenCodeProcessImpl
 
-func maybeAutoStartOpenCodeServer(provider, baseURL, token string, sink ProviderLogSink) (string, error) {
+func maybeAutoStartOpenCodeServer(provider, baseURL, token string, sink ProviderBaseSink) (string, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		return "", errors.New("base_url is required for auto-start")
@@ -132,7 +132,7 @@ func maybeAutoStartOpenCodeServer(provider, baseURL, token string, sink Provider
 	return fallbackURL, nil
 }
 
-func launchOpenCodeServer(cmdName string, args []string, env []string, baseURL string, waitTimeout time.Duration, sink ProviderLogSink) error {
+func launchOpenCodeServer(cmdName string, args []string, env []string, baseURL string, waitTimeout time.Duration, sink ProviderBaseSink) error {
 	if sink != nil {
 		sink.Write("stderr", []byte("opencode auto-start: launching "+cmdName+" "+strings.Join(args, " ")+"\n"))
 	}
@@ -142,7 +142,7 @@ func launchOpenCodeServer(cmdName string, args []string, env []string, baseURL s
 	return waitForOpenCodeServerReady(baseURL, waitTimeout)
 }
 
-func maybeCleanupStaleOpenCodeServer(provider, cmdName, host, port, baseURL string, sink ProviderLogSink) (bool, error) {
+func maybeCleanupStaleOpenCodeServer(provider, cmdName, host, port, baseURL string, sink ProviderBaseSink) (bool, error) {
 	if !allowOpenCodeCleanupAttempt(baseURL) {
 		return false, nil
 	}

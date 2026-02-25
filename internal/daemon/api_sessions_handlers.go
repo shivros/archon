@@ -303,6 +303,21 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		a.streamItems(w, r, id)
 		return
+	case "debug":
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		if !isFollowRequest(r) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "follow=1 is required",
+			})
+			return
+		}
+		a.streamDebug(w, r, id)
+		return
 	case "approval":
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{

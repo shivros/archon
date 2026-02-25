@@ -154,6 +154,7 @@ type Model struct {
 	stream                              *StreamController
 	codexStream                         *CodexStreamController
 	itemStream                          *ItemStreamController
+	debugStream                         *DebugStreamController
 	input                               *InputController
 	chat                                *SessionChatController
 	pendingApproval                     *ApprovalRequest
@@ -245,6 +246,9 @@ type Model struct {
 	notesPanelVisible                   bool
 	notesPanelWidth                     int
 	notesPanelMainWidth                 int
+	debugPanelVisible                   bool
+	debugPanelWidth                     int
+	debugPanelMainWidth                 int
 	notesPanelPendingScopes             map[types.NoteScope]struct{}
 	notesPanelLoadErrors                int
 	notesPanelBlocks                    []ChatBlock
@@ -382,6 +386,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
 	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
 	itemStream := NewItemStreamController(maxViewportLines, maxEventsPerTick)
+	debugStream := NewDebugStreamController(maxViewportLines, maxEventsPerTick)
 	loader := spinner.New()
 	loader.Spinner = spinner.Line
 	loader.Style = lipgloss.NewStyle()
@@ -407,6 +412,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		stream:                              stream,
 		codexStream:                         codexStream,
 		itemStream:                          itemStream,
+		debugStream:                         debugStream,
 		input:                               NewInputController(),
 		chat:                                NewSessionChatController(api, codexStream),
 		mode:                                uiModeNormal,
@@ -850,13 +856,31 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	m.width = width
 	m.height = height
 
-	layout := resolveResizeLayout(width, height, m.appState.SidebarCollapsed, m.notesPanelOpen, m.usesViewport())
+	panelMode := sidePanelModeNone
+	if m.appState.DebugStreamsEnabled {
+		panelMode = sidePanelModeDebug
+	} else if m.notesPanelOpen {
+		panelMode = sidePanelModeNotes
+	}
+	layout := resolveResizeLayout(width, height, m.appState.SidebarCollapsed, panelMode, m.usesViewport())
 	contentHeight := layout.contentHeight
 	contentWidth := layout.contentWidth
 	mainViewportWidth := layout.panelMain
-	m.notesPanelVisible = layout.panelVisible
-	m.notesPanelWidth = layout.panelWidth
-	m.notesPanelMainWidth = layout.panelMain
+	if panelMode == sidePanelModeDebug {
+		m.debugPanelVisible = layout.panelVisible
+		m.debugPanelWidth = layout.panelWidth
+		m.debugPanelMainWidth = layout.panelMain
+		m.notesPanelVisible = false
+		m.notesPanelWidth = 0
+		m.notesPanelMainWidth = layout.panelMain
+	} else {
+		m.notesPanelVisible = layout.panelVisible
+		m.notesPanelWidth = layout.panelWidth
+		m.notesPanelMainWidth = layout.panelMain
+		m.debugPanelVisible = false
+		m.debugPanelWidth = 0
+		m.debugPanelMainWidth = layout.panelMain
+	}
 
 	if m.sidebar != nil {
 		m.sidebar.SetSize(layout.sidebarWidth, contentHeight)
@@ -868,7 +892,7 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.SetWidth(contentWidth)
 	m.viewport.SetHeight(vpHeight)
-	if layout.panelVisible {
+	if panelMode == sidePanelModeNotes && layout.panelVisible {
 		m.notesPanelViewport.SetWidth(layout.panelWidth)
 		m.notesPanelViewport.SetHeight(max(1, contentHeight-1))
 	} else {
@@ -1135,6 +1159,9 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	}
 	if item.session.Provider == "codex" {
 		cmds = append(cmds, openEventsCmd(m.sessionAPI, id))
+	}
+	if m.appState.DebugStreamsEnabled {
+		cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, id))
 	}
 	return tea.Batch(cmds...)
 }
@@ -2257,6 +2284,7 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	m.consumeStreamTick(now)
 	m.consumeCodexTick(now)
 	m.consumeItemTick(now)
+	m.consumeDebugTick(now)
 	if m.streamRenderScheduler != nil && m.streamRenderScheduler.ShouldRender(now) {
 		m.renderViewport()
 		m.streamRenderScheduler.MarkRendered(now)
@@ -2311,6 +2339,9 @@ func (m *Model) resetStream() {
 	}
 	if m.itemStream != nil {
 		m.itemStream.Reset()
+	}
+	if m.debugStream != nil {
+		m.debugStream.Reset()
 	}
 	m.pendingApproval = nil
 	m.pendingSessionKey = ""
@@ -2434,6 +2465,21 @@ func (m *Model) consumeItemTick(now time.Time) {
 			if key := m.selectedKey(); key != "" {
 				m.cacheTranscriptBlocks(key, blocks)
 			}
+		}
+	}
+}
+
+func (m *Model) consumeDebugTick(now time.Time) {
+	if m.debugStream == nil {
+		return
+	}
+	_, changed, closed := m.debugStream.ConsumeTick()
+	if closed {
+		m.setBackgroundStatus("debug stream closed")
+	}
+	if changed {
+		if m.transcriptViewportVisible() && m.appState.DebugStreamsEnabled {
+			m.requestStreamRender(now)
 		}
 	}
 }
@@ -3591,6 +3637,27 @@ func (m *Model) toggleSidebar() {
 	m.hasAppState = true
 	m.updateDelegate()
 	m.resize(m.width, m.height)
+}
+
+func (m *Model) toggleDebugStreams() tea.Cmd {
+	enabled := !m.appState.DebugStreamsEnabled
+	m.appState.DebugStreamsEnabled = enabled
+	m.hasAppState = true
+	m.resize(m.width, m.height)
+
+	sessionID := m.activeStreamTargetID()
+	if !enabled {
+		if m.debugStream != nil {
+			m.debugStream.Reset()
+		}
+		m.setStatusInfo("debug streams disabled")
+		return m.requestAppStateSaveCmd()
+	}
+	m.setStatusInfo("debug streams enabled")
+	if strings.TrimSpace(sessionID) == "" {
+		return m.requestAppStateSaveCmd()
+	}
+	return tea.Batch(m.requestAppStateSaveCmd(), openDebugStreamCmd(m.sessionAPI, sessionID))
 }
 
 func (m *Model) applyAppState(state *types.AppState) {

@@ -16,6 +16,7 @@ const (
 	KeyCommandQuit                 = "ui.quit"
 	KeyCommandToggleSidebar        = "ui.toggleSidebar"
 	KeyCommandToggleNotesPanel     = "ui.toggleNotesPanel"
+	KeyCommandToggleDebugStreams   = "ui.toggleDebugStreams"
 	KeyCommandCopySessionID        = "ui.copySessionID"
 	KeyCommandOpenSearch           = "ui.openSearch"
 	KeyCommandSidebarFilter        = "ui.sidebarFilter"
@@ -76,6 +77,7 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandQuit:                 "q",
 	KeyCommandToggleSidebar:        "ctrl+b",
 	KeyCommandToggleNotesPanel:     "ctrl+o",
+	KeyCommandToggleDebugStreams:   "ctrl+d",
 	KeyCommandCopySessionID:        "ctrl+g",
 	KeyCommandOpenSearch:           "/",
 	KeyCommandSidebarFilter:        "ctrl+f",

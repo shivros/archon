@@ -12,9 +12,10 @@ type itemSink struct {
 	mu      sync.Mutex
 	hub     *itemHub
 	metrics itemTimestampMetricsSink
+	debug   *debugSink
 }
 
-func newItemSink(path string, hub *itemHub, metrics itemTimestampMetricsSink) (*itemSink, error) {
+func newItemSink(path string, hub *itemHub, metrics itemTimestampMetricsSink, debug *debugSink) (*itemSink, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -22,7 +23,7 @@ func newItemSink(path string, hub *itemHub, metrics itemTimestampMetricsSink) (*
 	if err != nil {
 		return nil, err
 	}
-	return &itemSink{file: file, hub: hub, metrics: metrics}, nil
+	return &itemSink{file: file, hub: hub, metrics: metrics, debug: debug}, nil
 }
 
 func (s *itemSink) Append(item map[string]any) {
@@ -38,6 +39,9 @@ func (s *itemSink) Append(item map[string]any) {
 	_, _ = s.file.Write(data)
 	_, _ = s.file.Write([]byte("\n"))
 	s.mu.Unlock()
+	if s.debug != nil {
+		s.debug.Write("item", append(data, '\n'))
+	}
 	if s.hub != nil {
 		s.hub.Broadcast(prepared)
 	}

@@ -21,7 +21,7 @@ type openCodeProvider struct {
 
 type openCodeRunner struct {
 	client     *openCodeClient
-	sink       ProviderLogSink
+	sink       ProviderSink
 	items      ProviderItemSink
 	options    *types.SessionRuntimeOptions
 	directory  string
@@ -64,7 +64,7 @@ func (p *openCodeProvider) Command() string {
 	return p.client.baseURL
 }
 
-func (p *openCodeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
+func (p *openCodeProvider) Start(cfg StartSessionConfig, sink ProviderSink, items ProviderItemSink) (*providerProcess, error) {
 	if p == nil || p.client == nil {
 		return nil, errors.New("provider is not initialized")
 	}
@@ -225,7 +225,7 @@ func (r *openCodeRunner) appendAssistantItem(text string) {
 	})
 }
 
-func (p *openCodeProvider) createSession(ctx context.Context, title, directory string, sink ProviderLogSink) (string, error) {
+func (p *openCodeProvider) createSession(ctx context.Context, title, directory string, sink ProviderSink) (string, error) {
 	if p == nil || p.client == nil {
 		return "", errors.New("provider is not initialized")
 	}

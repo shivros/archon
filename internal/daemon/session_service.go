@@ -1318,6 +1318,37 @@ func (s *SessionService) SubscribeItems(ctx context.Context, id string) (<-chan 
 	return ch, cancel, nil
 }
 
+func (s *SessionService) ReadDebug(ctx context.Context, id string, lines int) ([]types.DebugEvent, bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, false, invalidError("session id is required", nil)
+	}
+	if lines <= 0 {
+		lines = 200
+	}
+	events, truncated, err := s.readSessionDebug(id, lines)
+	if err != nil {
+		return nil, false, invalidError(err.Error(), err)
+	}
+	return events, truncated, nil
+}
+
+func (s *SessionService) SubscribeDebug(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error) {
+	if s.manager == nil {
+		return nil, nil, unavailableError("session manager not available", nil)
+	}
+	if strings.TrimSpace(id) == "" {
+		return nil, nil, invalidError("session id is required", nil)
+	}
+	ch, cancel, err := s.manager.SubscribeDebug(id)
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, nil, notFoundError("session not found", err)
+		}
+		return nil, nil, invalidError(err.Error(), err)
+	}
+	return ch, cancel, nil
+}
+
 func (s *SessionService) resolveWorktreePath(ctx context.Context, workspaceID, worktreeID string) (string, string, error) {
 	if strings.TrimSpace(workspaceID) == "" {
 		return "", "", nil

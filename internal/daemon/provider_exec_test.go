@@ -14,7 +14,10 @@ type testProviderLogSink struct {
 	mu     sync.Mutex
 	stdout bytes.Buffer
 	stderr bytes.Buffer
+	debug  bytes.Buffer
 }
+
+var _ ProviderSink = (*testProviderLogSink)(nil)
 
 func (s *testProviderLogSink) StdoutWriter() io.Writer {
 	return &lockedBufferWriter{
@@ -39,6 +42,12 @@ func (s *testProviderLogSink) Write(stream string, data []byte) {
 	case "stderr":
 		_, _ = s.stderr.Write(data)
 	}
+}
+
+func (s *testProviderLogSink) WriteDebug(_ string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.debug.Write(data)
 }
 
 func (s *testProviderLogSink) stdoutString() string {

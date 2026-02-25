@@ -44,7 +44,7 @@ func (p *codexProvider) Command() string {
 	return fmt.Sprintf("%s app-server", p.cmdName)
 }
 
-func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
+func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderSink, items ProviderItemSink) (*providerProcess, error) {
 	additionalDirArgs, err := providerAdditionalDirectoryArgs("codex", cfg.AdditionalDirectories)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ func (p *codexProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, item
 type codexController struct {
 	stdin  io.Writer
 	reader *bufio.Scanner
-	sink   ProviderLogSink
+	sink   ProviderSink
 
 	mu              sync.Mutex
 	nextID          int
@@ -164,7 +164,7 @@ type codexError struct {
 	Message string `json:"message"`
 }
 
-func newCodexController(stdin io.Writer, stdout io.Reader, sink ProviderLogSink) *codexController {
+func newCodexController(stdin io.Writer, stdout io.Reader, sink ProviderSink) *codexController {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	return &codexController{
@@ -177,7 +177,9 @@ func newCodexController(stdin io.Writer, stdout io.Reader, sink ProviderLogSink)
 
 func (c *codexController) readLoop() {
 	for c.reader.Scan() {
-		line := strings.TrimSpace(c.reader.Text())
+		rawLine := c.reader.Text()
+		writeProviderDebug(c.sink, "provider_stdout_raw", []byte(rawLine+"\n"))
+		line := strings.TrimSpace(rawLine)
 		if line == "" {
 			continue
 		}

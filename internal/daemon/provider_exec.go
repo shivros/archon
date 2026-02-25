@@ -33,7 +33,7 @@ func (p *execProvider) Command() string {
 	return p.cmdName
 }
 
-func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
+func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderSink, items ProviderItemSink) (*providerProcess, error) {
 	args := append([]string{}, cfg.Args...)
 	if strings.EqualFold(strings.TrimSpace(p.providerName), "gemini") {
 		additionalDirArgs, err := providerAdditionalDirectoryArgs(p.providerName, cfg.AdditionalDirectories)

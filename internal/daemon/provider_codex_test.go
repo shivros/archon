@@ -27,7 +27,7 @@ func TestCodexControllerFlow(t *testing.T) {
 	defer stdoutFile.Close()
 	defer stderrFile.Close()
 
-	sink := newLogSink(stdoutFile, stderrFile, newLogBuffer(logBufferMaxBytes), newLogBuffer(logBufferMaxBytes))
+	sink := newLogSink(stdoutFile, stderrFile, newLogBuffer(logBufferMaxBytes), newLogBuffer(logBufferMaxBytes), nil)
 	controller := newCodexController(stdinWriter, stdoutReader, sink)
 	go controller.readLoop()
 

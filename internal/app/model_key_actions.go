@@ -100,8 +100,7 @@ func (m *Model) reduceNotesEntryKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	switch m.keyString(msg) {
-	case "ctrl+m":
+	if m.keyMatchesCommand(msg, KeyCommandMenu, "ctrl+m") {
 		if m.menu != nil {
 			if m.contextMenu != nil {
 				m.contextMenu.Close()
@@ -109,15 +108,22 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.menu.Toggle()
 		}
 		return true, nil
+	}
+	if m.keyMatchesCommand(msg, KeyCommandToggleSidebar, "ctrl+b") {
+		m.toggleSidebar()
+		return true, m.requestAppStateSaveCmd()
+	}
+	if m.keyMatchesCommand(msg, KeyCommandToggleNotesPanel, "ctrl+o") {
+		return true, m.toggleNotesPanel()
+	}
+	if m.keyMatchesCommand(msg, KeyCommandToggleDebugStreams, "ctrl+d") {
+		return true, m.toggleDebugStreams()
+	}
+	switch m.keyString(msg) {
 	case "esc":
 		return true, nil
 	case "q":
 		return true, tea.Quit
-	case "ctrl+b":
-		m.toggleSidebar()
-		return true, m.requestAppStateSaveCmd()
-	case "ctrl+o":
-		return true, m.toggleNotesPanel()
 	default:
 		return false, nil
 	}

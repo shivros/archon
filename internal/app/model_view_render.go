@@ -38,7 +38,12 @@ func (m *Model) renderRightPaneView() string {
 	if !frame.panelVisible || frame.panelWidth <= 0 {
 		return mainView
 	}
-	panelView := m.renderNotesPanelView()
+	panelView := ""
+	if m.appState.DebugStreamsEnabled {
+		panelView = m.renderDebugPanelView()
+	} else {
+		panelView = m.renderNotesPanelView()
+	}
 	height := max(lipgloss.Height(mainView), lipgloss.Height(panelView))
 	if height < 1 {
 		height = 1
@@ -76,6 +81,19 @@ func normalizeBlockWidth(block string, width int) string {
 		lines[i] = lipgloss.PlaceHorizontal(width, lipgloss.Left, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *Model) renderDebugPanelView() string {
+	header := headerStyle.Render("Debug")
+	body := "Waiting for debug stream..."
+	if m.debugStream != nil {
+		lines := m.debugStream.Lines()
+		if len(lines) > 0 {
+			body = strings.Join(lines, "\n")
+		}
+	}
+	body = normalizeBlockWidth(body, m.debugPanelWidth)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body)
 }
 
 func (m *Model) renderStatusLineView() string {

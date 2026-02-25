@@ -295,6 +295,13 @@ type itemsStreamMsg struct {
 	err    error
 }
 
+type debugStreamMsg struct {
+	id     string
+	ch     <-chan types.DebugEvent
+	cancel func()
+	err    error
+}
+
 type selectDebounceMsg struct {
 	id  string
 	seq int

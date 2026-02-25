@@ -437,6 +437,9 @@ func isZeroAppState(state *types.AppState) bool {
 	if state.SidebarCollapsed {
 		return false
 	}
+	if state.DebugStreamsEnabled {
+		return false
+	}
 	return len(state.ActiveWorkspaceGroupIDs) == 0 &&
 		len(state.SidebarWorkspaceExpanded) == 0 &&
 		len(state.SidebarWorktreeExpanded) == 0 &&

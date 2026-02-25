@@ -110,6 +110,44 @@ func (s *SessionService) readSessionItems(id string, lines int) ([]map[string]an
 	return items, truncated, nil
 }
 
+func (s *SessionService) readSessionDebug(id string, lines int) ([]types.DebugEvent, bool, error) {
+	baseDir, err := s.sessionsBaseDir()
+	if err != nil {
+		return nil, false, err
+	}
+	sessionDir := filepath.Join(baseDir, id)
+	debugPath := filepath.Join(sessionDir, "debug.jsonl")
+	if _, err := os.Stat(debugPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	rawLines, truncated, err := tailLines(debugPath, lines)
+	if err != nil {
+		return nil, false, err
+	}
+	events := make([]types.DebugEvent, 0, len(rawLines))
+	for _, line := range rawLines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event types.DebugEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if event.Type == "" {
+			event.Type = "debug"
+		}
+		if event.SessionID == "" {
+			event.SessionID = strings.TrimSpace(id)
+		}
+		events = append(events, event)
+	}
+	return events, truncated, nil
+}
+
 func (s *SessionService) appendSessionItems(id string, items []map[string]any) error {
 	if strings.TrimSpace(id) == "" || len(items) == 0 {
 		return nil

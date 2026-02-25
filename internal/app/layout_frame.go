@@ -20,6 +20,19 @@ type resizeLayout struct {
 	panelWidth    int
 }
 
+type sidePanelMode int
+
+const (
+	sidePanelModeNone sidePanelMode = iota
+	sidePanelModeNotes
+	sidePanelModeDebug
+)
+
+const (
+	sidePanelMinWidth = 28
+	sidePanelMaxWidth = 56
+)
+
 func computeSidebarWidth(totalWidth int, collapsed bool) int {
 	if collapsed {
 		return 0
@@ -31,7 +44,7 @@ func computeSidebarWidth(totalWidth int, collapsed bool) int {
 	return listWidth
 }
 
-func resolveResizeLayout(width, height int, sidebarCollapsed, notesPanelOpen, usesViewport bool) resizeLayout {
+func resolveResizeLayout(width, height int, sidebarCollapsed bool, panelMode sidePanelMode, usesViewport bool) resizeLayout {
 	layout := resizeLayout{
 		contentHeight: max(minContentHeight, height-2),
 		sidebarWidth:  computeSidebarWidth(width, sidebarCollapsed),
@@ -42,8 +55,8 @@ func resolveResizeLayout(width, height int, sidebarCollapsed, notesPanelOpen, us
 	}
 	layout.contentWidth = layout.viewportWidth
 	layout.panelMain = layout.viewportWidth
-	if notesPanelOpen {
-		layout.panelWidth = clamp(layout.viewportWidth/3, notesPanelMinWidth, notesPanelMaxWidth)
+	if panelMode != sidePanelModeNone {
+		layout.panelWidth = clamp(layout.viewportWidth/3, sidePanelMinWidth, sidePanelMaxWidth)
 		if layout.viewportWidth-layout.panelWidth-1 >= minViewportWidth {
 			layout.panelVisible = true
 			layout.panelMain = layout.viewportWidth - layout.panelWidth - 1
@@ -58,11 +71,12 @@ func resolveResizeLayout(width, height int, sidebarCollapsed, notesPanelOpen, us
 
 func (m *Model) layoutFrame() layoutFrame {
 	sidebarWidth := m.sidebarWidth()
+	panelVisible, panelMain, panelWidth := m.activePanelDimensions()
 	frame := layoutFrame{
 		sidebarWidth: sidebarWidth,
-		panelVisible: m.notesPanelVisible && m.notesPanelWidth > 0,
-		panelMain:    m.notesPanelMainWidth,
-		panelWidth:   m.notesPanelWidth,
+		panelVisible: panelVisible,
+		panelMain:    panelMain,
+		panelWidth:   panelWidth,
 	}
 	if sidebarWidth > 0 {
 		frame.rightStart = sidebarWidth + 1
@@ -71,4 +85,11 @@ func (m *Model) layoutFrame() layoutFrame {
 		frame.panelStart = frame.rightStart + frame.panelMain + 1
 	}
 	return frame
+}
+
+func (m *Model) activePanelDimensions() (visible bool, main int, width int) {
+	if m != nil && m.appState.DebugStreamsEnabled {
+		return m.debugPanelVisible && m.debugPanelWidth > 0, m.debugPanelMainWidth, m.debugPanelWidth
+	}
+	return m.notesPanelVisible && m.notesPanelWidth > 0, m.notesPanelMainWidth, m.notesPanelWidth
 }

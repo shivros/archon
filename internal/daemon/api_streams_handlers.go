@@ -1,11 +1,18 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"control/internal/logging"
+	"control/internal/types"
 )
+
+type debugStreamService interface {
+	ReadDebug(ctx context.Context, id string, lines int) ([]types.DebugEvent, bool, error)
+	SubscribeDebug(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error)
+}
 
 func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 	stream := r.URL.Query().Get("stream")
@@ -218,6 +225,70 @@ func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
 			}
 			count++
 			data, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			_, _ = w.Write([]byte("data: "))
+			_, _ = w.Write(data)
+			_, _ = w.Write([]byte("\n\n"))
+			flusher.Flush()
+		}
+	}
+}
+
+func (a *API) streamDebug(w http.ResponseWriter, r *http.Request, id string) {
+	a.streamDebugWithService(w, r, id, a.newSessionService())
+}
+
+func (a *API) streamDebugWithService(w http.ResponseWriter, r *http.Request, id string, service debugStreamService) {
+	if service == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
+	lines := parseLines(r.URL.Query().Get("lines"))
+	snapshot, _, snapErr := service.ReadDebug(r.Context(), id, lines)
+	ch, cancel, err := service.SubscribeDebug(r.Context(), id)
+	if err != nil && (snapErr != nil || len(snapshot) == 0) {
+		writeServiceError(w, err)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	if len(snapshot) > 0 {
+		for _, event := range snapshot {
+			data, err := json.Marshal(event)
+			if err != nil {
+				continue
+			}
+			_, _ = w.Write([]byte("data: "))
+			_, _ = w.Write(data)
+			_, _ = w.Write([]byte("\n\n"))
+		}
+		flusher.Flush()
+	}
+	if err != nil {
+		return
+	}
+	defer cancel()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(event)
 			if err != nil {
 				continue
 			}

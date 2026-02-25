@@ -53,3 +53,27 @@ func TestComputeSidebarWidthUsesSharedRule(t *testing.T) {
 		t.Fatalf("expected expanded sidebar width > 0, got %d", got)
 	}
 }
+
+func TestLayoutFrameUsesDebugPanelDimensionsWhenEnabled(t *testing.T) {
+	m := NewModel(nil)
+	m.notesPanelOpen = true
+	m.appState.DebugStreamsEnabled = true
+	m.resize(180, 40)
+
+	if m.notesPanelVisible {
+		t.Fatalf("expected notes panel to be hidden while debug panel is enabled")
+	}
+	if !m.debugPanelVisible {
+		t.Fatalf("expected debug panel to be visible")
+	}
+	frame := m.layoutFrame()
+	if !frame.panelVisible {
+		t.Fatalf("expected panel visible in layout frame")
+	}
+	if frame.panelWidth != m.debugPanelWidth {
+		t.Fatalf("expected debug panel width %d, got %d", m.debugPanelWidth, frame.panelWidth)
+	}
+	if frame.panelMain != m.debugPanelMainWidth {
+		t.Fatalf("expected debug panel main width %d, got %d", m.debugPanelMainWidth, frame.panelMain)
+	}
+}

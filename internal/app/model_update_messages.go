@@ -987,10 +987,20 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.id))
+			if m.appState.DebugStreamsEnabled {
+				cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.id))
+			}
 			return true, tea.Batch(cmds...)
 		}
 		if provider == "codex" && m.codexStream != nil && !m.codexStream.HasStream() {
 			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.id))
+			if m.appState.DebugStreamsEnabled {
+				cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.id))
+			}
+			return true, tea.Batch(cmds...)
+		}
+		if m.appState.DebugStreamsEnabled && m.debugStream != nil && !m.debugStream.HasStream() {
+			cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.id))
 			return true, tea.Batch(cmds...)
 		}
 		return true, tea.Batch(cmds...)
@@ -1132,6 +1142,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		} else if isActiveStatus(msg.session.Status) {
 			cmds = append(cmds, openStreamCmd(m.sessionAPI, msg.session.ID))
 		}
+		if m.appState.DebugStreamsEnabled {
+			cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.session.ID))
+		}
 		if msg.session.Provider == "codex" {
 			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
 		}
@@ -1193,6 +1206,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case itemsStreamMsg:
 		m.applyItemsStreamMsg(msg)
+		return true, nil
+	case debugStreamMsg:
+		m.applyDebugStreamMsg(msg)
 		return true, nil
 	default:
 		return false, nil
@@ -1391,6 +1407,20 @@ func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
 		m.itemStream.SetStream(msg.ch, msg.cancel)
 	}
 	m.setBackgroundStatus("streaming items")
+}
+
+func (m *Model) applyDebugStreamMsg(msg debugStreamMsg) {
+	if msg.err != nil {
+		m.setBackgroundError("debug stream error: " + msg.err.Error())
+		return
+	}
+	if !m.streamMessageTargetsActiveSession(msg.id, msg.cancel) {
+		return
+	}
+	if m.debugStream != nil {
+		m.debugStream.SetStream(msg.ch, msg.cancel)
+	}
+	m.setBackgroundStatus("streaming debug")
 }
 
 func (m *Model) handleProviderOptionsMsg(msg providerOptionsMsg) tea.Cmd {

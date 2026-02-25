@@ -22,7 +22,7 @@ type claudeRunner struct {
 	cwd     string
 	env     []string
 	dirs    []string
-	sink    ProviderLogSink
+	sink    ProviderSink
 	items   ProviderItemSink
 	options *types.SessionRuntimeOptions
 
@@ -46,7 +46,7 @@ func (p *claudeProvider) Command() string {
 	return p.cmdName
 }
 
-func (p *claudeProvider) Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error) {
+func (p *claudeProvider) Start(cfg StartSessionConfig, sink ProviderSink, items ProviderItemSink) (*providerProcess, error) {
 	if cfg.Resume {
 		if strings.TrimSpace(cfg.ProviderSessionID) == "" {
 			return nil, errors.New("provider session id is required to resume")
@@ -168,11 +168,11 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = readClaudeStream(stdoutPipe, r.sink, r.items, r.updateSessionID)
+		_ = readClaudeStream(stdoutPipe, "provider_stdout_raw", r.sink, r.items, r.updateSessionID)
 	}()
 	go func() {
 		defer wg.Done()
-		_ = readClaudeStream(stderrPipe, nil, r.items, r.updateSessionID)
+		_ = readClaudeStream(stderrPipe, "provider_stderr_raw", r.sink, r.items, r.updateSessionID)
 	}()
 
 	err = cmd.Wait()
@@ -212,12 +212,14 @@ func (r *claudeRunner) updateSessionID(id string) {
 	}
 }
 
-func readClaudeStream(r io.Reader, sink ProviderLogSink, items ProviderItemSink, onSessionID func(string)) error {
+func readClaudeStream(r io.Reader, rawStream string, sink ProviderSink, items ProviderItemSink, onSessionID func(string)) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	state := &ClaudeParseState{}
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		rawLine := scanner.Text()
+		writeProviderDebug(sink, rawStream, []byte(rawLine+"\n"))
+		line := strings.TrimSpace(rawLine)
 		if line == "" {
 			continue
 		}

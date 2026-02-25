@@ -7,6 +7,7 @@ type AppState struct {
 	ActiveWorktreeID               string                            `json:"active_worktree_id"`
 	ActiveWorkspaceGroupIDs        []string                          `json:"active_workspace_group_ids"`
 	SidebarCollapsed               bool                              `json:"sidebar_collapsed"`
+	DebugStreamsEnabled            bool                              `json:"debug_streams_enabled,omitempty"`
 	SidebarWorkspaceExpanded       map[string]bool                   `json:"sidebar_workspace_expanded,omitempty"`
 	SidebarWorktreeExpanded        map[string]bool                   `json:"sidebar_worktree_expanded,omitempty"`
 	SidebarWorkflowExpanded        map[string]bool                   `json:"sidebar_workflow_expanded,omitempty"`

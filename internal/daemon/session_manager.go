@@ -62,11 +62,77 @@ type sessionRuntime struct {
 	stdout    *logBuffer
 	stderr    *logBuffer
 	hub       *subscriberHub
+	debugHub  *debugHub
+	debugBuf  *debugBuffer
 	sink      *logSink
+	debug     *debugSink
 	items     *itemSink
 	itemsHub  *itemHub
 	send      func([]byte) error
 	interrupt func() error
+}
+
+func (m *SessionManager) buildSessionRuntime(sessionID, provider string) (*sessionRuntime, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, errors.New("session id is required")
+	}
+	sessionDir := filepath.Join(m.baseDir, sessionID)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return nil, err
+	}
+
+	stdoutPath := filepath.Join(sessionDir, "stdout.log")
+	stderrPath := filepath.Join(sessionDir, "stderr.log")
+	debugPath := filepath.Join(sessionDir, "debug.jsonl")
+
+	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		_ = stdoutFile.Close()
+		return nil, err
+	}
+	debugHub := newDebugHub()
+	debugBuf := newDebugBuffer(debugMaxEvents)
+	debugSink, err := newDebugSink(debugPath, sessionID, provider, debugHub, debugBuf)
+	if err != nil {
+		_ = stdoutFile.Close()
+		_ = stderrFile.Close()
+		return nil, err
+	}
+
+	var (
+		items    *itemSink
+		itemsHub *itemHub
+	)
+	if providerUsesItems(provider) {
+		itemsPath := filepath.Join(sessionDir, "items.jsonl")
+		itemsHub = newItemHub()
+		items, err = newItemSink(itemsPath, itemsHub, m.newItemTimestampMetrics(provider, sessionID), debugSink)
+		if err != nil {
+			_ = stdoutFile.Close()
+			_ = stderrFile.Close()
+			debugSink.Close()
+			return nil, err
+		}
+	}
+
+	state := &sessionRuntime{
+		done:     make(chan struct{}),
+		stdout:   newLogBuffer(logBufferMaxBytes),
+		stderr:   newLogBuffer(logBufferMaxBytes),
+		hub:      newSubscriberHub(),
+		debugHub: debugHub,
+		debugBuf: debugBuf,
+		debug:    debugSink,
+		items:    items,
+		itemsHub: itemsHub,
+	}
+	state.sink = newLogSink(stdoutFile, stderrFile, state.stdout, state.stderr, debugSink)
+	return state, nil
 }
 
 func NewSessionManager(baseDir string) (*SessionManager, error) {
@@ -161,33 +227,9 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		return nil, err
 	}
 
-	sessionDir := filepath.Join(m.baseDir, sessionID)
-	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
-		return nil, err
-	}
-
-	stdoutPath := filepath.Join(sessionDir, "stdout.log")
-	stderrPath := filepath.Join(sessionDir, "stderr.log")
-	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	runtimeState, err := m.buildSessionRuntime(sessionID, cfg.Provider)
 	if err != nil {
 		return nil, err
-	}
-	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		_ = stdoutFile.Close()
-		return nil, err
-	}
-	var items *itemSink
-	var itemsHub *itemHub
-	if providerUsesItems(cfg.Provider) {
-		itemsPath := filepath.Join(sessionDir, "items.jsonl")
-		itemsHub = newItemHub()
-		items, err = newItemSink(itemsPath, itemsHub, m.newItemTimestampMetrics(cfg.Provider, sessionID))
-		if err != nil {
-			_ = stdoutFile.Close()
-			_ = stderrFile.Close()
-			return nil, err
-		}
 	}
 
 	now := time.Now().UTC()
@@ -204,16 +246,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		Tags:      append([]string{}, cfg.Tags...),
 	}
 
-	runtimeState := &sessionRuntime{
-		session:  session,
-		done:     make(chan struct{}),
-		stdout:   newLogBuffer(logBufferMaxBytes),
-		stderr:   newLogBuffer(logBufferMaxBytes),
-		hub:      newSubscriberHub(),
-		items:    items,
-		itemsHub: itemsHub,
-	}
-	runtimeState.sink = newLogSink(stdoutFile, stderrFile, runtimeState.stdout, runtimeState.stderr)
+	runtimeState.session = session
 
 	m.mu.Lock()
 	m.sessions[sessionID] = runtimeState
@@ -349,45 +382,11 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 		return nil, err
 	}
 
-	sessionDir := filepath.Join(m.baseDir, session.ID)
-	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
-		return nil, err
-	}
-
-	stdoutPath := filepath.Join(sessionDir, "stdout.log")
-	stderrPath := filepath.Join(sessionDir, "stderr.log")
-	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	runtimeState, err := m.buildSessionRuntime(session.ID, cfg.Provider)
 	if err != nil {
 		return nil, err
 	}
-	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		_ = stdoutFile.Close()
-		return nil, err
-	}
-	var items *itemSink
-	var itemsHub *itemHub
-	if providerUsesItems(cfg.Provider) {
-		itemsPath := filepath.Join(sessionDir, "items.jsonl")
-		itemsHub = newItemHub()
-		items, err = newItemSink(itemsPath, itemsHub, m.newItemTimestampMetrics(cfg.Provider, session.ID))
-		if err != nil {
-			_ = stdoutFile.Close()
-			_ = stderrFile.Close()
-			return nil, err
-		}
-	}
-
-	runtimeState := &sessionRuntime{
-		session:  session,
-		done:     make(chan struct{}),
-		stdout:   newLogBuffer(logBufferMaxBytes),
-		stderr:   newLogBuffer(logBufferMaxBytes),
-		hub:      newSubscriberHub(),
-		items:    items,
-		itemsHub: itemsHub,
-	}
-	runtimeState.sink = newLogSink(stdoutFile, stderrFile, runtimeState.stdout, runtimeState.stderr)
+	runtimeState.session = session
 
 	m.mu.Lock()
 	m.sessions[session.ID] = runtimeState
@@ -521,6 +520,27 @@ func (m *SessionManager) SubscribeItems(id string) (<-chan map[string]any, func(
 	}
 	ch, cancel := state.itemsHub.Add()
 	return ch, cancel, nil
+}
+
+func (m *SessionManager) SubscribeDebug(id string) (<-chan types.DebugEvent, func(), error) {
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok || state == nil || state.debugHub == nil {
+		return nil, nil, ErrSessionNotFound
+	}
+	ch, cancel := state.debugHub.Add()
+	return ch, cancel, nil
+}
+
+func (m *SessionManager) DebugSnapshot(id string, lines int) ([]types.DebugEvent, error) {
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok || state == nil || state.debugBuf == nil {
+		return nil, ErrSessionNotFound
+	}
+	return state.debugBuf.Snapshot(lines), nil
 }
 
 func (m *SessionManager) KillSession(id string) error {

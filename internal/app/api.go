@@ -147,6 +147,10 @@ type SessionItemsStreamAPI interface {
 	ItemsStream(ctx context.Context, id string) (<-chan map[string]any, func(), error)
 }
 
+type SessionDebugStreamAPI interface {
+	DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error)
+}
+
 type SessionKillAPI interface {
 	KillSession(ctx context.Context, id string) error
 }
@@ -223,6 +227,7 @@ type SessionAPI interface {
 	SessionTailStreamAPI
 	SessionEventStreamAPI
 	SessionItemsStreamAPI
+	SessionDebugStreamAPI
 	SessionKillAPI
 	SessionMarkExitedAPI
 	SessionDismissAPI
@@ -387,6 +392,10 @@ func (a *ClientAPI) History(ctx context.Context, id string, lines int) (*client.
 
 func (a *ClientAPI) TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error) {
 	return a.client.TailStream(ctx, id, stream)
+}
+
+func (a *ClientAPI) DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error) {
+	return a.client.DebugStream(ctx, id)
 }
 
 func (a *ClientAPI) EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {

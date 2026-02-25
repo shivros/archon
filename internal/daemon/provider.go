@@ -14,13 +14,29 @@ import (
 type Provider interface {
 	Name() string
 	Command() string
-	Start(cfg StartSessionConfig, sink ProviderLogSink, items ProviderItemSink) (*providerProcess, error)
+	Start(cfg StartSessionConfig, sink ProviderSink, items ProviderItemSink) (*providerProcess, error)
 }
 
-type ProviderLogSink interface {
+type ProviderBaseSink interface {
 	StdoutWriter() io.Writer
 	StderrWriter() io.Writer
 	Write(stream string, data []byte)
+}
+
+type ProviderDebugSink interface {
+	WriteDebug(stream string, data []byte)
+}
+
+type ProviderSink interface {
+	ProviderBaseSink
+	ProviderDebugSink
+}
+
+func writeProviderDebug(sink ProviderDebugSink, stream string, data []byte) {
+	if sink == nil || len(data) == 0 {
+		return
+	}
+	sink.WriteDebug(stream, data)
 }
 
 type ProviderItemSink interface {

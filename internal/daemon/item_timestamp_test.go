@@ -88,7 +88,7 @@ func TestPrepareItemForPersistenceUsesNestedTimestamp(t *testing.T) {
 
 func TestItemSinkAppendPersistsCreatedAt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "items.jsonl")
-	sink, err := newItemSink(path, nil, nil)
+	sink, err := newItemSink(path, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newItemSink: %v", err)
 	}
