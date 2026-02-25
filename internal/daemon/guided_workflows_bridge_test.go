@@ -2262,6 +2262,17 @@ type recordGuidedWorkflowOrchestrator struct {
 	turnEvents []types.NotificationEvent
 }
 
+type failingTurnProcessor struct {
+	err error
+}
+
+func (p *failingTurnProcessor) OnTurnCompleted(context.Context, guidedworkflows.TurnSignal) ([]*guidedworkflows.WorkflowRun, error) {
+	if p == nil {
+		return nil, nil
+	}
+	return nil, p.err
+}
+
 func (o *recordGuidedWorkflowOrchestrator) Enabled() bool {
 	return o.enabled
 }
@@ -2278,6 +2289,45 @@ func (o *recordGuidedWorkflowOrchestrator) StartRun(context.Context, guidedworkf
 
 func (o *recordGuidedWorkflowOrchestrator) OnTurnEvent(_ context.Context, event types.NotificationEvent) {
 	o.turnEvents = append(o.turnEvents, event)
+}
+
+func TestGuidedWorkflowNotificationPublisherPublishesTurnProcessingFailures(t *testing.T) {
+	downstream := &recordNotificationPublisher{}
+	orchestrator := &recordGuidedWorkflowOrchestrator{enabled: true}
+	publisher := NewGuidedWorkflowNotificationPublisher(
+		downstream,
+		orchestrator,
+		&failingTurnProcessor{err: errors.New("write |1: file already closed")},
+	)
+
+	publisher.Publish(types.NotificationEvent{
+		Trigger:     types.NotificationTriggerTurnCompleted,
+		SessionID:   "sess-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Provider:    "codex",
+		TurnID:      "turn-1",
+	})
+
+	if len(downstream.events) != 2 {
+		t.Fatalf("expected original + failure notification, got %d", len(downstream.events))
+	}
+	failure := downstream.events[1]
+	if failure.Trigger != types.NotificationTriggerSessionFailed {
+		t.Fatalf("expected session.failed trigger, got %q", failure.Trigger)
+	}
+	if failure.Status != "guided_workflow_failed" {
+		t.Fatalf("expected guided workflow failed status, got %q", failure.Status)
+	}
+	if kind := asString(failure.Payload["kind"]); kind != "guided_workflow_turn_processing_failed" {
+		t.Fatalf("unexpected failure kind: %q", kind)
+	}
+	if errMsg := asString(failure.Payload["error"]); !strings.Contains(errMsg, "file already closed") {
+		t.Fatalf("expected original error message in payload, got %q", errMsg)
+	}
+	if len(orchestrator.turnEvents) != 1 {
+		t.Fatalf("expected orchestrator to still observe turn event, got %d", len(orchestrator.turnEvents))
+	}
 }
 
 func boolPtr(v bool) *bool {

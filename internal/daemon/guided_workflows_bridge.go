@@ -1335,11 +1335,35 @@ func (p *guidedWorkflowNotificationPublisher) Publish(event types.NotificationEv
 		TurnID:      strings.TrimSpace(event.TurnID),
 	})
 	if err != nil {
+		p.publishTurnProcessingFailed(event, err)
 		return
 	}
 	for _, run := range updatedRuns {
 		p.publishDecisionNeeded(event, run)
 	}
+}
+
+func (p *guidedWorkflowNotificationPublisher) publishTurnProcessingFailed(turnEvent types.NotificationEvent, err error) {
+	if p == nil || p.downstream == nil || err == nil {
+		return
+	}
+	notification := types.NotificationEvent{
+		Trigger:     types.NotificationTriggerSessionFailed,
+		OccurredAt:  time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:   strings.TrimSpace(turnEvent.SessionID),
+		WorkspaceID: strings.TrimSpace(turnEvent.WorkspaceID),
+		WorktreeID:  strings.TrimSpace(turnEvent.WorktreeID),
+		Provider:    strings.TrimSpace(turnEvent.Provider),
+		TurnID:      strings.TrimSpace(turnEvent.TurnID),
+		Status:      "guided_workflow_failed",
+		Title:       "guided workflow turn processing failed",
+		Source:      "guided_workflow_turn_processor",
+		Payload: map[string]any{
+			"kind":  "guided_workflow_turn_processing_failed",
+			"error": strings.TrimSpace(err.Error()),
+		},
+	}
+	p.downstream.Publish(notification)
 }
 
 func (p *guidedWorkflowNotificationPublisher) publishDecisionNeeded(turnEvent types.NotificationEvent, run *guidedworkflows.WorkflowRun) {
