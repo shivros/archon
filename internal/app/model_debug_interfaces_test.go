@@ -1,10 +1,12 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
 )
@@ -13,6 +15,7 @@ type fakeDebugPanelView struct {
 	lastContent string
 	view        string
 	height      int
+	yOffset     int
 	scrollUp    int
 	scrollDown  int
 	scrollLeft  int
@@ -60,12 +63,16 @@ func (f *fakeDebugPanelView) GotoBottom() bool {
 	return true
 }
 func (f *fakeDebugPanelView) Height() int { return max(1, f.height) }
+func (f *fakeDebugPanelView) YOffset() int {
+	return max(0, f.yOffset)
+}
 func (f *fakeDebugPanelView) View() (string, int) {
 	return f.view, f.height
 }
 
 type fakeDebugStreamViewModel struct {
 	content       string
+	entries       []DebugStreamEntry
 	changed       bool
 	closed        bool
 	closedByClose bool
@@ -75,6 +82,7 @@ func (f *fakeDebugStreamViewModel) SetStream(<-chan types.DebugEvent, func()) {}
 func (f *fakeDebugStreamViewModel) Reset()                                    {}
 func (f *fakeDebugStreamViewModel) Close()                                    { f.closedByClose = true }
 func (f *fakeDebugStreamViewModel) Lines() []string                           { return nil }
+func (f *fakeDebugStreamViewModel) Entries() []DebugStreamEntry               { return f.entries }
 func (f *fakeDebugStreamViewModel) HasStream() bool                           { return true }
 func (f *fakeDebugStreamViewModel) Content() string                           { return f.content }
 func (f *fakeDebugStreamViewModel) ConsumeTick() ([]string, bool, bool) {
@@ -84,13 +92,19 @@ func (f *fakeDebugStreamViewModel) ConsumeTick() ([]string, bool, bool) {
 func TestModelDebugInterfacesConsumeTickRefreshesPanelContent(t *testing.T) {
 	m := NewModel(nil)
 	panel := &fakeDebugPanelView{view: "panel", height: 2}
-	stream := &fakeDebugStreamViewModel{content: "stream output", changed: true}
+	stream := &fakeDebugStreamViewModel{
+		content: "stream output",
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "stream output"}},
+		changed: true,
+	}
 	m.debugPanel = panel
 	m.debugStream = stream
+	m.debugStreamSnapshot = stream
+	m.debugPanelWidth = 80
 
 	m.consumeDebugTick(time.Now())
 
-	if panel.lastContent != "stream output" {
+	if plain := xansi.Strip(panel.lastContent); plain == "" || !strings.Contains(plain, "stream output") {
 		t.Fatalf("expected panel content to be refreshed from stream, got %q", panel.lastContent)
 	}
 }
@@ -98,7 +112,9 @@ func TestModelDebugInterfacesConsumeTickRefreshesPanelContent(t *testing.T) {
 func TestModelDebugInterfacesConsumeTickClosedSetsStatus(t *testing.T) {
 	m := NewModel(nil)
 	m.debugPanel = &fakeDebugPanelView{}
-	m.debugStream = &fakeDebugStreamViewModel{content: "", closed: true}
+	stream := &fakeDebugStreamViewModel{content: "", closed: true}
+	m.debugStream = stream
+	m.debugStreamSnapshot = stream
 
 	m.consumeDebugTick(time.Now())
 
@@ -120,12 +136,6 @@ func TestModelDebugInterfacesHandleViewportScrollRoutesToDebugPanel(t *testing.T
 	if panel.scrollDown != 1 {
 		t.Fatalf("expected debug panel vertical scroll down, got %d", panel.scrollDown)
 	}
-	if !m.handleViewportScroll(tea.KeyPressMsg{Code: 'L', Text: "L"}) {
-		t.Fatalf("expected debug panel horizontal key to be handled")
-	}
-	if panel.scrollRight == 0 {
-		t.Fatalf("expected debug panel horizontal scroll right")
-	}
 }
 
 func TestModelDebugInterfacesHandleDebugPanelAllCommandBranches(t *testing.T) {
@@ -136,15 +146,13 @@ func TestModelDebugInterfacesHandleDebugPanelAllCommandBranches(t *testing.T) {
 	m.appState.DebugStreamsEnabled = true
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
-	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyPgDown, Mod: tea.ModShift})
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyPgUp, Mod: tea.ModShift})
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModShift})
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift})
 
-	if panel.scrollUp == 0 || panel.scrollDown == 0 || panel.scrollLeft == 0 || panel.scrollRight == 0 {
-		t.Fatalf("expected directional command branches to execute")
+	if panel.scrollUp == 0 || panel.scrollDown == 0 {
+		t.Fatalf("expected vertical command branches to execute")
 	}
 	if panel.pageDown == 0 || panel.pageUp == 0 {
 		t.Fatalf("expected page branches to execute")
@@ -154,7 +162,7 @@ func TestModelDebugInterfacesHandleDebugPanelAllCommandBranches(t *testing.T) {
 	}
 }
 
-func TestModelDebugInterfacesHandleDebugPanelShiftArrowFallbacks(t *testing.T) {
+func TestModelDebugInterfacesHandleDebugPanelShiftArrowVerticalFallbacks(t *testing.T) {
 	m := NewModel(nil)
 	panel := &fakeDebugPanelView{height: 6}
 	m.debugPanel = panel
@@ -162,19 +170,15 @@ func TestModelDebugInterfacesHandleDebugPanelShiftArrowFallbacks(t *testing.T) {
 	m.appState.DebugStreamsEnabled = true
 	// Override command bindings so fallback paths are required.
 	m.applyKeybindings(NewKeybindings(map[string]string{
-		KeyCommandDebugPanelUp:    "f1",
-		KeyCommandDebugPanelDown:  "f2",
-		KeyCommandDebugPanelLeft:  "f3",
-		KeyCommandDebugPanelRight: "f4",
+		KeyCommandDebugPanelUp:   "f1",
+		KeyCommandDebugPanelDown: "f2",
 	}))
 
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
 	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
-	_ = m.handleDebugPanelScrollKey(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 
-	if panel.scrollUp == 0 || panel.scrollDown == 0 || panel.scrollLeft == 0 || panel.scrollRight == 0 {
-		t.Fatalf("expected shift-arrow fallback branches to execute")
+	if panel.scrollUp == 0 || panel.scrollDown == 0 {
+		t.Fatalf("expected shift-arrow vertical fallback branches to execute")
 	}
 }
 
@@ -230,10 +234,137 @@ func TestModelDebugInterfacesDebugPanelWheelGuards(t *testing.T) {
 	}
 }
 
+func TestModelDebugInterfacesDebugPanelLeftPressCopy(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.DebugStreamsEnabled = true
+	m.debugPanelVisible = true
+	m.debugPanelWidth = 72
+	m.debugPanel.Resize(72, 10)
+	m.debugStream = &fakeDebugStreamViewModel{
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "copy me"}},
+	}
+	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
+	m.refreshDebugPanelContent()
+	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
+
+	span := m.debugPanelSpans[0]
+	copyHit := renderedMetaControlHit{}
+	found := false
+	for _, control := range span.MetaControls {
+		if control.ID == debugMetaControlCopy {
+			copyHit = control
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected copy control hitbox in debug panel span")
+	}
+	x := layout.panelStart + copyHit.Start
+	y := copyHit.Line - m.debugPanel.YOffset() + 1
+	handled := m.reduceDebugPanelLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected debug panel copy click to be handled")
+	}
+	if m.pendingMouseCmd == nil {
+		t.Fatalf("expected copy click to enqueue clipboard command")
+	}
+}
+
+func TestModelDebugInterfacesDebugPanelLeftPressToggle(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.DebugStreamsEnabled = true
+	m.debugPanelVisible = true
+	m.debugPanelWidth = 72
+	m.debugPanel.Resize(72, 10)
+	m.debugStream = &fakeDebugStreamViewModel{
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6"}},
+	}
+	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
+	m.refreshDebugPanelContent()
+	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
+
+	span := m.debugPanelSpans[0]
+	toggleHit := renderedMetaControlHit{}
+	found := false
+	for _, control := range span.MetaControls {
+		if control.ID == debugMetaControlToggle {
+			toggleHit = control
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected toggle control hitbox in debug panel span")
+	}
+	x := layout.panelStart + toggleHit.Start
+	y := toggleHit.Line - m.debugPanel.YOffset() + 1
+	handled := m.reduceDebugPanelLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected debug panel toggle click to be handled")
+	}
+	if !m.debugPanelExpandedByID["debug-1"] {
+		t.Fatalf("expected debug event to toggle expanded state")
+	}
+}
+
+func TestModelDebugInterfacesDebugPanelLeftPressNotOnControl(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.DebugStreamsEnabled = true
+	m.debugPanelVisible = true
+	m.debugPanelWidth = 72
+	m.debugPanel.Resize(72, 10)
+	m.debugStream = &fakeDebugStreamViewModel{
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "plain text"}},
+	}
+	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
+	m.refreshDebugPanelContent()
+	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
+
+	handled := m.reduceDebugPanelLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.panelStart + 2, Y: 3}, layout)
+	if handled {
+		t.Fatalf("expected body click outside control hitboxes to be ignored")
+	}
+}
+
+func TestModelDebugInterfacesDebugPanelLeftPressInitializesInteractionFallback(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.DebugStreamsEnabled = true
+	m.debugPanelVisible = true
+	m.debugPanelWidth = 72
+	m.debugPanel.Resize(72, 10)
+	m.debugPanelInteractionService = nil
+	m.debugStream = &fakeDebugStreamViewModel{
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6"}},
+	}
+	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
+	m.refreshDebugPanelContent()
+	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
+
+	span := m.debugPanelSpans[0]
+	toggleHit := renderedMetaControlHit{}
+	for _, control := range span.MetaControls {
+		if control.ID == debugMetaControlToggle {
+			toggleHit = control
+			break
+		}
+	}
+	x := layout.panelStart + toggleHit.Start
+	y := toggleHit.Line - m.debugPanel.YOffset() + 1
+	handled := m.reduceDebugPanelLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected click to be handled via fallback interaction service")
+	}
+	if m.debugPanelInteractionService == nil {
+		t.Fatalf("expected fallback interaction service to be initialized")
+	}
+}
+
 func TestModelDebugInterfacesQuitClosesDebugStream(t *testing.T) {
 	m := NewModel(nil)
 	stream := &fakeDebugStreamViewModel{}
 	m.debugStream = stream
+	m.debugStreamSnapshot = stream
 
 	handled, cmd := m.reduceMenuAndAppKeys(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	if !handled {

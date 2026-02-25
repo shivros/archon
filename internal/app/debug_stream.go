@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -53,15 +54,24 @@ func (f JSONDebugLineFormatter) Format(line string) (string, bool) {
 	return formatted, true
 }
 
+type DebugStreamEntry struct {
+	ID      string
+	Seq     uint64
+	Stream  string
+	TS      string
+	Raw     string
+	Display string
+}
+
 type debugFormatRequest struct {
 	generation uint64
-	lineID     uint64
+	entryID    uint64
 	line       string
 }
 
 type debugFormatResult struct {
 	generation uint64
-	lineID     uint64
+	entryID    uint64
 	formatted  string
 	changed    bool
 }
@@ -112,7 +122,7 @@ func (w *asyncDebugFormatWorker) run() {
 			formatted, changed := w.formatter.Format(req.line)
 			res := debugFormatResult{
 				generation: req.generation,
-				lineID:     req.lineID,
+				entryID:    req.entryID,
 				formatted:  formatted,
 				changed:    changed,
 			}
@@ -205,18 +215,16 @@ func defaultDebugStreamControllerOptions() DebugStreamControllerOptions {
 type DebugStreamController struct {
 	events           <-chan types.DebugEvent
 	cancel           func()
-	lines            []string
-	displayLines     []string
-	lineIDs          []uint64
-	lineBytes        []int
+	entries          []DebugStreamEntry
+	entryIDs         []uint64
+	entryBytes       []int
 	totalBytes       int
-	pending          string
 	contentCache     string
 	contentDirty     bool
 	retention        DebugStreamRetentionPolicy
 	maxEventsPerTick int
 	worker           DebugFormatWorker
-	nextLineID       uint64
+	nextEntryID      uint64
 	generation       uint64
 	closed           bool
 }
@@ -264,12 +272,10 @@ func (c *DebugStreamController) Reset() {
 	}
 	c.cancel = nil
 	c.events = nil
-	c.lines = nil
-	c.displayLines = nil
-	c.lineIDs = nil
-	c.lineBytes = nil
+	c.entries = nil
+	c.entryIDs = nil
+	c.entryBytes = nil
 	c.totalBytes = 0
-	c.pending = ""
 	c.contentCache = ""
 	c.contentDirty = true
 	c.generation++
@@ -287,7 +293,22 @@ func (c *DebugStreamController) Lines() []string {
 	if c == nil {
 		return nil
 	}
-	return c.displayLines
+	c.drainFormatResults()
+	lines := make([]string, 0, len(c.entries))
+	for _, entry := range c.entries {
+		lines = append(lines, entry.Display)
+	}
+	return lines
+}
+
+func (c *DebugStreamController) Entries() []DebugStreamEntry {
+	if c == nil {
+		return nil
+	}
+	c.drainFormatResults()
+	entries := make([]DebugStreamEntry, len(c.entries))
+	copy(entries, c.entries)
+	return entries
 }
 
 func (c *DebugStreamController) HasStream() bool {
@@ -300,7 +321,11 @@ func (c *DebugStreamController) Content() string {
 	}
 	c.drainFormatResults()
 	if c.contentDirty {
-		c.contentCache = strings.Join(c.displayLines, "\n")
+		parts := make([]string, 0, len(c.entries))
+		for _, entry := range c.entries {
+			parts = append(parts, entry.Display)
+		}
+		c.contentCache = strings.Join(parts, "\n")
 		c.contentDirty = false
 	}
 	return c.contentCache
@@ -314,9 +339,8 @@ func (c *DebugStreamController) ConsumeTick() (lines []string, changed bool, clo
 		changed = true
 	}
 	if c.events == nil {
-		return c.displayLines, changed, false
+		return c.Lines(), changed, false
 	}
-	var builder strings.Builder
 	drain := true
 	for i := 0; i < c.maxEventsPerTick && drain; i++ {
 		select {
@@ -328,65 +352,72 @@ func (c *DebugStreamController) ConsumeTick() (lines []string, changed bool, clo
 				drain = false
 				break
 			}
-			builder.WriteString(event.Chunk)
+			if c.appendEvent(event) {
+				changed = true
+			}
 		default:
 			drain = false
 		}
 	}
-	if builder.Len() > 0 {
-		c.appendText(builder.String())
-		changed = true
-	}
-	return c.displayLines, changed, closed
+	return c.Lines(), changed, closed
 }
 
-func (c *DebugStreamController) appendText(text string) {
-	combined := c.pending + text
-	parts := strings.Split(combined, "\n")
-	if len(parts) == 0 {
-		return
+func (c *DebugStreamController) appendEvent(event types.DebugEvent) bool {
+	if c == nil {
+		return false
 	}
-	if len(parts) == 1 {
-		c.pending = parts[0]
-		return
+	raw := strings.TrimRight(event.Chunk, "\n")
+	if raw == "" {
+		return false
 	}
-	c.pending = parts[len(parts)-1]
-	for _, line := range parts[:len(parts)-1] {
-		c.nextLineID++
-		lineID := c.nextLineID
-		c.lines = append(c.lines, line)
-		c.displayLines = append(c.displayLines, line)
-		c.lineIDs = append(c.lineIDs, lineID)
-		lineBytes := len(line)
-		c.lineBytes = append(c.lineBytes, lineBytes)
-		c.totalBytes += lineBytes
-		c.enqueueFormat(lineID, line)
+	c.nextEntryID++
+	entryID := c.nextEntryID
+	entry := DebugStreamEntry{
+		ID:      debugEntryID(event, entryID),
+		Seq:     event.Seq,
+		Stream:  strings.TrimSpace(event.Stream),
+		TS:      strings.TrimSpace(event.TS),
+		Raw:     raw,
+		Display: raw,
 	}
+	c.entries = append(c.entries, entry)
+	c.entryIDs = append(c.entryIDs, entryID)
+	eventBytes := len(raw)
+	c.entryBytes = append(c.entryBytes, eventBytes)
+	c.totalBytes += eventBytes
+	c.enqueueFormat(entryID, raw)
 	for {
-		trimLines := c.retention.MaxLines > 0 && len(c.lines) > c.retention.MaxLines
-		trimBytes := c.retention.MaxBytes > 0 && c.totalBytes > c.retention.MaxBytes
+		trimLines := c.retention.MaxLines > 0 && len(c.entries) > c.retention.MaxLines && len(c.entries) > 1
+		trimBytes := c.retention.MaxBytes > 0 && c.totalBytes > c.retention.MaxBytes && len(c.entries) > 1
 		if !trimLines && !trimBytes {
 			break
 		}
-		if len(c.lines) == 0 {
+		if len(c.entries) == 0 {
 			break
 		}
-		c.totalBytes -= c.lineBytes[0]
-		c.lines = c.lines[1:]
-		c.displayLines = c.displayLines[1:]
-		c.lineIDs = c.lineIDs[1:]
-		c.lineBytes = c.lineBytes[1:]
+		c.totalBytes -= c.entryBytes[0]
+		c.entries = c.entries[1:]
+		c.entryIDs = c.entryIDs[1:]
+		c.entryBytes = c.entryBytes[1:]
 	}
 	c.contentDirty = true
+	return true
 }
 
-func (c *DebugStreamController) enqueueFormat(lineID uint64, line string) {
+func debugEntryID(event types.DebugEvent, entryID uint64) string {
+	if event.Seq > 0 {
+		return "debug-" + strconv.FormatUint(event.Seq, 10)
+	}
+	return "debug-entry-" + strconv.FormatUint(entryID, 10)
+}
+
+func (c *DebugStreamController) enqueueFormat(entryID uint64, line string) {
 	if c == nil || c.worker == nil {
 		return
 	}
 	c.worker.Enqueue(debugFormatRequest{
 		generation: c.generation,
-		lineID:     lineID,
+		entryID:    entryID,
 		line:       line,
 	})
 }
@@ -400,14 +431,14 @@ func (c *DebugStreamController) drainFormatResults() bool {
 		if !res.changed || res.generation != c.generation {
 			return
 		}
-		for i, lineID := range c.lineIDs {
-			if lineID != res.lineID {
+		for i, entryID := range c.entryIDs {
+			if entryID != res.entryID {
 				continue
 			}
-			if c.displayLines[i] == res.formatted {
+			if c.entries[i].Display == res.formatted {
 				break
 			}
-			c.displayLines[i] = res.formatted
+			c.entries[i].Display = res.formatted
 			c.contentDirty = true
 			changed = true
 			break

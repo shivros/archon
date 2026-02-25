@@ -66,8 +66,8 @@ func TestToggleDebugStreamsDisableResetsController(t *testing.T) {
 	if m.debugStream.HasStream() {
 		t.Fatalf("expected debug stream to be cleared")
 	}
-	if len(m.debugStream.Lines()) != 0 {
-		t.Fatalf("expected debug lines to be cleared")
+	if m.debugStreamSnapshot != nil && len(m.debugStreamSnapshot.Entries()) != 0 {
+		t.Fatalf("expected debug entries to be cleared")
 	}
 }
 
@@ -144,7 +144,10 @@ func TestRenderDebugPanelViewShowsFallbackAndStreamLines(t *testing.T) {
 
 	panelView, _ := m.renderDebugPanelView()
 	panel := xansi.Strip(panelView)
-	if !strings.Contains(panel, "line one") || !strings.Contains(panel, "line two") {
-		t.Fatalf("expected stream lines in panel, got %q", panel)
+	if !strings.Contains(panel, "Debug Event") || !strings.Contains(panel, "[Copy]") {
+		t.Fatalf("expected debug cards with controls in panel, got %q", panel)
+	}
+	if len(m.debugPanelBlocks) == 0 || !strings.Contains(m.debugPanelBlocks[0].Text, "line one") || !strings.Contains(m.debugPanelBlocks[0].Text, "line two") {
+		t.Fatalf("expected debug block payload to include streamed content, got %#v", m.debugPanelBlocks)
 	}
 }

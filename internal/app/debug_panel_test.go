@@ -3,8 +3,6 @@ package app
 import (
 	"strings"
 	"testing"
-
-	xansi "github.com/charmbracelet/x/ansi"
 )
 
 type testDebugPanelHeaderRenderer struct{}
@@ -65,7 +63,7 @@ func TestDebugPanelControllerNormalizesEmptyContent(t *testing.T) {
 	}
 }
 
-func TestDebugPanelControllerScrollsVerticallyAndHorizontally(t *testing.T) {
+func TestDebugPanelControllerScrollsAndWrapsLongLines(t *testing.T) {
 	panel := NewDebugPanelController(14, 3, testDebugPanelHeaderRenderer{})
 	panel.SetContent("line-1\nline-2\nline-3\nline-4\nline-5")
 	if !panel.ScrollDown(2) {
@@ -76,16 +74,15 @@ func TestDebugPanelControllerScrollsVerticallyAndHorizontally(t *testing.T) {
 	}
 
 	panel.SetContent("abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-	before, _ := panel.View()
-	if !panel.ScrollRight(8) {
-		t.Fatalf("expected horizontal scroll right to move viewport")
+	view, _ := panel.View()
+	if !strings.Contains(view, "\n") {
+		t.Fatalf("expected long line content to wrap in panel view")
 	}
-	after, _ := panel.View()
-	if xansi.Strip(before) == xansi.Strip(after) {
-		t.Fatalf("expected horizontal scroll to change rendered body")
+	if panel.ScrollRight(8) {
+		t.Fatalf("expected no horizontal scroll movement when soft wrapping is enabled")
 	}
-	if !panel.ScrollLeft(8) {
-		t.Fatalf("expected horizontal scroll left to move viewport")
+	if panel.ScrollLeft(8) {
+		t.Fatalf("expected no horizontal scroll movement when soft wrapping is enabled")
 	}
 }
 
@@ -107,5 +104,8 @@ func TestDebugPanelControllerPageAndGotoNavigation(t *testing.T) {
 	}
 	if panel.Height() != 3 {
 		t.Fatalf("expected viewport height 3, got %d", panel.Height())
+	}
+	if panel.YOffset() != 0 {
+		t.Fatalf("expected goto top to reset vertical offset, got %d", panel.YOffset())
 	}
 }

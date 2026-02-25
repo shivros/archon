@@ -156,7 +156,8 @@ type Model struct {
 	stream                              *StreamController
 	codexStream                         *CodexStreamController
 	itemStream                          *ItemStreamController
-	debugStream                         debugStreamViewModel
+	debugStream                         debugStreamConsumer
+	debugStreamSnapshot                 debugStreamSnapshot
 	input                               *InputController
 	chat                                *SessionChatController
 	pendingApproval                     *ApprovalRequest
@@ -252,6 +253,14 @@ type Model struct {
 	debugPanelWidth                     int
 	debugPanelMainWidth                 int
 	debugPanel                          debugPanelView
+	debugPanelPresenter                 debugPanelPresenter
+	debugPanelBlocksRenderer            debugPanelBlocksRenderer
+	debugPanelInteractionService        debugPanelInteractionService
+	debugPanelBlocks                    []ChatBlock
+	debugPanelSpans                     []renderedBlockSpan
+	debugPanelMetaByID                  map[string]ChatBlockMetaPresentation
+	debugPanelCopyByID                  map[string]string
+	debugPanelExpandedByID              map[string]bool
 	notesPanelPendingScopes             map[types.NoteScope]struct{}
 	notesPanelLoadErrors                int
 	notesPanelBlocks                    []ChatBlock
@@ -417,7 +426,11 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		codexStream:                         codexStream,
 		itemStream:                          itemStream,
 		debugStream:                         debugStream,
+		debugStreamSnapshot:                 debugStream,
 		debugPanel:                          debugPanel,
+		debugPanelPresenter:                 NewDefaultDebugPanelPresenter(DefaultDebugPanelDisplayPolicy()),
+		debugPanelBlocksRenderer:            NewDefaultDebugPanelBlocksRenderer(),
+		debugPanelInteractionService:        NewDefaultDebugPanelInteractionService(),
 		input:                               NewInputController(),
 		chat:                                NewSessionChatController(api, codexStream),
 		mode:                                uiModeNormal,
@@ -484,6 +497,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		requestScopes:                       map[string]requestScope{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
+		debugPanelExpandedByID:              map[string]bool{},
+		debugPanelCopyByID:                  map[string]string{},
 		uiLatency:                           newUILatencyTracker(nil),
 		selectionLoadPolicy:                 defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
@@ -3402,6 +3417,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 	if m.reduceGlobalStatusCopyLeftPressMouse(msg) {
+		return true
+	}
+	if m.reduceDebugPanelLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceNotesPanelLeftPressMouse(msg, layout) {

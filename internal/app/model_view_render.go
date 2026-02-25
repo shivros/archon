@@ -85,19 +85,6 @@ func normalizeBlockWidth(block string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) refreshDebugPanelContent() {
-	if m == nil || m.debugPanel == nil {
-		return
-	}
-	body := debugPanelWaitingMessage
-	if m.debugStream != nil {
-		if content := m.debugStream.Content(); strings.TrimSpace(content) != "" {
-			body = content
-		}
-	}
-	m.debugPanel.SetContent(body)
-}
-
 func (m *Model) renderDebugPanelView() (string, int) {
 	if m.debugPanel == nil {
 		m.debugPanel = NewDebugPanelController(max(1, m.debugPanelWidth), max(1, m.height-1), nil)

@@ -26,7 +26,7 @@ func (w *testDebugFormatWorker) Drain(apply func(debugFormatResult)) {
 	for _, req := range w.requests {
 		apply(debugFormatResult{
 			generation: req.generation,
-			lineID:     req.lineID,
+			entryID:    req.entryID,
 			formatted:  "wrk:" + req.line,
 			changed:    true,
 		})
@@ -51,7 +51,7 @@ func TestDebugStreamControllerConsumeTickAccumulatesAndCloses(t *testing.T) {
 	if !changed {
 		t.Fatalf("expected changed=true on chunk consumption")
 	}
-	if len(lines) != 2 || lines[0] != "first" || lines[1] != "second" {
+	if len(lines) != 1 || lines[0] != "first\nsecond" {
 		t.Fatalf("unexpected lines after first tick: %#v", lines)
 	}
 
@@ -63,7 +63,7 @@ func TestDebugStreamControllerConsumeTickAccumulatesAndCloses(t *testing.T) {
 	if !changed {
 		t.Fatalf("expected changed=true after second chunk")
 	}
-	if len(lines) != 2 || lines[0] != "second" || lines[1] != "third" {
+	if len(lines) != 2 || lines[0] != "first\nsecond" || lines[1] != "third" {
 		t.Fatalf("expected max-lines trimming, got %#v", lines)
 	}
 
@@ -83,8 +83,7 @@ func TestDebugStreamControllerConsumeTickAccumulatesAndCloses(t *testing.T) {
 func TestDebugStreamControllerResetCancelsAndClearsState(t *testing.T) {
 	controller := NewDebugStreamController(DebugStreamRetentionPolicy{MaxLines: 10, MaxBytes: 1024}, 10)
 	called := 0
-	controller.lines = []string{"line"}
-	controller.pending = "partial"
+	controller.entries = []DebugStreamEntry{{ID: "debug-1", Raw: "line", Display: "line"}}
 	controller.SetStream(make(chan types.DebugEvent), func() {
 		called++
 	})
@@ -100,8 +99,8 @@ func TestDebugStreamControllerResetCancelsAndClearsState(t *testing.T) {
 	if len(controller.Lines()) != 0 {
 		t.Fatalf("expected lines to be cleared, got %#v", controller.Lines())
 	}
-	if controller.pending != "" {
-		t.Fatalf("expected pending buffer to be cleared, got %q", controller.pending)
+	if len(controller.entries) != 0 {
+		t.Fatalf("expected entries to be cleared, got %#v", controller.entries)
 	}
 }
 
@@ -110,15 +109,15 @@ func TestDebugStreamControllerTrimsByBytes(t *testing.T) {
 	ch := make(chan types.DebugEvent, 1)
 	controller.SetStream(ch, nil)
 
-	ch <- types.DebugEvent{Chunk: "abcd\nefgh\n"}
+	ch <- types.DebugEvent{Chunk: "abcd\nefgh"}
 	lines, changed, _ := controller.ConsumeTick()
 	if !changed {
 		t.Fatalf("expected changed=true on chunk consumption")
 	}
-	if len(lines) != 1 || lines[0] != "efgh" {
-		t.Fatalf("expected byte-bound trimming to retain latest line, got %#v", lines)
+	if len(lines) != 1 || lines[0] != "abcd\nefgh" {
+		t.Fatalf("expected byte-bound retention to keep latest event payload, got %#v", lines)
 	}
-	if got := controller.Content(); got != "efgh" {
+	if got := controller.Content(); got != "abcd\nefgh" {
 		t.Fatalf("expected cached content to match trimmed lines, got %q", got)
 	}
 }
@@ -128,7 +127,7 @@ func TestDebugStreamControllerPrettyFormatsJSONAsynchronously(t *testing.T) {
 	ch := make(chan types.DebugEvent, 1)
 	controller.SetStream(ch, nil)
 
-	ch <- types.DebugEvent{Chunk: "{\"a\":1,\"b\":{\"c\":2}}\n"}
+	ch <- types.DebugEvent{Chunk: "{\"a\":1,\"b\":{\"c\":2}}"}
 	_, changed, _ := controller.ConsumeTick()
 	if !changed {
 		t.Fatalf("expected first tick to consume line")
@@ -156,7 +155,7 @@ func TestDebugStreamControllerFallsBackForNonJSONLines(t *testing.T) {
 	ch := make(chan types.DebugEvent, 1)
 	controller.SetStream(ch, nil)
 
-	ch <- types.DebugEvent{Chunk: "plain text line\n"}
+	ch <- types.DebugEvent{Chunk: "plain text line"}
 	_, changed, _ := controller.ConsumeTick()
 	if !changed {
 		t.Fatalf("expected first tick to consume non-json line")
@@ -175,7 +174,7 @@ func TestDebugStreamControllerOptionsUseInjectedFormatter(t *testing.T) {
 	ch := make(chan types.DebugEvent, 1)
 	controller.SetStream(ch, nil)
 
-	ch <- types.DebugEvent{Chunk: "hello\n"}
+	ch <- types.DebugEvent{Chunk: "hello"}
 	_, _, _ = controller.ConsumeTick()
 
 	deadline := time.Now().Add(200 * time.Millisecond)
@@ -200,7 +199,7 @@ func TestDebugStreamControllerCloseClosesWorker(t *testing.T) {
 	)
 	ch := make(chan types.DebugEvent, 1)
 	controller.SetStream(ch, nil)
-	ch <- types.DebugEvent{Chunk: "hello\n"}
+	ch <- types.DebugEvent{Chunk: "hello"}
 	_, _, _ = controller.ConsumeTick()
 
 	controller.Close()
@@ -214,7 +213,7 @@ func TestAsyncDebugFormatWorkerCloseIdempotentAndStopsEnqueue(t *testing.T) {
 	worker.Close()
 	worker.Close()
 
-	worker.Enqueue(debugFormatRequest{generation: 1, lineID: 1, line: "hello"})
+	worker.Enqueue(debugFormatRequest{generation: 1, entryID: 1, line: "hello"})
 	called := false
 	worker.Drain(func(debugFormatResult) {
 		called = true
@@ -235,12 +234,50 @@ func TestDebugStreamControllerOptionsCoverQueueAndMaxBytes(t *testing.T) {
 	controller.SetStream(ch, nil)
 
 	// Valid JSON but above max-bytes threshold: should remain raw.
-	ch <- types.DebugEvent{Chunk: "{\"a\":1234}\n"}
+	ch <- types.DebugEvent{Chunk: "{\"a\":1234}"}
 	_, changed, _ := controller.ConsumeTick()
 	if !changed {
 		t.Fatalf("expected stream update")
 	}
 	if got := controller.Content(); got != "{\"a\":1234}" {
 		t.Fatalf("expected JSON to remain raw due to max-bytes cap, got %q", got)
+	}
+}
+
+func TestDebugStreamControllerIgnoresEmptyChunks(t *testing.T) {
+	controller := NewDebugStreamController(DebugStreamRetentionPolicy{MaxLines: 10, MaxBytes: 4096}, 10)
+	ch := make(chan types.DebugEvent, 1)
+	controller.SetStream(ch, nil)
+
+	ch <- types.DebugEvent{Chunk: ""}
+	lines, changed, _ := controller.ConsumeTick()
+	if changed {
+		t.Fatalf("expected empty chunk to not mark stream changed")
+	}
+	if len(lines) != 0 {
+		t.Fatalf("expected no lines for empty chunk, got %#v", lines)
+	}
+}
+
+func TestDebugStreamControllerEntryIDFallbackAndSeqID(t *testing.T) {
+	controller := NewDebugStreamController(DebugStreamRetentionPolicy{MaxLines: 10, MaxBytes: 4096}, 10)
+	ch := make(chan types.DebugEvent, 2)
+	controller.SetStream(ch, nil)
+
+	ch <- types.DebugEvent{Seq: 42, Chunk: "with-seq"}
+	ch <- types.DebugEvent{Seq: 0, Chunk: "no-seq"}
+	_, changed, _ := controller.ConsumeTick()
+	if !changed {
+		t.Fatalf("expected stream change")
+	}
+	entries := controller.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("expected two entries, got %d", len(entries))
+	}
+	if entries[0].ID != "debug-42" {
+		t.Fatalf("expected seq-based id, got %q", entries[0].ID)
+	}
+	if entries[1].ID == "" || entries[1].ID == "debug-0" {
+		t.Fatalf("expected fallback entry id, got %q", entries[1].ID)
 	}
 }

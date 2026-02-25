@@ -33,7 +33,7 @@ func NewDebugPanelController(width, height int, renderer DebugPanelHeaderRendere
 		renderer = defaultDebugPanelHeaderRenderer{}
 	}
 	vp := viewport.New(viewport.WithWidth(max(1, width)), viewport.WithHeight(max(1, height)))
-	vp.SoftWrap = false
+	vp.SoftWrap = true
 	vp.SetContent(debugPanelWaitingMessage)
 	return &DebugPanelController{
 		viewport:     vp,
@@ -154,6 +154,13 @@ func (c *DebugPanelController) Height() int {
 		return 0
 	}
 	return c.viewport.Height()
+}
+
+func (c *DebugPanelController) YOffset() int {
+	if c == nil {
+		return 0
+	}
+	return c.viewport.YOffset()
 }
 
 func (c *DebugPanelController) Resize(width, height int) {
