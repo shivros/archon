@@ -462,13 +462,28 @@ func (c *GuidedWorkflowUIController) ActivePickerLayout() (guidedWorkflowLaunche
 }
 
 func (c *GuidedWorkflowUIController) LauncherRequiresRawANSIRender() bool {
-	if c == nil || c.stage != guidedWorkflowStageLauncher {
+	if c == nil {
 		return false
 	}
-	if c.templatePicker.Loading() || c.templatePicker.Error() != "" || len(c.templatePicker.Options()) == 0 {
+	switch c.stage {
+	case guidedWorkflowStageLauncher:
+		if c.templatePicker.Loading() || c.templatePicker.Error() != "" || len(c.templatePicker.Options()) == 0 {
+			return false
+		}
+		return strings.Contains(c.templatePicker.View(), "\x1b[")
+	case guidedWorkflowStageProvider:
+		if c.providerPicker == nil {
+			return false
+		}
+		return strings.Contains(c.providerPicker.View(), "\x1b[")
+	case guidedWorkflowStagePolicy:
+		if c.policyPicker == nil {
+			return false
+		}
+		return strings.Contains(c.policyPicker.View(), "\x1b[")
+	default:
 		return false
 	}
-	return strings.Contains(c.templatePicker.View(), "\x1b[")
 }
 
 func (c *GuidedWorkflowUIController) TemplatesLoading() bool {
@@ -907,113 +922,34 @@ func (c *GuidedWorkflowUIController) Render() string {
 }
 
 func (c *GuidedWorkflowUIController) renderLauncher() string {
-	lines := []string{
-		"# Workflow Template Picker",
-		"",
-		"Select a workflow template.",
-		"",
-		"### Template Picker",
-		"- Type to filter templates. Use up/down to select, enter to continue.",
+	if c.templatePicker.Loading() {
+		return "Loading workflow templates..."
 	}
-	options := c.templatePicker.Options()
-	switch {
-	case c.templatePicker.Loading():
-		lines = append(lines, "- Loading workflow templates...")
-	case c.templatePicker.Error() != "":
-		lines = append(lines, "- Template load failed: "+c.templatePicker.Error())
-	case len(options) == 0:
-		lines = append(lines, "- No templates available.")
-	default:
-		if pickerView := strings.TrimSpace(c.templatePicker.View()); pickerView != "" {
-			lines = append(lines, "")
-			lines = append(lines, strings.Split(pickerView, "\n")...)
-		}
-		if selected, ok := c.templatePicker.Selected(); ok {
-			lines = append(lines,
-				"",
-				"### Selected Template",
-				fmt.Sprintf("- Name: %s", valueOrFallback(selected.name, selected.id)),
-				fmt.Sprintf("- ID: %s", valueOrFallback(selected.id, "(not set)")),
-			)
-			if text := strings.TrimSpace(selected.description); text != "" {
-				lines = append(lines, fmt.Sprintf("- Description: %s", text))
-			}
-		}
+	if text := strings.TrimSpace(c.templatePicker.Error()); text != "" {
+		return "Template load failed: " + text
 	}
-	lines = append(lines,
-		"",
-		"### Controls",
-		"- up/down: choose template",
-		"- type/backspace/ctrl+u: filter templates",
-		"- enter: continue to provider",
-		"- ctrl+r: reload templates",
-		"- esc: close launcher",
-	)
-	if text := strings.TrimSpace(c.lastError); text != "" {
-		lines = append(lines, "", "Error: "+text)
+	if len(c.templatePicker.Options()) == 0 {
+		return "No templates available."
 	}
-	return joinGuidedWorkflowLines(lines)
+	return c.templatePicker.View()
 }
 
 func (c *GuidedWorkflowUIController) renderProvider() string {
-	lines := []string{
-		"# Provider Picker",
-		"",
-		"Select the provider for this workflow run.",
+	if c.providerPicker == nil {
+		return ""
 	}
-	if view := strings.TrimSpace(c.providerPickerView()); view != "" {
-		lines = append(lines, "")
-		lines = append(lines, strings.Split(view, "\n")...)
-	}
-	lines = append(lines,
-		"",
-		"### Selected Provider",
-		fmt.Sprintf("- Provider: %s", valueOrFallback(c.provider, "(not selected)")),
-		"",
-		"### Controls",
-		"- up/down: choose provider",
-		"- type/backspace/ctrl+u: filter providers",
-		"- enter: continue to policy sensitivity",
-		"- esc: back to template picker",
-	)
-	if text := strings.TrimSpace(c.lastError); text != "" {
-		lines = append(lines, "", "Error: "+text)
-	}
-	return joinGuidedWorkflowLines(lines)
+	return c.providerPicker.View()
 }
 
 func (c *GuidedWorkflowUIController) renderPolicy() string {
-	lines := []string{
-		"# Policy Sensitivity Picker",
-		"",
-		"Select checkpoint sensitivity for this run.",
+	if c.policyPicker == nil {
+		return ""
 	}
-	if c.policyPicker != nil {
-		if view := strings.TrimSpace(c.policyPicker.View()); view != "" {
-			lines = append(lines, "")
-			lines = append(lines, strings.Split(view, "\n")...)
-		}
-	}
-	lines = append(lines,
-		"",
-		"### Selected Sensitivity",
-		fmt.Sprintf("- Preset: %s", c.sensitivityLabel()),
-		"",
-		"### Controls",
-		"- up/down: choose sensitivity",
-		"- type/backspace/ctrl+u: filter presets",
-		"- enter: continue to prompt composer",
-		"- esc: back to provider",
-	)
-	if text := strings.TrimSpace(c.lastError); text != "" {
-		lines = append(lines, "", "Error: "+text)
-	}
-	return joinGuidedWorkflowLines(lines)
+	return c.policyPicker.View()
 }
 
 func (c *GuidedWorkflowUIController) renderSetup() string {
 	sensitivity := c.sensitivityLabel()
-	chars, linesCount := promptStats(c.userPrompt)
 	lines := []string{
 		"# Prompt Composer",
 		"",
@@ -1022,27 +958,7 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 		fmt.Sprintf("- ID: %s", valueOrFallback(c.templateID, "(not selected)")),
 		fmt.Sprintf("- Provider: %s", valueOrFallback(c.provider, "(not selected)")),
 		fmt.Sprintf("- Policy sensitivity: %s", sensitivity),
-		"",
-		"### Workflow Prompt (Required)",
-		"- Input focus: active in the framed task description panel below",
-		fmt.Sprintf("- Prompt stats: %d chars across %d lines", chars, linesCount),
-		"- Paste support: uses the same editor behavior as chat/notes input",
 	}
-	lines = append(lines,
-		"",
-		"### Runtime Options",
-		fmt.Sprintf("- Model: %s", c.runtimeModelLabel()),
-		fmt.Sprintf("- Reasoning: %s", c.runtimeReasoningLabel()),
-		fmt.Sprintf("- Access: %s", c.runtimeAccessLabel()),
-		"",
-		"### Controls",
-		"- type/paste: edit workflow prompt",
-		"- ctrl+1: choose model",
-		"- ctrl+2: choose reasoning",
-		"- ctrl+3: choose access",
-		"- enter: create and start run",
-		"- esc: back to policy sensitivity",
-	)
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
@@ -1569,27 +1485,6 @@ func (c *GuidedWorkflowUIController) providerPickerView() string {
 	return c.providerPicker.View()
 }
 
-func (c *GuidedWorkflowUIController) runtimeModelLabel() string {
-	if c == nil || c.runtimeOptions == nil || strings.TrimSpace(c.runtimeOptions.Model) == "" {
-		return "default"
-	}
-	return strings.TrimSpace(c.runtimeOptions.Model)
-}
-
-func (c *GuidedWorkflowUIController) runtimeReasoningLabel() string {
-	if c == nil || c.runtimeOptions == nil || strings.TrimSpace(string(c.runtimeOptions.Reasoning)) == "" {
-		return "default"
-	}
-	return strings.TrimSpace(string(c.runtimeOptions.Reasoning))
-}
-
-func (c *GuidedWorkflowUIController) runtimeAccessLabel() string {
-	if c == nil || c.runtimeOptions == nil || strings.TrimSpace(string(c.runtimeOptions.Access)) == "" {
-		return "default"
-	}
-	return strings.TrimSpace(string(c.runtimeOptions.Access))
-}
-
 func (c *GuidedWorkflowUIController) sensitivityLabel() string {
 	switch c.sensitivity {
 	case guidedPolicySensitivityLow:
@@ -1744,16 +1639,6 @@ func policyPresetForSensitivity(sensitivity guidedPolicySensitivity) guidedworkf
 	default:
 		return guidedworkflows.PolicyPresetBalanced
 	}
-}
-
-func promptStats(text string) (chars int, lines int) {
-	chars = len([]rune(text))
-	lines = 1
-	if text == "" {
-		return chars, lines
-	}
-	lines = len(strings.Split(text, "\n"))
-	return chars, lines
 }
 
 func cloneWorkflowRun(run *guidedworkflows.WorkflowRun) *guidedworkflows.WorkflowRun {

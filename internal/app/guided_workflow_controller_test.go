@@ -197,8 +197,8 @@ func TestGuidedWorkflowControllerLauncherRequiresRawANSIRender(t *testing.T) {
 	}
 
 	controller.OpenProvider()
-	if controller.LauncherRequiresRawANSIRender() {
-		t.Fatalf("expected non-launcher stage to disable ANSI passthrough")
+	if !controller.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected picker stages to preserve ANSI passthrough")
 	}
 }
 
@@ -368,5 +368,30 @@ func TestGuidedWorkflowControllerRenderWorkflowPromptNilPresenterFallback(t *tes
 	run := &guidedworkflows.WorkflowRun{UserPrompt: "recover prompt from default presenter"}
 	if got := controller.renderWorkflowPrompt(run); got != "recover prompt from default presenter" {
 		t.Fatalf("expected fallback presenter output, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderSetupOmitsLegacyWorkflowPromptMetadata(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
+	})
+	if !controller.OpenProvider() || !controller.OpenPolicy() || !controller.OpenSetup() {
+		t.Fatalf("expected launcher/provider/policy/setup flow")
+	}
+
+	setup := controller.Render()
+	if !strings.Contains(setup, "### Launch Selections") {
+		t.Fatalf("expected launch selections section, got %q", setup)
+	}
+	if strings.Contains(setup, "### Workflow Prompt") {
+		t.Fatalf("expected workflow prompt metadata block removed, got %q", setup)
+	}
+	if strings.Contains(setup, "### Runtime Options") {
+		t.Fatalf("expected runtime options summary block removed, got %q", setup)
+	}
+	if strings.Contains(setup, "### Controls") {
+		t.Fatalf("expected controls legend removed from setup metadata, got %q", setup)
 	}
 }

@@ -88,15 +88,20 @@ func (m *Model) composeRuntimeOptions() *types.SessionRuntimeOptions {
 		return nil
 	}
 	if m != nil && m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
-		out := m.guidedWorkflow.RuntimeOptions()
+		var out *types.SessionRuntimeOptions
+		if m.newSession != nil && strings.EqualFold(strings.TrimSpace(m.newSession.provider), provider) {
+			out = types.CloneRuntimeOptions(m.newSession.runtimeOptions)
+		}
+		if out == nil {
+			out = m.guidedWorkflow.RuntimeOptions()
+		}
+		if out == nil {
+			out = m.composeDefaultsForProvider(provider)
+		}
 		if out == nil {
 			out = &types.SessionRuntimeOptions{}
 		}
-		if catalog := m.providerOptionCatalog(provider); catalog != nil {
-			out = types.MergeRuntimeOptions(&catalog.Defaults, out)
-		}
-		m.normalizeComposeRuntimeOptionsForModel(provider, out)
-		return out
+		return m.resolveComposeRuntimeOptions(provider, out)
 	}
 	var out *types.SessionRuntimeOptions
 	if catalog := m.providerOptionCatalog(provider); catalog != nil {
@@ -116,8 +121,7 @@ func (m *Model) composeRuntimeOptions() *types.SessionRuntimeOptions {
 	if out == nil {
 		out = &types.SessionRuntimeOptions{}
 	}
-	m.normalizeComposeRuntimeOptionsForModel(provider, out)
-	return out
+	return m.resolveComposeRuntimeOptions(provider, out)
 }
 
 func (m *Model) composeDefaultsForProvider(provider string) *types.SessionRuntimeOptions {
@@ -163,71 +167,36 @@ func (m *Model) composeControlsLine() string {
 	return m.chatAddonController.composeControlsLine(m)
 }
 
+func (m *Model) composeOptionResolver() runtimeOptionResolver {
+	return newRuntimeOptionResolver(m, m)
+}
+
+func (m *Model) resolveComposeRuntimeOptions(provider string, options *types.SessionRuntimeOptions) *types.SessionRuntimeOptions {
+	if m == nil {
+		return types.CloneRuntimeOptions(options)
+	}
+	return m.composeOptionResolver().resolve(provider, options)
+}
+
 func (m *Model) modelReasoningLevels(provider, model string) []types.ReasoningLevel {
 	catalog := m.providerOptionCatalog(provider)
-	if catalog == nil {
-		return nil
-	}
-	model = strings.TrimSpace(model)
-	if model != "" && len(catalog.ModelReasoningLevels) > 0 {
-		for key, levels := range catalog.ModelReasoningLevels {
-			if strings.EqualFold(strings.TrimSpace(key), model) {
-				return append([]types.ReasoningLevel{}, levels...)
-			}
-		}
-	}
-	return append([]types.ReasoningLevel{}, catalog.ReasoningLevels...)
-}
-
-func (m *Model) modelDefaultReasoning(provider, model string) types.ReasoningLevel {
-	catalog := m.providerOptionCatalog(provider)
-	if catalog == nil {
-		return ""
-	}
-	model = strings.TrimSpace(model)
-	if model != "" && len(catalog.ModelDefaultReasoning) > 0 {
-		for key, level := range catalog.ModelDefaultReasoning {
-			if strings.EqualFold(strings.TrimSpace(key), model) {
-				return level
-			}
-		}
-	}
-	return catalog.Defaults.Reasoning
-}
-
-func reasoningLevelAllowed(level types.ReasoningLevel, allowed []types.ReasoningLevel) bool {
-	if level == "" || len(allowed) == 0 {
-		return true
-	}
-	for _, entry := range allowed {
-		if entry == level {
-			return true
-		}
-	}
-	return false
+	return runtimeReasoningLevelsForModel(catalog, model)
 }
 
 func (m *Model) normalizeComposeRuntimeOptionsForModel(provider string, options *types.SessionRuntimeOptions) {
 	if options == nil {
 		return
 	}
-	allowed := m.modelReasoningLevels(provider, options.Model)
-	if len(allowed) == 0 {
+	resolved := m.resolveComposeRuntimeOptions(provider, options)
+	options.Reasoning = resolved.Reasoning
+}
+
+func (m *Model) normalizeComposeRuntimeOptionsForProvider(provider string, options *types.SessionRuntimeOptions) {
+	if options == nil {
 		return
 	}
-	if reasoningLevelAllowed(options.Reasoning, allowed) {
-		if options.Reasoning == "" {
-			options.Reasoning = m.modelDefaultReasoning(provider, options.Model)
-			if options.Reasoning == "" && len(allowed) > 0 {
-				options.Reasoning = allowed[0]
-			}
-		}
-		return
-	}
-	options.Reasoning = m.modelDefaultReasoning(provider, options.Model)
-	if options.Reasoning == "" || !reasoningLevelAllowed(options.Reasoning, allowed) {
-		options.Reasoning = allowed[0]
-	}
+	resolved := m.resolveComposeRuntimeOptions(provider, options)
+	*options = *resolved
 }
 
 func (m *Model) composeControlsRow() int {

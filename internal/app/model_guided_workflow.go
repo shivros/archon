@@ -1125,19 +1125,20 @@ func (m *Model) prepareGuidedWorkflowComposerDefaults() {
 	if provider == "" {
 		return
 	}
-	runtime := m.guidedWorkflow.RuntimeOptions()
+	var runtime *types.SessionRuntimeOptions
+	if m.newSession != nil && strings.EqualFold(strings.TrimSpace(m.newSession.provider), provider) {
+		runtime = types.CloneRuntimeOptions(m.newSession.runtimeOptions)
+	}
+	if runtime == nil {
+		runtime = m.guidedWorkflow.RuntimeOptions()
+	}
 	if runtime == nil {
 		runtime = m.composeDefaultsForProvider(provider)
 	}
 	if runtime == nil {
-		if catalog := m.providerOptionCatalog(provider); catalog != nil {
-			runtime = types.CloneRuntimeOptions(&catalog.Defaults)
-		}
-	}
-	if runtime == nil {
 		runtime = &types.SessionRuntimeOptions{}
 	}
-	m.normalizeComposeRuntimeOptionsForModel(provider, runtime)
+	m.normalizeComposeRuntimeOptionsForProvider(provider, runtime)
 	m.guidedWorkflow.SetRuntimeOptions(runtime)
 	m.newSession = &newSessionTarget{
 		provider:       provider,
@@ -1149,16 +1150,27 @@ func (m *Model) syncGuidedWorkflowRuntimeOptionsFromCompose() {
 	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
 		return
 	}
-	if m.newSession == nil {
+	provider := strings.TrimSpace(m.guidedWorkflow.Provider())
+	if provider == "" {
 		return
 	}
-	provider := strings.TrimSpace(m.guidedWorkflow.Provider())
-	runtime := types.CloneRuntimeOptions(m.newSession.runtimeOptions)
+	var runtime *types.SessionRuntimeOptions
+	if m.newSession != nil && strings.EqualFold(strings.TrimSpace(m.newSession.provider), provider) {
+		runtime = types.CloneRuntimeOptions(m.newSession.runtimeOptions)
+	}
+	if runtime == nil {
+		runtime = m.guidedWorkflow.RuntimeOptions()
+	}
+	if runtime == nil {
+		runtime = m.composeDefaultsForProvider(provider)
+	}
 	if runtime == nil {
 		runtime = &types.SessionRuntimeOptions{}
 	}
-	if provider != "" {
-		m.normalizeComposeRuntimeOptionsForModel(provider, runtime)
+	m.normalizeComposeRuntimeOptionsForProvider(provider, runtime)
+	m.newSession = &newSessionTarget{
+		provider:       provider,
+		runtimeOptions: types.CloneRuntimeOptions(runtime),
 	}
 	m.guidedWorkflow.SetRuntimeOptions(runtime)
 }

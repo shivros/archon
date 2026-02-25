@@ -892,36 +892,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.setCopyStatusInfo(msg.success)
 		return true, nil
 	case providerOptionsMsg:
-		provider := strings.ToLower(strings.TrimSpace(msg.provider))
-		isPending := provider != "" && strings.EqualFold(provider, strings.TrimSpace(m.pendingComposeOptionFor))
-		if msg.err != nil {
-			if isCanceledRequestError(msg.err) {
-				return true, nil
-			}
-			if isPending {
-				m.clearPendingComposeOptionRequest()
-			}
-			m.setBackgroundError("provider options error: " + msg.err.Error())
-			return true, nil
-		}
-		if provider != "" && msg.options != nil {
-			if m.providerOptions == nil {
-				m.providerOptions = map[string]*types.ProviderOptionCatalog{}
-			}
-			m.providerOptions[provider] = msg.options
-		}
-		if isPending {
-			target := m.pendingComposeOptionTarget
-			m.clearPendingComposeOptionRequest()
-			if m.mode == uiModeCompose && strings.EqualFold(m.composeProvider(), provider) {
-				if m.openComposeOptionPicker(target) {
-					m.setStatusMessage("select " + composeOptionLabel(target))
-				} else {
-					m.setValidationStatus("no " + composeOptionLabel(target) + " options available")
-				}
-			}
-		}
-		return true, nil
+		return true, m.handleProviderOptionsMsg(msg)
 	case tailMsg:
 		return true, m.handleSessionItemsMessage(sessionProjectionSourceTail, msg.id, msg.key, msg.items, msg.err)
 	case historyMsg:
@@ -1420,4 +1391,62 @@ func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
 		m.itemStream.SetStream(msg.ch, msg.cancel)
 	}
 	m.setBackgroundStatus("streaming items")
+}
+
+func (m *Model) handleProviderOptionsMsg(msg providerOptionsMsg) tea.Cmd {
+	provider := strings.ToLower(strings.TrimSpace(msg.provider))
+	isPending := provider != "" && strings.EqualFold(provider, strings.TrimSpace(m.pendingComposeOptionFor))
+	if msg.err != nil {
+		return m.handleProviderOptionsError(msg.err, isPending)
+	}
+	if provider != "" && msg.options != nil {
+		m.cacheProviderOptions(provider, msg.options)
+		m.reconcileGuidedWorkflowRuntimeAfterProviderOptions(provider)
+	}
+	if isPending {
+		return m.reopenPendingComposeOptionPicker(provider)
+	}
+	return nil
+}
+
+func (m *Model) handleProviderOptionsError(err error, isPending bool) tea.Cmd {
+	if isCanceledRequestError(err) {
+		return nil
+	}
+	if isPending {
+		m.clearPendingComposeOptionRequest()
+	}
+	m.setBackgroundError("provider options error: " + err.Error())
+	return nil
+}
+
+func (m *Model) cacheProviderOptions(provider string, options *types.ProviderOptionCatalog) {
+	if m.providerOptions == nil {
+		m.providerOptions = map[string]*types.ProviderOptionCatalog{}
+	}
+	m.providerOptions[provider] = options
+}
+
+func (m *Model) reconcileGuidedWorkflowRuntimeAfterProviderOptions(provider string) {
+	if m.mode != uiModeGuidedWorkflow || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(m.guidedWorkflow.Provider()), provider) {
+		return
+	}
+	m.syncGuidedWorkflowRuntimeOptionsFromCompose()
+	m.renderGuidedWorkflowContent()
+}
+
+func (m *Model) reopenPendingComposeOptionPicker(provider string) tea.Cmd {
+	target := m.pendingComposeOptionTarget
+	m.clearPendingComposeOptionRequest()
+	if m.mode == uiModeCompose && strings.EqualFold(m.composeProvider(), provider) {
+		if m.openComposeOptionPicker(target) {
+			m.setStatusMessage("select " + composeOptionLabel(target))
+		} else {
+			m.setValidationStatus("no " + composeOptionLabel(target) + " options available")
+		}
+	}
+	return nil
 }

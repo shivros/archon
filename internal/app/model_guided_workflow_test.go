@@ -420,8 +420,8 @@ func TestGuidedWorkflowLauncherDisplaysContextNames(t *testing.T) {
 		sessionID:   "s1",
 	})
 
-	if !strings.Contains(m.contentRaw, "# Workflow Template Picker") {
-		t.Fatalf("expected template picker launcher content, got %q", m.contentRaw)
+	if !strings.Contains(m.contentRaw, "/") || !strings.Contains(m.contentRaw, "Bug Triage") {
+		t.Fatalf("expected bare template picker content, got %q", m.contentRaw)
 	}
 }
 
@@ -442,7 +442,7 @@ func TestGuidedWorkflowLauncherTemplatePickerSupportsTypeAhead(t *testing.T) {
 			t.Fatalf("expected no command while typing launcher filter, got %T", cmd())
 		}
 	}
-	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
+	if !strings.Contains(m.contentRaw, "Bug Triage") {
 		t.Fatalf("expected filtered template selection, got %q", m.contentRaw)
 	}
 
@@ -820,6 +820,171 @@ func TestGuidedWorkflowSetupContentNotOverwrittenBySidebarRefresh(t *testing.T) 
 	}
 	if !strings.Contains(m.contentRaw, "Prompt Composer") {
 		t.Fatalf("expected setup content to remain visible after sidebar refresh, got %q", m.contentRaw)
+	}
+}
+
+func TestGuidedWorkflowProviderSwitchFallsBackForIncompatibleSelections(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.providerOptions = map[string]*types.ProviderOptionCatalog{
+		"codex": {
+			Provider:        "codex",
+			Models:          []string{"gpt-5.1-codex", "gpt-5.3-codex"},
+			ReasoningLevels: []types.ReasoningLevel{types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh},
+			AccessLevels:    []types.AccessLevel{types.AccessReadOnly, types.AccessOnRequest, types.AccessFull},
+			Defaults: types.SessionRuntimeOptions{
+				Model:     "gpt-5.1-codex",
+				Reasoning: types.ReasoningMedium,
+				Access:    types.AccessOnRequest,
+			},
+		},
+		"claude": {
+			Provider:     "claude",
+			Models:       []string{"sonnet", "opus"},
+			AccessLevels: []types.AccessLevel{types.AccessReadOnly, types.AccessOnRequest},
+			Defaults: types.SessionRuntimeOptions{
+				Model:  "sonnet",
+				Access: types.AccessOnRequest,
+			},
+		},
+	}
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	m.newSession = &newSessionTarget{
+		provider: "codex",
+		runtimeOptions: &types.SessionRuntimeOptions{
+			Model:     "gpt-5.3-codex",
+			Reasoning: types.ReasoningHigh,
+			Access:    types.AccessFull,
+		},
+	}
+	m.guidedWorkflow.SetRuntimeOptions(m.newSession.runtimeOptions)
+	m.guidedWorkflow.SetProvider("claude")
+	m.prepareGuidedWorkflowComposerDefaults()
+
+	runtime := m.guidedWorkflow.RuntimeOptions()
+	if runtime == nil {
+		t.Fatalf("expected runtime options")
+	}
+	if runtime.Model != "sonnet" {
+		t.Fatalf("expected model fallback to selected provider default, got %q", runtime.Model)
+	}
+	if runtime.Access != types.AccessOnRequest {
+		t.Fatalf("expected access fallback to selected provider default, got %q", runtime.Access)
+	}
+	if runtime.Reasoning != "" {
+		t.Fatalf("expected reasoning to clear for provider without reasoning levels, got %q", runtime.Reasoning)
+	}
+}
+
+func TestGuidedWorkflowProviderSwitchKeepsCompatibleSelections(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.providerOptions = map[string]*types.ProviderOptionCatalog{
+		"codex": {
+			Provider:        "codex",
+			Models:          []string{"shared-model", "codex-only"},
+			ReasoningLevels: []types.ReasoningLevel{types.ReasoningLow, types.ReasoningHigh},
+			AccessLevels:    []types.AccessLevel{types.AccessOnRequest, types.AccessFull},
+			Defaults: types.SessionRuntimeOptions{
+				Model:     "codex-only",
+				Reasoning: types.ReasoningLow,
+				Access:    types.AccessOnRequest,
+			},
+		},
+		"opencode": {
+			Provider:        "opencode",
+			Models:          []string{"shared-model", "opencode-only"},
+			ReasoningLevels: []types.ReasoningLevel{types.ReasoningLow, types.ReasoningHigh},
+			AccessLevels:    []types.AccessLevel{types.AccessOnRequest, types.AccessFull},
+			Defaults: types.SessionRuntimeOptions{
+				Model:     "opencode-only",
+				Reasoning: types.ReasoningLow,
+				Access:    types.AccessOnRequest,
+			},
+		},
+	}
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	selected := &types.SessionRuntimeOptions{
+		Model:     "shared-model",
+		Reasoning: types.ReasoningHigh,
+		Access:    types.AccessFull,
+	}
+	m.newSession = &newSessionTarget{
+		provider:       "codex",
+		runtimeOptions: types.CloneRuntimeOptions(selected),
+	}
+	m.guidedWorkflow.SetRuntimeOptions(selected)
+	m.guidedWorkflow.SetProvider("opencode")
+	m.prepareGuidedWorkflowComposerDefaults()
+
+	runtime := m.guidedWorkflow.RuntimeOptions()
+	if runtime == nil {
+		t.Fatalf("expected runtime options")
+	}
+	if runtime.Model != "shared-model" || runtime.Reasoning != types.ReasoningHigh || runtime.Access != types.AccessFull {
+		t.Fatalf("expected compatible selections to remain unchanged, got %#v", runtime)
+	}
+}
+
+func TestGuidedWorkflowSetupSelectionsDoNotSnapBackAfterProviderOptionsRefresh(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	selected := &types.SessionRuntimeOptions{
+		Model:     "gpt-5.3-codex",
+		Reasoning: types.ReasoningHigh,
+		Access:    types.AccessFull,
+	}
+	m.newSession = &newSessionTarget{
+		provider:       "codex",
+		runtimeOptions: types.CloneRuntimeOptions(selected),
+	}
+	m.guidedWorkflow.SetRuntimeOptions(selected)
+
+	updated, _ := m.Update(providerOptionsMsg{
+		provider: "codex",
+		options: &types.ProviderOptionCatalog{
+			Provider:        "codex",
+			Models:          []string{"gpt-5.1-codex", "gpt-5.3-codex"},
+			ReasoningLevels: []types.ReasoningLevel{types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh},
+			AccessLevels:    []types.AccessLevel{types.AccessReadOnly, types.AccessOnRequest, types.AccessFull},
+			Defaults: types.SessionRuntimeOptions{
+				Model:     "gpt-5.1-codex",
+				Reasoning: types.ReasoningMedium,
+				Access:    types.AccessOnRequest,
+			},
+		},
+	})
+	m = asModel(t, updated)
+
+	runtime := m.guidedWorkflow.RuntimeOptions()
+	if runtime == nil {
+		t.Fatalf("expected runtime options")
+	}
+	if runtime.Model != "gpt-5.3-codex" || runtime.Reasoning != types.ReasoningHigh || runtime.Access != types.AccessFull {
+		t.Fatalf("expected user selections to persist after provider options refresh, got %#v", runtime)
+	}
+}
+
+func TestGuidedWorkflowSetupUIRemovesRedundantMetadataSections(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	if !strings.Contains(m.contentRaw, "### Launch Selections") {
+		t.Fatalf("expected launch selections section, got %q", m.contentRaw)
+	}
+	if strings.Contains(m.contentRaw, "### Workflow Prompt") {
+		t.Fatalf("expected workflow prompt metadata section removed, got %q", m.contentRaw)
+	}
+	if strings.Contains(m.contentRaw, "### Runtime Options") {
+		t.Fatalf("expected runtime options metadata section removed, got %q", m.contentRaw)
+	}
+	if strings.Contains(m.contentRaw, "### Controls") {
+		t.Fatalf("expected controls legend removed from setup metadata, got %q", m.contentRaw)
 	}
 }
 

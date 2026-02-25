@@ -789,8 +789,8 @@ func TestMouseReducerGuidedWorkflowLauncherTemplateClickSelects(t *testing.T) {
 	if m.mode != uiModeGuidedWorkflow {
 		t.Fatalf("expected guided workflow mode, got %v", m.mode)
 	}
-	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
-		t.Fatalf("expected default template selection before click, got %q", m.contentRaw)
+	if m.guidedWorkflow == nil || strings.TrimSpace(m.guidedWorkflow.templateID) != "custom_triage" {
+		t.Fatalf("expected default template selection before click, got template=%q", strings.TrimSpace(m.guidedWorkflow.templateID))
 	}
 
 	layout := m.resolveMouseLayout()
@@ -807,8 +807,8 @@ func TestMouseReducerGuidedWorkflowLauncherTemplateClickSelects(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected guided workflow picker click to be handled")
 	}
-	if !strings.Contains(m.contentRaw, "- Name: SOLID Phase Delivery") {
-		t.Fatalf("expected click to select second template, got %q", m.contentRaw)
+	if m.guidedWorkflow == nil || strings.TrimSpace(m.guidedWorkflow.templateID) != guidedworkflows.TemplateIDSolidPhaseDelivery {
+		t.Fatalf("expected click to select second template, got template=%q", strings.TrimSpace(m.guidedWorkflow.templateID))
 	}
 }
 
@@ -841,8 +841,8 @@ func TestMouseReducerGuidedWorkflowLauncherIgnoresClicksOutsideTemplatePicker(t 
 	if handled {
 		t.Fatalf("expected click outside picker block to be ignored")
 	}
-	if !strings.Contains(m.contentRaw, "- Name: Bug Triage") {
-		t.Fatalf("expected selection to remain unchanged, got %q", m.contentRaw)
+	if m.guidedWorkflow == nil || strings.TrimSpace(m.guidedWorkflow.templateID) != "custom_triage" {
+		t.Fatalf("expected selection to remain unchanged, got template=%q", strings.TrimSpace(m.guidedWorkflow.templateID))
 	}
 }
 
