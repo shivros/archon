@@ -150,6 +150,13 @@ func (p *testSessionProjectionPostProcessor) PostProcessSessionProjection(_ *Mod
 	p.last = input
 }
 
+type testDebugPanelProjectionCoordinator struct{}
+
+func (testDebugPanelProjectionCoordinator) Schedule(DebugPanelProjectionRequest) tea.Cmd { return nil }
+func (testDebugPanelProjectionCoordinator) IsCurrent(int) bool                           { return true }
+func (testDebugPanelProjectionCoordinator) Consume(int)                                  {}
+func (testDebugPanelProjectionCoordinator) Invalidate()                                  {}
+
 func TestWithSidebarUpdatePolicyConfiguresModelAndDefaultReset(t *testing.T) {
 	WithSidebarUpdatePolicy(testSidebarUpdatePolicy{allow: true})(nil)
 
@@ -221,6 +228,59 @@ func TestPolicyDefaultsHandleNilModel(t *testing.T) {
 	}
 	if processor := m.sessionProjectionPostProcessorOrDefault(); processor == nil {
 		t.Fatalf("expected default projection post processor for nil model")
+	}
+	if got := m.debugPanelProjectionPolicyOrDefault().MaxTrackedProjectionTokens(); got != defaultDebugPanelProjectionMaxTokens {
+		t.Fatalf("expected default debug projection token cap for nil model, got %d", got)
+	}
+	if coordinator := m.debugPanelProjectionCoordinatorOrDefault(); coordinator == nil {
+		t.Fatalf("expected default debug projection coordinator for nil model")
+	}
+}
+
+func TestWithDebugPanelProjectionPolicyConfiguresModelAndDefaultReset(t *testing.T) {
+	WithDebugPanelProjectionPolicy(testDebugProjectionPolicy{max: 2})(nil)
+
+	m := NewModel(nil, WithDebugPanelProjectionPolicy(testDebugProjectionPolicy{max: 5}))
+	if got := m.debugPanelProjectionPolicyOrDefault().MaxTrackedProjectionTokens(); got != 5 {
+		t.Fatalf("expected custom debug projection max tokens 5, got %d", got)
+	}
+	if m.debugPanelProjectionCoordinator == nil {
+		t.Fatalf("expected debug projection coordinator to be initialized")
+	}
+
+	WithDebugPanelProjectionPolicy(nil)(&m)
+	if got := m.debugPanelProjectionPolicyOrDefault().MaxTrackedProjectionTokens(); got != defaultDebugPanelProjectionMaxTokens {
+		t.Fatalf("expected default debug projection max tokens %d, got %d", defaultDebugPanelProjectionMaxTokens, got)
+	}
+	if m.debugPanelProjectionCoordinator == nil {
+		t.Fatalf("expected default debug projection coordinator after reset")
+	}
+}
+
+func TestWithDebugPanelProjectionCoordinatorConfiguresModelAndDefaultReset(t *testing.T) {
+	WithDebugPanelProjectionCoordinator(testDebugPanelProjectionCoordinator{})(nil)
+
+	custom := testDebugPanelProjectionCoordinator{}
+	m := NewModel(nil, WithDebugPanelProjectionCoordinator(custom))
+	if _, ok := m.debugPanelProjectionCoordinator.(testDebugPanelProjectionCoordinator); !ok {
+		t.Fatalf("expected custom debug projection coordinator")
+	}
+
+	WithDebugPanelProjectionCoordinator(nil)(&m)
+	if _, ok := m.debugPanelProjectionCoordinator.(*defaultDebugPanelProjectionCoordinator); !ok {
+		t.Fatalf("expected default debug projection coordinator after nil reset, got %T", m.debugPanelProjectionCoordinator)
+	}
+}
+
+func TestDebugPanelProjectionCoordinatorOrDefaultInitializesWhenMissing(t *testing.T) {
+	m := NewModel(nil)
+	m.debugPanelProjectionCoordinator = nil
+	coordinator := m.debugPanelProjectionCoordinatorOrDefault()
+	if coordinator == nil {
+		t.Fatalf("expected coordinator fallback")
+	}
+	if m.debugPanelProjectionCoordinator == nil {
+		t.Fatalf("expected coordinator fallback to be cached on model")
 	}
 }
 

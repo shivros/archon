@@ -89,7 +89,6 @@ func (m *Model) renderDebugPanelView() (string, int) {
 	if m.debugPanel == nil {
 		m.debugPanel = NewDebugPanelController(max(1, m.debugPanelWidth), max(1, m.height-1), nil)
 	}
-	m.refreshDebugPanelContent()
 	return m.debugPanel.View()
 }
 

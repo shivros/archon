@@ -25,6 +25,7 @@ func TestResetStreamCancelsSessionScopes(t *testing.T) {
 	m := NewModel(nil)
 	loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
 	startCtx := m.replaceRequestScope(requestScopeSessionStart)
+	debugCtx := m.replaceRequestScope(requestScopeDebugStream)
 
 	m.resetStream()
 
@@ -38,11 +39,19 @@ func TestResetStreamCancelsSessionScopes(t *testing.T) {
 	default:
 		t.Fatalf("expected session start scope to be canceled")
 	}
+	select {
+	case <-debugCtx.Done():
+	default:
+		t.Fatalf("expected debug stream scope to be canceled")
+	}
 	if _, ok := m.requestScopes[requestScopeSessionLoad]; ok {
 		t.Fatalf("expected session load scope entry to be removed")
 	}
 	if _, ok := m.requestScopes[requestScopeSessionStart]; ok {
 		t.Fatalf("expected session start scope entry to be removed")
+	}
+	if _, ok := m.requestScopes[requestScopeDebugStream]; ok {
+		t.Fatalf("expected debug stream scope entry to be removed")
 	}
 }
 
@@ -85,5 +94,21 @@ func TestClearPendingComposeOptionRequestCancelsProviderScope(t *testing.T) {
 	}
 	if m.pendingComposeOptionFor != "" {
 		t.Fatalf("expected pending compose option provider to reset")
+	}
+}
+
+func TestApplyDebugStreamMsgCancelsDebugStreamScope(t *testing.T) {
+	m := NewModel(nil)
+	debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+
+	m.applyDebugStreamMsg(debugStreamMsg{id: "s1", err: nil})
+
+	select {
+	case <-debugCtx.Done():
+	default:
+		t.Fatalf("expected debug stream scope to be canceled")
+	}
+	if _, ok := m.requestScopes[requestScopeDebugStream]; ok {
+		t.Fatalf("expected debug stream scope to be removed")
 	}
 }

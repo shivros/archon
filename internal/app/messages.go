@@ -163,6 +163,16 @@ type sessionBlocksProjectedMsg struct {
 	projectionSeq int
 }
 
+type debugPanelProjectedMsg struct {
+	projectionSeq int
+	rendered      string
+	blocks        []ChatBlock
+	spans         []renderedBlockSpan
+	metaByID      map[string]ChatBlockMetaPresentation
+	copyByID      map[string]string
+	empty         bool
+}
+
 type recentsPreviewMsg struct {
 	id       string
 	revision string

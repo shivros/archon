@@ -261,6 +261,10 @@ type Model struct {
 	debugPanelMetaByID                  map[string]ChatBlockMetaPresentation
 	debugPanelCopyByID                  map[string]string
 	debugPanelExpandedByID              map[string]bool
+	debugPanelLoading                   bool
+	debugPanelRefreshPending            bool
+	debugPanelProjectionPolicy          DebugPanelProjectionPolicy
+	debugPanelProjectionCoordinator     debugPanelProjectionCoordinator
 	notesPanelPendingScopes             map[types.NoteScope]struct{}
 	notesPanelLoadErrors                int
 	notesPanelBlocks                    []ChatBlock
@@ -509,6 +513,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
+		debugPanelProjectionPolicy:          defaultDebugPanelProjectionPolicy{},
+		debugPanelProjectionCoordinator:     NewDefaultDebugPanelProjectionCoordinator(defaultDebugPanelProjectionPolicy{}, nil),
 		sessionProjectionPostProcessor:      NewDefaultSessionProjectionPostProcessor(),
 		sidebarProjectionBuilder:            NewDefaultSidebarProjectionBuilder(),
 		sidebarProjectionInvalidationPolicy: NewDefaultSidebarProjectionInvalidationPolicy(),
@@ -873,6 +879,8 @@ func (m *Model) resize(width, height int) {
 }
 
 func (m *Model) resizeWithoutRender(width, height int) {
+	previousDebugVisible := m.debugPanelVisible
+	previousDebugWidth := m.debugPanelWidth
 	m.width = width
 	m.height = height
 
@@ -925,6 +933,15 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		} else {
 			m.debugPanel.Resize(0, 0)
 		}
+	}
+	if panelMode == sidePanelModeDebug {
+		if previousDebugWidth != layout.panelWidth || previousDebugVisible != layout.panelVisible {
+			m.debugPanelRefreshPending = true
+		}
+	} else if previousDebugVisible {
+		m.invalidateDebugPanelProjection()
+		m.debugPanelLoading = false
+		m.debugPanelRefreshPending = false
 	}
 	if m.addWorkspace != nil {
 		m.addWorkspace.Resize(mainViewportWidth)
@@ -1189,7 +1206,8 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		cmds = append(cmds, openEventsCmd(m.sessionAPI, id))
 	}
 	if m.appState.DebugStreamsEnabled {
-		cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, id))
+		debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+		cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, id, debugCtx))
 	}
 	return tea.Batch(cmds...)
 }
@@ -2309,10 +2327,19 @@ func (m *Model) tickCmd() tea.Cmd {
 func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	now := time.Time(msg)
 	m.clockNow = now
+	cmds := make([]tea.Cmd, 0, 4)
+	if m.debugPanelRefreshPending && m.appState.DebugStreamsEnabled {
+		if cmd := m.refreshDebugPanelContent(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.debugPanelRefreshPending = false
+	}
 	m.consumeStreamTick(now)
 	m.consumeCodexTick(now)
 	m.consumeItemTick(now)
-	m.consumeDebugTick(now)
+	if cmd := m.consumeDebugTick(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.streamRenderScheduler != nil && m.streamRenderScheduler.ShouldRender(now) {
 		m.renderViewport()
 		m.streamRenderScheduler.MarkRendered(now)
@@ -2325,7 +2352,6 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 		m.clearToast()
 	}
 	m.maybeShowNextStartupToast(now)
-	cmds := make([]tea.Cmd, 0, 3)
 	if cmd := m.maybeAutoRefreshHistory(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -2357,6 +2383,7 @@ func (m *Model) maybeRefreshRelativeTimestampLabels(now time.Time) {
 func (m *Model) resetStream() {
 	m.cancelRequestScope(requestScopeSessionLoad)
 	m.cancelRequestScope(requestScopeSessionStart)
+	m.cancelRequestScope(requestScopeDebugStream)
 	if m.stream != nil {
 		m.stream.Reset()
 	}
@@ -2371,6 +2398,8 @@ func (m *Model) resetStream() {
 	if m.debugStream != nil {
 		m.debugStream.Reset()
 	}
+	m.invalidateDebugPanelProjection()
+	m.debugPanelLoading = false
 	m.pendingApproval = nil
 	m.pendingSessionKey = ""
 	m.loading = false
@@ -2497,20 +2526,22 @@ func (m *Model) consumeItemTick(now time.Time) {
 	}
 }
 
-func (m *Model) consumeDebugTick(now time.Time) {
+func (m *Model) consumeDebugTick(now time.Time) tea.Cmd {
 	if m.debugStream == nil {
-		return
+		return nil
 	}
 	_, changed, closed := m.debugStream.ConsumeTick()
 	if closed {
 		m.setBackgroundStatus("debug stream closed")
 	}
 	if changed {
-		m.refreshDebugPanelContent()
+		cmd := m.refreshDebugPanelContent()
 		if m.transcriptViewportVisible() && m.appState.DebugStreamsEnabled {
 			m.requestStreamRender(now)
 		}
+		return cmd
 	}
+	return nil
 }
 
 func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {
@@ -3685,20 +3716,30 @@ func (m *Model) toggleDebugStreams() tea.Cmd {
 		if m.debugStream != nil {
 			m.debugStream.Reset()
 		}
-		m.refreshDebugPanelContent()
+		m.cancelRequestScope(requestScopeDebugStream)
+		m.invalidateDebugPanelProjection()
+		m.applyDebugPanelEmpty()
 		message := "debug streams disabled"
 		m.status = message
 		m.showToast(toastLevelInfo, message)
 		return m.requestAppStateSaveCmd()
 	}
-	m.refreshDebugPanelContent()
+	panelCmd := m.refreshDebugPanelContent()
 	message := "debug streams enabled"
 	m.status = message
 	m.showToast(toastLevelInfo, message)
 	if strings.TrimSpace(sessionID) == "" {
+		if panelCmd != nil {
+			return tea.Batch(m.requestAppStateSaveCmd(), panelCmd)
+		}
 		return m.requestAppStateSaveCmd()
 	}
-	return tea.Batch(m.requestAppStateSaveCmd(), openDebugStreamCmd(m.sessionAPI, sessionID))
+	debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+	cmds := []tea.Cmd{m.requestAppStateSaveCmd(), openDebugStreamCmdWithContext(m.sessionAPI, sessionID, debugCtx)}
+	if panelCmd != nil {
+		cmds = append(cmds, panelCmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) applyAppState(state *types.AppState) {

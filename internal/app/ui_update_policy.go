@@ -5,6 +5,7 @@ import tea "charm.land/bubbletea/v2"
 const (
 	defaultSessionProjectionAsyncThreshold = 32
 	defaultSessionProjectionMaxTokens      = 256
+	defaultDebugPanelProjectionMaxTokens   = 32
 )
 
 type SidebarUpdatePolicy interface {
@@ -75,4 +76,47 @@ func (m *Model) sessionProjectionPolicyOrDefault() SessionProjectionPolicy {
 		return defaultSessionProjectionPolicy{}
 	}
 	return m.sessionProjectionPolicy
+}
+
+type DebugPanelProjectionPolicy interface {
+	MaxTrackedProjectionTokens() int
+}
+
+type defaultDebugPanelProjectionPolicy struct{}
+
+func WithDebugPanelProjectionPolicy(policy DebugPanelProjectionPolicy) ModelOption {
+	return func(m *Model) {
+		if m == nil {
+			return
+		}
+		if policy == nil {
+			policy = defaultDebugPanelProjectionPolicy{}
+		}
+		m.debugPanelProjectionPolicy = policy
+		m.debugPanelProjectionCoordinator = NewDefaultDebugPanelProjectionCoordinator(policy, nil)
+	}
+}
+
+func WithDebugPanelProjectionCoordinator(coordinator debugPanelProjectionCoordinator) ModelOption {
+	return func(m *Model) {
+		if m == nil {
+			return
+		}
+		if coordinator == nil {
+			m.debugPanelProjectionCoordinator = NewDefaultDebugPanelProjectionCoordinator(m.debugPanelProjectionPolicyOrDefault(), nil)
+			return
+		}
+		m.debugPanelProjectionCoordinator = coordinator
+	}
+}
+
+func (defaultDebugPanelProjectionPolicy) MaxTrackedProjectionTokens() int {
+	return defaultDebugPanelProjectionMaxTokens
+}
+
+func (m *Model) debugPanelProjectionPolicyOrDefault() DebugPanelProjectionPolicy {
+	if m == nil || m.debugPanelProjectionPolicy == nil {
+		return defaultDebugPanelProjectionPolicy{}
+	}
+	return m.debugPanelProjectionPolicy
 }

@@ -141,6 +141,15 @@ func TestRenderDebugPanelViewShowsFallbackAndStreamLines(t *testing.T) {
 	if !changed {
 		t.Fatalf("expected debug stream tick to change lines")
 	}
+	cmd := m.refreshDebugPanelContent()
+	if cmd == nil {
+		t.Fatalf("expected debug panel projection command")
+	}
+	projected, ok := cmd().(debugPanelProjectedMsg)
+	if !ok {
+		t.Fatalf("expected debugPanelProjectedMsg, got %T", cmd())
+	}
+	m.applyDebugPanelProjection(projected)
 
 	panelView, _ := m.renderDebugPanelView()
 	panel := xansi.Strip(panelView)

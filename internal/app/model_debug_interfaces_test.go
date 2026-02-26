@@ -89,6 +89,16 @@ func (f *fakeDebugStreamViewModel) ConsumeTick() ([]string, bool, bool) {
 	return nil, f.changed, f.closed
 }
 
+func applyDebugProjectionFromCmd(m *Model, cmd tea.Cmd) {
+	if m == nil || cmd == nil {
+		return
+	}
+	msg := cmd()
+	if projected, ok := msg.(debugPanelProjectedMsg); ok {
+		m.applyDebugPanelProjection(projected)
+	}
+}
+
 func TestModelDebugInterfacesConsumeTickRefreshesPanelContent(t *testing.T) {
 	m := NewModel(nil)
 	panel := &fakeDebugPanelView{view: "panel", height: 2}
@@ -102,7 +112,7 @@ func TestModelDebugInterfacesConsumeTickRefreshesPanelContent(t *testing.T) {
 	m.debugStreamSnapshot = stream
 	m.debugPanelWidth = 80
 
-	m.consumeDebugTick(time.Now())
+	applyDebugProjectionFromCmd(&m, m.consumeDebugTick(time.Now()))
 
 	if plain := xansi.Strip(panel.lastContent); plain == "" || !strings.Contains(plain, "stream output") {
 		t.Fatalf("expected panel content to be refreshed from stream, got %q", panel.lastContent)
@@ -120,6 +130,47 @@ func TestModelDebugInterfacesConsumeTickClosedSetsStatus(t *testing.T) {
 
 	if m.status != "debug stream closed" {
 		t.Fatalf("expected closed status, got %q", m.status)
+	}
+}
+
+func TestModelDebugInterfacesResizeMarksDebugPanelRefreshPending(t *testing.T) {
+	m := NewModel(nil)
+	m.appState.DebugStreamsEnabled = true
+
+	m.resizeWithoutRender(120, 40)
+	m.debugPanelRefreshPending = false
+	m.resizeWithoutRender(140, 40)
+
+	if !m.debugPanelRefreshPending {
+		t.Fatalf("expected debug panel refresh to be pending after debug width change")
+	}
+}
+
+func TestModelDebugInterfacesHandleTickConsumesPendingDebugRefresh(t *testing.T) {
+	m := NewModel(nil)
+	panel := &fakeDebugPanelView{view: "panel", height: 6}
+	m.debugPanel = panel
+	m.appState.DebugStreamsEnabled = true
+	m.debugPanelVisible = true
+	m.debugPanelWidth = 72
+	m.debugPanel.Resize(72, 10)
+	m.debugStream = &fakeDebugStreamViewModel{
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "payload"}},
+	}
+	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
+	m.debugPanelRefreshPending = true
+	m.tickFn = func() tea.Cmd { return nil }
+
+	_ = m.handleTick(tickMsg(time.Now()))
+
+	if m.debugPanelRefreshPending {
+		t.Fatalf("expected pending debug panel refresh to be consumed")
+	}
+	if !m.debugPanelLoading {
+		t.Fatalf("expected debug panel to enter loading state while async projection runs")
+	}
+	if panel.lastContent == "" {
+		t.Fatalf("expected debug panel to show loading content while projection runs")
 	}
 }
 
@@ -244,7 +295,7 @@ func TestModelDebugInterfacesDebugPanelLeftPressCopy(t *testing.T) {
 		entries: []DebugStreamEntry{{ID: "debug-1", Display: "copy me"}},
 	}
 	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
-	m.refreshDebugPanelContent()
+	applyDebugProjectionFromCmd(&m, m.refreshDebugPanelContent())
 	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
 
 	span := m.debugPanelSpans[0]
@@ -281,7 +332,7 @@ func TestModelDebugInterfacesDebugPanelLeftPressToggle(t *testing.T) {
 		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6"}},
 	}
 	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
-	m.refreshDebugPanelContent()
+	applyDebugProjectionFromCmd(&m, m.refreshDebugPanelContent())
 	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
 
 	span := m.debugPanelSpans[0]
@@ -318,7 +369,7 @@ func TestModelDebugInterfacesDebugPanelLeftPressNotOnControl(t *testing.T) {
 		entries: []DebugStreamEntry{{ID: "debug-1", Display: "plain text"}},
 	}
 	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
-	m.refreshDebugPanelContent()
+	applyDebugProjectionFromCmd(&m, m.refreshDebugPanelContent())
 	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
 
 	handled := m.reduceDebugPanelLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.panelStart + 2, Y: 3}, layout)
@@ -338,7 +389,7 @@ func TestModelDebugInterfacesDebugPanelLeftPressInitializesInteractionFallback(t
 		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6"}},
 	}
 	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
-	m.refreshDebugPanelContent()
+	applyDebugProjectionFromCmd(&m, m.refreshDebugPanelContent())
 	layout := mouseLayout{panelVisible: true, panelStart: 20, panelWidth: 72}
 
 	span := m.debugPanelSpans[0]

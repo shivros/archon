@@ -692,8 +692,12 @@ func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {
 }
 
 func openDebugStreamCmd(api SessionDebugStreamAPI, id string) tea.Cmd {
+	return openDebugStreamCmdWithContext(api, id, nil)
+}
+
+func openDebugStreamCmdWithContext(api SessionDebugStreamAPI, id string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ch, cancel, err := api.DebugStream(context.Background(), id)
+		ch, cancel, err := api.DebugStream(commandParentContext(parent), id)
 		return debugStreamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }

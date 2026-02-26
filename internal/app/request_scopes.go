@@ -11,6 +11,7 @@ const (
 	requestScopeProviderOption = "provider_options"
 	requestScopeSessionStart   = "session_start"
 	requestScopeWorktrees      = "worktrees"
+	requestScopeDebugStream    = "debug_stream"
 	requestScopeRecentsPrefix  = "recents_watch:"
 )
 

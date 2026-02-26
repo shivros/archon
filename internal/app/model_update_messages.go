@@ -905,6 +905,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.applySessionProjection(msg.source, msg.id, msg.key, blocks)
 		m.consumeSessionProjectionToken(msg.key, msg.id, msg.projectionSeq)
 		return true, nil
+	case debugPanelProjectedMsg:
+		m.applyDebugPanelProjection(msg)
+		return true, nil
 	case recentsPreviewMsg:
 		return true, m.handleRecentsPreview(msg)
 	case recentsTurnCompletedMsg:
@@ -988,19 +991,22 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.id))
 			if m.appState.DebugStreamsEnabled {
-				cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.id))
+				debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+				cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.id, debugCtx))
 			}
 			return true, tea.Batch(cmds...)
 		}
 		if provider == "codex" && m.codexStream != nil && !m.codexStream.HasStream() {
 			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.id))
 			if m.appState.DebugStreamsEnabled {
-				cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.id))
+				debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+				cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.id, debugCtx))
 			}
 			return true, tea.Batch(cmds...)
 		}
 		if m.appState.DebugStreamsEnabled && m.debugStream != nil && !m.debugStream.HasStream() {
-			cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.id))
+			debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+			cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.id, debugCtx))
 			return true, tea.Batch(cmds...)
 		}
 		return true, tea.Batch(cmds...)
@@ -1143,7 +1149,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			cmds = append(cmds, openStreamCmd(m.sessionAPI, msg.session.ID))
 		}
 		if m.appState.DebugStreamsEnabled {
-			cmds = append(cmds, openDebugStreamCmd(m.sessionAPI, msg.session.ID))
+			debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+			cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.session.ID, debugCtx))
 		}
 		if msg.session.Provider == "codex" {
 			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
@@ -1410,6 +1417,7 @@ func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
 }
 
 func (m *Model) applyDebugStreamMsg(msg debugStreamMsg) {
+	m.cancelRequestScope(requestScopeDebugStream)
 	if msg.err != nil {
 		m.setBackgroundError("debug stream error: " + msg.err.Error())
 		return

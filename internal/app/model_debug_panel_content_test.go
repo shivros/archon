@@ -3,8 +3,22 @@ package app
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"control/internal/types"
 )
+
+func applyDebugProjectionCmdForContentTests(m *Model, cmd tea.Cmd) {
+	if m == nil || cmd == nil {
+		return
+	}
+	msg := cmd()
+	projected, ok := msg.(debugPanelProjectedMsg)
+	if !ok {
+		return
+	}
+	m.applyDebugPanelProjection(projected)
+}
 
 type debugConsumerNoSnapshot struct{}
 
@@ -149,7 +163,7 @@ func TestRefreshDebugPanelContentUsesInjectedPresenter(t *testing.T) {
 		spans:    []renderedBlockSpan{{ID: "debug-1", StartLine: 0, EndLine: 0}},
 	}
 
-	m.refreshDebugPanelContent()
+	applyDebugProjectionCmdForContentTests(&m, m.refreshDebugPanelContent())
 	if panel.lastContent != "rendered by fake" {
 		t.Fatalf("expected injected presenter/renderer output, got %q", panel.lastContent)
 	}
