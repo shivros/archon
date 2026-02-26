@@ -17,6 +17,8 @@ type TurnCompletionEvent struct {
 	Source      string
 	Status      string
 	Error       string
+	Output      string
+	Payload     map[string]any
 }
 
 type TurnCompletionNotifier interface {
@@ -90,6 +92,21 @@ func (n *DefaultTurnCompletionNotifier) NotifyTurnCompletedEvent(ctx context.Con
 			"turn_status": strings.TrimSpace(completion.Status),
 			"turn_error":  strings.TrimSpace(completion.Error),
 		}
+	}
+	if strings.TrimSpace(completion.Output) != "" {
+		if event.Payload == nil {
+			event.Payload = map[string]any{}
+		}
+		event.Payload["turn_output"] = strings.TrimSpace(completion.Output)
+	}
+	for key, value := range cloneNotificationPayload(completion.Payload) {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if event.Payload == nil {
+			event.Payload = map[string]any{}
+		}
+		event.Payload[key] = value
 	}
 
 	n.notifier.Publish(event)

@@ -22,6 +22,8 @@ type openCodeLiveSession struct {
 	hub           *codexSubscriberHub
 	turnNotifier  TurnCompletionNotifier
 	approvalStore ApprovalStorage
+	artifactSync  TurnArtifactSynchronizer
+	payloads      TurnCompletionPayloadBuilder
 	activeTurn    string
 	closed        bool
 }
@@ -139,6 +141,17 @@ func (s *openCodeLiveSession) publishTurnCompleted(turn turnEventParams) {
 	if s.turnNotifier == nil {
 		return
 	}
+	syncResult := TurnArtifactSyncResult{}
+	if s.artifactSync != nil {
+		syncResult = s.artifactSync.SyncTurnArtifacts(context.Background(), turn)
+	}
+	output := strings.TrimSpace(syncResult.Output)
+	payload := map[string]any{}
+	if s.payloads != nil {
+		output, payload = s.payloads.Build(turn, syncResult)
+	} else {
+		output, payload = defaultTurnCompletionPayloadBuilder{}.Build(turn, syncResult)
+	}
 	s.turnNotifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{
 		SessionID: strings.TrimSpace(s.sessionID),
 		TurnID:    strings.TrimSpace(turn.TurnID),
@@ -146,6 +159,8 @@ func (s *openCodeLiveSession) publishTurnCompleted(turn turnEventParams) {
 		Source:    "live_session_event",
 		Status:    strings.TrimSpace(turn.Status),
 		Error:     strings.TrimSpace(turn.Error),
+		Output:    strings.TrimSpace(output),
+		Payload:   payload,
 	})
 }
 
@@ -160,10 +175,19 @@ type openCodeLiveSessionFactory struct {
 	providerName  string
 	turnNotifier  TurnCompletionNotifier
 	approvalStore ApprovalStorage
+	repository    TurnArtifactRepository
+	payloads      TurnCompletionPayloadBuilder
 	logger        logging.Logger
 }
 
-func newOpenCodeLiveSessionFactory(providerName string, turnNotifier TurnCompletionNotifier, approvalStore ApprovalStorage, logger logging.Logger) *openCodeLiveSessionFactory {
+func newOpenCodeLiveSessionFactory(
+	providerName string,
+	turnNotifier TurnCompletionNotifier,
+	approvalStore ApprovalStorage,
+	repository TurnArtifactRepository,
+	payloads TurnCompletionPayloadBuilder,
+	logger logging.Logger,
+) *openCodeLiveSessionFactory {
 	if logger == nil {
 		logger = logging.Nop()
 	}
@@ -173,10 +197,18 @@ func newOpenCodeLiveSessionFactory(providerName string, turnNotifier TurnComplet
 	if approvalStore == nil {
 		approvalStore = NopApprovalStorage{}
 	}
+	if repository == nil {
+		repository = &fileSessionItemsRepository{}
+	}
+	if payloads == nil {
+		payloads = defaultTurnCompletionPayloadBuilder{}
+	}
 	return &openCodeLiveSessionFactory{
 		providerName:  providerName,
 		turnNotifier:  turnNotifier,
 		approvalStore: approvalStore,
+		repository:    repository,
+		payloads:      payloads,
 		logger:        logger,
 	}
 }
@@ -222,6 +254,14 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 		hub:           newCodexSubscriberHub(),
 		turnNotifier:  f.turnNotifier,
 		approvalStore: f.approvalStore,
+		artifactSync: newOpenCodeTurnArtifactSynchronizer(
+			session.ID,
+			providerID,
+			session.Cwd,
+			openCodeTurnArtifactRemoteSource{client: client},
+			f.repository,
+		),
+		payloads: f.payloads,
 	}
 	ls.start()
 

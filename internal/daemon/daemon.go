@@ -154,12 +154,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	logGuidedWorkflowRunReconciliationOutcome(d.logger, reconcileResult, reconcileErr)
 	turnNotifier := NewTurnCompletionNotifier(nil, d.stores)
 	approvalStore := NewStoreApprovalStorage(d.stores)
+	artifactRepository := newFileSessionItemsRepository(d.manager)
 	compositeLive := NewCompositeLiveManager(
 		d.stores,
 		d.logger,
 		newCodexLiveSessionFactory(liveCodex),
-		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, d.logger),
-		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, d.logger),
+		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, d.logger),
+		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, d.logger),
 	)
 	workflowRuns := newGuidedWorkflowRunServiceFn(coreCfg, d.stores, d.manager, compositeLive, d.logger)
 	if closer, ok := any(workflowRuns).(guidedWorkflowRunCloser); ok {

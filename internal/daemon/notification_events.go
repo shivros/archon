@@ -242,6 +242,7 @@ type turnEventParams struct {
 	TurnID string
 	Status string
 	Error  string
+	Output string
 }
 
 func parseTurnEventFromParams(raw []byte) turnEventParams {
@@ -257,6 +258,7 @@ func parseTurnEventFromParams(raw []byte) turnEventParams {
 		out.TurnID = strings.TrimSpace(asString(turn["id"]))
 		out.Status = strings.TrimSpace(asString(turn["status"]))
 		out.Error = strings.TrimSpace(turnErrorMessage(turn["error"]))
+		out.Output = strings.TrimSpace(turnOutputText(turn))
 	}
 	if out.TurnID == "" {
 		out.TurnID = strings.TrimSpace(asString(payload["turn_id"]))
@@ -267,7 +269,29 @@ func parseTurnEventFromParams(raw []byte) turnEventParams {
 	if out.Error == "" {
 		out.Error = strings.TrimSpace(turnErrorMessage(payload["error"]))
 	}
+	if out.Output == "" {
+		out.Output = strings.TrimSpace(turnOutputText(payload))
+	}
 	return out
+}
+
+func turnOutputText(raw map[string]any) string {
+	if raw == nil {
+		return ""
+	}
+	for _, key := range []string{"output", "result", "assistant_output", "text"} {
+		if value := strings.TrimSpace(asString(raw[key])); value != "" {
+			return value
+		}
+	}
+	if data, ok := raw["data"].(map[string]any); ok && data != nil {
+		for _, key := range []string{"output", "result", "assistant_output", "text"} {
+			if value := strings.TrimSpace(asString(data[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func turnErrorMessage(raw any) string {

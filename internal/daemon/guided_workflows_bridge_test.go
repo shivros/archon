@@ -2562,6 +2562,61 @@ func TestGuidedWorkflowNotificationPublisherForwardsTurnContextToProcessor(t *te
 	}
 }
 
+func TestGuidedWorkflowNotificationPublisherBlocksOpenCodeCompletionWithoutArtifacts(t *testing.T) {
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-open",
+		Provider:  "opencode",
+		TurnID:    "turn-1",
+		Payload: map[string]any{
+			"turn_status": "completed",
+		},
+	})
+	if len(turnProcessor.signals) != 0 {
+		t.Fatalf("expected open code completion without artifacts to be ignored, got %d signals", len(turnProcessor.signals))
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherAllowsOpenCodeCompletionWithArtifacts(t *testing.T) {
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-open",
+		Provider:  "kilocode",
+		TurnID:    "turn-1",
+		Payload: map[string]any{
+			"turn_status":              "completed",
+			"artifacts_persisted":      true,
+			"assistant_output":         "done",
+			"assistant_artifact_count": 1,
+		},
+	})
+	if len(turnProcessor.signals) != 1 {
+		t.Fatalf("expected open code completion with artifacts to pass, got %d signals", len(turnProcessor.signals))
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherAllowsOpenCodeTerminalFailuresWithoutArtifacts(t *testing.T) {
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-open",
+		Provider:  "opencode",
+		TurnID:    "turn-1",
+		Payload: map[string]any{
+			"turn_status": "failed",
+			"turn_error":  "provider error",
+		},
+	})
+	if len(turnProcessor.signals) != 1 {
+		t.Fatalf("expected terminal failure to pass, got %d signals", len(turnProcessor.signals))
+	}
+}
+
 func boolPtr(v bool) *bool {
 	return &v
 }

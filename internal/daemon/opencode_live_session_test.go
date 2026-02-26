@@ -135,6 +135,91 @@ func TestOpenCodeLiveSessionPublishTurnCompletedNoNotifierNoPanic(t *testing.T) 
 	})
 }
 
+func TestOpenCodeLiveSessionStoreApprovalPersists(t *testing.T) {
+	approvalID := 42
+	store := &captureApprovalStorage{}
+	ls := &openCodeLiveSession{
+		sessionID:     "sess-open-approval",
+		approvalStore: store,
+	}
+	ls.storeApproval(types.CodexEvent{
+		ID:     &approvalID,
+		Method: "item/commandExecution/requestApproval",
+		Params: json.RawMessage(`{"permission_id":"perm-1"}`),
+	})
+	if store.called != 1 {
+		t.Fatalf("expected approval store call, got %d", store.called)
+	}
+	if store.sessionID != "sess-open-approval" || store.requestID != approvalID {
+		t.Fatalf("unexpected approval store call args: %#v", store)
+	}
+}
+
+func TestOpenCodeLiveSessionBasicAccessorsAndInterrupt(t *testing.T) {
+	ls := &openCodeLiveSession{
+		sessionID: "sess-open-basic",
+		client:    &openCodeClient{},
+		hub:       newCodexSubscriberHub(),
+	}
+	if got := ls.SessionID(); got != "sess-open-basic" {
+		t.Fatalf("expected session id accessor, got %q", got)
+	}
+	if ls.isClosed() {
+		t.Fatalf("expected session to start open")
+	}
+	ch, cancel := ls.Events()
+	if ch == nil || cancel == nil {
+		t.Fatalf("expected events subscription handles")
+	}
+	cancel()
+	if err := ls.Interrupt(context.Background()); err == nil {
+		t.Fatalf("expected interrupt to delegate and fail when session service missing")
+	}
+	ls.Close()
+	if !ls.isClosed() {
+		t.Fatalf("expected session to be closed after Close()")
+	}
+}
+
+func TestOpenCodeLiveSessionPublishTurnCompletedIncludesArtifactPayload(t *testing.T) {
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-artifacts",
+		providerName: "opencode",
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+		artifactSync: stubTurnArtifactSynchronizer{
+			result: TurnArtifactSyncResult{
+				Output:                 "assistant output",
+				ArtifactsPersisted:     true,
+				AssistantArtifactCount: 2,
+				Source:                 "test_sync",
+			},
+		},
+	}
+
+	ls.publishTurnCompleted(turnEventParams{
+		TurnID: "turn-artifacts",
+		Status: "completed",
+	})
+	notifications := notifier.Events()
+	if len(notifications) != 1 {
+		t.Fatalf("expected one turn completion notification, got %d", len(notifications))
+	}
+	event := notifications[0]
+	if got := strings.TrimSpace(asString(event.Payload["turn_output"])); got != "assistant output" {
+		t.Fatalf("expected turn_output payload, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(event.Payload["artifact_sync_source"])); got != "test_sync" {
+		t.Fatalf("expected artifact_sync_source payload, got %q", got)
+	}
+	if persisted, _ := event.Payload["artifacts_persisted"].(bool); !persisted {
+		t.Fatalf("expected artifacts_persisted=true, got %#v", event.Payload["artifacts_persisted"])
+	}
+	if count, _ := asInt(event.Payload["assistant_artifact_count"]); count != 2 {
+		t.Fatalf("expected assistant_artifact_count=2, got %#v", event.Payload["assistant_artifact_count"])
+	}
+}
+
 type captureOpenCodeNotificationPublisher struct {
 	mu     sync.Mutex
 	events []types.NotificationEvent
@@ -171,6 +256,17 @@ type stubAwareTurnCompletionNotifier struct {
 	setCalls  int
 }
 
+type stubTurnArtifactSynchronizer struct {
+	result TurnArtifactSyncResult
+}
+
+func (s stubTurnArtifactSynchronizer) SyncTurnArtifacts(_ context.Context, turn turnEventParams) TurnArtifactSyncResult {
+	if strings.TrimSpace(s.result.Output) == "" {
+		s.result.Output = strings.TrimSpace(turn.Output)
+	}
+	return s.result
+}
+
 func (s *stubAwareTurnCompletionNotifier) NotifyTurnCompleted(context.Context, string, string, string, *types.SessionMeta) {
 }
 
@@ -180,4 +276,21 @@ func (s *stubAwareTurnCompletionNotifier) NotifyTurnCompletedEvent(context.Conte
 func (s *stubAwareTurnCompletionNotifier) SetNotificationPublisher(notifier NotificationPublisher) {
 	s.publisher = notifier
 	s.setCalls++
+}
+
+type captureApprovalStorage struct {
+	called    int
+	sessionID string
+	requestID int
+	method    string
+	params    json.RawMessage
+}
+
+func (s *captureApprovalStorage) StoreApproval(_ context.Context, sessionID string, requestID int, method string, params json.RawMessage) error {
+	s.called++
+	s.sessionID = sessionID
+	s.requestID = requestID
+	s.method = method
+	s.params = params
+	return nil
 }
