@@ -365,6 +365,631 @@ func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) 
 	}
 }
 
+type stubTurnCompletionStrategy struct {
+	shouldPublish bool
+	source        string
+}
+
+func (s stubTurnCompletionStrategy) ShouldPublishCompletion(int, []map[string]any) bool {
+	return s.shouldPublish
+}
+
+func (s stubTurnCompletionStrategy) Source() string {
+	if strings.TrimSpace(s.source) == "" {
+		return "stub_source"
+	}
+	return s.source
+}
+
+type stubClaudeCompletionIO struct {
+	items    []map[string]any
+	readErr  error
+	publishN int
+}
+
+func (s *stubClaudeCompletionIO) ReadSessionItems(string, int) ([]map[string]any, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	return s.items, nil
+}
+
+func (s *stubClaudeCompletionIO) PublishTurnCompleted(*types.Session, *types.SessionMeta, string, string) {
+	if s == nil {
+		return
+	}
+	s.publishN++
+}
+
+func TestClaudeItemDeltaCompletionStrategy(t *testing.T) {
+	strategy := claudeItemDeltaCompletionStrategy{}
+	tests := []struct {
+		name        string
+		before      int
+		items       []map[string]any
+		wantPublish bool
+	}{
+		{
+			name:        "user_only_delta",
+			before:      1,
+			items:       []map[string]any{{"type": "userMessage"}, {"type": "userMessage"}},
+			wantPublish: false,
+		},
+		{
+			name:        "assistant_delta",
+			before:      1,
+			items:       []map[string]any{{"type": "userMessage"}, {"type": "agentMessage"}},
+			wantPublish: true,
+		},
+		{
+			name:        "reasoning_delta",
+			before:      0,
+			items:       []map[string]any{{"type": "reasoning"}},
+			wantPublish: true,
+		},
+		{
+			name:        "negative_before_is_normalized",
+			before:      -1,
+			items:       []map[string]any{{"type": "agentMessage"}},
+			wantPublish: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strategy.ShouldPublishCompletion(tt.before, tt.items)
+			if got != tt.wantPublish {
+				t.Fatalf("ShouldPublishCompletion mismatch: got=%v want=%v", got, tt.wantPublish)
+			}
+		})
+	}
+	if strategy.Source() != "claude_items_post_send" {
+		t.Fatalf("unexpected strategy source: %q", strategy.Source())
+	}
+}
+
+func TestClaudeCompletionProbeItemCount(t *testing.T) {
+	if got := claudeCompletionProbeItemCount(nil, "s1"); got != 0 {
+		t.Fatalf("expected zero count for nil IO, got %d", got)
+	}
+	if got := claudeCompletionProbeItemCount(&stubClaudeCompletionIO{}, "   "); got != 0 {
+		t.Fatalf("expected zero count for empty session id, got %d", got)
+	}
+	if got := claudeCompletionProbeItemCount(&stubClaudeCompletionIO{readErr: errors.New("boom")}, "s1"); got != 0 {
+		t.Fatalf("expected zero count on read error, got %d", got)
+	}
+	if got := claudeCompletionProbeItemCount(&stubClaudeCompletionIO{
+		items: []map[string]any{{"type": "userMessage"}, {"type": "agentMessage"}},
+	}, "s1"); got != 2 {
+		t.Fatalf("expected count 2, got %d", got)
+	}
+}
+
+func TestClaudeCompletionProbeHasTerminalOutput(t *testing.T) {
+	strategy := claudeItemDeltaCompletionStrategy{}
+	io := &stubClaudeCompletionIO{
+		items: []map[string]any{{"type": "userMessage"}, {"type": "agentMessage"}},
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(nil, strategy, "s1", 0); got {
+		t.Fatalf("expected false for nil IO")
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(io, nil, "s1", 0); got {
+		t.Fatalf("expected false for nil strategy")
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(io, strategy, "   ", 0); got {
+		t.Fatalf("expected false for empty session id")
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(&stubClaudeCompletionIO{readErr: errors.New("boom")}, strategy, "s1", 0); got {
+		t.Fatalf("expected false on read error")
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(&stubClaudeCompletionIO{items: nil}, strategy, "s1", 0); got {
+		t.Fatalf("expected false on empty items")
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(io, strategy, "s1", 5); got {
+		t.Fatalf("expected false when baseline exceeds len and no new items exist")
+	}
+	if got := claudeCompletionProbeHasTerminalOutput(io, strategy, "s1", -1); !got {
+		t.Fatalf("expected true when negative baseline is normalized and assistant item exists")
+	}
+}
+
+func TestClaudeCompletionItemSignalsTurnCompletion(t *testing.T) {
+	tests := []struct {
+		name string
+		item map[string]any
+		want bool
+	}{
+		{name: "nil", item: nil, want: false},
+		{name: "agent_message", item: map[string]any{"type": "agentMessage"}, want: true},
+		{name: "agent_message_delta", item: map[string]any{"type": "agentMessageDelta"}, want: true},
+		{name: "agent_message_end", item: map[string]any{"type": "agentMessageEnd"}, want: true},
+		{name: "assistant", item: map[string]any{"type": "assistant"}, want: true},
+		{name: "reasoning", item: map[string]any{"type": "reasoning"}, want: true},
+		{name: "result", item: map[string]any{"type": "result"}, want: true},
+		{name: "unknown", item: map[string]any{"type": "userMessage"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeCompletionItemSignalsTurnCompletion(tt.item); got != tt.want {
+				t.Fatalf("claudeCompletionItemSignalsTurnCompletion() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeCompletionStrategyOrDefault(t *testing.T) {
+	adapter := claudeConversationAdapter{}
+	if _, ok := adapter.completionStrategyOrDefault().(claudeItemDeltaCompletionStrategy); !ok {
+		t.Fatalf("expected default claude completion strategy")
+	}
+	custom := stubTurnCompletionStrategy{shouldPublish: true, source: "custom"}
+	adapter.completionStrategy = custom
+	if got := adapter.completionStrategyOrDefault(); got.Source() != "custom" {
+		t.Fatalf("expected custom strategy source, got %q", got.Source())
+	}
+}
+
+func TestSessionServiceClaudeCompletionIONilService(t *testing.T) {
+	io := sessionServiceClaudeCompletionIO{}
+	items, err := io.ReadSessionItems("s1", 10)
+	if err != nil {
+		t.Fatalf("ReadSessionItems err: %v", err)
+	}
+	if items != nil {
+		t.Fatalf("expected nil items for nil service, got %#v", items)
+	}
+	io.PublishTurnCompleted(nil, nil, "", "")
+}
+
+func TestClaudeConversationAdapterSendMessageDoesNotPublishCompletionWithoutAssistantOutput(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-no-complete"
+	baseDir := t.TempDir()
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			sessionID: {
+				Session: session,
+				Source:  sessionSourceInternal,
+			},
+		},
+	}
+	var service *SessionService
+	manager := &SessionManager{
+		baseDir: baseDir,
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return service.appendSessionItems(sessionID, []map[string]any{
+						{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
+					})
+				},
+			},
+		},
+	}
+	publisher := &captureSessionServiceNotificationPublisher{}
+	service = NewSessionService(manager, &Stores{Sessions: sessionStore}, nil, WithNotificationPublisher(publisher))
+
+	turnID, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if turnID != "" {
+		t.Fatalf("expected empty turn id for claude send, got %q", turnID)
+	}
+	if len(publisher.events) != 0 {
+		t.Fatalf("expected no turn-completed event without assistant output, got %#v", publisher.events)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessageRequiresProviderSessionIDOnRecovery(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-missing-provider-session"
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	service := NewSessionService(&SessionManager{
+		baseDir: t.TempDir(),
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return ErrSessionNotFound
+				},
+			},
+		},
+	}, &Stores{
+		Sessions: &stubSessionIndexStore{
+			records: map[string]*types.SessionRecord{
+				sessionID: {Session: session, Source: sessionSourceInternal},
+			},
+		},
+	}, nil)
+	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(err.Error(), "provider session id not available") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessageRequiresCwdOnRecovery(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-missing-cwd"
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       "   ",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	service := NewSessionService(&SessionManager{
+		baseDir: t.TempDir(),
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return ErrSessionNotFound
+				},
+			},
+		},
+	}, &Stores{
+		Sessions: &stubSessionIndexStore{
+			records: map[string]*types.SessionRecord{
+				sessionID: {Session: session, Source: sessionSourceInternal},
+			},
+		},
+		SessionMeta: &failingSessionMetaStore{
+			entry: &types.SessionMeta{
+				SessionID:         sessionID,
+				ProviderSessionID: "provider-sess-1",
+			},
+		},
+	}, nil)
+	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(err.Error(), "session cwd is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessageRecoveryAdditionalDirectoriesError(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
+	repoDir := filepath.Join(base, "repo")
+	if err := ensureDir(repoDir); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	ws, err := workspaceStore.Add(ctx, &types.Workspace{
+		RepoPath:              repoDir,
+		AdditionalDirectories: []string{"../missing"},
+	})
+	if err != nil {
+		t.Fatalf("add workspace: %v", err)
+	}
+	sessionID := "s-claude-dirs-err"
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       repoDir,
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	service := NewSessionService(&SessionManager{
+		baseDir: t.TempDir(),
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return ErrSessionNotFound
+				},
+			},
+		},
+	}, &Stores{
+		Sessions: &stubSessionIndexStore{
+			records: map[string]*types.SessionRecord{
+				sessionID: {Session: session, Source: sessionSourceInternal},
+			},
+		},
+		SessionMeta: &failingSessionMetaStore{
+			entry: &types.SessionMeta{
+				SessionID:         sessionID,
+				ProviderSessionID: "provider-sess-1",
+				WorkspaceID:       ws.ID,
+			},
+		},
+		Workspaces: workspaceStore,
+	}, nil)
+	_, err = service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(strings.ToLower(err.Error()), "no such file") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessageRecoveryResumeError(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-resume-err"
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	baseFile := filepath.Join(t.TempDir(), "sessions-base-file")
+	if err := os.WriteFile(baseFile, []byte("not a dir"), 0o600); err != nil {
+		t.Fatalf("write base file: %v", err)
+	}
+	service := NewSessionService(&SessionManager{
+		baseDir:  baseFile,
+		sessions: map[string]*sessionRuntime{},
+	}, &Stores{
+		Sessions: &stubSessionIndexStore{
+			records: map[string]*types.SessionRecord{
+				sessionID: {Session: session, Source: sessionSourceInternal},
+			},
+		},
+		SessionMeta: &failingSessionMetaStore{
+			entry: &types.SessionMeta{
+				SessionID:         sessionID,
+				ProviderSessionID: "provider-sess-1",
+			},
+		},
+	}, nil)
+	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+}
+
+func TestClaudeConversationAdapterSendMessageRecoverySecondSendFailure(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-retry-send-fail"
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	sendCalls := 0
+	service := NewSessionService(&SessionManager{
+		baseDir: t.TempDir(),
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					sendCalls++
+					if sendCalls == 1 {
+						return ErrSessionNotFound
+					}
+					return errors.New("second send failed")
+				},
+			},
+		},
+	}, &Stores{
+		Sessions: &stubSessionIndexStore{
+			records: map[string]*types.SessionRecord{
+				sessionID: {Session: session, Source: sessionSourceInternal},
+			},
+		},
+		SessionMeta: &failingSessionMetaStore{
+			entry: &types.SessionMeta{
+				SessionID:         sessionID,
+				ProviderSessionID: "provider-sess-1",
+			},
+		},
+	}, nil)
+	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(err.Error(), "second send failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessageRecoverySecondSendSuccess(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-retry-send-ok"
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	sendCalls := 0
+	service := NewSessionService(&SessionManager{
+		baseDir: t.TempDir(),
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					sendCalls++
+					if sendCalls == 1 {
+						return ErrSessionNotFound
+					}
+					return nil
+				},
+			},
+		},
+	}, &Stores{
+		Sessions: &stubSessionIndexStore{
+			records: map[string]*types.SessionRecord{
+				sessionID: {Session: session, Source: sessionSourceInternal},
+			},
+		},
+		SessionMeta: &failingSessionMetaStore{
+			entry: &types.SessionMeta{
+				SessionID:         sessionID,
+				ProviderSessionID: "provider-sess-1",
+			},
+		},
+	}, nil)
+	if _, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if sendCalls != 2 {
+		t.Fatalf("expected two send attempts, got %d", sendCalls)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessageUsesInjectedCompletionStrategy(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-injected-strategy"
+	baseDir := t.TempDir()
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			sessionID: {
+				Session: session,
+				Source:  sessionSourceInternal,
+			},
+		},
+	}
+	var service *SessionService
+	manager := &SessionManager{
+		baseDir: baseDir,
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return service.appendSessionItems(sessionID, []map[string]any{
+						{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
+					})
+				},
+			},
+		},
+	}
+	publisher := &captureSessionServiceNotificationPublisher{}
+	service = NewSessionService(manager, &Stores{Sessions: sessionStore}, nil, WithNotificationPublisher(publisher))
+	service.adapters = newConversationAdapterRegistry(claudeConversationAdapter{
+		fallback: defaultConversationAdapter{},
+		completionStrategy: stubTurnCompletionStrategy{
+			shouldPublish: true,
+			source:        "injected_strategy",
+		},
+	})
+
+	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if len(publisher.events) != 1 {
+		t.Fatalf("expected one completion event from injected strategy, got %d", len(publisher.events))
+	}
+	if publisher.events[0].Source != "injected_strategy" {
+		t.Fatalf("unexpected completion source: %q", publisher.events[0].Source)
+	}
+}
+
+func TestClaudeConversationAdapterSendMessagePublishesCompletionAfterAssistantOutput(t *testing.T) {
+	ctx := context.Background()
+	sessionID := "s-claude-complete"
+	baseDir := t.TempDir()
+	session := &types.Session{
+		ID:        sessionID,
+		Provider:  "claude",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	sessionStore := &stubSessionIndexStore{
+		records: map[string]*types.SessionRecord{
+			sessionID: {
+				Session: session,
+				Source:  sessionSourceInternal,
+			},
+		},
+	}
+	var service *SessionService
+	manager := &SessionManager{
+		baseDir: baseDir,
+		sessions: map[string]*sessionRuntime{
+			sessionID: {
+				session: session,
+				send: func([]byte) error {
+					return service.appendSessionItems(sessionID, []map[string]any{
+						{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
+						{"type": "agentMessage", "text": "done"},
+					})
+				},
+			},
+		},
+	}
+	publisher := &captureSessionServiceNotificationPublisher{}
+	service = NewSessionService(manager, &Stores{Sessions: sessionStore}, nil, WithNotificationPublisher(publisher))
+
+	turnID, err := service.SendMessage(ctx, sessionID, []map[string]any{
+		{"type": "text", "text": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if turnID != "" {
+		t.Fatalf("expected empty turn id for claude send, got %q", turnID)
+	}
+	if len(publisher.events) != 1 {
+		t.Fatalf("expected one turn-completed event, got %d", len(publisher.events))
+	}
+	event := publisher.events[0]
+	if event.Trigger != types.NotificationTriggerTurnCompleted {
+		t.Fatalf("unexpected trigger: %q", event.Trigger)
+	}
+	if event.Source != "claude_items_post_send" {
+		t.Fatalf("expected claude post-send completion source, got %q", event.Source)
+	}
+}
+
+func TestClaudeConversationAdapterUnsupportedOperationsReturnInvalid(t *testing.T) {
+	adapter := newClaudeConversationAdapter(defaultConversationAdapter{})
+	_, _, err := adapter.SubscribeEvents(context.Background(), nil, &types.Session{ID: "s1"}, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if err := adapter.Approve(context.Background(), nil, &types.Session{ID: "s1"}, nil, 1, "accept", nil, nil); err == nil {
+		t.Fatalf("expected approve to return error")
+	} else {
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	}
+	if err := adapter.Interrupt(context.Background(), nil, &types.Session{ID: "s1"}, nil); err == nil {
+		t.Fatalf("expected interrupt to return error")
+	} else {
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	}
+}
+
 func TestOpenCodeConversationAdapterApproveRepliesPermission(t *testing.T) {
 	var (
 		receivedPath string

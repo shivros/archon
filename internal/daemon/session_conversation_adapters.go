@@ -59,7 +59,7 @@ func defaultConversationAdapterFor(def providers.Definition, fallback defaultCon
 	case providers.RuntimeCodex:
 		return codexConversationAdapter{fallback: fallback}
 	case providers.RuntimeClaude:
-		return claudeConversationAdapter{fallback: fallback}
+		return newClaudeConversationAdapter(fallback)
 	case providers.RuntimeOpenCodeServer:
 		return openCodeConversationAdapter{providerName: providers.Normalize(def.Name), fallback: fallback}
 	default:
@@ -253,7 +253,31 @@ func (codexConversationAdapter) Interrupt(ctx context.Context, service *SessionS
 }
 
 type claudeConversationAdapter struct {
-	fallback defaultConversationAdapter
+	fallback           defaultConversationAdapter
+	completionStrategy turnCompletionStrategy
+}
+
+type turnCompletionStrategy interface {
+	ShouldPublishCompletion(beforeCount int, items []map[string]any) bool
+	Source() string
+}
+
+type claudeCompletionIO interface {
+	ReadSessionItems(sessionID string, lines int) ([]map[string]any, error)
+	PublishTurnCompleted(session *types.Session, meta *types.SessionMeta, turnID, source string)
+}
+
+type sessionServiceClaudeCompletionIO struct {
+	service *SessionService
+}
+
+type claudeItemDeltaCompletionStrategy struct{}
+
+func newClaudeConversationAdapter(fallback defaultConversationAdapter) claudeConversationAdapter {
+	return claudeConversationAdapter{
+		fallback:           fallback,
+		completionStrategy: claudeItemDeltaCompletionStrategy{},
+	}
 }
 
 func (claudeConversationAdapter) Provider() string {
@@ -264,13 +288,16 @@ func (a claudeConversationAdapter) History(ctx context.Context, service *Session
 	return a.fallback.History(ctx, service, session, meta, source, lines)
 }
 
-func (claudeConversationAdapter) SendMessage(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error) {
+func (a claudeConversationAdapter) SendMessage(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error) {
 	if session == nil {
 		return "", invalidError("session is required", nil)
 	}
 	if service.manager == nil {
 		return "", unavailableError("session manager not available", nil)
 	}
+	completionIO := sessionServiceClaudeCompletionIO{service: service}
+	strategy := a.completionStrategyOrDefault()
+	preSendItemCount := claudeCompletionProbeItemCount(completionIO, session.ID)
 	text := extractTextInput(input)
 	if text == "" {
 		return "", invalidError("text input is required", nil)
@@ -322,8 +349,88 @@ func (claudeConversationAdapter) SendMessage(ctx context.Context, service *Sessi
 			LastActiveAt: &now,
 		})
 	}
-	service.publishTurnCompleted(session, meta, "", "claude_send")
+	if claudeCompletionProbeHasTerminalOutput(completionIO, strategy, session.ID, preSendItemCount) {
+		completionIO.PublishTurnCompleted(session, meta, "", strategy.Source())
+	}
 	return "", nil
+}
+
+func (a claudeConversationAdapter) completionStrategyOrDefault() turnCompletionStrategy {
+	if a.completionStrategy == nil {
+		return claudeItemDeltaCompletionStrategy{}
+	}
+	return a.completionStrategy
+}
+
+func (io sessionServiceClaudeCompletionIO) ReadSessionItems(sessionID string, lines int) ([]map[string]any, error) {
+	if io.service == nil {
+		return nil, nil
+	}
+	items, _, err := io.service.readSessionItems(sessionID, lines)
+	return items, err
+}
+
+func (io sessionServiceClaudeCompletionIO) PublishTurnCompleted(session *types.Session, meta *types.SessionMeta, turnID, source string) {
+	if io.service == nil {
+		return
+	}
+	io.service.publishTurnCompleted(session, meta, turnID, source)
+}
+
+func claudeCompletionProbeItemCount(io claudeCompletionIO, sessionID string) int {
+	if io == nil || strings.TrimSpace(sessionID) == "" {
+		return 0
+	}
+	items, err := io.ReadSessionItems(sessionID, 10_000)
+	if err != nil {
+		return 0
+	}
+	return len(items)
+}
+
+func claudeCompletionProbeHasTerminalOutput(io claudeCompletionIO, strategy turnCompletionStrategy, sessionID string, baselineCount int) bool {
+	if io == nil || strategy == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	if baselineCount < 0 {
+		baselineCount = 0
+	}
+	items, err := io.ReadSessionItems(sessionID, 10_000)
+	if err != nil || len(items) == 0 {
+		return false
+	}
+	return strategy.ShouldPublishCompletion(baselineCount, items)
+}
+
+func (claudeItemDeltaCompletionStrategy) Source() string {
+	return "claude_items_post_send"
+}
+
+func (claudeItemDeltaCompletionStrategy) ShouldPublishCompletion(beforeCount int, items []map[string]any) bool {
+	if beforeCount < 0 {
+		beforeCount = 0
+	}
+	if beforeCount > len(items) {
+		beforeCount = len(items)
+	}
+	for _, item := range items[beforeCount:] {
+		if claudeCompletionItemSignalsTurnCompletion(item) {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeCompletionItemSignalsTurnCompletion(item map[string]any) bool {
+	if item == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(asString(item["type"]))) {
+	case "agentmessage", "agentmessagedelta", "agentmessageend", "assistant", "reasoning", "result":
+		return true
+	default:
+		return false
+	}
 }
 
 func (claudeConversationAdapter) SubscribeEvents(context.Context, *SessionService, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
