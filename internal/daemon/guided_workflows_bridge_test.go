@@ -1676,6 +1676,112 @@ func TestGuidedWorkflowPromptDispatcherUsesConfiguredDefaultsForAutoCreatedSessi
 	if !strings.Contains(logs, "effective_reasoning=high") {
 		t.Fatalf("expected effective reasoning in session creation logs, got %q", logs)
 	}
+	if !strings.Contains(logs, "msg=guided_workflow_dispatch_result") {
+		t.Fatalf("expected dispatch result telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "disposition=dispatched") {
+		t.Fatalf("expected dispatched disposition in telemetry log, got %q", logs)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherLogsDeferredDispatchResult(t *testing.T) {
+	var logOut bytes.Buffer
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		sendErrs: []error{
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+		},
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		logger:   logging.New(&logOut, logging.Info),
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err == nil {
+		t.Fatalf("expected deferred dispatch error")
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result for deferred path, got %#v", result)
+	}
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=guided_workflow_dispatch_result") {
+		t.Fatalf("expected dispatch result telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "disposition=deferred") {
+		t.Fatalf("expected deferred disposition in telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "attempt_count=3") {
+		t.Fatalf("expected attempt count telemetry in log, got %q", logs)
+	}
+}
+
+type captureDispatchTelemetryReporter struct {
+	last dispatchTelemetryContext
+}
+
+func (r *captureDispatchTelemetryReporter) ReportDispatchResult(ctx dispatchTelemetryContext) {
+	if r == nil {
+		return
+	}
+	r.last = ctx
+}
+
+func TestDispatchTelemetryReporterOrDefaultFallbacks(t *testing.T) {
+	var dispatcher *guidedWorkflowPromptDispatcher
+	reporter := dispatcher.dispatchTelemetryReporterOrDefault()
+	if reporter == nil {
+		t.Fatalf("expected non-nil fallback reporter")
+	}
+	reporter.ReportDispatchResult(dispatchTelemetryContext{RunID: "gwf-1"})
+	noopDispatchTelemetryReporter{}.ReportDispatchResult(dispatchTelemetryContext{RunID: "gwf-2"})
+	loggerDispatchTelemetryReporter{}.ReportDispatchResult(dispatchTelemetryContext{RunID: "gwf-3"})
+}
+
+func TestDispatchTelemetryReporterOrDefaultPrefersInjectedReporter(t *testing.T) {
+	capture := &captureDispatchTelemetryReporter{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		dispatchTelemetry: capture,
+	}
+	reporter := dispatcher.dispatchTelemetryReporterOrDefault()
+	reporter.ReportDispatchResult(dispatchTelemetryContext{RunID: "gwf-injected", Disposition: "dispatched"})
+	if capture.last.RunID != "gwf-injected" || capture.last.Disposition != "dispatched" {
+		t.Fatalf("expected injected reporter to receive telemetry, got %#v", capture.last)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherDispatchWithoutLoggerUsesNoopTelemetry(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		turnID: "turn-noop",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err != nil {
+		t.Fatalf("DispatchStepPrompt: %v", err)
+	}
+	if !result.Dispatched || result.TurnID != "turn-noop" {
+		t.Fatalf("expected successful dispatch without logger telemetry, got %#v", result)
+	}
 }
 
 func TestGuidedWorkflowPromptDispatcherLogsSessionLinkTelemetry(t *testing.T) {
@@ -2576,6 +2682,70 @@ func TestGuidedWorkflowNotificationPublisherBlocksOpenCodeCompletionWithoutArtif
 	})
 	if len(turnProcessor.signals) != 0 {
 		t.Fatalf("expected open code completion without artifacts to be ignored, got %d signals", len(turnProcessor.signals))
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherBlocksCodexNonTerminalProgression(t *testing.T) {
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-codex",
+		Provider:  "codex",
+		TurnID:    "turn-1",
+		Payload: map[string]any{
+			"turn_status": "in_progress",
+			"turn_output": "stream chunk",
+		},
+	})
+	if len(turnProcessor.signals) != 0 {
+		t.Fatalf("expected codex non-terminal turn to be ignored, got %d signals", len(turnProcessor.signals))
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherUsesInjectedReadinessRegistry(t *testing.T) {
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisherWithReadiness(
+		&recordNotificationPublisher{},
+		nil,
+		newTurnProgressionReadinessRegistry(
+			withTurnProgressionProviderReadiness("codex", allowAllTurnProgressionReadinessPolicy{}),
+		),
+		turnProcessor,
+	)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-codex",
+		Provider:  "codex",
+		TurnID:    "turn-1",
+		Payload: map[string]any{
+			"turn_status": "in_progress",
+		},
+	})
+	if len(turnProcessor.signals) != 1 {
+		t.Fatalf("expected injected readiness policy to allow progression, got %d signals", len(turnProcessor.signals))
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherWithNilReadinessFallsBackToDefault(t *testing.T) {
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisherWithReadiness(
+		&recordNotificationPublisher{},
+		nil,
+		nil,
+		turnProcessor,
+	)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-codex",
+		Provider:  "codex",
+		TurnID:    "turn-1",
+		Payload: map[string]any{
+			"turn_status": "in_progress",
+		},
+	})
+	if len(turnProcessor.signals) != 0 {
+		t.Fatalf("expected default readiness to block non-terminal codex event, got %d signals", len(turnProcessor.signals))
 	}
 }
 

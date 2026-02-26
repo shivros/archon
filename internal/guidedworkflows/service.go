@@ -127,6 +127,16 @@ type runServiceMetrics struct {
 	approvalCount        int
 	approvalLatencyTotal int64
 	approvalLatencyMax   int64
+	dispatchAttempts     int
+	dispatchDeferred     int
+	dispatchFailures     int
+	turnEventsReceived   int
+	turnEventsMatched    int
+	turnEventsStepDone   int
+	turnEventsAdvance    int
+	turnEventsProgressed int
+	turnEventsBlocked    int
+	stepOutcomeDeferred  int
 	interventionCauses   map[string]int
 }
 
@@ -779,6 +789,7 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 	if normalized.SessionID == "" {
 		return nil, nil
 	}
+	s.recordTurnEventReceivedLocked()
 	updated := make([]*WorkflowRun, 0, 1)
 	for _, run := range s.runs {
 		if run == nil || run.Status != WorkflowRunStatusRunning {
@@ -787,17 +798,27 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 		if !s.turnMatcher.Matches(run, normalized) {
 			continue
 		}
+		s.recordTurnEventMatchedLocked()
 		if normalized.TurnID != "" {
 			receipt := turnReceiptKey(run.ID, normalized.TurnID)
 			if _, seen := s.turnSeen[receipt]; seen {
+				s.recordTurnEventBlockedLocked()
 				continue
 			}
 			s.turnSeen[receipt] = struct{}{}
 		}
 		beforeStatus := run.Status
-		if _, err := s.completeAwaitingTurnStepLocked(ctx, run, normalized); err != nil {
+		wasAwaitingTurn := isRunAwaitingTurn(run)
+		completed, err := s.completeAwaitingTurnStepLocked(ctx, run, normalized)
+		if err != nil {
 			changedRunIDs[run.ID] = struct{}{}
 			return nil, err
+		}
+		if wasAwaitingTurn && !completed {
+			s.recordTurnEventBlockedLocked()
+		}
+		if completed {
+			s.recordTurnEventStepDoneLocked()
 		}
 		if run.Status != WorkflowRunStatusRunning {
 			s.recordTerminalTransitionLocked(beforeStatus, run.Status)
@@ -808,6 +829,9 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 		if err := s.advanceOnceLocked(ctx, run); err != nil {
 			changedRunIDs[run.ID] = struct{}{}
 			return nil, err
+		}
+		if !completed && !wasAwaitingTurn {
+			s.recordTurnEventAdvanceLocked()
 		}
 		changedRunIDs[run.ID] = struct{}{}
 		updated = append(updated, cloneWorkflowRun(run))
@@ -1126,6 +1150,16 @@ func (s *InMemoryRunService) GetRunMetrics(_ context.Context) (RunMetricsSnapsho
 		PauseCount:           s.metrics.pauseCount,
 		ApprovalCount:        s.metrics.approvalCount,
 		ApprovalLatencyMaxMS: s.metrics.approvalLatencyMax,
+		DispatchAttempts:     s.metrics.dispatchAttempts,
+		DispatchDeferred:     s.metrics.dispatchDeferred,
+		DispatchFailures:     s.metrics.dispatchFailures,
+		TurnEventsReceived:   s.metrics.turnEventsReceived,
+		TurnEventsMatched:    s.metrics.turnEventsMatched,
+		TurnEventsStepDone:   s.metrics.turnEventsStepDone,
+		TurnEventsAdvance:    s.metrics.turnEventsAdvance,
+		TurnEventsProgressed: s.metrics.turnEventsStepDone + s.metrics.turnEventsAdvance,
+		TurnEventsBlocked:    s.metrics.turnEventsBlocked,
+		StepOutcomeDeferred:  s.metrics.stepOutcomeDeferred,
 		InterventionCauses:   map[string]int{},
 	}
 	for cause, count := range s.metrics.interventionCauses {
@@ -1294,6 +1328,7 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 	if dispatchPrompt == "" {
 		return false, nil
 	}
+	s.recordDispatchAttemptLocked()
 	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
 		RunID:                  strings.TrimSpace(run.ID),
 		TemplateID:             strings.TrimSpace(run.TemplateID),
@@ -1310,19 +1345,23 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 	})
 	if err != nil {
 		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(err) == DispatchErrorDispositionDeferred {
+			s.recordDispatchDeferredLocked()
 			s.deferRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
 			return true, nil
 		}
+		s.recordDispatchFailureLocked()
 		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
 		return false, err
 	}
 	if !result.Dispatched {
 		cause := fmt.Errorf("%w: dispatcher did not dispatch step prompt", ErrStepDispatch)
+		s.recordDispatchFailureLocked()
 		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
 		return false, cause
 	}
 	if strings.TrimSpace(result.SessionID) == "" {
 		cause := fmt.Errorf("%w: dispatcher returned dispatched step without session id", ErrStepDispatch)
+		s.recordDispatchFailureLocked()
 		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
 		return false, cause
 	}
@@ -1738,6 +1777,7 @@ func (s *InMemoryRunService) applyStepOutcomeUndetermined(
 	if run == nil || phase == nil || step == nil {
 		return
 	}
+	s.recordStepOutcomeDeferredLocked()
 	detail := firstNonEmpty(
 		strings.TrimSpace(evaluation.SuccessDetail),
 		strings.TrimSpace(evaluation.FailureDetail),
@@ -2695,6 +2735,71 @@ func (s *InMemoryRunService) recordInterventionCauseLocked(cause string) {
 	s.metrics.interventionCauses[cause]++
 }
 
+func (s *InMemoryRunService) recordDispatchAttemptLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.dispatchAttempts++
+}
+
+func (s *InMemoryRunService) recordDispatchDeferredLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.dispatchDeferred++
+}
+
+func (s *InMemoryRunService) recordDispatchFailureLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.dispatchFailures++
+}
+
+func (s *InMemoryRunService) recordTurnEventReceivedLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnEventsReceived++
+}
+
+func (s *InMemoryRunService) recordTurnEventMatchedLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnEventsMatched++
+}
+
+func (s *InMemoryRunService) recordTurnEventStepDoneLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnEventsStepDone++
+	s.metrics.turnEventsProgressed++
+}
+
+func (s *InMemoryRunService) recordTurnEventAdvanceLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnEventsAdvance++
+	s.metrics.turnEventsProgressed++
+}
+
+func (s *InMemoryRunService) recordTurnEventBlockedLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnEventsBlocked++
+}
+
+func (s *InMemoryRunService) recordStepOutcomeDeferredLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.stepOutcomeDeferred++
+}
+
 func (s *InMemoryRunService) lookupDecisionLocked(run *WorkflowRun, decisionID string) *CheckpointDecision {
 	if run == nil {
 		return nil
@@ -2781,6 +2886,23 @@ func (s *InMemoryRunService) restoreMetrics(ctx context.Context) {
 	s.metrics.pauseCount = sanitizeCounter(snapshot.PauseCount)
 	s.metrics.approvalCount = sanitizeCounter(snapshot.ApprovalCount)
 	s.metrics.approvalLatencyMax = sanitizeInt64Counter(snapshot.ApprovalLatencyMaxMS)
+	s.metrics.dispatchAttempts = sanitizeCounter(snapshot.DispatchAttempts)
+	s.metrics.dispatchDeferred = sanitizeCounter(snapshot.DispatchDeferred)
+	s.metrics.dispatchFailures = sanitizeCounter(snapshot.DispatchFailures)
+	s.metrics.turnEventsReceived = sanitizeCounter(snapshot.TurnEventsReceived)
+	s.metrics.turnEventsMatched = sanitizeCounter(snapshot.TurnEventsMatched)
+	s.metrics.turnEventsStepDone = sanitizeCounter(snapshot.TurnEventsStepDone)
+	s.metrics.turnEventsAdvance = sanitizeCounter(snapshot.TurnEventsAdvance)
+	s.metrics.turnEventsProgressed = sanitizeCounter(snapshot.TurnEventsProgressed)
+	if s.metrics.turnEventsProgressed == 0 {
+		s.metrics.turnEventsProgressed = s.metrics.turnEventsStepDone + s.metrics.turnEventsAdvance
+	}
+	if s.metrics.turnEventsStepDone == 0 && s.metrics.turnEventsAdvance == 0 && s.metrics.turnEventsProgressed > 0 {
+		// Backward compatibility with snapshots saved before explicit progression semantics.
+		s.metrics.turnEventsAdvance = s.metrics.turnEventsProgressed
+	}
+	s.metrics.turnEventsBlocked = sanitizeCounter(snapshot.TurnEventsBlocked)
+	s.metrics.stepOutcomeDeferred = sanitizeCounter(snapshot.StepOutcomeDeferred)
 	if s.metrics.approvalCount > 0 {
 		avg := sanitizeInt64Counter(snapshot.ApprovalLatencyAvgMS)
 		s.metrics.approvalLatencyTotal = avg * int64(s.metrics.approvalCount)

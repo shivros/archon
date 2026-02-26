@@ -74,10 +74,20 @@ func TestGuidedWorkflowMetricsStoreRoundTrip(t *testing.T) {
 	}
 	store := &guidedWorkflowMetricsStore{appState: appStateStore}
 	snapshot := guidedworkflows.RunMetricsSnapshot{
-		Enabled:       true,
-		RunsStarted:   3,
-		RunsCompleted: 2,
-		PauseCount:    1,
+		Enabled:              true,
+		RunsStarted:          3,
+		RunsCompleted:        2,
+		PauseCount:           1,
+		DispatchAttempts:     4,
+		DispatchDeferred:     1,
+		DispatchFailures:     2,
+		TurnEventsReceived:   6,
+		TurnEventsMatched:    4,
+		TurnEventsStepDone:   2,
+		TurnEventsAdvance:    1,
+		TurnEventsProgressed: 3,
+		TurnEventsBlocked:    3,
+		StepOutcomeDeferred:  2,
 		InterventionCauses: map[string]int{
 			"user_pause_run": 1,
 		},
@@ -98,6 +108,15 @@ func TestGuidedWorkflowMetricsStoreRoundTrip(t *testing.T) {
 	}
 	if loaded.RunsStarted != 3 || loaded.RunsCompleted != 2 || loaded.PauseCount != 1 {
 		t.Fatalf("unexpected loaded metrics: %#v", loaded)
+	}
+	if loaded.DispatchAttempts != 4 || loaded.DispatchDeferred != 1 || loaded.DispatchFailures != 2 {
+		t.Fatalf("expected dispatch counters to round-trip, got %#v", loaded)
+	}
+	if loaded.TurnEventsReceived != 6 || loaded.TurnEventsMatched != 4 || loaded.TurnEventsStepDone != 2 || loaded.TurnEventsAdvance != 1 || loaded.TurnEventsProgressed != 3 || loaded.TurnEventsBlocked != 3 {
+		t.Fatalf("expected turn counters to round-trip, got %#v", loaded)
+	}
+	if loaded.StepOutcomeDeferred != 2 {
+		t.Fatalf("expected deferred step outcomes to round-trip, got %#v", loaded)
 	}
 	if loaded.InterventionCauses["user_pause_run"] != 1 {
 		t.Fatalf("expected intervention causes to round-trip, got %#v", loaded.InterventionCauses)

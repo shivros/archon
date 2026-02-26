@@ -64,5 +64,15 @@ type GuidedWorkflowTelemetryState struct {
 	ApprovalCount        int            `json:"approval_count,omitempty"`
 	ApprovalLatencyAvgMS int64          `json:"approval_latency_avg_ms,omitempty"`
 	ApprovalLatencyMaxMS int64          `json:"approval_latency_max_ms,omitempty"`
+	DispatchAttempts     int            `json:"dispatch_attempts,omitempty"`
+	DispatchDeferred     int            `json:"dispatch_deferred,omitempty"`
+	DispatchFailures     int            `json:"dispatch_failures,omitempty"`
+	TurnEventsReceived   int            `json:"turn_events_received,omitempty"`
+	TurnEventsMatched    int            `json:"turn_events_matched,omitempty"`
+	TurnEventsStepDone   int            `json:"turn_events_step_done,omitempty"`
+	TurnEventsAdvance    int            `json:"turn_events_advance_only,omitempty"`
+	TurnEventsProgressed int            `json:"turn_events_progressed,omitempty"`
+	TurnEventsBlocked    int            `json:"turn_events_blocked,omitempty"`
+	StepOutcomeDeferred  int            `json:"step_outcome_deferred,omitempty"`
 	InterventionCauses   map[string]int `json:"intervention_causes,omitempty"`
 }

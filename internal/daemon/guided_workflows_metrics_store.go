@@ -62,6 +62,16 @@ func runMetricsSnapshotFromState(state *types.GuidedWorkflowTelemetryState) guid
 		ApprovalCount:        state.ApprovalCount,
 		ApprovalLatencyAvgMS: state.ApprovalLatencyAvgMS,
 		ApprovalLatencyMaxMS: state.ApprovalLatencyMaxMS,
+		DispatchAttempts:     state.DispatchAttempts,
+		DispatchDeferred:     state.DispatchDeferred,
+		DispatchFailures:     state.DispatchFailures,
+		TurnEventsReceived:   state.TurnEventsReceived,
+		TurnEventsMatched:    state.TurnEventsMatched,
+		TurnEventsStepDone:   state.TurnEventsStepDone,
+		TurnEventsAdvance:    state.TurnEventsAdvance,
+		TurnEventsProgressed: state.TurnEventsProgressed,
+		TurnEventsBlocked:    state.TurnEventsBlocked,
+		StepOutcomeDeferred:  state.StepOutcomeDeferred,
 		InterventionCauses:   map[string]int{},
 	}
 	for cause, count := range state.InterventionCauses {
@@ -81,6 +91,16 @@ func guidedWorkflowTelemetryStateFromSnapshot(snapshot guidedworkflows.RunMetric
 		ApprovalCount:        snapshot.ApprovalCount,
 		ApprovalLatencyAvgMS: snapshot.ApprovalLatencyAvgMS,
 		ApprovalLatencyMaxMS: snapshot.ApprovalLatencyMaxMS,
+		DispatchAttempts:     snapshot.DispatchAttempts,
+		DispatchDeferred:     snapshot.DispatchDeferred,
+		DispatchFailures:     snapshot.DispatchFailures,
+		TurnEventsReceived:   snapshot.TurnEventsReceived,
+		TurnEventsMatched:    snapshot.TurnEventsMatched,
+		TurnEventsStepDone:   snapshot.TurnEventsStepDone,
+		TurnEventsAdvance:    snapshot.TurnEventsAdvance,
+		TurnEventsProgressed: snapshot.TurnEventsProgressed,
+		TurnEventsBlocked:    snapshot.TurnEventsBlocked,
+		StepOutcomeDeferred:  snapshot.StepOutcomeDeferred,
 	}
 	if len(snapshot.InterventionCauses) > 0 {
 		out.InterventionCauses = make(map[string]int, len(snapshot.InterventionCauses))

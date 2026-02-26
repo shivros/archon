@@ -10,7 +10,9 @@ func TestTurnProgressionReadinessRegistryKnownAndFallbackProviders(t *testing.T)
 	registry := newDefaultTurnProgressionReadinessRegistry()
 	openCodePolicy := registry.ForProvider("opencode")
 	kiloPolicy := registry.ForProvider("kilocode")
-	unknownPolicy := registry.ForProvider("codex")
+	codexPolicy := registry.ForProvider("codex")
+	claudePolicy := registry.ForProvider("claude")
+	unknownPolicy := registry.ForProvider("gemini")
 
 	if !openCodePolicy.AllowProgression(types.NotificationEvent{}, "failed", "err", true, "") {
 		t.Fatalf("expected open code policy to allow terminal failures")
@@ -20,8 +22,20 @@ func TestTurnProgressionReadinessRegistryKnownAndFallbackProviders(t *testing.T)
 	}, "completed", "", true, "") {
 		t.Fatalf("expected kilocode policy to allow when artifacts are persisted")
 	}
-	if !unknownPolicy.AllowProgression(types.NotificationEvent{}, "completed", "", false, "") {
-		t.Fatalf("expected fallback policy to allow unknown providers")
+	if codexPolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected codex policy to block non-terminal events")
+	}
+	if claudePolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected claude policy to block non-terminal events")
+	}
+	if !codexPolicy.AllowProgression(types.NotificationEvent{}, "completed", "", true, "done") {
+		t.Fatalf("expected codex policy to allow terminal completion")
+	}
+	if !unknownPolicy.AllowProgression(types.NotificationEvent{}, "completed", "", true, "done") {
+		t.Fatalf("expected fallback policy to allow terminal unknown-provider events")
+	}
+	if unknownPolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected fallback policy to block non-terminal unknown-provider events")
 	}
 }
 
@@ -87,4 +101,40 @@ func TestOpenCodeTurnProgressionReadinessPolicyMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTurnProgressionReadinessRegistryOptionsOverrideProviderAndFallback(t *testing.T) {
+	registry := newTurnProgressionReadinessRegistry(
+		withTurnProgressionProviderReadiness("gemini", allowAllTurnProgressionReadinessPolicy{}),
+		withTurnProgressionFallbackReadiness(allowAllTurnProgressionReadinessPolicy{}),
+	)
+	geminiPolicy := registry.ForProvider("gemini")
+	if !geminiPolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected overridden gemini policy to allow progression")
+	}
+	unknownPolicy := registry.ForProvider("custom-provider")
+	if !unknownPolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected overridden fallback policy to allow progression")
+	}
+}
+
+func TestTurnProgressionReadinessRegistryOptionsIgnoreInvalidInputs(t *testing.T) {
+	registry := newTurnProgressionReadinessRegistry(
+		withTurnProgressionProviderReadiness("", allowAllTurnProgressionReadinessPolicy{}),
+		withTurnProgressionProviderReadiness("codex", nil),
+		withTurnProgressionFallbackReadiness(nil),
+	)
+	codexPolicy := registry.ForProvider("codex")
+	if codexPolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected default codex policy to remain in effect")
+	}
+	unknownPolicy := registry.ForProvider("unknown")
+	if unknownPolicy.AllowProgression(types.NotificationEvent{}, "in_progress", "", false, "") {
+		t.Fatalf("expected default fallback policy to remain in effect")
+	}
+}
+
+func TestTurnProgressionReadinessOptionsSafeOnNilRegistry(t *testing.T) {
+	withTurnProgressionProviderReadiness("codex", allowAllTurnProgressionReadinessPolicy{})(nil)
+	withTurnProgressionFallbackReadiness(allowAllTurnProgressionReadinessPolicy{})(nil)
 }

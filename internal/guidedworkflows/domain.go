@@ -290,6 +290,16 @@ type RunMetricsSnapshot struct {
 	ApprovalCount        int            `json:"approval_count"`
 	ApprovalLatencyAvgMS int64          `json:"approval_latency_avg_ms"`
 	ApprovalLatencyMaxMS int64          `json:"approval_latency_max_ms"`
+	DispatchAttempts     int            `json:"dispatch_attempts"`
+	DispatchDeferred     int            `json:"dispatch_deferred"`
+	DispatchFailures     int            `json:"dispatch_failures"`
+	TurnEventsReceived   int            `json:"turn_events_received"`
+	TurnEventsMatched    int            `json:"turn_events_matched"`
+	TurnEventsStepDone   int            `json:"turn_events_step_done"`
+	TurnEventsAdvance    int            `json:"turn_events_advance_only"`
+	TurnEventsProgressed int            `json:"turn_events_progressed"`
+	TurnEventsBlocked    int            `json:"turn_events_blocked"`
+	StepOutcomeDeferred  int            `json:"step_outcome_deferred"`
 	InterventionCauses   map[string]int `json:"intervention_causes,omitempty"`
 }
 

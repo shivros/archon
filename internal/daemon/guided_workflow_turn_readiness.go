@@ -21,15 +21,53 @@ type providerTurnProgressionReadinessRegistry struct {
 	fallback   turnProgressionReadinessPolicy
 }
 
-func newDefaultTurnProgressionReadinessRegistry() turnProgressionReadinessRegistry {
-	fallback := allowAllTurnProgressionReadinessPolicy{}
-	return providerTurnProgressionReadinessRegistry{
+type turnProgressionReadinessRegistryOption func(*providerTurnProgressionReadinessRegistry)
+
+func withTurnProgressionProviderReadiness(provider string, policy turnProgressionReadinessPolicy) turnProgressionReadinessRegistryOption {
+	return func(registry *providerTurnProgressionReadinessRegistry) {
+		if registry == nil {
+			return
+		}
+		normalized := providers.Normalize(provider)
+		if normalized == "" || policy == nil {
+			return
+		}
+		if registry.byProvider == nil {
+			registry.byProvider = map[string]turnProgressionReadinessPolicy{}
+		}
+		registry.byProvider[normalized] = policy
+	}
+}
+
+func withTurnProgressionFallbackReadiness(policy turnProgressionReadinessPolicy) turnProgressionReadinessRegistryOption {
+	return func(registry *providerTurnProgressionReadinessRegistry) {
+		if registry == nil || policy == nil {
+			return
+		}
+		registry.fallback = policy
+	}
+}
+
+func newTurnProgressionReadinessRegistry(opts ...turnProgressionReadinessRegistryOption) turnProgressionReadinessRegistry {
+	registry := providerTurnProgressionReadinessRegistry{
 		byProvider: map[string]turnProgressionReadinessPolicy{
+			"codex":    terminalTurnProgressionReadinessPolicy{},
+			"claude":   terminalTurnProgressionReadinessPolicy{},
 			"opencode": openCodeTurnProgressionReadinessPolicy{},
 			"kilocode": openCodeTurnProgressionReadinessPolicy{},
 		},
-		fallback: fallback,
+		fallback: terminalTurnProgressionReadinessPolicy{},
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&registry)
+		}
+	}
+	return registry
+}
+
+func newDefaultTurnProgressionReadinessRegistry() turnProgressionReadinessRegistry {
+	return newTurnProgressionReadinessRegistry()
 }
 
 func (r providerTurnProgressionReadinessRegistry) ForProvider(provider string) turnProgressionReadinessPolicy {
@@ -47,6 +85,18 @@ type allowAllTurnProgressionReadinessPolicy struct{}
 
 func (allowAllTurnProgressionReadinessPolicy) AllowProgression(types.NotificationEvent, string, string, bool, string) bool {
 	return true
+}
+
+type terminalTurnProgressionReadinessPolicy struct{}
+
+func (terminalTurnProgressionReadinessPolicy) AllowProgression(
+	_ types.NotificationEvent,
+	_ string,
+	_ string,
+	terminal bool,
+	_ string,
+) bool {
+	return terminal
 }
 
 type openCodeTurnProgressionReadinessPolicy struct{}

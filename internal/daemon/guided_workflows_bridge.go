@@ -365,6 +365,7 @@ type guidedWorkflowPromptDispatcher struct {
 	sessionMeta            SessionMetaStore
 	defaults               guidedWorkflowDispatchDefaults
 	dispatchProviderPolicy guidedworkflows.DispatchProviderPolicy
+	dispatchTelemetry      dispatchTelemetryReporter
 	logger                 logging.Logger
 }
 
@@ -373,6 +374,58 @@ type guidedWorkflowDispatchDefaults struct {
 	Model     string
 	Access    types.AccessLevel
 	Reasoning types.ReasoningLevel
+}
+
+type dispatchTelemetryReporter interface {
+	ReportDispatchResult(dispatchTelemetryContext)
+}
+
+type dispatchTelemetryContext struct {
+	RunID        string
+	PhaseID      string
+	StepID       string
+	SessionID    string
+	Provider     string
+	Model        string
+	TurnID       string
+	Disposition  string
+	AttemptCount int
+	Error        error
+	Blocked      bool
+}
+
+type noopDispatchTelemetryReporter struct{}
+
+func (noopDispatchTelemetryReporter) ReportDispatchResult(dispatchTelemetryContext) {}
+
+type loggerDispatchTelemetryReporter struct {
+	logger logging.Logger
+}
+
+func (r loggerDispatchTelemetryReporter) ReportDispatchResult(ctx dispatchTelemetryContext) {
+	if r.logger == nil {
+		return
+	}
+	fields := []logging.Field{
+		logging.F("run_id", strings.TrimSpace(ctx.RunID)),
+		logging.F("phase_id", strings.TrimSpace(ctx.PhaseID)),
+		logging.F("step_id", strings.TrimSpace(ctx.StepID)),
+		logging.F("session_id", strings.TrimSpace(ctx.SessionID)),
+		logging.F("turn_id", strings.TrimSpace(ctx.TurnID)),
+		logging.F("provider", strings.TrimSpace(ctx.Provider)),
+		logging.F("model", strings.TrimSpace(ctx.Model)),
+		logging.F("disposition", strings.TrimSpace(ctx.Disposition)),
+		logging.F("attempt_count", ctx.AttemptCount),
+	}
+	if ctx.Blocked {
+		fields = append(fields, logging.F("blocked", true))
+	}
+	if ctx.Error != nil {
+		fields = append(fields, logging.F("error", ctx.Error))
+		r.logger.Warn("guided_workflow_dispatch_result", fields...)
+		return
+	}
+	r.logger.Info("guided_workflow_dispatch_result", fields...)
 }
 
 func newGuidedWorkflowPromptDispatcher(
@@ -394,8 +447,22 @@ func newGuidedWorkflowPromptDispatcher(
 		sessionMeta:            stores.SessionMeta,
 		defaults:               guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg),
 		dispatchProviderPolicy: guidedworkflows.DefaultDispatchProviderPolicy(),
+		dispatchTelemetry:      loggerDispatchTelemetryReporter{logger: logger},
 		logger:                 logger,
 	}
+}
+
+func (d *guidedWorkflowPromptDispatcher) dispatchTelemetryReporterOrDefault() dispatchTelemetryReporter {
+	if d == nil {
+		return noopDispatchTelemetryReporter{}
+	}
+	if d.dispatchTelemetry != nil {
+		return d.dispatchTelemetry
+	}
+	if d.logger != nil {
+		return loggerDispatchTelemetryReporter{logger: d.logger}
+	}
+	return noopDispatchTelemetryReporter{}
 }
 
 func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
@@ -430,16 +497,24 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	}
 	d.linkSessionToWorkflow(ctx, sessionID, req.RunID, req.WorkspaceID, req.WorktreeID)
 	resolvedRuntime := d.resolveDispatchRuntimeOptions(provider, req)
-	turnID, err := d.sendStepPrompt(ctx, sessionID, prompt, resolvedRuntime)
+	reporter := d.dispatchTelemetryReporterOrDefault()
+	turnID, attemptCount, err := d.sendStepPrompt(ctx, sessionID, prompt, resolvedRuntime)
 	if err != nil {
-		if shouldFailStepDispatchWithoutSessionReplacement(err) && d.logger != nil {
-			d.logger.Warn("guided_workflow_step_dispatch_blocked",
-				logging.F("run_id", strings.TrimSpace(req.RunID)),
-				logging.F("session_id", strings.TrimSpace(sessionID)),
-				logging.F("provider", strings.TrimSpace(provider)),
-				logging.F("error", err),
-			)
+		disposition := "fatal"
+		if errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
+			disposition = "deferred"
 		}
+		reporter.ReportDispatchResult(dispatchTelemetryContext{
+			RunID:        req.RunID,
+			PhaseID:      req.PhaseID,
+			StepID:       req.StepID,
+			SessionID:    sessionID,
+			Provider:     provider,
+			Disposition:  disposition,
+			AttemptCount: attemptCount,
+			Error:        err,
+			Blocked:      shouldFailStepDispatchWithoutSessionReplacement(err),
+		})
 		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
 	}
 	effectiveModel := strings.TrimSpace(model)
@@ -448,13 +523,25 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 			effectiveModel = overrideModel
 		}
 	}
-	return guidedworkflows.StepPromptDispatchResult{
+	result := guidedworkflows.StepPromptDispatchResult{
 		Dispatched: true,
 		SessionID:  sessionID,
 		TurnID:     strings.TrimSpace(turnID),
 		Provider:   strings.TrimSpace(provider),
 		Model:      effectiveModel,
-	}, nil
+	}
+	reporter.ReportDispatchResult(dispatchTelemetryContext{
+		RunID:        req.RunID,
+		PhaseID:      req.PhaseID,
+		StepID:       req.StepID,
+		SessionID:    result.SessionID,
+		Provider:     result.Provider,
+		Model:        result.Model,
+		TurnID:       result.TurnID,
+		Disposition:  "dispatched",
+		AttemptCount: attemptCount,
+	})
+	return result, nil
 }
 
 func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(
@@ -462,22 +549,24 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(
 	sessionID string,
 	prompt string,
 	runtimeOptions *types.SessionRuntimeOptions,
-) (string, error) {
+) (string, int, error) {
 	if d == nil || d.sessions == nil {
-		return "", fmt.Errorf("%w: session gateway unavailable", guidedworkflows.ErrStepDispatch)
+		return "", 0, fmt.Errorf("%w: session gateway unavailable", guidedworkflows.ErrStepDispatch)
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return "", fmt.Errorf("%w: session id is required", guidedworkflows.ErrStepDispatch)
+		return "", 0, fmt.Errorf("%w: session id is required", guidedworkflows.ErrStepDispatch)
 	}
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		return "", fmt.Errorf("%w: prompt is empty", guidedworkflows.ErrStepDispatch)
+		return "", 0, fmt.Errorf("%w: prompt is empty", guidedworkflows.ErrStepDispatch)
 	}
 	const maxAttempts = 3
 	var lastErr error
+	attemptCount := 0
 	allBusy := true
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		attemptCount = attempt
 		input := []map[string]any{
 			{"type": "text", "text": prompt},
 		}
@@ -494,7 +583,7 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(
 			turnID, err = d.sessions.SendMessage(ctx, sessionID, input)
 		}
 		if err == nil {
-			return strings.TrimSpace(turnID), nil
+			return strings.TrimSpace(turnID), attemptCount, nil
 		}
 		lastErr = err
 		if !isTurnAlreadyInProgressError(err) || attempt == maxAttempts {
@@ -506,14 +595,14 @@ func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(
 		delay := time.Duration(attempt*150) * time.Millisecond
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", attemptCount, ctx.Err()
 		case <-time.After(delay):
 		}
 	}
 	if allBusy && lastErr != nil {
-		return "", fmt.Errorf("%w: %v", guidedworkflows.ErrStepDispatchDeferred, lastErr)
+		return "", attemptCount, fmt.Errorf("%w: %v", guidedworkflows.ErrStepDispatchDeferred, lastErr)
 	}
-	return "", lastErr
+	return "", attemptCount, lastErr
 }
 
 func (d *guidedWorkflowPromptDispatcher) linkSessionToWorkflow(ctx context.Context, sessionID, runID, workspaceID, worktreeID string) {
@@ -1317,6 +1406,20 @@ func NewGuidedWorkflowNotificationPublisher(
 	orchestrator guidedworkflows.Orchestrator,
 	turnProcessors ...guidedworkflows.TurnEventProcessor,
 ) NotificationPublisher {
+	return NewGuidedWorkflowNotificationPublisherWithReadiness(
+		downstream,
+		orchestrator,
+		newDefaultTurnProgressionReadinessRegistry(),
+		turnProcessors...,
+	)
+}
+
+func NewGuidedWorkflowNotificationPublisherWithReadiness(
+	downstream NotificationPublisher,
+	orchestrator guidedworkflows.Orchestrator,
+	readiness turnProgressionReadinessRegistry,
+	turnProcessors ...guidedworkflows.TurnEventProcessor,
+) NotificationPublisher {
 	var turnProcessor guidedworkflows.TurnEventProcessor
 	for _, candidate := range turnProcessors {
 		if candidate != nil {
@@ -1331,7 +1434,7 @@ func NewGuidedWorkflowNotificationPublisher(
 		downstream:         downstream,
 		orchestrator:       orchestrator,
 		turnProcessor:      turnProcessor,
-		readiness:          newDefaultTurnProgressionReadinessRegistry(),
+		readiness:          readiness,
 		decisionNotifiedBy: map[string]struct{}{},
 	}
 }
@@ -1422,6 +1525,13 @@ func guidedWorkflowTurnOutcomeFromNotification(event types.NotificationEvent) (s
 		errMsg = strings.TrimSpace(notificationPayloadString(event.Payload, "error"))
 	}
 	outcome := classifyTurnOutcome(status, errMsg)
+	if !outcome.Terminal &&
+		outcome.Status == "" &&
+		outcome.Error == "" &&
+		event.Trigger == types.NotificationTriggerTurnCompleted {
+		outcome.Status = "completed"
+		outcome.Terminal = true
+	}
 	return outcome.Status, outcome.Error, outcome.Terminal
 }
 

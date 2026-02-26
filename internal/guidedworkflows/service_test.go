@@ -3862,3 +3862,208 @@ func TestRunLifecycleRestorePausedRunPreservesState(t *testing.T) {
 		}
 	}
 }
+
+func TestRunMetricsDispatchReliabilityCounters(t *testing.T) {
+	tpl := WorkflowTemplate{
+		ID:   "dispatch_metrics",
+		Name: "Dispatch Metrics",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "do work"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		errs: []error{ErrStepDispatchDeferred},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(tpl),
+		WithStepPromptDispatcher(dispatcher),
+		WithDispatchRetryScheduler(&stubDispatchRetryScheduler{}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  tpl.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun with deferred dispatch should not fail: %v", err)
+	}
+	metrics, err := service.GetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetRunMetrics: %v", err)
+	}
+	if metrics.DispatchAttempts != 1 || metrics.DispatchDeferred != 1 || metrics.DispatchFailures != 0 {
+		t.Fatalf("unexpected deferred dispatch metrics: %#v", metrics)
+	}
+
+	failedDispatcher := &stubStepPromptDispatcher{err: errors.New("dispatcher crashed")}
+	failedService := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(tpl),
+		WithStepPromptDispatcher(failedDispatcher),
+	)
+	run, err = failedService.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  tpl.ID,
+		WorkspaceID: "ws-2",
+		WorktreeID:  "wt-2",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun (failed path): %v", err)
+	}
+	if _, err := failedService.StartRun(context.Background(), run.ID); err == nil {
+		t.Fatalf("expected StartRun to fail on fatal dispatch error")
+	}
+	metrics, err = failedService.GetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetRunMetrics (failed path): %v", err)
+	}
+	if metrics.DispatchAttempts != 1 || metrics.DispatchFailures != 1 {
+		t.Fatalf("expected fatal dispatch counters to increment, got %#v", metrics)
+	}
+}
+
+func TestRunMetricsTurnProgressionReliabilityCounters(t *testing.T) {
+	tpl := WorkflowTemplate{
+		ID:   "turn_metrics",
+		Name: "Turn Metrics",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "step one"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-1", Provider: "codex"},
+		},
+	}
+	evaluator := &stubStepOutcomeEvaluator{
+		evaluation: StepOutcomeEvaluation{
+			Decision:      StepOutcomeDecisionUndetermined,
+			SuccessDetail: "waiting for more evidence",
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(tpl),
+		WithStepPromptDispatcher(dispatcher),
+		WithStepOutcomeEvaluator(evaluator),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  tpl.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-mismatch",
+		Status:    "completed",
+		Terminal:  true,
+	}); err != nil {
+		t.Fatalf("OnTurnCompleted mismatched turn: %v", err)
+	}
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "partial",
+	}); err != nil {
+		t.Fatalf("OnTurnCompleted undetermined: %v", err)
+	}
+	metrics, err := service.GetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetRunMetrics: %v", err)
+	}
+	if metrics.TurnEventsReceived != 2 {
+		t.Fatalf("expected 2 received turn events, got %#v", metrics)
+	}
+	if metrics.TurnEventsMatched != 2 {
+		t.Fatalf("expected 2 matched turn events, got %#v", metrics)
+	}
+	if metrics.TurnEventsBlocked != 1 {
+		t.Fatalf("expected one blocked turn event, got %#v", metrics)
+	}
+	if metrics.TurnEventsStepDone != 1 {
+		t.Fatalf("expected one step-done turn event, got %#v", metrics)
+	}
+	if metrics.TurnEventsAdvance != 0 {
+		t.Fatalf("expected zero advance-only turn events, got %#v", metrics)
+	}
+	if metrics.TurnEventsProgressed != 1 {
+		t.Fatalf("expected one progressed turn event, got %#v", metrics)
+	}
+	if metrics.StepOutcomeDeferred != 1 {
+		t.Fatalf("expected one deferred step outcome, got %#v", metrics)
+	}
+}
+
+func TestRunMetricsRestoreLegacyProgressedCounterBackfillsAdvance(t *testing.T) {
+	store := &stubRunMetricsStore{
+		loadSnapshot: RunMetricsSnapshot{
+			Enabled:              true,
+			TurnEventsProgressed: 5,
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithRunMetricsStore(store),
+	)
+	metrics, err := service.GetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetRunMetrics: %v", err)
+	}
+	if metrics.TurnEventsProgressed != 5 {
+		t.Fatalf("expected legacy progressed count to restore, got %#v", metrics)
+	}
+	if metrics.TurnEventsAdvance != 5 {
+		t.Fatalf("expected legacy progressed to backfill advance-only counter, got %#v", metrics)
+	}
+	if metrics.TurnEventsStepDone != 0 {
+		t.Fatalf("expected no step-done count from legacy snapshot, got %#v", metrics)
+	}
+}
+
+func TestRunMetricsRestoreComputesProgressedFromExplicitCounters(t *testing.T) {
+	store := &stubRunMetricsStore{
+		loadSnapshot: RunMetricsSnapshot{
+			Enabled:              true,
+			TurnEventsStepDone:   2,
+			TurnEventsAdvance:    3,
+			TurnEventsProgressed: 0,
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithRunMetricsStore(store),
+	)
+	metrics, err := service.GetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetRunMetrics: %v", err)
+	}
+	if metrics.TurnEventsStepDone != 2 || metrics.TurnEventsAdvance != 3 {
+		t.Fatalf("expected explicit turn semantics to restore, got %#v", metrics)
+	}
+	if metrics.TurnEventsProgressed != 5 {
+		t.Fatalf("expected progressed to be derived from explicit counters, got %#v", metrics)
+	}
+}
