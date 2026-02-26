@@ -87,6 +87,36 @@ func TestActiveInputContextSearchHasNoFooterAndNoFrame(t *testing.T) {
 	}
 }
 
+func TestActiveInputContextApprovalResponseNilInputReturnsNoContext(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeApprovalResponse
+	m.approvalInput = nil
+
+	if _, ok := m.activeInputContext(); ok {
+		t.Fatalf("did not expect approval response context when input is nil")
+	}
+}
+
+func TestActiveInputContextAddNoteNilInputReturnsNoContext(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddNote
+	m.noteInput = nil
+
+	if _, ok := m.activeInputContext(); ok {
+		t.Fatalf("did not expect add-note context when input is nil")
+	}
+}
+
+func TestActiveInputContextSearchNilInputReturnsNoContext(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeSearch
+	m.searchInput = nil
+
+	if _, ok := m.activeInputContext(); ok {
+		t.Fatalf("did not expect search context when input is nil")
+	}
+}
+
 func TestActiveInputContextNilModelReturnsNoContext(t *testing.T) {
 	var m *Model
 	if _, ok := m.activeInputContext(); ok {

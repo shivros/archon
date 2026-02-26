@@ -134,6 +134,9 @@ func (m *Model) modeInputPanel() (InputPanel, bool) {
 	if panel, ok := m.activeInputPanel(); ok {
 		return panel, true
 	}
+	if m == nil || m.mode != uiModeGuidedWorkflow {
+		return InputPanel{}, false
+	}
 	if panel, ok := m.guidedWorkflowSetupInputPanel(); ok {
 		return panel, true
 	}
