@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"control/internal/types"
 )
 
 func TestOpenCodeLiveSessionStartTurnAcceptsPromptPending(t *testing.T) {
@@ -63,4 +65,94 @@ func TestOpenCodeLiveSessionStartTurnAcceptsPromptPending(t *testing.T) {
 	if got := strings.TrimSpace(ls.ActiveTurnID()); got != strings.TrimSpace(turnID) {
 		t.Fatalf("expected active turn %q, got %q", turnID, got)
 	}
+}
+
+func TestOpenCodeLiveSessionPublishesTurnFailurePayload(t *testing.T) {
+	events := make(chan types.CodexEvent, 1)
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-failure",
+		providerName: "opencode",
+		events:       events,
+		hub:          newCodexSubscriberHub(),
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+	}
+	ls.start()
+	events <- types.CodexEvent{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"turn":{"id":"turn-1","status":"failed","error":{"message":"unsupported model"}}}`),
+	}
+	close(events)
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for len(notifier.events) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(notifier.events) != 1 {
+		t.Fatalf("expected one turn completion notification, got %d", len(notifier.events))
+	}
+	event := notifier.events[0]
+	if event.Trigger != types.NotificationTriggerTurnCompleted {
+		t.Fatalf("unexpected trigger: %q", event.Trigger)
+	}
+	if got := strings.TrimSpace(asString(event.Payload["turn_status"])); got != "failed" {
+		t.Fatalf("expected turn_status=failed, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(event.Payload["turn_error"])); got != "unsupported model" {
+		t.Fatalf("expected turn_error payload, got %q", got)
+	}
+}
+
+func TestOpenCodeLiveSessionSetNotificationPublisherUsesNotifierInterface(t *testing.T) {
+	aware := &stubAwareTurnCompletionNotifier{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-aware",
+		providerName: "opencode",
+		turnNotifier: aware,
+	}
+	publisher := &captureOpenCodeNotificationPublisher{}
+	ls.SetNotificationPublisher(publisher)
+	if aware.setCalls != 1 {
+		t.Fatalf("expected SetNotificationPublisher to be delegated once, got %d", aware.setCalls)
+	}
+	if aware.publisher != publisher {
+		t.Fatalf("expected delegated publisher to be stored on notifier")
+	}
+}
+
+func TestOpenCodeLiveSessionPublishTurnCompletedNoNotifierNoPanic(t *testing.T) {
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-nil",
+		providerName: "opencode",
+		turnNotifier: nil,
+	}
+	ls.publishTurnCompleted(turnEventParams{
+		TurnID: "turn-nil",
+		Status: "failed",
+		Error:  "ignored",
+	})
+}
+
+type captureOpenCodeNotificationPublisher struct {
+	events []types.NotificationEvent
+}
+
+func (p *captureOpenCodeNotificationPublisher) Publish(event types.NotificationEvent) {
+	p.events = append(p.events, event)
+}
+
+type stubAwareTurnCompletionNotifier struct {
+	publisher NotificationPublisher
+	setCalls  int
+}
+
+func (s *stubAwareTurnCompletionNotifier) NotifyTurnCompleted(context.Context, string, string, string, *types.SessionMeta) {
+}
+
+func (s *stubAwareTurnCompletionNotifier) NotifyTurnCompletedEvent(context.Context, TurnCompletionEvent) {
+}
+
+func (s *stubAwareTurnCompletionNotifier) SetNotificationPublisher(notifier NotificationPublisher) {
+	s.publisher = notifier
+	s.setCalls++
 }

@@ -235,20 +235,60 @@ func notificationEventFromSession(session *types.Session, trigger types.Notifica
 }
 
 func parseTurnIDFromEventParams(raw []byte) string {
+	return parseTurnEventFromParams(raw).TurnID
+}
+
+type turnEventParams struct {
+	TurnID string
+	Status string
+	Error  string
+}
+
+func parseTurnEventFromParams(raw []byte) turnEventParams {
 	if len(raw) == 0 {
-		return ""
+		return turnEventParams{}
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
+		return turnEventParams{}
+	}
+	out := turnEventParams{}
+	if turn, ok := payload["turn"].(map[string]any); ok {
+		out.TurnID = strings.TrimSpace(asString(turn["id"]))
+		out.Status = strings.TrimSpace(asString(turn["status"]))
+		out.Error = strings.TrimSpace(turnErrorMessage(turn["error"]))
+	}
+	if out.TurnID == "" {
+		out.TurnID = strings.TrimSpace(asString(payload["turn_id"]))
+	}
+	if out.Status == "" {
+		out.Status = strings.TrimSpace(asString(payload["status"]))
+	}
+	if out.Error == "" {
+		out.Error = strings.TrimSpace(turnErrorMessage(payload["error"]))
+	}
+	return out
+}
+
+func turnErrorMessage(raw any) string {
+	if raw == nil {
 		return ""
 	}
-	if turn, ok := payload["turn"].(map[string]any); ok {
-		if id := strings.TrimSpace(asString(turn["id"])); id != "" {
-			return id
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case map[string]any:
+		if msg := strings.TrimSpace(asString(value["message"])); msg != "" {
+			return msg
 		}
-	}
-	if id := strings.TrimSpace(asString(payload["turn_id"])); id != "" {
-		return id
+		if msg := strings.TrimSpace(asString(value["error"])); msg != "" {
+			return msg
+		}
+		if data, ok := value["data"].(map[string]any); ok {
+			if msg := strings.TrimSpace(asString(data["message"])); msg != "" {
+				return msg
+			}
+		}
 	}
 	return ""
 }

@@ -1791,6 +1791,92 @@ func TestRunLifecyclePromptDispatchWaitsForTurnThenAdvances(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleOnTurnCompletedTerminalFailureFailsStepAndRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_failure",
+		Name: "Prompted Turn Failure",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_failure",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+		Status:    "failed",
+		Error:     "model unsupported for this provider",
+		Terminal:  true,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted failed turn: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run status, got %q", current.Status)
+	}
+	if !strings.Contains(strings.ToLower(current.LastError), "model unsupported") {
+		t.Fatalf("expected run LastError to include provider failure, got %q", current.LastError)
+	}
+	step := current.Phases[0].Steps[0]
+	if step.Status != StepRunStatusFailed {
+		t.Fatalf("expected failed step status, got %q", step.Status)
+	}
+	if !strings.Contains(strings.ToLower(step.Error), "model unsupported") {
+		t.Fatalf("expected step error to include provider failure, got %q", step.Error)
+	}
+	timeline, err := service.GetRunTimeline(context.Background(), current.ID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline: %v", err)
+	}
+	hasStepFailed := false
+	hasRunFailed := false
+	for _, event := range timeline {
+		if event.Type == "step_failed" && strings.Contains(strings.ToLower(event.Message), "model unsupported") {
+			hasStepFailed = true
+		}
+		if event.Type == "run_failed" && strings.Contains(strings.ToLower(event.Message), "model unsupported") {
+			hasRunFailed = true
+		}
+	}
+	if !hasStepFailed {
+		t.Fatalf("expected step_failed timeline event with failure detail")
+	}
+	if !hasRunFailed {
+		t.Fatalf("expected run_failed timeline event with failure detail")
+	}
+}
+
 func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
 	template := WorkflowTemplate{
 		ID:   "prompted_with_model",

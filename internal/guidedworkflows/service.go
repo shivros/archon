@@ -1569,6 +1569,58 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, si
 		return false, nil
 	}
 	now := s.engine.now()
+	if failure, failed := TurnSignalFailureDetail(signal); failed {
+		step.Status = StepRunStatusFailed
+		step.AwaitingTurn = false
+		step.CompletedAt = &now
+		step.Error = failure
+		step.Outcome = "failed"
+		if strings.TrimSpace(signal.TurnID) != "" {
+			step.TurnID = strings.TrimSpace(signal.TurnID)
+			if strings.TrimSpace(step.Output) == "" {
+				step.Output = step.TurnID
+			}
+		}
+		recordStepExecutionCompletion(run, phase, step, signal, now)
+		phase.Status = PhaseRunStatusFailed
+		phase.CompletedAt = &now
+		run.Status = WorkflowRunStatusFailed
+		run.CompletedAt = &now
+		run.LastError = failure
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "step",
+			Action:  "step_failed",
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Outcome: "failed",
+			Detail:  failure,
+		})
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "run",
+			Action:  "run_failed",
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Outcome: "failed",
+			Detail:  failure,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "step_failed",
+			RunID:   run.ID,
+			PhaseID: phase.ID,
+			StepID:  step.ID,
+			Message: failure,
+		})
+		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			At:      now,
+			Type:    "run_failed",
+			RunID:   run.ID,
+			Message: failure,
+		})
+		return true, nil
+	}
 	step.Status = StepRunStatusCompleted
 	step.AwaitingTurn = false
 	step.CompletedAt = &now
@@ -1844,6 +1896,8 @@ func normalizeTurnSignal(signal TurnSignal) TurnSignal {
 	signal.WorkspaceID = strings.TrimSpace(signal.WorkspaceID)
 	signal.WorktreeID = strings.TrimSpace(signal.WorktreeID)
 	signal.TurnID = strings.TrimSpace(signal.TurnID)
+	signal.Status = strings.TrimSpace(signal.Status)
+	signal.Error = strings.TrimSpace(signal.Error)
 	return signal
 }
 

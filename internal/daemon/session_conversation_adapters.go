@@ -676,7 +676,17 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 						recoveredCount = len(recoveredEvents)
 						for _, recovered := range recoveredEvents {
 							if recovered.Method == "turn/completed" {
-								service.publishTurnCompleted(session, meta, parseTurnIDFromEventParams(recovered.Params), "opencode_recovered_event")
+								turn := parseTurnEventFromParams(recovered.Params)
+								service.publishTurnCompletedWithPayload(
+									session,
+									meta,
+									turn.TurnID,
+									"opencode_recovered_event",
+									map[string]any{
+										"turn_status": turn.Status,
+										"turn_error":  turn.Error,
+									},
+								)
 							}
 							select {
 							case <-ctx.Done():
@@ -700,7 +710,17 @@ func (openCodeConversationAdapter) SubscribeEvents(ctx context.Context, service 
 				lastMethod = event.Method
 				if event.Method == "turn/completed" {
 					sawTurnCompleted = true
-					service.publishTurnCompleted(session, meta, parseTurnIDFromEventParams(event.Params), "opencode_event")
+					turn := parseTurnEventFromParams(event.Params)
+					service.publishTurnCompletedWithPayload(
+						session,
+						meta,
+						turn.TurnID,
+						"opencode_event",
+						map[string]any{
+							"turn_status": turn.Status,
+							"turn_error":  turn.Error,
+						},
+					)
 				}
 				if event.Method == "error" && service.logger != nil {
 					service.logger.Warn("opencode_events_error_event",

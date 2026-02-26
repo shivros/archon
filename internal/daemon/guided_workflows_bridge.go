@@ -1356,11 +1356,15 @@ func (p *guidedWorkflowNotificationPublisher) Publish(event types.NotificationEv
 	if p.turnProcessor == nil {
 		return
 	}
+	turnStatus, turnError, terminal := guidedWorkflowTurnOutcomeFromNotification(event)
 	updatedRuns, err := p.turnProcessor.OnTurnCompleted(context.Background(), guidedworkflows.TurnSignal{
 		SessionID:   strings.TrimSpace(event.SessionID),
 		WorkspaceID: strings.TrimSpace(event.WorkspaceID),
 		WorktreeID:  strings.TrimSpace(event.WorktreeID),
 		TurnID:      strings.TrimSpace(event.TurnID),
+		Status:      turnStatus,
+		Error:       turnError,
+		Terminal:    terminal,
 	})
 	if err != nil {
 		p.publishTurnProcessingFailed(event, err)
@@ -1392,6 +1396,19 @@ func (p *guidedWorkflowNotificationPublisher) publishTurnProcessingFailed(turnEv
 		},
 	}
 	p.downstream.Publish(notification)
+}
+
+func guidedWorkflowTurnOutcomeFromNotification(event types.NotificationEvent) (status, errMsg string, terminal bool) {
+	status = strings.TrimSpace(notificationPayloadString(event.Payload, "turn_status"))
+	errMsg = strings.TrimSpace(notificationPayloadString(event.Payload, "turn_error"))
+	if status == "" {
+		status = strings.TrimSpace(notificationPayloadString(event.Payload, "status"))
+	}
+	if errMsg == "" {
+		errMsg = strings.TrimSpace(notificationPayloadString(event.Payload, "error"))
+	}
+	outcome := classifyTurnOutcome(status, errMsg)
+	return outcome.Status, outcome.Error, outcome.Terminal
 }
 
 func (p *guidedWorkflowNotificationPublisher) publishDecisionNeeded(turnEvent types.NotificationEvent, run *guidedworkflows.WorkflowRun) {

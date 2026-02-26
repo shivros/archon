@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"control/internal/logging"
@@ -99,10 +100,8 @@ func (s *openCodeLiveSession) isClosed() bool {
 func (s *openCodeLiveSession) SetNotificationPublisher(notifier NotificationPublisher) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.turnNotifier != nil {
-		if dn, ok := s.turnNotifier.(*DefaultTurnCompletionNotifier); ok {
-			dn.notifier = notifier
-		}
+	if aware, ok := s.turnNotifier.(TurnCompletionNotificationPublisherAware); ok {
+		aware.SetNotificationPublisher(notifier)
 	}
 }
 
@@ -113,18 +112,20 @@ func (s *openCodeLiveSession) start() {
 			s.hub.Broadcast(event)
 
 			if event.Method == "turn/completed" || event.Method == "session.idle" {
-				turnID := parseTurnIDFromEventParams(event.Params)
+				turn := parseTurnEventFromParams(event.Params)
+				turnID := turn.TurnID
 				if turnID == "" {
 					s.mu.Lock()
 					turnID = s.activeTurn
 					s.activeTurn = ""
 					s.mu.Unlock()
+					turn.TurnID = turnID
 				} else {
 					s.mu.Lock()
 					s.activeTurn = ""
 					s.mu.Unlock()
 				}
-				s.publishTurnCompleted(turnID)
+				s.publishTurnCompleted(turn)
 			}
 
 			if isApprovalMethod(event.Method) && event.ID != nil {
@@ -134,11 +135,18 @@ func (s *openCodeLiveSession) start() {
 	}()
 }
 
-func (s *openCodeLiveSession) publishTurnCompleted(turnID string) {
+func (s *openCodeLiveSession) publishTurnCompleted(turn turnEventParams) {
 	if s.turnNotifier == nil {
 		return
 	}
-	s.turnNotifier.NotifyTurnCompleted(context.Background(), s.sessionID, turnID, s.providerName, nil)
+	s.turnNotifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{
+		SessionID: strings.TrimSpace(s.sessionID),
+		TurnID:    strings.TrimSpace(turn.TurnID),
+		Provider:  strings.TrimSpace(s.providerName),
+		Source:    "live_session_event",
+		Status:    strings.TrimSpace(turn.Status),
+		Error:     strings.TrimSpace(turn.Error),
+	})
 }
 
 func (s *openCodeLiveSession) storeApproval(event types.CodexEvent) {

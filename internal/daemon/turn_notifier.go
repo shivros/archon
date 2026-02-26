@@ -2,13 +2,30 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"control/internal/types"
 )
 
+type TurnCompletionEvent struct {
+	SessionID   string
+	TurnID      string
+	Provider    string
+	WorkspaceID string
+	WorktreeID  string
+	Source      string
+	Status      string
+	Error       string
+}
+
 type TurnCompletionNotifier interface {
 	NotifyTurnCompleted(ctx context.Context, sessionID, turnID, provider string, meta *types.SessionMeta)
+	NotifyTurnCompletedEvent(ctx context.Context, event TurnCompletionEvent)
+}
+
+type TurnCompletionNotificationPublisherAware interface {
+	SetNotificationPublisher(NotificationPublisher)
 }
 
 type DefaultTurnCompletionNotifier struct {
@@ -24,6 +41,20 @@ func NewTurnCompletionNotifier(notifier NotificationPublisher, stores *Stores) *
 }
 
 func (n *DefaultTurnCompletionNotifier) NotifyTurnCompleted(ctx context.Context, sessionID, turnID, provider string, meta *types.SessionMeta) {
+	event := TurnCompletionEvent{
+		SessionID: strings.TrimSpace(sessionID),
+		TurnID:    strings.TrimSpace(turnID),
+		Provider:  strings.TrimSpace(provider),
+		Source:    "live_session_event",
+	}
+	if meta != nil {
+		event.WorkspaceID = strings.TrimSpace(meta.WorkspaceID)
+		event.WorktreeID = strings.TrimSpace(meta.WorktreeID)
+	}
+	n.NotifyTurnCompletedEvent(ctx, event)
+}
+
+func (n *DefaultTurnCompletionNotifier) NotifyTurnCompletedEvent(ctx context.Context, completion TurnCompletionEvent) {
 	if n.notifier == nil {
 		return
 	}
@@ -31,19 +62,33 @@ func (n *DefaultTurnCompletionNotifier) NotifyTurnCompleted(ctx context.Context,
 	event := types.NotificationEvent{
 		Trigger:    types.NotificationTriggerTurnCompleted,
 		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
-		SessionID:  sessionID,
-		TurnID:     turnID,
-		Provider:   provider,
-		Source:     "live_session_event",
+		SessionID:  strings.TrimSpace(completion.SessionID),
+		TurnID:     strings.TrimSpace(completion.TurnID),
+		Provider:   strings.TrimSpace(completion.Provider),
+		Source:     strings.TrimSpace(completion.Source),
 	}
 
-	if meta != nil {
-		event.WorkspaceID = meta.WorkspaceID
-		event.WorktreeID = meta.WorktreeID
-	} else if n.stores != nil && n.stores.SessionMeta != nil {
-		if m, ok, _ := n.stores.SessionMeta.Get(ctx, sessionID); ok && m != nil {
-			event.WorkspaceID = m.WorkspaceID
-			event.WorktreeID = m.WorktreeID
+	if event.Source == "" {
+		event.Source = "live_session_event"
+	}
+	event.WorkspaceID = strings.TrimSpace(completion.WorkspaceID)
+	event.WorktreeID = strings.TrimSpace(completion.WorktreeID)
+	if event.WorkspaceID == "" || event.WorktreeID == "" {
+		if n.stores != nil && n.stores.SessionMeta != nil {
+			if m, ok, _ := n.stores.SessionMeta.Get(ctx, event.SessionID); ok && m != nil {
+				if event.WorkspaceID == "" {
+					event.WorkspaceID = strings.TrimSpace(m.WorkspaceID)
+				}
+				if event.WorktreeID == "" {
+					event.WorktreeID = strings.TrimSpace(m.WorktreeID)
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(completion.Status) != "" || strings.TrimSpace(completion.Error) != "" {
+		event.Payload = map[string]any{
+			"turn_status": strings.TrimSpace(completion.Status),
+			"turn_error":  strings.TrimSpace(completion.Error),
 		}
 	}
 
@@ -53,4 +98,14 @@ func (n *DefaultTurnCompletionNotifier) NotifyTurnCompleted(ctx context.Context,
 type NopTurnCompletionNotifier struct{}
 
 func (NopTurnCompletionNotifier) NotifyTurnCompleted(_ context.Context, _, _, _ string, _ *types.SessionMeta) {
+}
+
+func (NopTurnCompletionNotifier) NotifyTurnCompletedEvent(context.Context, TurnCompletionEvent) {
+}
+
+func (n *DefaultTurnCompletionNotifier) SetNotificationPublisher(notifier NotificationPublisher) {
+	if n == nil {
+		return
+	}
+	n.notifier = notifier
 }

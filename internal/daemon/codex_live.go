@@ -454,12 +454,12 @@ func (s *codexLiveSession) handleNote(msg rpcMessage) {
 			s.activeTurn = ""
 			s.mu.Unlock()
 		}
-		s.publishTurnCompleted(parseTurnIDFromEventParams(msg.Params))
+		s.publishTurnCompleted(parseTurnEventFromParams(msg.Params))
 		s.maybeClose()
 	}
 }
 
-func (s *codexLiveSession) publishTurnCompleted(turnID string) {
+func (s *codexLiveSession) publishTurnCompleted(turn turnEventParams) {
 	if s == nil || s.notifier == nil {
 		return
 	}
@@ -467,8 +467,14 @@ func (s *codexLiveSession) publishTurnCompleted(turnID string) {
 		Trigger:    types.NotificationTriggerTurnCompleted,
 		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
 		SessionID:  strings.TrimSpace(s.sessionID),
-		TurnID:     strings.TrimSpace(turnID),
+		TurnID:     strings.TrimSpace(turn.TurnID),
 		Source:     "codex_live_event",
+	}
+	if turn.Status != "" || turn.Error != "" {
+		event.Payload = map[string]any{
+			"turn_status": strings.TrimSpace(turn.Status),
+			"turn_error":  strings.TrimSpace(turn.Error),
+		}
 	}
 	if s.stores != nil && s.stores.Sessions != nil {
 		if record, ok, err := s.stores.Sessions.GetRecord(context.Background(), s.sessionID); err == nil && ok && record != nil && record.Session != nil {

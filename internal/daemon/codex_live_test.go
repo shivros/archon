@@ -268,6 +268,33 @@ func TestCodexLiveSessionHandleRequestPublishesApprovalNotification(t *testing.T
 	}
 }
 
+func TestCodexLiveSessionHandleNotePublishesTurnFailurePayload(t *testing.T) {
+	notifier := &captureCodexNotificationPublisher{}
+	ls := &codexLiveSession{
+		sessionID: "sess-failure",
+		client:    &codexAppServer{},
+		hub:       newCodexSubscriberHub(),
+		notifier:  notifier,
+	}
+	ls.handleNote(rpcMessage{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"turn":{"id":"turn-1","status":"failed","error":{"message":"model unsupported"}}}`),
+	})
+	if len(notifier.events) != 1 {
+		t.Fatalf("expected one turn completion notification, got %d", len(notifier.events))
+	}
+	event := notifier.events[0]
+	if event.Trigger != types.NotificationTriggerTurnCompleted {
+		t.Fatalf("unexpected trigger: %q", event.Trigger)
+	}
+	if got := strings.TrimSpace(asString(event.Payload["turn_status"])); got != "failed" {
+		t.Fatalf("expected turn_status=failed, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(event.Payload["turn_error"])); got != "model unsupported" {
+		t.Fatalf("expected turn_error payload, got %q", got)
+	}
+}
+
 func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 	wrapper := codexLiveHelperWrapper(t)
 	home := filepath.Join(t.TempDir(), "home")

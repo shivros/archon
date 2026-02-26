@@ -130,6 +130,16 @@ func (s *SessionService) StartGuidedWorkflowRun(ctx context.Context, req guidedw
 }
 
 func (s *SessionService) publishTurnCompleted(session *types.Session, meta *types.SessionMeta, turnID string, source string) {
+	s.publishTurnCompletedWithPayload(session, meta, turnID, source, nil)
+}
+
+func (s *SessionService) publishTurnCompletedWithPayload(
+	session *types.Session,
+	meta *types.SessionMeta,
+	turnID string,
+	source string,
+	payload map[string]any,
+) {
 	if s == nil || s.notifier == nil || session == nil {
 		return
 	}
@@ -139,6 +149,9 @@ func (s *SessionService) publishTurnCompleted(session *types.Session, meta *type
 		event.WorktreeID = strings.TrimSpace(meta.WorktreeID)
 	}
 	event.TurnID = strings.TrimSpace(turnID)
+	if len(payload) > 0 {
+		event.Payload = payload
+	}
 	s.notifier.Publish(event)
 }
 

@@ -2330,6 +2330,70 @@ func TestGuidedWorkflowNotificationPublisherEmitsDecisionNeededPayload(t *testin
 	}
 }
 
+func TestGuidedWorkflowNotificationPublisherPropagatesTerminalTurnFailure(t *testing.T) {
+	downstream := &recordNotificationPublisher{}
+	orchestrator := &recordGuidedWorkflowOrchestrator{enabled: true}
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "prompted_turn_failure_bridge",
+		Name: "Prompted Turn Failure Bridge",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithTemplate(template),
+		guidedworkflows.WithStepPromptDispatcher(&guidedWorkflowPromptDispatcher{
+			sessions: &stubGuidedWorkflowSessionGateway{
+				turnID: "turn-fail",
+				sessions: []*types.Session{
+					{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: time.Now().UTC()},
+				},
+			},
+		}),
+	)
+	run, err := runService.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		TemplateID:  "prompted_turn_failure_bridge",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := runService.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	publisher := NewGuidedWorkflowNotificationPublisher(downstream, orchestrator, runService)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:   types.NotificationTriggerTurnCompleted,
+		SessionID: "sess-1",
+		TurnID:    "turn-fail",
+		Payload: map[string]any{
+			"turn_status": "failed",
+			"turn_error":  "unsupported model",
+		},
+	})
+
+	current, err := runService.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != guidedworkflows.WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run status, got %q", current.Status)
+	}
+	if !strings.Contains(strings.ToLower(current.LastError), "unsupported model") {
+		t.Fatalf("expected LastError to include terminal runtime detail, got %q", current.LastError)
+	}
+}
+
 type recordNotificationPublisher struct {
 	events []types.NotificationEvent
 }

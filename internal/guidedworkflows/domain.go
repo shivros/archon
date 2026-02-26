@@ -218,6 +218,9 @@ type TurnSignal struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	WorktreeID  string `json:"worktree_id,omitempty"`
 	TurnID      string `json:"turn_id,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Terminal    bool   `json:"terminal,omitempty"`
 }
 
 type StepPromptDispatchRequest struct {
