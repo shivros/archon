@@ -295,6 +295,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	if threadID := strings.TrimSpace(proc.ThreadID); threadID != "" && threadID != sessionID {
 		m.rekeySession(sessionID, threadID, runtimeState)
 	}
+	startedSession := cloneSession(session)
 	m.mu.Unlock()
 
 	// After re-key, session.ID holds the effective (possibly new) ID.
@@ -342,7 +343,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		close(runtimeState.done)
 	}
 
-	return cloneSession(session), nil
+	return startedSession, nil
 }
 
 func providerUsesItems(provider string) bool {

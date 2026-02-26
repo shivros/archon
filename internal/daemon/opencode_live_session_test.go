@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,30 +69,31 @@ func TestOpenCodeLiveSessionStartTurnAcceptsPromptPending(t *testing.T) {
 }
 
 func TestOpenCodeLiveSessionPublishesTurnFailurePayload(t *testing.T) {
-	events := make(chan types.CodexEvent, 1)
+	eventStream := make(chan types.CodexEvent, 1)
 	notifier := &captureOpenCodeNotificationPublisher{}
 	ls := &openCodeLiveSession{
 		sessionID:    "sess-open-failure",
 		providerName: "opencode",
-		events:       events,
+		events:       eventStream,
 		hub:          newCodexSubscriberHub(),
 		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
 	}
 	ls.start()
-	events <- types.CodexEvent{
+	eventStream <- types.CodexEvent{
 		Method: "turn/completed",
 		Params: json.RawMessage(`{"turn":{"id":"turn-1","status":"failed","error":{"message":"unsupported model"}}}`),
 	}
-	close(events)
+	close(eventStream)
 
 	deadline := time.Now().Add(250 * time.Millisecond)
-	for len(notifier.events) == 0 && time.Now().Before(deadline) {
+	for notifier.Len() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(notifier.events) != 1 {
-		t.Fatalf("expected one turn completion notification, got %d", len(notifier.events))
+	notifications := notifier.Events()
+	if len(notifications) != 1 {
+		t.Fatalf("expected one turn completion notification, got %d", len(notifications))
 	}
-	event := notifier.events[0]
+	event := notifications[0]
 	if event.Trigger != types.NotificationTriggerTurnCompleted {
 		t.Fatalf("unexpected trigger: %q", event.Trigger)
 	}
@@ -134,11 +136,34 @@ func TestOpenCodeLiveSessionPublishTurnCompletedNoNotifierNoPanic(t *testing.T) 
 }
 
 type captureOpenCodeNotificationPublisher struct {
+	mu     sync.Mutex
 	events []types.NotificationEvent
 }
 
 func (p *captureOpenCodeNotificationPublisher) Publish(event types.NotificationEvent) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.events = append(p.events, event)
+}
+
+func (p *captureOpenCodeNotificationPublisher) Len() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.events)
+}
+
+func (p *captureOpenCodeNotificationPublisher) Events() []types.NotificationEvent {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]types.NotificationEvent, len(p.events))
+	copy(out, p.events)
+	return out
 }
 
 type stubAwareTurnCompletionNotifier struct {

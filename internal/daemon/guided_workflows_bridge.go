@@ -1357,14 +1357,19 @@ func (p *guidedWorkflowNotificationPublisher) Publish(event types.NotificationEv
 		return
 	}
 	turnStatus, turnError, terminal := guidedWorkflowTurnOutcomeFromNotification(event)
+	turnOutput := guidedWorkflowTurnOutputFromNotification(event)
 	updatedRuns, err := p.turnProcessor.OnTurnCompleted(context.Background(), guidedworkflows.TurnSignal{
 		SessionID:   strings.TrimSpace(event.SessionID),
 		WorkspaceID: strings.TrimSpace(event.WorkspaceID),
 		WorktreeID:  strings.TrimSpace(event.WorktreeID),
+		Provider:    strings.TrimSpace(event.Provider),
+		Source:      strings.TrimSpace(event.Source),
 		TurnID:      strings.TrimSpace(event.TurnID),
 		Status:      turnStatus,
 		Error:       turnError,
+		Output:      turnOutput,
 		Terminal:    terminal,
+		Payload:     cloneNotificationPayload(event.Payload),
 	})
 	if err != nil {
 		p.publishTurnProcessingFailed(event, err)
@@ -1409,6 +1414,52 @@ func guidedWorkflowTurnOutcomeFromNotification(event types.NotificationEvent) (s
 	}
 	outcome := classifyTurnOutcome(status, errMsg)
 	return outcome.Status, outcome.Error, outcome.Terminal
+}
+
+func guidedWorkflowTurnOutputFromNotification(event types.NotificationEvent) string {
+	return firstNonEmpty(
+		strings.TrimSpace(notificationPayloadString(event.Payload, "turn_output")),
+		firstNonEmpty(
+			strings.TrimSpace(notificationPayloadString(event.Payload, "output")),
+			firstNonEmpty(
+				strings.TrimSpace(notificationPayloadString(event.Payload, "assistant_output")),
+				strings.TrimSpace(notificationPayloadString(event.Payload, "result")),
+			),
+		),
+	)
+}
+
+func cloneNotificationPayload(payload map[string]any) map[string]any {
+	if len(payload) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(payload))
+	for key, value := range payload {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		out[trimmed] = deepCloneNotificationPayloadValue(value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func deepCloneNotificationPayloadValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return cloneNotificationPayload(v)
+	case []any:
+		out := make([]any, len(v))
+		for i := range v {
+			out[i] = deepCloneNotificationPayloadValue(v[i])
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func (p *guidedWorkflowNotificationPublisher) publishDecisionNeeded(turnEvent types.NotificationEvent, run *guidedworkflows.WorkflowRun) {

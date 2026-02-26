@@ -2438,6 +2438,18 @@ func (p *failingTurnProcessor) OnTurnCompleted(context.Context, guidedworkflows.
 	return nil, p.err
 }
 
+type captureTurnProcessor struct {
+	signals []guidedworkflows.TurnSignal
+}
+
+func (p *captureTurnProcessor) OnTurnCompleted(_ context.Context, signal guidedworkflows.TurnSignal) ([]*guidedworkflows.WorkflowRun, error) {
+	if p == nil {
+		return nil, nil
+	}
+	p.signals = append(p.signals, signal)
+	return nil, nil
+}
+
 func (o *recordGuidedWorkflowOrchestrator) Enabled() bool {
 	return o.enabled
 }
@@ -2492,6 +2504,61 @@ func TestGuidedWorkflowNotificationPublisherPublishesTurnProcessingFailures(t *t
 	}
 	if len(orchestrator.turnEvents) != 1 {
 		t.Fatalf("expected orchestrator to still observe turn event, got %d", len(orchestrator.turnEvents))
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherForwardsTurnContextToProcessor(t *testing.T) {
+	downstream := &recordNotificationPublisher{}
+	turnProcessor := &captureTurnProcessor{}
+	publisher := NewGuidedWorkflowNotificationPublisher(downstream, nil, turnProcessor)
+	payload := map[string]any{
+		"turn_status": "completed",
+		"turn_output": "done",
+		"trace_id":    "trace-123",
+		"nested": map[string]any{
+			"result": "ok",
+		},
+		"items": []any{
+			map[string]any{"k": "v"},
+			"stable",
+		},
+	}
+	publisher.Publish(types.NotificationEvent{
+		Trigger:     types.NotificationTriggerTurnCompleted,
+		SessionID:   "sess-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Provider:    "codex",
+		Source:      "opencode_event",
+		TurnID:      "turn-1",
+		Payload:     payload,
+	})
+	payload["trace_id"] = "mutated"
+	nested, _ := payload["nested"].(map[string]any)
+	nested["result"] = "mutated"
+	items, _ := payload["items"].([]any)
+	items[0].(map[string]any)["k"] = "mutated"
+
+	if len(turnProcessor.signals) != 1 {
+		t.Fatalf("expected one forwarded turn signal, got %d", len(turnProcessor.signals))
+	}
+	signal := turnProcessor.signals[0]
+	if signal.SessionID != "sess-1" || signal.Provider != "codex" || signal.Source != "opencode_event" {
+		t.Fatalf("unexpected forwarded session/provider/source: %#v", signal)
+	}
+	if signal.Status != "completed" || signal.Output != "done" || !signal.Terminal {
+		t.Fatalf("unexpected forwarded status/output/terminal: %#v", signal)
+	}
+	if signal.Payload["trace_id"] != "trace-123" {
+		t.Fatalf("expected payload clone for forwarded signal, got %#v", signal.Payload)
+	}
+	retainedNested, ok := signal.Payload["nested"].(map[string]any)
+	if !ok || retainedNested["result"] != "ok" {
+		t.Fatalf("expected nested payload clone for forwarded signal, got %#v", signal.Payload)
+	}
+	retainedItems, ok := signal.Payload["items"].([]any)
+	if !ok || retainedItems[0].(map[string]any)["k"] != "v" {
+		t.Fatalf("expected nested array payload clone for forwarded signal, got %#v", signal.Payload)
 	}
 }
 
