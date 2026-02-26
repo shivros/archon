@@ -123,9 +123,6 @@ func (s *sidebarItem) Title() string {
 			}
 			return name
 		}
-		if id := strings.TrimSpace(s.workflowID); id != "" {
-			return "Guided Workflow " + id
-		}
 		return "Guided Workflow"
 	case sidebarSession:
 		return sessionTitle(s.session, s.meta)
@@ -236,6 +233,27 @@ type sidebarDelegate struct {
 	selectedKeys      map[string]struct{}
 	unreadSessions    map[string]struct{}
 	providerBadges    map[string]*types.ProviderBadgeConfig
+	now               func() time.Time
+	sessionLayout     sidebarSessionLayoutEngine
+}
+
+type sidebarSessionLayoutEngine interface {
+	Layout(title, right string, width int) (string, string)
+}
+
+type defaultSidebarSessionLayoutEngine struct{}
+
+func (defaultSidebarSessionLayoutEngine) Layout(title, right string, width int) (string, string) {
+	return renderSessionColumns(title, right, width)
+}
+
+type sidebarSessionRowViewModel struct {
+	Prefix        string
+	BadgeText     string
+	BadgeColor    string
+	Title         string
+	RightText     string
+	TitleIsUnread bool
 }
 
 func (d *sidebarDelegate) Height() int {
@@ -260,189 +278,178 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 	maxWidth := m.Width()
 	switch entry.kind {
 	case sidebarRecentsAll:
-		label := entry.Title()
-		total := max(0, entry.recentsCount)
-		label = fmt.Sprintf("%s (%d)", label, total)
-		line := "• " + label
-		line = truncateToWidth(line, maxWidth)
-		style := workspaceStyle
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		fmt.Fprint(w, style.Render(line))
+		fmt.Fprint(w, d.renderRecentsAllRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarRecentsReady:
-		label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
-		line := "  - " + label
-		line = truncateToWidth(line, maxWidth)
-		style := worktreeStyle
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		fmt.Fprint(w, style.Render(line))
+		fmt.Fprint(w, d.renderRecentsReadyRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarRecentsRunning:
-		label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
-		line := "  - " + label
-		line = truncateToWidth(line, maxWidth)
-		style := worktreeStyle
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		fmt.Fprint(w, style.Render(line))
+		fmt.Fprint(w, d.renderRecentsRunningRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarWorkspace:
-		label := entry.Title()
-		if entry.sessionCount > 0 {
-			label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
-		}
-		indent := strings.Repeat("  ", max(0, entry.depth))
-		prefix := "  "
-		if entry.collapsible {
-			if entry.expanded {
-				prefix = "▾ "
-			} else {
-				prefix = "▸ "
-			}
-		}
-		label = indent + prefix + label
-		label = truncateToWidth(label, maxWidth)
-		style := workspaceStyle
-		if entry.workspace != nil && entry.workspace.ID == d.activeWorkspaceID {
-			style = workspaceActiveStyle
-		}
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		fmt.Fprint(w, style.Render(label))
+		fmt.Fprint(w, d.renderWorkspaceRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarWorktree:
-		label := entry.Title()
-		if entry.sessionCount > 0 {
-			label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
-		}
-		indent := strings.Repeat("  ", max(0, entry.depth))
-		marker := " "
-		if entry.collapsible {
-			if entry.expanded {
-				marker = "▾"
-			} else {
-				marker = "▸"
-			}
-		}
-		line := indent + marker + " " + label
-		line = truncateToWidth(line, maxWidth)
-		style := worktreeStyle
-		if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
-			style = worktreeActiveStyle
-		}
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		fmt.Fprint(w, style.Render(line))
+		fmt.Fprint(w, d.renderWorktreeRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarWorkflow:
-		label := entry.Title()
-		if entry.workflow != nil {
-			label = fmt.Sprintf("%s (%s)", label, strings.TrimSpace(entry.workflow.ID))
-		}
-		if entry.sessionCount > 0 {
-			label = fmt.Sprintf("%s • %d sessions", label, entry.sessionCount)
-		}
-		statusText := workflowRunStatusText(entry.workflow)
-		if strings.TrimSpace(statusText) != "" {
-			label = fmt.Sprintf("%s • %s", label, statusText)
-		}
-		marker := " "
-		if entry.collapsible {
-			if entry.expanded {
-				marker = "▾"
-			} else {
-				marker = "▸"
-			}
-		}
-		indent := strings.Repeat("  ", max(0, entry.depth))
-		line := indent + marker + " [WFL] " + label
-		line = truncateToWidth(line, maxWidth)
-		style := worktreeStyle
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		fmt.Fprint(w, style.Render(line))
+		fmt.Fprint(w, d.renderWorkflowRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarSession:
-		title := sessionTitle(entry.session, entry.meta)
-		since := formatSince(sessionLastActive(entry.session, entry.meta))
-		indicator := inactiveDot
-		if entry.session != nil && isActiveStatus(entry.session.Status) {
-			indicator = activeDot
-		}
-		if isDismissedSession(entry.session, entry.meta) {
-			indicator = dismissedDot
-		}
-		badgeConfig := resolveProviderBadge(entry.sessionProvider(), d.providerBadges)
-		badgeText := strings.TrimSpace(badgeConfig.Prefix)
-		indent := strings.Repeat("  ", max(0, entry.depth))
-		prefix := indent + fmt.Sprintf(" %s ", indicator)
-		if badgeText != "" {
-			prefix += badgeText + " "
-		}
-		suffix := ""
-		if strings.TrimSpace(since) != "" {
-			suffix = fmt.Sprintf(" • %s", since)
-		}
-		if isDismissedSession(entry.session, entry.meta) {
-			suffix += " • dismissed"
-		}
-		available := maxWidth - ansi.StringWidth(prefix) - ansi.StringWidth(suffix)
-		if available <= 0 {
-			title = ""
-		} else {
-			title = truncateToWidth(title, available)
-		}
-		main := title + suffix
-		if ansi.StringWidth(prefix)+ansi.StringWidth(main) > maxWidth {
-			mainWidth := maxWidth - ansi.StringWidth(prefix)
-			if mainWidth <= 0 {
-				title = ""
-				suffix = ""
-			} else {
-				titleWidth := ansi.StringWidth(title)
-				if titleWidth > mainWidth {
-					title = truncateToWidth(title, mainWidth)
-					suffix = ""
-				} else {
-					suffix = truncateToWidth(suffix, mainWidth-titleWidth)
-				}
-			}
-		}
-		style := sessionStyle
-		if isSelected {
-			style = selectedStyle
-		} else if isMarked {
-			style = multiSelectStyle
-		}
-		titleStyle := style
-		if entry.session != nil && d.isUnread(entry.session.ID) && !isSelected {
-			titleStyle = sessionUnreadStyle
-		}
-
-		rendered := style.Render(indent + fmt.Sprintf(" %s ", indicator))
-		if badgeText != "" {
-			badgeStyle := style.Copy().Foreground(lipgloss.Color(strings.TrimSpace(badgeConfig.Color)))
-			rendered += badgeStyle.Render(badgeText)
-			rendered += style.Render(" ")
-		}
-		rendered += titleStyle.Render(title)
-		rendered += style.Render(suffix)
-		fmt.Fprint(w, rendered)
+		fmt.Fprint(w, d.renderSessionRow(entry, maxWidth, isSelected, isMarked))
 	}
+}
+
+func (d *sidebarDelegate) renderRecentsAllRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
+	line := truncateToWidth("• "+label, maxWidth)
+	return sidebarSelectStyle(workspaceStyle, isSelected, isMarked).Render(line)
+}
+
+func (d *sidebarDelegate) renderRecentsReadyRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
+	line := truncateToWidth("  - "+label, maxWidth)
+	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+}
+
+func (d *sidebarDelegate) renderRecentsRunningRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
+	line := truncateToWidth("  - "+label, maxWidth)
+	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+}
+
+func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	label := entry.Title()
+	if entry.sessionCount > 0 {
+		label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
+	}
+	indent := strings.Repeat("  ", max(0, entry.depth))
+	prefix := "  "
+	if entry.collapsible {
+		if entry.expanded {
+			prefix = "▾ "
+		} else {
+			prefix = "▸ "
+		}
+	}
+	line := truncateToWidth(indent+prefix+label, maxWidth)
+	baseStyle := workspaceStyle
+	if entry.workspace != nil && entry.workspace.ID == d.activeWorkspaceID {
+		baseStyle = workspaceActiveStyle
+	}
+	return sidebarSelectStyle(baseStyle, isSelected, isMarked).Render(line)
+}
+
+func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	label := entry.Title()
+	if entry.sessionCount > 0 {
+		label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
+	}
+	indent := strings.Repeat("  ", max(0, entry.depth))
+	marker := " "
+	if entry.collapsible {
+		if entry.expanded {
+			marker = "▾"
+		} else {
+			marker = "▸"
+		}
+	}
+	line := truncateToWidth(indent+marker+" "+label, maxWidth)
+	baseStyle := worktreeStyle
+	if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
+		baseStyle = worktreeActiveStyle
+	}
+	return sidebarSelectStyle(baseStyle, isSelected, isMarked).Render(line)
+}
+
+func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	label := entry.Title()
+	if entry.sessionCount > 0 {
+		label = fmt.Sprintf("%s • %d sessions", label, entry.sessionCount)
+	}
+	statusText := workflowRunStatusText(entry.workflow)
+	if strings.TrimSpace(statusText) != "" {
+		label = fmt.Sprintf("%s • %s", label, statusText)
+	}
+	marker := " "
+	if entry.collapsible {
+		if entry.expanded {
+			marker = "▾"
+		} else {
+			marker = "▸"
+		}
+	}
+	indent := strings.Repeat("  ", max(0, entry.depth))
+	line := truncateToWidth(indent+marker+" [WFL] "+label, maxWidth)
+	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+}
+
+func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+	baseStyle := sidebarSelectStyle(sessionStyle, isSelected, isMarked)
+	viewModel := d.buildSessionRowViewModel(entry, maxWidth)
+
+	rendered := baseStyle.Render(viewModel.Prefix)
+	if viewModel.BadgeText != "" {
+		badgeStyle := baseStyle.Copy().Foreground(lipgloss.Color(strings.TrimSpace(viewModel.BadgeColor)))
+		rendered += badgeStyle.Render(viewModel.BadgeText)
+		rendered += baseStyle.Render(" ")
+	}
+	titleStyle := baseStyle
+	if viewModel.TitleIsUnread {
+		titleStyle = sessionUnreadStyle
+	}
+	rendered += titleStyle.Render(viewModel.Title)
+	if strings.TrimSpace(viewModel.RightText) != "" {
+		rendered += baseStyle.Render(viewModel.RightText)
+	}
+	return rendered
+}
+
+func (d *sidebarDelegate) buildSessionRowViewModel(entry *sidebarItem, maxWidth int) sidebarSessionRowViewModel {
+	indicator := inactiveDot
+	if entry.session != nil && isActiveStatus(entry.session.Status) {
+		indicator = activeDot
+	}
+	if isDismissedSession(entry.session, entry.meta) {
+		indicator = dismissedDot
+	}
+	indent := strings.Repeat("  ", max(0, entry.depth))
+	prefix := indent + fmt.Sprintf(" %s ", indicator)
+	badgeConfig := resolveProviderBadge(entry.sessionProvider(), d.providerBadges)
+	badgeText := strings.TrimSpace(badgeConfig.Prefix)
+	badgeWidth := 0
+	if badgeText != "" {
+		badgeWidth = ansi.StringWidth(badgeText) + ansi.StringWidth(" ")
+	}
+	rightText := buildSessionRightText(entry.session, entry.meta, d.nowOrDefault()())
+	layout := d.layoutEngineOrDefault()
+	title, right := layout.Layout(sessionTitle(entry.session, entry.meta), rightText, maxWidth-ansi.StringWidth(prefix)-badgeWidth)
+	return sidebarSessionRowViewModel{
+		Prefix:        prefix,
+		BadgeText:     badgeText,
+		BadgeColor:    strings.TrimSpace(badgeConfig.Color),
+		Title:         title,
+		RightText:     right,
+		TitleIsUnread: entry.session != nil && d.isUnread(entry.session.ID) && d.selectedKey != entry.key(),
+	}
+}
+
+func (d *sidebarDelegate) nowOrDefault() func() time.Time {
+	if d != nil && d.now != nil {
+		return d.now
+	}
+	return time.Now
+}
+
+func (d *sidebarDelegate) layoutEngineOrDefault() sidebarSessionLayoutEngine {
+	if d != nil && d.sessionLayout != nil {
+		return d.sessionLayout
+	}
+	return defaultSidebarSessionLayoutEngine{}
+}
+
+func sidebarSelectStyle(base lipgloss.Style, isSelected, isMarked bool) lipgloss.Style {
+	if isSelected {
+		return selectedStyle
+	}
+	if isMarked {
+		return multiSelectStyle
+	}
+	return base
 }
 
 func (d *sidebarDelegate) isUnread(id string) bool {
@@ -1299,10 +1306,14 @@ func sessionActivityMarker(meta *types.SessionMeta) string {
 }
 
 func formatSince(last *time.Time) string {
+	return formatSinceAt(last, time.Now().UTC())
+}
+
+func formatSinceAt(last *time.Time, now time.Time) string {
 	if last == nil {
 		return "—"
 	}
-	delta := time.Since(*last)
+	delta := now.Sub(*last)
 	if delta < 0 {
 		delta = 0
 	}
@@ -1310,13 +1321,52 @@ func formatSince(last *time.Time) string {
 	case delta < time.Minute:
 		return "just now"
 	case delta < time.Hour:
-		return fmt.Sprintf("%dm ago", int(delta.Minutes()))
+		return fmt.Sprintf("%dm", int(delta.Minutes()))
 	case delta < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(delta.Hours()))
+		return fmt.Sprintf("%dh", int(delta.Hours()))
 	default:
 		days := int(delta.Hours() / 24)
-		return fmt.Sprintf("%dd ago", days)
+		return fmt.Sprintf("%dd", days)
 	}
+}
+
+func buildSessionRightText(session *types.Session, meta *types.SessionMeta, now time.Time) string {
+	since := strings.TrimSpace(formatSinceAt(sessionLastActive(session, meta), now))
+	if isDismissedSession(session, meta) {
+		return "dismissed • " + since
+	}
+	return since
+}
+
+func renderSessionColumns(title, right string, width int) (string, string) {
+	if width <= 0 {
+		return "", ""
+	}
+	title = strings.TrimSpace(title)
+	right = strings.TrimSpace(right)
+	if right == "" {
+		return truncateToWidth(title, width), ""
+	}
+	rightWidth := ansi.StringWidth(right)
+	if rightWidth >= width {
+		return "", truncateToWidth(right, width)
+	}
+	maxTitle := width - rightWidth - 1
+	if maxTitle <= 0 {
+		return "", strings.Repeat(" ", width-rightWidth) + right
+	}
+	title = truncateToWidth(title, maxTitle)
+	titleWidth := ansi.StringWidth(title)
+	gap := width - titleWidth - rightWidth
+	if gap < 1 && titleWidth > 0 {
+		title = truncateToWidth(title, max(0, maxTitle-1))
+		titleWidth = ansi.StringWidth(title)
+		gap = width - titleWidth - rightWidth
+	}
+	if gap < 0 {
+		gap = 0
+	}
+	return title, strings.Repeat(" ", gap) + right
 }
 
 func truncateText(text string, maxLen int) string {

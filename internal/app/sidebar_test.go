@@ -13,6 +13,15 @@ import (
 	"control/internal/types"
 )
 
+type testSessionLayoutEngine struct {
+	title string
+	right string
+}
+
+func (e testSessionLayoutEngine) Layout(_, _ string, _ int) (string, string) {
+	return e.title, e.right
+}
+
 func TestBuildSidebarItemsGroupsSessions(t *testing.T) {
 	now := time.Now().UTC()
 	workspaces := []*types.Workspace{
@@ -418,8 +427,249 @@ func TestSidebarDelegateRenderSessionIncludesDepthIndent(t *testing.T) {
 	if !strings.HasPrefix(plainDepthTwo, "     "+activeDot+" ") {
 		t.Fatalf("expected depth 2 session to include additive leading indent, got %q", plainDepthTwo)
 	}
-	if len(plainDepthTwo) <= len(plainDepthOne) {
-		t.Fatalf("expected deeper session row to include more leading spaces")
+}
+
+func TestSidebarItemWorkflowTitleOmitsRunID(t *testing.T) {
+	item := &sidebarItem{
+		kind:       sidebarWorkflow,
+		workflowID: "gwf-123",
+	}
+	if got := item.Title(); got != "Guided Workflow" {
+		t.Fatalf("expected generic guided workflow title, got %q", got)
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowOmitsRunID(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind: sidebarWorkflow,
+		workflow: &guidedworkflows.WorkflowRun{
+			ID:           "gwf-123",
+			TemplateName: "SOLID Phase Delivery",
+			Status:       guidedworkflows.WorkflowRunStatusRunning,
+		},
+		collapsible: true,
+		expanded:    true,
+		depth:       1,
+	})
+	plain := xansi.Strip(buf.String())
+	if strings.Contains(plain, "gwf-123") {
+		t.Fatalf("expected workflow row to hide run id, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorktreeRowVariants(t *testing.T) {
+	delegate := &sidebarDelegate{activeWorktreeID: "wt1"}
+	model := list.New(nil, delegate, 120, 1)
+
+	rendered := func(item *sidebarItem) string {
+		var buf bytes.Buffer
+		delegate.Render(&buf, model, 0, item)
+		return xansi.Strip(buf.String())
+	}
+
+	collapsed := rendered(&sidebarItem{
+		kind:         sidebarWorktree,
+		worktree:     &types.Worktree{ID: "wt1", Name: "Feature A"},
+		collapsible:  true,
+		expanded:     false,
+		depth:        1,
+		sessionCount: 2,
+	})
+	if !strings.Contains(collapsed, "▸ Feature A (2)") {
+		t.Fatalf("expected collapsed marker and count in worktree row, got %q", collapsed)
+	}
+
+	expanded := rendered(&sidebarItem{
+		kind:        sidebarWorktree,
+		worktree:    &types.Worktree{ID: "wt2", Name: "Feature B"},
+		collapsible: true,
+		expanded:    true,
+		depth:       1,
+	})
+	if !strings.Contains(expanded, "▾ Feature B") {
+		t.Fatalf("expected expanded marker in worktree row, got %q", expanded)
+	}
+}
+
+func TestFormatSinceUsesCompactUnits(t *testing.T) {
+	now := time.Now().UTC()
+	if got := formatSince(ptrTime(now.Add(-30 * time.Second))); got != "just now" {
+		t.Fatalf("expected just now for sub-minute delta, got %q", got)
+	}
+	if got := formatSince(ptrTime(now.Add(-2 * time.Minute))); got != "2m" {
+		t.Fatalf("expected compact minutes, got %q", got)
+	}
+	if got := formatSince(ptrTime(now.Add(-3 * time.Hour))); got != "3h" {
+		t.Fatalf("expected compact hours, got %q", got)
+	}
+	if got := formatSince(ptrTime(now.Add(-49 * time.Hour))); got != "2d" {
+		t.Fatalf("expected compact days, got %q", got)
+	}
+}
+
+func TestBuildSessionRightTextIncludesDismissedAndCompactTime(t *testing.T) {
+	now := time.Now().UTC()
+	session := &types.Session{
+		ID:        "s1",
+		Status:    types.SessionStatusExited,
+		CreatedAt: now.Add(-5 * time.Minute),
+	}
+	dismissedAt := now.Add(-2 * time.Minute)
+	meta := &types.SessionMeta{
+		SessionID:   "s1",
+		DismissedAt: &dismissedAt,
+	}
+	if got := buildSessionRightText(session, meta, now); got != "dismissed • 5m" {
+		t.Fatalf("expected dismissed compact age text, got %q", got)
+	}
+}
+
+func TestBuildSessionRightTextNonDismissed(t *testing.T) {
+	now := time.Now().UTC()
+	session := &types.Session{
+		ID:        "s1",
+		Status:    types.SessionStatusRunning,
+		CreatedAt: now.Add(-3 * time.Minute),
+	}
+	if got := buildSessionRightText(session, nil, now); got != "3m" {
+		t.Fatalf("expected compact age text, got %q", got)
+	}
+}
+
+func TestSidebarDelegateBuildSessionRowViewModelUsesInjectedNow(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 10, 0, 0, 0, time.UTC)
+	delegate := &sidebarDelegate{
+		now: func() time.Time { return base.Add(8 * time.Minute) },
+	}
+	entry := &sidebarItem{
+		kind: sidebarSession,
+		session: &types.Session{
+			ID:        "s1",
+			Provider:  "codex",
+			Status:    types.SessionStatusRunning,
+			CreatedAt: base,
+		},
+		meta: &types.SessionMeta{
+			SessionID: "s1",
+		},
+	}
+
+	vm := delegate.buildSessionRowViewModel(entry, 80)
+	if !strings.Contains(vm.RightText, "8m") {
+		t.Fatalf("expected injected now to drive compact age, got right text %q", vm.RightText)
+	}
+}
+
+func TestSidebarDelegateRenderSessionRowUsesInjectedLayoutEngine(t *testing.T) {
+	delegate := &sidebarDelegate{
+		sessionLayout: testSessionLayoutEngine{title: "LEFT", right: "  RIGHT"},
+	}
+	model := list.New(nil, delegate, 60, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind: sidebarSession,
+		session: &types.Session{
+			ID:        "s1",
+			Provider:  "codex",
+			Status:    types.SessionStatusRunning,
+			CreatedAt: time.Now().UTC(),
+		},
+		meta: &types.SessionMeta{SessionID: "s1"},
+	})
+	plain := xansi.Strip(buf.String())
+	if !strings.Contains(plain, "LEFT") || !strings.Contains(plain, "RIGHT") {
+		t.Fatalf("expected injected layout output in rendered session row, got %q", plain)
+	}
+}
+
+func TestRenderSessionColumnsEdgeCases(t *testing.T) {
+	cases := []struct {
+		name       string
+		title      string
+		right      string
+		width      int
+		wantTitle  string
+		wantRight  string
+		wantRightW int
+	}{
+		{name: "non-positive width", title: "abc", right: "1m", width: 0, wantTitle: "", wantRight: ""},
+		{name: "empty right", title: "abcdef", right: "", width: 4, wantTitle: "abc…", wantRight: ""},
+		{name: "right wider than width", title: "abcdef", right: "dismissed • 10m", width: 6, wantTitle: "", wantRightW: 6},
+		{name: "max title zero", title: "abcdef", right: "1234", width: 5, wantTitle: "", wantRight: " 1234"},
+		{name: "normal layout", title: "alpha", right: "5m", width: 10, wantTitle: "alpha", wantRight: "   5m"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			title, right := renderSessionColumns(tc.title, tc.right, tc.width)
+			if tc.wantTitle != "" && title != tc.wantTitle {
+				t.Fatalf("expected title %q, got %q", tc.wantTitle, title)
+			}
+			if tc.wantRight != "" && right != tc.wantRight {
+				t.Fatalf("expected right %q, got %q", tc.wantRight, right)
+			}
+			if tc.wantRightW > 0 && xansi.StringWidth(right) != tc.wantRightW {
+				t.Fatalf("expected right width %d, got %d (%q)", tc.wantRightW, xansi.StringWidth(right), right)
+			}
+		})
+	}
+}
+
+func TestSidebarIsSelectedKeyGuards(t *testing.T) {
+	var nilDelegate *sidebarDelegate
+	if nilDelegate.isSelectedKey("ws:1") {
+		t.Fatalf("expected nil delegate to return false")
+	}
+	delegate := &sidebarDelegate{selectedKeys: map[string]struct{}{"ws:1": {}}}
+	if delegate.isSelectedKey(" ") {
+		t.Fatalf("expected blank key to return false")
+	}
+	if !delegate.isSelectedKey("ws:1") {
+		t.Fatalf("expected existing key to return true")
+	}
+}
+
+func TestSidebarDelegateRenderSessionTimeIsRightAligned(t *testing.T) {
+	now := time.Now().UTC()
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 70, 1)
+
+	renderSession := func(title string) string {
+		var buf bytes.Buffer
+		delegate.Render(&buf, model, 0, &sidebarItem{
+			kind: sidebarSession,
+			session: &types.Session{
+				ID:        "s1",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: now.Add(-5 * time.Minute),
+			},
+			meta: &types.SessionMeta{
+				SessionID: "s1",
+				Title:     title,
+			},
+			depth: 1,
+		})
+		return xansi.Strip(buf.String())
+	}
+
+	shortLine := renderSession("short")
+	longLine := renderSession("this is a much longer session title used for alignment checks")
+
+	shortIdx := strings.Index(shortLine, "5m")
+	longIdx := strings.Index(longLine, "5m")
+	if shortIdx < 0 || longIdx < 0 {
+		t.Fatalf("expected both lines to include compact age value: short=%q long=%q", shortLine, longLine)
+	}
+	shortCol := xansi.StringWidth(shortLine[:shortIdx])
+	longCol := xansi.StringWidth(longLine[:longIdx])
+	if shortCol != longCol {
+		t.Fatalf("expected age text to align to same visual column, got short=%d long=%d", shortCol, longCol)
+	}
+	if strings.Contains(shortLine, "ago") || strings.Contains(longLine, "ago") {
+		t.Fatalf("expected compact age without ago suffix: short=%q long=%q", shortLine, longLine)
 	}
 }
 
