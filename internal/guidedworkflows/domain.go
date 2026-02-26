@@ -123,6 +123,7 @@ type StepRun struct {
 	ExecutionAttempts []StepExecutionRef           `json:"execution_attempts,omitempty"`
 	ExecutionState    StepExecutionState           `json:"execution_state,omitempty"`
 	ExecutionMessage  string                       `json:"execution_message,omitempty"`
+	LastTurnSignal    *StepTurnSignalContext       `json:"last_turn_signal,omitempty"`
 }
 
 type StepExecutionState string
@@ -214,13 +215,32 @@ type ResumeFailedRunRequest struct {
 }
 
 type TurnSignal struct {
-	SessionID   string `json:"session_id,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	WorktreeID  string `json:"worktree_id,omitempty"`
-	TurnID      string `json:"turn_id,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Error       string `json:"error,omitempty"`
-	Terminal    bool   `json:"terminal,omitempty"`
+	SessionID   string         `json:"session_id,omitempty"`
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	WorktreeID  string         `json:"worktree_id,omitempty"`
+	Provider    string         `json:"provider,omitempty"`
+	Source      string         `json:"source,omitempty"`
+	TurnID      string         `json:"turn_id,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Output      string         `json:"output,omitempty"`
+	Terminal    bool           `json:"terminal,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+}
+
+type StepTurnSignalContext struct {
+	ReceivedAt  time.Time      `json:"received_at"`
+	SessionID   string         `json:"session_id,omitempty"`
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	WorktreeID  string         `json:"worktree_id,omitempty"`
+	Provider    string         `json:"provider,omitempty"`
+	Source      string         `json:"source,omitempty"`
+	TurnID      string         `json:"turn_id,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Output      string         `json:"output,omitempty"`
+	Terminal    bool           `json:"terminal,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
 }
 
 type StepPromptDispatchRequest struct {

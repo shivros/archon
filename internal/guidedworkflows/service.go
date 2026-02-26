@@ -99,6 +99,7 @@ type InMemoryRunService struct {
 	stepDispatcher         StepPromptDispatcher
 	dispatchProviderPolicy DispatchProviderPolicy
 	turnMatcher            TurnSignalMatcher
+	stepOutcomeEvaluator   StepOutcomeEvaluator
 	dispatchClassifier     DispatchErrorClassifier
 	dispatchRetryPolicy    DispatchRetryPolicy
 	dispatchRetryScheduler DispatchRetryScheduler
@@ -185,6 +186,15 @@ func WithTurnSignalMatcher(matcher TurnSignalMatcher) RunServiceOption {
 			return
 		}
 		s.turnMatcher = matcher
+	}
+}
+
+func WithStepOutcomeEvaluator(evaluator StepOutcomeEvaluator) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || evaluator == nil {
+			return
+		}
+		s.stepOutcomeEvaluator = evaluator
 	}
 }
 
@@ -312,6 +322,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		telemetryEnabled:       true,
 		tombstoneFactory:       defaultMissingRunTombstoneFactory{},
 		turnMatcher:            StrictSessionTurnSignalMatcher{},
+		stepOutcomeEvaluator:   defaultStepOutcomeEvaluator{},
 		dispatchClassifier:     defaultDispatchErrorClassifier{},
 		dispatchRetryPolicy:    defaultDispatchRetryPolicy(),
 		dispatchProviderPolicy: registryDispatchProviderPolicy{},
@@ -326,6 +337,9 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	}
 	if service.dispatchClassifier == nil {
 		service.dispatchClassifier = defaultDispatchErrorClassifier{}
+	}
+	if service.stepOutcomeEvaluator == nil {
+		service.stepOutcomeEvaluator = defaultStepOutcomeEvaluator{}
 	}
 	if service.dispatchRetryPolicy == nil {
 		service.dispatchRetryPolicy = defaultDispatchRetryPolicy()
@@ -448,6 +462,13 @@ func (s *InMemoryRunService) dispatchProviderPolicyOrDefault() DispatchProviderP
 		return registryDispatchProviderPolicy{}
 	}
 	return s.dispatchProviderPolicy
+}
+
+func (s *InMemoryRunService) stepOutcomeEvaluatorOrDefault() StepOutcomeEvaluator {
+	if s == nil || s.stepOutcomeEvaluator == nil {
+		return defaultStepOutcomeEvaluator{}
+	}
+	return s.stepOutcomeEvaluator
 }
 
 func (s *InMemoryRunService) ListTemplates(ctx context.Context) ([]WorkflowTemplate, error) {
@@ -774,7 +795,7 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 			s.turnSeen[receipt] = struct{}{}
 		}
 		beforeStatus := run.Status
-		if _, err := s.completeAwaitingTurnStepLocked(run, normalized); err != nil {
+		if _, err := s.completeAwaitingTurnStepLocked(ctx, run, normalized); err != nil {
 			changedRunIDs[run.ID] = struct{}{}
 			return nil, err
 		}
@@ -1508,9 +1529,12 @@ func (s *InMemoryRunService) retryDeferredDispatch(runID string) bool {
 	return run.Status != WorkflowRunStatusRunning || !runHasDeferredDispatch(run)
 }
 
-func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, signal TurnSignal) (bool, error) {
+func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context, run *WorkflowRun, signal TurnSignal) (bool, error) {
 	if s == nil || run == nil {
 		return false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	phaseIndex, stepIndex, ok := findAwaitingTurn(run)
 	if !ok {
@@ -1569,87 +1593,29 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, si
 		return false, nil
 	}
 	now := s.engine.now()
-	if failure, failed := TurnSignalFailureDetail(signal); failed {
-		step.Status = StepRunStatusFailed
-		step.AwaitingTurn = false
-		step.CompletedAt = &now
-		step.Error = failure
-		step.Outcome = "failed"
-		if strings.TrimSpace(signal.TurnID) != "" {
-			step.TurnID = strings.TrimSpace(signal.TurnID)
-			if strings.TrimSpace(step.Output) == "" {
-				step.Output = step.TurnID
-			}
-		}
-		recordStepExecutionCompletion(run, phase, step, signal, now)
-		phase.Status = PhaseRunStatusFailed
-		phase.CompletedAt = &now
-		run.Status = WorkflowRunStatusFailed
-		run.CompletedAt = &now
-		run.LastError = failure
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "step",
-			Action:  "step_failed",
-			PhaseID: phase.ID,
-			StepID:  step.ID,
-			Outcome: "failed",
-			Detail:  failure,
-		})
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "run",
-			Action:  "run_failed",
-			PhaseID: phase.ID,
-			StepID:  step.ID,
-			Outcome: "failed",
-			Detail:  failure,
-		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
-			At:      now,
-			Type:    "step_failed",
-			RunID:   run.ID,
-			PhaseID: phase.ID,
-			StepID:  step.ID,
-			Message: failure,
-		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
-			At:      now,
-			Type:    "run_failed",
-			RunID:   run.ID,
-			Message: failure,
-		})
+	step.LastTurnSignal = buildStepTurnSignalContext(signal, now)
+	evaluator := s.stepOutcomeEvaluatorOrDefault()
+	evaluation := evaluator.EvaluateStepOutcome(ctx, StepOutcomeEvaluationInput{
+		RunID:   strings.TrimSpace(run.ID),
+		PhaseID: strings.TrimSpace(phase.ID),
+		StepID:  strings.TrimSpace(step.ID),
+		Step:    *step,
+		Signal:  signal,
+	})
+	evaluation = normalizeStepOutcomeEvaluation(evaluation)
+	if strings.TrimSpace(signal.Output) != "" {
+		step.Output = strings.TrimSpace(signal.Output)
+	}
+	switch evaluation.Decision {
+	case StepOutcomeDecisionFailure:
+		s.applyStepOutcomeFailure(run, phase, step, signal, now, evaluation)
 		return true, nil
+	case StepOutcomeDecisionUndetermined:
+		s.applyStepOutcomeUndetermined(run, phase, step, now, evaluation)
+		return true, nil
+	default:
+		s.applyStepOutcomeSuccess(run, phase, step, signal, now, evaluation)
 	}
-	step.Status = StepRunStatusCompleted
-	step.AwaitingTurn = false
-	step.CompletedAt = &now
-	step.Error = ""
-	step.Outcome = "success"
-	if strings.TrimSpace(signal.TurnID) != "" {
-		step.TurnID = strings.TrimSpace(signal.TurnID)
-		if strings.TrimSpace(step.Output) == "" {
-			step.Output = step.TurnID
-		}
-	}
-	recordStepExecutionCompletion(run, phase, step, signal, now)
-	appendRunAudit(run, RunAuditEntry{
-		At:      now,
-		Scope:   "step",
-		Action:  "step_completed",
-		PhaseID: phase.ID,
-		StepID:  step.ID,
-		Outcome: "success",
-		Detail:  "completed by turn signal",
-	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
-		At:      now,
-		Type:    "step_completed",
-		RunID:   run.ID,
-		PhaseID: phase.ID,
-		StepID:  step.ID,
-		Message: "completed by turn",
-	})
 	if phaseComplete(phase) {
 		phase.Status = PhaseRunStatusCompleted
 		phase.CompletedAt = &now
@@ -1690,6 +1656,156 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(run *WorkflowRun, si
 		RunID: run.ID,
 	})
 	return true, nil
+}
+
+func (s *InMemoryRunService) applyStepOutcomeFailure(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	step *StepRun,
+	signal TurnSignal,
+	now time.Time,
+	evaluation StepOutcomeEvaluation,
+) {
+	if run == nil || phase == nil || step == nil {
+		return
+	}
+	outcome := strings.TrimSpace(evaluation.Outcome)
+	if outcome == "" {
+		outcome = "failed"
+	}
+	failure := strings.TrimSpace(evaluation.FailureDetail)
+	if failure == "" {
+		failure = "step failed: turn outcome evaluator returned failure"
+	}
+	step.Status = StepRunStatusFailed
+	step.AwaitingTurn = false
+	step.CompletedAt = &now
+	step.Error = failure
+	step.Outcome = outcome
+	if strings.TrimSpace(signal.TurnID) != "" {
+		step.TurnID = strings.TrimSpace(signal.TurnID)
+		if strings.TrimSpace(step.Output) == "" {
+			step.Output = step.TurnID
+		}
+	}
+	recordStepExecutionCompletion(run, phase, step, signal, now)
+	phase.Status = PhaseRunStatusFailed
+	phase.CompletedAt = &now
+	run.Status = WorkflowRunStatusFailed
+	run.CompletedAt = &now
+	run.LastError = failure
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_failed",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "failed",
+		Detail:  failure,
+	})
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "run",
+		Action:  "run_failed",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "failed",
+		Detail:  failure,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_failed",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: failure,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "run_failed",
+		RunID:   run.ID,
+		Message: failure,
+	})
+}
+
+func (s *InMemoryRunService) applyStepOutcomeUndetermined(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	step *StepRun,
+	now time.Time,
+	evaluation StepOutcomeEvaluation,
+) {
+	if run == nil || phase == nil || step == nil {
+		return
+	}
+	detail := firstNonEmpty(
+		strings.TrimSpace(evaluation.SuccessDetail),
+		strings.TrimSpace(evaluation.FailureDetail),
+		"step outcome deferred by evaluator",
+	)
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_turn_outcome_deferred",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: "awaiting_turn",
+		Detail:  detail,
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_turn_outcome_deferred",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: detail,
+	})
+}
+
+func (s *InMemoryRunService) applyStepOutcomeSuccess(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	step *StepRun,
+	signal TurnSignal,
+	now time.Time,
+	evaluation StepOutcomeEvaluation,
+) {
+	if run == nil || phase == nil || step == nil {
+		return
+	}
+	outcome := strings.TrimSpace(evaluation.Outcome)
+	if outcome == "" {
+		outcome = "success"
+	}
+	step.Status = StepRunStatusCompleted
+	step.AwaitingTurn = false
+	step.CompletedAt = &now
+	step.Error = ""
+	step.Outcome = outcome
+	if strings.TrimSpace(signal.TurnID) != "" {
+		step.TurnID = strings.TrimSpace(signal.TurnID)
+		if strings.TrimSpace(step.Output) == "" {
+			step.Output = step.TurnID
+		}
+	}
+	recordStepExecutionCompletion(run, phase, step, signal, now)
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "step",
+		Action:  "step_completed",
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Outcome: outcome,
+		Detail:  firstNonEmpty(evaluation.SuccessDetail, "completed by turn signal"),
+	})
+	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		At:      now,
+		Type:    "step_completed",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+		StepID:  step.ID,
+		Message: "completed by turn",
+	})
 }
 
 func (s *InMemoryRunService) resumeAndAdvanceWithoutPolicyLocked(ctx context.Context, run *WorkflowRun, note string) error {
@@ -1895,9 +2011,13 @@ func normalizeTurnSignal(signal TurnSignal) TurnSignal {
 	signal.SessionID = strings.TrimSpace(signal.SessionID)
 	signal.WorkspaceID = strings.TrimSpace(signal.WorkspaceID)
 	signal.WorktreeID = strings.TrimSpace(signal.WorktreeID)
+	signal.Provider = strings.TrimSpace(signal.Provider)
+	signal.Source = strings.TrimSpace(signal.Source)
 	signal.TurnID = strings.TrimSpace(signal.TurnID)
 	signal.Status = strings.TrimSpace(signal.Status)
 	signal.Error = strings.TrimSpace(signal.Error)
+	signal.Output = strings.TrimSpace(signal.Output)
+	signal.Payload = cloneStringAnyMap(signal.Payload)
 	return signal
 }
 
@@ -1962,6 +2082,39 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func cloneStringAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		out[trimmed] = deepCloneAny(value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func deepCloneAny(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return cloneStringAnyMap(v)
+	case []any:
+		out := make([]any, len(v))
+		for i := range v {
+			out[i] = deepCloneAny(v[i])
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func recordStepExecutionDispatch(
@@ -2031,6 +2184,7 @@ func recordStepExecutionCompletion(run *WorkflowRun, phase *PhaseRun, step *Step
 			TraceID:      stepTraceID(run, phase, step, max(1, step.Attempts)),
 			SessionID:    firstNonEmpty(strings.TrimSpace(signal.SessionID), strings.TrimSpace(run.SessionID)),
 			SessionScope: runSessionScope(run),
+			Provider:     strings.TrimSpace(signal.Provider),
 			TurnID:       strings.TrimSpace(step.TurnID),
 			StartedAt:    step.StartedAt,
 			CompletedAt:  &now,
@@ -2049,8 +2203,28 @@ func recordStepExecutionCompletion(run *WorkflowRun, phase *PhaseRun, step *Step
 	if strings.TrimSpace(step.Execution.SessionID) == "" {
 		step.Execution.SessionID = firstNonEmpty(strings.TrimSpace(signal.SessionID), strings.TrimSpace(run.SessionID))
 	}
+	if strings.TrimSpace(step.Execution.Provider) == "" {
+		step.Execution.Provider = strings.TrimSpace(signal.Provider)
+	}
 	if len(step.ExecutionAttempts) > 0 {
 		step.ExecutionAttempts[len(step.ExecutionAttempts)-1] = *step.Execution
+	}
+}
+
+func buildStepTurnSignalContext(signal TurnSignal, now time.Time) *StepTurnSignalContext {
+	return &StepTurnSignalContext{
+		ReceivedAt:  now,
+		SessionID:   strings.TrimSpace(signal.SessionID),
+		WorkspaceID: strings.TrimSpace(signal.WorkspaceID),
+		WorktreeID:  strings.TrimSpace(signal.WorktreeID),
+		Provider:    strings.TrimSpace(signal.Provider),
+		Source:      strings.TrimSpace(signal.Source),
+		TurnID:      strings.TrimSpace(signal.TurnID),
+		Status:      strings.TrimSpace(signal.Status),
+		Error:       strings.TrimSpace(signal.Error),
+		Output:      strings.TrimSpace(signal.Output),
+		Terminal:    signal.Terminal,
+		Payload:     cloneStringAnyMap(signal.Payload),
 	}
 }
 
@@ -2254,6 +2428,11 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 			}
 			if len(step.ExecutionAttempts) > 0 {
 				step.ExecutionAttempts = append([]StepExecutionRef{}, step.ExecutionAttempts...)
+			}
+			if step.LastTurnSignal != nil {
+				signal := *step.LastTurnSignal
+				signal.Payload = cloneStringAnyMap(signal.Payload)
+				step.LastTurnSignal = &signal
 			}
 		}
 	}

@@ -73,8 +73,23 @@ type stubDispatchProviderPolicy struct {
 	validateErr error
 }
 
+type stubStepOutcomeEvaluator struct {
+	evaluation StepOutcomeEvaluation
+	inputs     []StepOutcomeEvaluationInput
+}
+
 func (s stubDispatchErrorClassifier) Classify(error) DispatchErrorDisposition {
 	return s.disposition
+}
+
+func (s *stubStepOutcomeEvaluator) EvaluateStepOutcome(_ context.Context, input StepOutcomeEvaluationInput) StepOutcomeEvaluation {
+	if s != nil {
+		s.inputs = append(s.inputs, input)
+	}
+	if s == nil || strings.TrimSpace(string(s.evaluation.Decision)) == "" {
+		return StepOutcomeEvaluation{Decision: StepOutcomeDecisionSuccess}
+	}
+	return s.evaluation
 }
 
 func (s *stubDispatchRetryScheduler) Enqueue(runID string) {
@@ -1874,6 +1889,341 @@ func TestRunLifecycleOnTurnCompletedTerminalFailureFailsStepAndRun(t *testing.T)
 	}
 	if !hasRunFailed {
 		t.Fatalf("expected run_failed timeline event with failure detail")
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedDelegatesOutcomeToEvaluator(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_outcome_evaluator",
+		Name: "Prompted Turn Outcome Evaluator",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	evaluator := &stubStepOutcomeEvaluator{
+		evaluation: StepOutcomeEvaluation{
+			Decision:      StepOutcomeDecisionFailure,
+			FailureDetail: "classifier rejected output",
+			Outcome:       "failed",
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithStepOutcomeEvaluator(evaluator),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_outcome_evaluator",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "assistant final output",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run from evaluator decision, got %q", current.Status)
+	}
+	step := current.Phases[0].Steps[0]
+	if step.Status != StepRunStatusFailed {
+		t.Fatalf("expected failed step from evaluator decision, got %q", step.Status)
+	}
+	if !strings.Contains(strings.ToLower(step.Error), "classifier rejected output") {
+		t.Fatalf("expected evaluator failure detail on step error, got %q", step.Error)
+	}
+	if step.Output != "assistant final output" {
+		t.Fatalf("expected step output to capture turn output, got %q", step.Output)
+	}
+	if len(evaluator.inputs) != 1 {
+		t.Fatalf("expected evaluator to receive one turn input, got %d", len(evaluator.inputs))
+	}
+	if evaluator.inputs[0].Signal.Status != "completed" {
+		t.Fatalf("expected evaluator signal status to include completed, got %q", evaluator.inputs[0].Signal.Status)
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedUnknownDecisionDefersOutcome(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_outcome_unknown",
+		Name: "Prompted Turn Outcome Unknown",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	evaluator := &stubStepOutcomeEvaluator{
+		evaluation: StepOutcomeEvaluation{
+			Decision: StepOutcomeDecision("unknown-new-value"),
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithStepOutcomeEvaluator(evaluator),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_outcome_unknown",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+		Status:    "completed",
+		Terminal:  true,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected run to remain running when evaluator outcome is unknown, got %q", current.Status)
+	}
+	step := current.Phases[0].Steps[0]
+	if step.Status != StepRunStatusRunning || !step.AwaitingTurn {
+		t.Fatalf("expected step to remain awaiting turn, got %#v", step)
+	}
+	timeline, err := service.GetRunTimeline(context.Background(), current.ID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline: %v", err)
+	}
+	foundDeferred := false
+	for _, event := range timeline {
+		if event.Type == "step_turn_outcome_deferred" && strings.Contains(strings.ToLower(event.Message), "invalid step outcome decision") {
+			foundDeferred = true
+			break
+		}
+	}
+	if !foundDeferred {
+		t.Fatalf("expected deferred timeline event for unknown evaluator decision")
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedRetainsTurnContextForFutureEvaluation(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_context",
+		Name: "Prompted Turn Context",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_context",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	payload := map[string]any{
+		"turn_status": "completed",
+		"trace_id":    "trace-123",
+		"nested": map[string]any{
+			"result": "ok",
+		},
+		"items": []any{
+			map[string]any{"k": "v"},
+			"stable",
+		},
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+		Status:    "completed",
+		Terminal:  true,
+		Provider:  "codex",
+		Source:    "opencode_event",
+		Output:    "done",
+		Payload:   payload,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	payload["trace_id"] = "mutated"
+	payloadNested, _ := payload["nested"].(map[string]any)
+	payloadNested["result"] = "mutated"
+	payloadItems, _ := payload["items"].([]any)
+	payloadItems[0].(map[string]any)["k"] = "mutated"
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+	step := updated[0].Phases[0].Steps[0]
+	if step.Status != StepRunStatusCompleted {
+		t.Fatalf("expected completed step, got %q", step.Status)
+	}
+	if step.LastTurnSignal == nil {
+		t.Fatalf("expected last turn signal context to be retained")
+	}
+	if step.LastTurnSignal.TurnID != "turn-a" || step.LastTurnSignal.Provider != "codex" {
+		t.Fatalf("unexpected retained turn context: %#v", step.LastTurnSignal)
+	}
+	if step.LastTurnSignal.Payload["trace_id"] != "trace-123" {
+		t.Fatalf("expected retained payload for future evaluator context, got %#v", step.LastTurnSignal.Payload)
+	}
+	nested, ok := step.LastTurnSignal.Payload["nested"].(map[string]any)
+	if !ok || nested["result"] != "ok" {
+		t.Fatalf("expected retained nested payload for future evaluator context, got %#v", step.LastTurnSignal.Payload)
+	}
+	items, ok := step.LastTurnSignal.Payload["items"].([]any)
+	if !ok {
+		t.Fatalf("expected retained array payload for future evaluator context, got %#v", step.LastTurnSignal.Payload)
+	}
+	if items[0].(map[string]any)["k"] != "v" {
+		t.Fatalf("expected retained nested array payload for future evaluator context, got %#v", step.LastTurnSignal.Payload)
+	}
+}
+
+func TestRunLifecycleOnTurnCompletedFailureOutcomeDefaultsWhenEvaluatorOmitsFields(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_failure_defaults",
+		Name: "Prompted Turn Failure Defaults",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-a"},
+		},
+	}
+	evaluator := &stubStepOutcomeEvaluator{
+		evaluation: StepOutcomeEvaluation{
+			Decision: StepOutcomeDecisionFailure,
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithStepOutcomeEvaluator(evaluator),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_failure_defaults",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-a",
+		Status:    "completed",
+		Terminal:  true,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+	step := updated[0].Phases[0].Steps[0]
+	if step.Status != StepRunStatusFailed {
+		t.Fatalf("expected failed step from evaluator decision, got %q", step.Status)
+	}
+	if step.Outcome != "failed" {
+		t.Fatalf("expected default failed outcome, got %q", step.Outcome)
+	}
+	if !strings.Contains(strings.ToLower(step.Error), "turn outcome evaluator returned failure") {
+		t.Fatalf("expected default failure detail, got %q", step.Error)
+	}
+}
+
+func TestStepOutcomeEvaluatorOrDefaultFallback(t *testing.T) {
+	var nilService *InMemoryRunService
+	if _, ok := nilService.stepOutcomeEvaluatorOrDefault().(defaultStepOutcomeEvaluator); !ok {
+		t.Fatalf("expected nil service to resolve default evaluator")
+	}
+	service := &InMemoryRunService{}
+	if _, ok := service.stepOutcomeEvaluatorOrDefault().(defaultStepOutcomeEvaluator); !ok {
+		t.Fatalf("expected nil evaluator to resolve default evaluator")
+	}
+	custom := &stubStepOutcomeEvaluator{}
+	service.stepOutcomeEvaluator = custom
+	if resolved := service.stepOutcomeEvaluatorOrDefault(); resolved != custom {
+		t.Fatalf("expected custom evaluator to be preserved")
 	}
 }
 
