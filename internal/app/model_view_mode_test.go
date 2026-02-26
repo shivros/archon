@@ -2,8 +2,10 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 func TestVisibleInputPanelLayoutReturnsFalseWithoutLayout(t *testing.T) {
@@ -110,5 +112,112 @@ func TestModeInputPanelGuidedWorkflowResumeVisibleInGuidedWorkflowMode(t *testin
 	}
 	if panel.Input != m.guidedWorkflowResumeInput {
 		t.Fatalf("expected resume input panel")
+	}
+}
+
+func TestViewportHeightReturnsToBaselineAfterGuidedWorkflowExit(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	baseline := m.viewport.Height()
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+	duringSetup := m.viewport.Height()
+	if duringSetup >= baseline {
+		t.Fatalf("expected guided workflow setup viewport height %d to be less than baseline %d", duringSetup, baseline)
+	}
+
+	m.exitGuidedWorkflow("")
+	if got := m.viewport.Height(); got != baseline {
+		t.Fatalf("expected viewport height to return to baseline %d after guided workflow exit, got %d", baseline, got)
+	}
+}
+
+func TestViewportHeightStableAcrossRepeatedGuidedWorkflowToggle(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	baseline := m.viewport.Height()
+
+	lastGuidedHeight := -1
+	for i := 0; i < 3; i++ {
+		enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1"})
+		advanceGuidedWorkflowToComposerForTest(t, &m)
+		current := m.viewport.Height()
+		if current >= baseline {
+			t.Fatalf("cycle %d: expected guided workflow viewport height %d to be less than baseline %d", i, current, baseline)
+		}
+		if lastGuidedHeight >= 0 && current != lastGuidedHeight {
+			t.Fatalf("cycle %d: expected guided workflow viewport height %d to match prior cycle %d", i, current, lastGuidedHeight)
+		}
+		lastGuidedHeight = current
+		m.exitGuidedWorkflow("")
+		if got := m.viewport.Height(); got != baseline {
+			t.Fatalf("cycle %d: expected viewport height to return to baseline %d after guided workflow exit, got %d", i, baseline, got)
+		}
+	}
+}
+
+func TestViewportHeightReturnsToBaselineAfterRecentsReplyExit(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	baseline := m.viewport.Height()
+
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
+	m.recentsSelectedSessionID = "s1"
+	if !m.startRecentsReply() {
+		t.Fatalf("expected to start recents reply")
+	}
+	duringReply := m.viewport.Height()
+	if duringReply >= baseline {
+		t.Fatalf("expected recents reply viewport height %d to be less than baseline %d", duringReply, baseline)
+	}
+
+	m.exitRecentsView()
+	if got := m.viewport.Height(); got != baseline {
+		t.Fatalf("expected viewport height to return to baseline %d after recents exit, got %d", baseline, got)
+	}
+}
+
+func TestViewportHeightReturnsToBaselineAfterRecentsReplyExitSmallViewport(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(90, 14)
+	baseline := m.viewport.Height()
+
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
+	m.recentsSelectedSessionID = "s1"
+	if !m.startRecentsReply() {
+		t.Fatalf("expected to start recents reply")
+	}
+	if m.viewport.Height() >= baseline {
+		t.Fatalf("expected recents reply to reduce viewport height in tight viewport")
+	}
+
+	m.exitRecentsView()
+	if got := m.viewport.Height(); got != baseline {
+		t.Fatalf("expected viewport height to return to baseline %d after recents exit in tight viewport, got %d", baseline, got)
 	}
 }

@@ -178,18 +178,19 @@ func (m *Model) enterAddNote() {
 }
 
 func (m *Model) exitAddNote(status string) {
-	m.saveCurrentNoteDraft()
-	m.mode = uiModeNotes
-	if m.noteInput != nil {
-		m.noteInput.Blur()
-	}
-	if m.input != nil {
-		m.input.FocusSidebar()
-	}
-	if status != "" {
-		m.setStatusMessage(status)
-	}
-	m.resize(m.width, m.height)
+	nextFocus := focusSidebar
+	m.applyModeTransition(modeTransitionRequest{
+		toMode:      uiModeNotes,
+		status:      status,
+		focus:       &nextFocus,
+		forceReflow: true,
+		before: func() {
+			m.saveCurrentNoteDraft()
+			if m.noteInput != nil {
+				m.noteInput.Blur()
+			}
+		},
+	})
 }
 
 func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {

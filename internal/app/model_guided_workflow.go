@@ -118,28 +118,26 @@ func (m *Model) exitGuidedWorkflow(status string) {
 	if m == nil {
 		return
 	}
-	if m.guidedWorkflow != nil {
-		m.guidedWorkflow.Exit()
-	}
-	m.closeComposeOptionPicker()
-	m.newSession = nil
-	if m.guidedWorkflowPromptInput != nil {
-		m.guidedWorkflowPromptInput.Blur()
-	}
-	if m.guidedWorkflowResumeInput != nil {
-		m.guidedWorkflowResumeInput.Blur()
-	}
-	if m.guidedWorkflowResumeInput != nil {
-		m.guidedWorkflowResumeInput.Blur()
-	}
-	m.mode = uiModeNormal
-	if m.input != nil {
-		m.input.FocusSidebar()
-	}
-	if status != "" {
-		m.setStatusMessage(status)
-	}
-	m.renderViewport()
+	nextFocus := focusSidebar
+	m.applyModeTransition(modeTransitionRequest{
+		toMode:      uiModeNormal,
+		status:      status,
+		focus:       &nextFocus,
+		forceReflow: true,
+		before: func() {
+			if m.guidedWorkflow != nil {
+				m.guidedWorkflow.Exit()
+			}
+			m.closeComposeOptionPicker()
+			m.newSession = nil
+			if m.guidedWorkflowPromptInput != nil {
+				m.guidedWorkflowPromptInput.Blur()
+			}
+			if m.guidedWorkflowResumeInput != nil {
+				m.guidedWorkflowResumeInput.Blur()
+			}
+		},
+	})
 }
 
 func (m *Model) renderGuidedWorkflowContent() {

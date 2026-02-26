@@ -93,15 +93,19 @@ func (m *Model) exitRecentsView() {
 	if m == nil || m.mode != uiModeRecents {
 		return
 	}
-	m.mode = uiModeNormal
-	m.recentsReplySessionID = ""
-	if m.recentsReplyInput != nil {
-		m.recentsReplyInput.Blur()
-		m.recentsReplyInput.SetValue("")
-	}
-	if m.input != nil {
-		m.input.FocusSidebar()
-	}
+	nextFocus := focusSidebar
+	m.applyModeTransition(modeTransitionRequest{
+		toMode:      uiModeNormal,
+		focus:       &nextFocus,
+		forceReflow: true,
+		before: func() {
+			m.recentsReplySessionID = ""
+			if m.recentsReplyInput != nil {
+				m.recentsReplyInput.Blur()
+				m.recentsReplyInput.SetValue("")
+			}
+		},
+	})
 }
 
 func (m *Model) recentsHeader() string {

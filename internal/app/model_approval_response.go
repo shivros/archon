@@ -54,34 +54,39 @@ func (m *Model) exitApprovalResponse(status string) {
 		returnMode = uiModeNormal
 	}
 	returnFocus := m.approvalResponseReturnFocus
-	m.approvalResponseRequest = nil
-	m.approvalResponseSessionID = ""
-	m.approvalResponseRequestID = -1
-	m.approvalResponseReturnMode = uiModeNormal
-	m.approvalResponseReturnFocus = focusSidebar
-	if m.approvalInput != nil {
-		m.approvalInput.Blur()
-		m.approvalInput.SetPlaceholder("")
-		m.approvalInput.SetValue("")
+	targetFocus := focusSidebar
+	if returnMode == uiModeCompose && returnFocus == focusChatInput {
+		targetFocus = focusChatInput
 	}
-	m.mode = returnMode
-	if m.input != nil {
-		if returnMode == uiModeCompose && returnFocus == focusChatInput {
-			m.input.FocusChatInput()
-			if m.chatInput != nil {
-				m.chatInput.Focus()
+	m.applyModeTransition(modeTransitionRequest{
+		toMode:      returnMode,
+		status:      status,
+		focus:       &targetFocus,
+		forceReflow: true,
+		before: func() {
+			m.approvalResponseRequest = nil
+			m.approvalResponseSessionID = ""
+			m.approvalResponseRequestID = -1
+			m.approvalResponseReturnMode = uiModeNormal
+			m.approvalResponseReturnFocus = focusSidebar
+			if m.approvalInput != nil {
+				m.approvalInput.Blur()
+				m.approvalInput.SetPlaceholder("")
+				m.approvalInput.SetValue("")
 			}
-		} else {
-			m.input.FocusSidebar()
+		},
+		after: func() {
+			if targetFocus == focusChatInput {
+				if m.chatInput != nil {
+					m.chatInput.Focus()
+				}
+				return
+			}
 			if m.chatInput != nil {
 				m.chatInput.Blur()
 			}
-		}
-	}
-	if status != "" {
-		m.setStatusMessage(status)
-	}
-	m.resize(m.width, m.height)
+		},
+	})
 }
 
 func (m *Model) cancelApprovalResponseInput() tea.Cmd {

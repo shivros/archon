@@ -4353,26 +4353,27 @@ func (m *Model) exitCompose(status string) {
 	m.startUILatencyAction(uiLatencyActionExitCompose, "")
 	defer m.finishUILatencyAction(uiLatencyActionExitCompose, "", uiLatencyOutcomeOK)
 
-	m.cancelRequestScope(requestScopeSessionStart)
-	m.saveCurrentComposeDraft()
-	m.clearPendingComposeOptionRequest()
-	m.mode = uiModeNormal
-	m.closeComposeOptionPicker()
-	if m.compose != nil {
-		m.compose.Exit()
-	}
-	if m.chatInput != nil {
-		m.chatInput.Blur()
-		m.chatInput.Clear()
-	}
-	m.newSession = nil
-	if m.input != nil {
-		m.input.FocusSidebar()
-	}
-	if status != "" {
-		m.setStatusMessage(status)
-	}
-	m.resize(m.width, m.height)
+	nextFocus := focusSidebar
+	m.applyModeTransition(modeTransitionRequest{
+		toMode:      uiModeNormal,
+		status:      status,
+		focus:       &nextFocus,
+		forceReflow: true,
+		before: func() {
+			m.cancelRequestScope(requestScopeSessionStart)
+			m.saveCurrentComposeDraft()
+			m.clearPendingComposeOptionRequest()
+			m.closeComposeOptionPicker()
+			if m.compose != nil {
+				m.compose.Exit()
+			}
+			if m.chatInput != nil {
+				m.chatInput.Blur()
+				m.chatInput.Clear()
+			}
+			m.newSession = nil
+		},
+	})
 }
 
 func (m *Model) enterProviderPick() {
