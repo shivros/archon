@@ -183,6 +183,60 @@ func TestPhase1SessionsWithMetaReloadsOnlyWhenSelectedRevisionChanges(t *testing
 	}
 }
 
+func TestPhase1SessionsWithMetaReloadKeepsItemsStreamForInactiveItemProvider(t *testing.T) {
+	m := newPhase0ModelWithSession("kilocode")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	if len(m.sessions) == 0 || m.sessions[0] == nil {
+		t.Fatalf("expected seeded session")
+	}
+	m.sessions[0].Status = types.SessionStatusInactive
+	currentSession := m.sessions[0]
+	currentMeta := m.sessionMeta["s1"]
+
+	sameSessions := []*types.Session{
+		{
+			ID:        currentSession.ID,
+			Provider:  currentSession.Provider,
+			Status:    currentSession.Status,
+			CreatedAt: currentSession.CreatedAt,
+			Title:     currentSession.Title,
+		},
+	}
+	changedMeta := []*types.SessionMeta{
+		{
+			SessionID:   currentMeta.SessionID,
+			WorkspaceID: currentMeta.WorkspaceID,
+			LastTurnID:  "turn-refresh",
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(sessionsWithMetaMsg{sessions: sameSessions, meta: changedMeta})
+	if !handled {
+		t.Fatalf("expected message to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected reload command when revision changes")
+	}
+	msg := cmd()
+	outerBatch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected load batch, got %T", msg)
+	}
+	loadBatch := outerBatch
+	if len(outerBatch) > 0 {
+		if nested, ok := outerBatch[0]().(tea.BatchMsg); ok {
+			loadBatch = nested
+		}
+	}
+	// For inactive item providers we still expect:
+	// history + approvals + items stream
+	if len(loadBatch) != 3 {
+		t.Fatalf("expected 3 selection-load commands, got %d", len(loadBatch))
+	}
+}
+
 func TestPhase1AppStateSaveQueueDebouncesAndFlushes(t *testing.T) {
 	stub := &phase1AppStateSyncStub{}
 	m := NewModel(nil)

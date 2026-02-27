@@ -142,6 +142,32 @@ func TestPhase0LoadSelectedSessionResetsApprovalAndUsesCache(t *testing.T) {
 	}
 }
 
+func TestPhase0LoadSelectedSessionOpensItemsStreamForInactiveItemProvider(t *testing.T) {
+	m := newPhase0ModelWithSession("kilocode")
+	if len(m.sessions) == 0 || m.sessions[0] == nil {
+		t.Fatalf("expected session fixture")
+	}
+	m.sessions[0].Status = types.SessionStatusInactive
+	item := m.selectedItem()
+	if item == nil || item.session == nil {
+		t.Fatalf("expected selected session")
+	}
+
+	cmd := m.loadSelectedSession(item)
+	if cmd == nil {
+		t.Fatalf("expected load command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected batch message, got %T", msg)
+	}
+	// history + approvals + items stream
+	if len(batch) != 3 {
+		t.Fatalf("expected 3 selection-load commands, got %d", len(batch))
+	}
+}
+
 func TestPhase0SelectApprovalRequestChoosesLatest(t *testing.T) {
 	older := &types.Approval{
 		SessionID: "s1",

@@ -1195,12 +1195,14 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		fetchHistoryCmdWithContext(m.sessionHistoryAPI, id, token, initialLines, ctx),
 		fetchApprovalsCmdWithContext(m.sessionAPI, id, ctx),
 	}
-	if isActiveStatus(item.session.Status) {
-		if shouldStreamItems(item.session.Provider) {
-			cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
-		} else {
-			cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
-		}
+	if shouldStreamItems(item.session.Provider) {
+		// Item-backed providers (for example OpenCode/Kilo) can keep producing
+		// remote updates while local session status remains inactive/no-process.
+		// Always open the items stream on selection load so we don't lose live
+		// delivery after a refresh-driven reload.
+		cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
+	} else if isActiveStatus(item.session.Status) {
+		cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
 	}
 	if item.session.Provider == "codex" {
 		cmds = append(cmds, openEventsCmd(m.sessionAPI, id))
@@ -2504,9 +2506,9 @@ func (m *Model) consumeItemTick(now time.Time) {
 	sessionID := m.activeStreamTargetID()
 	if closed {
 		m.setBackgroundStatus("items stream closed")
-		if sessionID != "" {
-			m.stopRequestActivityFor(sessionID)
-		}
+		// Item streams can close transiently (for example during selection churn)
+		// before the assistant reply arrives. Keep request activity running so the
+		// stale-history fallback continues polling and can surface delayed items.
 	}
 	if changed {
 		blocks := m.itemStream.Blocks()
