@@ -3,11 +3,12 @@ package providers
 import "strings"
 
 type Capabilities struct {
-	UsesItems         bool
-	SupportsEvents    bool
-	SupportsApprovals bool
-	SupportsInterrupt bool
-	NoProcess         bool
+	SupportsGuidedWorkflowDispatch bool
+	UsesItems                      bool
+	SupportsEvents                 bool
+	SupportsApprovals              bool
+	SupportsInterrupt              bool
+	NoProcess                      bool
 }
 
 type Runtime string
@@ -35,9 +36,10 @@ var registry = []Definition{
 		Runtime:           RuntimeCodex,
 		CommandCandidates: []string{"codex"},
 		Capabilities: Capabilities{
-			SupportsEvents:    true,
-			SupportsApprovals: true,
-			SupportsInterrupt: true,
+			SupportsGuidedWorkflowDispatch: true,
+			SupportsEvents:                 true,
+			SupportsApprovals:              true,
+			SupportsInterrupt:              true,
 		},
 	},
 	{
@@ -46,8 +48,9 @@ var registry = []Definition{
 		Runtime:           RuntimeClaude,
 		CommandCandidates: []string{"claude"},
 		Capabilities: Capabilities{
-			UsesItems: true,
-			NoProcess: true,
+			SupportsGuidedWorkflowDispatch: true,
+			UsesItems:                      true,
+			NoProcess:                      true,
 		},
 	},
 	{
@@ -55,11 +58,12 @@ var registry = []Definition{
 		Label:   "opencode",
 		Runtime: RuntimeOpenCodeServer,
 		Capabilities: Capabilities{
-			UsesItems:         true,
-			SupportsEvents:    true,
-			SupportsApprovals: true,
-			SupportsInterrupt: true,
-			NoProcess:         true,
+			SupportsGuidedWorkflowDispatch: true,
+			UsesItems:                      true,
+			SupportsEvents:                 true,
+			SupportsApprovals:              true,
+			SupportsInterrupt:              true,
+			NoProcess:                      true,
 		},
 	},
 	{
@@ -67,11 +71,12 @@ var registry = []Definition{
 		Label:   "kilocode",
 		Runtime: RuntimeOpenCodeServer,
 		Capabilities: Capabilities{
-			UsesItems:         true,
-			SupportsEvents:    true,
-			SupportsApprovals: true,
-			SupportsInterrupt: true,
-			NoProcess:         true,
+			SupportsGuidedWorkflowDispatch: true,
+			UsesItems:                      true,
+			SupportsEvents:                 true,
+			SupportsApprovals:              true,
+			SupportsInterrupt:              true,
+			NoProcess:                      true,
 		},
 	},
 	{

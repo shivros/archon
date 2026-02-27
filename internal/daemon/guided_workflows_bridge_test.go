@@ -1446,7 +1446,7 @@ func TestGuidedWorkflowPromptDispatcherLinksSessionBeforeDispatchFailure(t *test
 func TestGuidedWorkflowPromptDispatcherSkipsUnsupportedProvider(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
-			{ID: "sess-1", Provider: "claude", Status: types.SessionStatusRunning},
+			{ID: "sess-1", Provider: "gemini", Status: types.SessionStatusRunning},
 		},
 		meta: []*types.SessionMeta{
 			{SessionID: "sess-1", WorkspaceID: "ws-1"},
@@ -1497,7 +1497,7 @@ func TestGuidedWorkflowPromptDispatcherRejectsSelectedProviderWithoutCodexCoerci
 		RunID:            "gwf-1",
 		WorkspaceID:      "ws-1",
 		Prompt:           "hello",
-		SelectedProvider: "claude",
+		SelectedProvider: "gemini",
 	})
 	if err == nil {
 		t.Fatalf("expected unsupported selected provider to fail dispatch")
@@ -1519,10 +1519,10 @@ func TestGuidedWorkflowPromptDispatcherRejectsSelectedProviderWithoutCodexCoerci
 func TestGuidedWorkflowPromptDispatcherFallsBackToSupportedSession(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
-			{ID: "sess-claude", Provider: "claude", Status: types.SessionStatusRunning},
+			{ID: "sess-gemini", Provider: "gemini", Status: types.SessionStatusRunning},
 		},
 		meta: []*types.SessionMeta{
-			{SessionID: "sess-claude", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+			{SessionID: "sess-gemini", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
 		},
 		started: []*types.Session{
 			{ID: "sess-codex", Provider: "codex", Status: types.SessionStatusRunning},
@@ -1556,10 +1556,10 @@ func TestGuidedWorkflowPromptDispatcherFallsBackToSupportedSession(t *testing.T)
 func TestGuidedWorkflowPromptDispatcherReturnsErrorWhenFallbackStartReturnsNilSession(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
-			{ID: "sess-claude", Provider: "claude", Status: types.SessionStatusRunning},
+			{ID: "sess-gemini", Provider: "gemini", Status: types.SessionStatusRunning},
 		},
 		meta: []*types.SessionMeta{
-			{SessionID: "sess-claude", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
+			{SessionID: "sess-gemini", WorkspaceID: "ws-1", WorktreeID: "wt-1"},
 		},
 		turnID: "turn-4",
 	}
@@ -2026,12 +2026,12 @@ func TestGuidedWorkflowEffectiveDispatchSettingsPreservesConfiguredProvider(t *t
 
 func TestGuidedWorkflowDispatchDefaultsFromCoreConfigInvalidValuesFallbackGracefully(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
-	cfg.GuidedWorkflows.Defaults.Provider = "claude"
+	cfg.GuidedWorkflows.Defaults.Provider = "gemini"
 	cfg.GuidedWorkflows.Defaults.Model = "   "
 	cfg.GuidedWorkflows.Defaults.Access = "invalid_access"
 	cfg.GuidedWorkflows.Defaults.Reasoning = "invalid_reasoning"
 	defaults := guidedWorkflowDispatchDefaultsFromCoreConfig(cfg)
-	if defaults.Provider != "claude" {
+	if defaults.Provider != "gemini" {
 		t.Fatalf("expected unsupported provider to remain for explicit validation, got %q", defaults.Provider)
 	}
 	if defaults.Model != "" {
@@ -2047,7 +2047,7 @@ func TestGuidedWorkflowDispatchDefaultsFromCoreConfigInvalidValuesFallbackGracef
 
 func TestGuidedWorkflowPromptDispatcherFailsExplicitlyWhenDefaultsProviderUnsupported(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
-	cfg.GuidedWorkflows.Defaults.Provider = "claude"
+	cfg.GuidedWorkflows.Defaults.Provider = "gemini"
 	cfg.GuidedWorkflows.Defaults.Model = "   "
 	cfg.GuidedWorkflows.Defaults.Access = "invalid_access"
 	cfg.GuidedWorkflows.Defaults.Reasoning = "invalid_reasoning"
@@ -2195,7 +2195,7 @@ func TestGuidedWorkflowPromptDispatcherFailsWhenConfiguredProviderUnsupported(t 
 	dispatcher := &guidedWorkflowPromptDispatcher{
 		sessions: gateway,
 		defaults: guidedWorkflowDispatchDefaults{
-			Provider: "claude",
+			Provider: "gemini",
 		},
 	}
 	_, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{

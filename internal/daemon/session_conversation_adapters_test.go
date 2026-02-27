@@ -531,6 +531,54 @@ func TestClaudeCompletionStrategyOrDefault(t *testing.T) {
 	}
 }
 
+type stubClaudeCompletionDecisionPolicy struct {
+	publish bool
+	source  string
+}
+
+func (s stubClaudeCompletionDecisionPolicy) Decide(int, []map[string]any, error) (bool, string) {
+	return s.publish, s.source
+}
+
+type stubAdapterInputValidator struct{}
+
+func (stubAdapterInputValidator) TextFromInput([]map[string]any) (string, error) {
+	return "validated", nil
+}
+
+func TestClaudeCompletionPolicyOrDefault(t *testing.T) {
+	adapter := claudeConversationAdapter{}
+	policy := adapter.completionPolicyOrDefault()
+	publish, source := policy.Decide(0, nil, nil)
+	if !publish || source == "" {
+		t.Fatalf("expected default policy to publish with source, got publish=%v source=%q", publish, source)
+	}
+	custom := stubClaudeCompletionDecisionPolicy{publish: true, source: "custom_source"}
+	adapter.completionPolicy = custom
+	policy = adapter.completionPolicyOrDefault()
+	publish, source = policy.Decide(0, nil, nil)
+	if !publish || source != "custom_source" {
+		t.Fatalf("expected custom policy source, got publish=%v source=%q", publish, source)
+	}
+}
+
+func TestClaudeInputValidatorOrDefault(t *testing.T) {
+	adapter := claudeConversationAdapter{}
+	validator := adapter.inputValidatorOrDefault()
+	if _, err := validator.TextFromInput([]map[string]any{{"type": "text", "text": "ok"}}); err != nil {
+		t.Fatalf("default validator should accept text input, got %v", err)
+	}
+	adapter.inputValidator = stubAdapterInputValidator{}
+	validator = adapter.inputValidatorOrDefault()
+	text, err := validator.TextFromInput(nil)
+	if err != nil {
+		t.Fatalf("custom validator error: %v", err)
+	}
+	if text != "validated" {
+		t.Fatalf("expected custom validator output, got %q", text)
+	}
+}
+
 func TestSessionServiceClaudeCompletionIONilService(t *testing.T) {
 	io := sessionServiceClaudeCompletionIO{}
 	items, err := io.ReadSessionItems("s1", 10)
@@ -585,11 +633,17 @@ func TestClaudeConversationAdapterSendMessageDoesNotPublishCompletionWithoutAssi
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if turnID != "" {
-		t.Fatalf("expected empty turn id for claude send, got %q", turnID)
+	if strings.TrimSpace(turnID) == "" {
+		t.Fatalf("expected non-empty turn id for claude send")
 	}
-	if len(publisher.events) != 0 {
-		t.Fatalf("expected no turn-completed event without assistant output, got %#v", publisher.events)
+	if len(publisher.events) != 1 {
+		t.Fatalf("expected one turn-completed event for synchronous claude send, got %#v", publisher.events)
+	}
+	if publisher.events[0].TurnID != turnID {
+		t.Fatalf("expected completion turn id %q, got %q", turnID, publisher.events[0].TurnID)
+	}
+	if publisher.events[0].Source != "claude_sync_send_completed" {
+		t.Fatalf("unexpected completion source: %q", publisher.events[0].Source)
 	}
 }
 
@@ -959,8 +1013,8 @@ func TestClaudeConversationAdapterSendMessagePublishesCompletionAfterAssistantOu
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if turnID != "" {
-		t.Fatalf("expected empty turn id for claude send, got %q", turnID)
+	if strings.TrimSpace(turnID) == "" {
+		t.Fatalf("expected non-empty turn id for claude send")
 	}
 	if len(publisher.events) != 1 {
 		t.Fatalf("expected one turn-completed event, got %d", len(publisher.events))
@@ -971,6 +1025,9 @@ func TestClaudeConversationAdapterSendMessagePublishesCompletionAfterAssistantOu
 	}
 	if event.Source != "claude_items_post_send" {
 		t.Fatalf("expected claude post-send completion source, got %q", event.Source)
+	}
+	if event.TurnID != turnID {
+		t.Fatalf("expected event turn id %q, got %q", turnID, event.TurnID)
 	}
 }
 

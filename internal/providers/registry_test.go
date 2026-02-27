@@ -17,9 +17,10 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			runtime:    RuntimeCodex,
 			candidates: []string{"codex"},
 			capabilities: Capabilities{
-				SupportsEvents:    true,
-				SupportsApprovals: true,
-				SupportsInterrupt: true,
+				SupportsGuidedWorkflowDispatch: true,
+				SupportsEvents:                 true,
+				SupportsApprovals:              true,
+				SupportsInterrupt:              true,
 			},
 		},
 		{
@@ -27,8 +28,9 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			runtime:    RuntimeClaude,
 			candidates: []string{"claude"},
 			capabilities: Capabilities{
-				UsesItems: true,
-				NoProcess: true,
+				SupportsGuidedWorkflowDispatch: true,
+				UsesItems:                      true,
+				NoProcess:                      true,
 			},
 		},
 		{
@@ -36,11 +38,12 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			runtime:    RuntimeOpenCodeServer,
 			candidates: nil,
 			capabilities: Capabilities{
-				UsesItems:         true,
-				SupportsEvents:    true,
-				SupportsApprovals: true,
-				SupportsInterrupt: true,
-				NoProcess:         true,
+				SupportsGuidedWorkflowDispatch: true,
+				UsesItems:                      true,
+				SupportsEvents:                 true,
+				SupportsApprovals:              true,
+				SupportsInterrupt:              true,
+				NoProcess:                      true,
 			},
 		},
 		{
@@ -48,11 +51,12 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			runtime:    RuntimeOpenCodeServer,
 			candidates: nil,
 			capabilities: Capabilities{
-				UsesItems:         true,
-				SupportsEvents:    true,
-				SupportsApprovals: true,
-				SupportsInterrupt: true,
-				NoProcess:         true,
+				SupportsGuidedWorkflowDispatch: true,
+				UsesItems:                      true,
+				SupportsEvents:                 true,
+				SupportsApprovals:              true,
+				SupportsInterrupt:              true,
+				NoProcess:                      true,
 			},
 		},
 		{
@@ -135,7 +139,7 @@ func TestProviderRegistryAllReturnsClones(t *testing.T) {
 
 func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
 	caps := CapabilitiesFor("codex")
-	if !caps.SupportsEvents || !caps.SupportsApprovals || !caps.SupportsInterrupt {
+	if !caps.SupportsGuidedWorkflowDispatch || !caps.SupportsEvents || !caps.SupportsApprovals || !caps.SupportsInterrupt {
 		t.Fatalf("unexpected codex capabilities: %#v", caps)
 	}
 }

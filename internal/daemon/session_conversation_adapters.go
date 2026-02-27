@@ -255,16 +255,14 @@ func (codexConversationAdapter) Interrupt(ctx context.Context, service *SessionS
 type claudeConversationAdapter struct {
 	fallback           defaultConversationAdapter
 	completionStrategy turnCompletionStrategy
+	completionPolicy   claudeCompletionDecisionPolicy
+	inputValidator     claudeInputValidator
+	turnIDs            turnIDGenerator
 }
 
 type turnCompletionStrategy interface {
 	ShouldPublishCompletion(beforeCount int, items []map[string]any) bool
 	Source() string
-}
-
-type claudeCompletionIO interface {
-	ReadSessionItems(sessionID string, lines int) ([]map[string]any, error)
-	PublishTurnCompleted(session *types.Session, meta *types.SessionMeta, turnID, source string)
 }
 
 type sessionServiceClaudeCompletionIO struct {
@@ -277,6 +275,7 @@ func newClaudeConversationAdapter(fallback defaultConversationAdapter) claudeCon
 	return claudeConversationAdapter{
 		fallback:           fallback,
 		completionStrategy: claudeItemDeltaCompletionStrategy{},
+		turnIDs:            defaultTurnIDGenerator{},
 	}
 }
 
@@ -289,70 +288,8 @@ func (a claudeConversationAdapter) History(ctx context.Context, service *Session
 }
 
 func (a claudeConversationAdapter) SendMessage(ctx context.Context, service *SessionService, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error) {
-	if session == nil {
-		return "", invalidError("session is required", nil)
-	}
-	if service.manager == nil {
-		return "", unavailableError("session manager not available", nil)
-	}
-	completionIO := sessionServiceClaudeCompletionIO{service: service}
-	strategy := a.completionStrategyOrDefault()
-	preSendItemCount := claudeCompletionProbeItemCount(completionIO, session.ID)
-	text := extractTextInput(input)
-	if text == "" {
-		return "", invalidError("text input is required", nil)
-	}
-	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
-	if meta != nil {
-		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
-	}
-	payload := buildClaudeUserPayloadWithRuntime(text, runtimeOptions)
-	if err := service.manager.SendInput(session.ID, payload); err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			providerSessionID := ""
-			if meta != nil {
-				providerSessionID = meta.ProviderSessionID
-			}
-			if strings.TrimSpace(providerSessionID) == "" {
-				return "", invalidError("provider session id not available", nil)
-			}
-			if strings.TrimSpace(session.Cwd) == "" {
-				return "", invalidError("session cwd is required", nil)
-			}
-			additionalDirectories, dirsErr := service.resolveAdditionalDirectoriesForSession(ctx, session, meta)
-			if dirsErr != nil {
-				return "", invalidError(dirsErr.Error(), dirsErr)
-			}
-			_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
-				Provider:              session.Provider,
-				Cwd:                   session.Cwd,
-				AdditionalDirectories: additionalDirectories,
-				Env:                   session.Env,
-				RuntimeOptions:        runtimeOptions,
-				Resume:                true,
-				ProviderSessionID:     providerSessionID,
-			}, session)
-			if resumeErr != nil {
-				return "", invalidError(resumeErr.Error(), resumeErr)
-			}
-			if err := service.manager.SendInput(session.ID, payload); err != nil {
-				return "", invalidError(err.Error(), err)
-			}
-		} else {
-			return "", invalidError(err.Error(), err)
-		}
-	}
-	now := time.Now().UTC()
-	if service.stores != nil && service.stores.SessionMeta != nil {
-		_, _ = service.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-			SessionID:    session.ID,
-			LastActiveAt: &now,
-		})
-	}
-	if claudeCompletionProbeHasTerminalOutput(completionIO, strategy, session.ID, preSendItemCount) {
-		completionIO.PublishTurnCompleted(session, meta, "", strategy.Source())
-	}
-	return "", nil
+	orchestrator := a.sendOrchestrator(service)
+	return orchestrator.Send(ctx, service, session, meta, input)
 }
 
 func (a claudeConversationAdapter) completionStrategyOrDefault() turnCompletionStrategy {
@@ -360,6 +297,40 @@ func (a claudeConversationAdapter) completionStrategyOrDefault() turnCompletionS
 		return claudeItemDeltaCompletionStrategy{}
 	}
 	return a.completionStrategy
+}
+
+func (a claudeConversationAdapter) turnIDGeneratorOrDefault() turnIDGenerator {
+	if a.turnIDs == nil {
+		return defaultTurnIDGenerator{}
+	}
+	return a.turnIDs
+}
+
+func (a claudeConversationAdapter) completionPolicyOrDefault() claudeCompletionDecisionPolicy {
+	if a.completionPolicy != nil {
+		return a.completionPolicy
+	}
+	return defaultClaudeCompletionDecisionPolicy{strategy: a.completionStrategyOrDefault()}
+}
+
+func (a claudeConversationAdapter) inputValidatorOrDefault() claudeInputValidator {
+	if a.inputValidator != nil {
+		return a.inputValidator
+	}
+	return defaultClaudeInputValidator{}
+}
+
+func (a claudeConversationAdapter) sendOrchestrator(service *SessionService) claudeSendOrchestrator {
+	completionIO := sessionServiceClaudeCompletionIO{service: service}
+	return claudeSendOrchestrator{
+		validator:           a.inputValidatorOrDefault(),
+		transport:           defaultClaudeSendTransport{},
+		turnIDs:             a.turnIDGeneratorOrDefault(),
+		stateStore:          sessionServiceClaudeTurnStateStore{service: service},
+		completionReader:    completionIO,
+		completionPublisher: completionIO,
+		completionPolicy:    a.completionPolicyOrDefault(),
+	}
 }
 
 func (io sessionServiceClaudeCompletionIO) ReadSessionItems(sessionID string, lines int) ([]map[string]any, error) {
@@ -377,7 +348,7 @@ func (io sessionServiceClaudeCompletionIO) PublishTurnCompleted(session *types.S
 	io.service.publishTurnCompleted(session, meta, turnID, source)
 }
 
-func claudeCompletionProbeItemCount(io claudeCompletionIO, sessionID string) int {
+func claudeCompletionProbeItemCount(io claudeCompletionReader, sessionID string) int {
 	if io == nil || strings.TrimSpace(sessionID) == "" {
 		return 0
 	}
@@ -388,7 +359,7 @@ func claudeCompletionProbeItemCount(io claudeCompletionIO, sessionID string) int
 	return len(items)
 }
 
-func claudeCompletionProbeHasTerminalOutput(io claudeCompletionIO, strategy turnCompletionStrategy, sessionID string, baselineCount int) bool {
+func claudeCompletionProbeHasTerminalOutput(io claudeCompletionReader, strategy turnCompletionStrategy, sessionID string, baselineCount int) bool {
 	if io == nil || strategy == nil || strings.TrimSpace(sessionID) == "" {
 		return false
 	}

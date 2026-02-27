@@ -51,7 +51,7 @@ func (p registryDispatchProviderPolicy) SupportsDispatch(provider string) bool {
 	if !ok {
 		return false
 	}
-	return def.Capabilities.SupportsEvents
+	return CanDispatchGuidedWorkflow(def)
 }
 
 func (p registryDispatchProviderPolicy) Validate(provider string) error {
@@ -81,4 +81,14 @@ func SupportsDispatchProvider(provider string) bool {
 
 func ValidateDispatchProvider(provider string) error {
 	return DefaultDispatchProviderPolicy().Validate(provider)
+}
+
+func CanDispatchGuidedWorkflow(def providers.Definition) bool {
+	if !def.Capabilities.SupportsGuidedWorkflowDispatch {
+		return false
+	}
+	if def.Capabilities.SupportsEvents {
+		return true
+	}
+	return def.Capabilities.UsesItems
 }

@@ -960,7 +960,7 @@ func TestWorkflowRunCreateRejectsUnsupportedProvider(t *testing.T) {
 	body, _ := json.Marshal(CreateWorkflowRunRequest{
 		WorkspaceID:      "ws-1",
 		WorktreeID:       "wt-1",
-		SelectedProvider: "claude",
+		SelectedProvider: "gemini",
 	})
 	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workflow-runs", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token")

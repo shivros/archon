@@ -1218,7 +1218,7 @@ func TestRunLifecycleCreateRunValidation(t *testing.T) {
 	if _, err := enabled.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:       TemplateIDSolidPhaseDelivery,
 		WorkspaceID:      "ws-1",
-		SelectedProvider: "claude",
+		SelectedProvider: "gemini",
 	}); !errors.Is(err, ErrUnsupportedProvider) {
 		t.Fatalf("expected ErrUnsupportedProvider, got %v", err)
 	}
