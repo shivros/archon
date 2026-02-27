@@ -325,7 +325,7 @@ func resolveOpenCodeClientConfig(provider string, coreCfg config.CoreConfig) ope
 	}
 	timeoutSeconds := coreCfg.OpenCodeTimeoutSeconds(provider)
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 30
+		timeoutSeconds = 180
 	}
 	return openCodeClientConfig{
 		BaseURL:  baseURL,

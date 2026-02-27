@@ -588,7 +588,7 @@ func (c *Client) StartWorkspaceSession(ctx context.Context, workspaceID, worktre
 func providerCallTimeout(provider string) time.Duration {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "opencode", "kilocode":
-		return 90 * time.Second
+		return 3 * time.Minute
 	default:
 		return 0
 	}
@@ -644,7 +644,7 @@ func (c *Client) History(ctx context.Context, id string, lines int) (*TailItemsR
 func (c *Client) SendMessage(ctx context.Context, id string, req SendSessionRequest) (*SendSessionResponse, error) {
 	path := fmt.Sprintf("/v1/sessions/%s/send", strings.TrimSpace(id))
 	var resp SendSessionResponse
-	if err := c.doJSONWithTimeout(ctx, http.MethodPost, path, req, true, &resp, 90*time.Second); err != nil {
+	if err := c.doJSONWithTimeout(ctx, http.MethodPost, path, req, true, &resp, 5*time.Minute); err != nil {
 		return nil, err
 	}
 	return &resp, nil

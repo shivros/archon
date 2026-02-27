@@ -126,7 +126,7 @@ func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = 180 * time.Second
 	}
 	username := strings.TrimSpace(cfg.Username)
 	if username == "" {
@@ -160,7 +160,7 @@ func cloneOpenCodeClientWithBaseURL(client *openCodeClient, baseURL string) (*op
 	}
 	timeout := client.timeout
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = 180 * time.Second
 	}
 	return newOpenCodeClient(openCodeClientConfig{
 		BaseURL:  baseURL,

@@ -141,10 +141,21 @@ func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {
 	provider := m.providerForSessionID(sessionID)
 	ctx := m.requestScopeContext(requestScopeSessionLoad)
 	historyCmd := fetchHistoryCmdWithContext(m.sessionHistoryAPI, sessionID, key, m.historyFetchLinesInitial(), ctx)
-	if shouldStreamItems(provider) && providerSupportsApprovals(provider) {
-		return tea.Batch(historyCmd, fetchApprovalsCmdWithContext(m.sessionAPI, sessionID, ctx))
+	cmds := []tea.Cmd{}
+	if shouldStreamItems(provider) {
+		if m.itemStream != nil && !m.itemStream.HasStream() {
+			cmds = append(cmds, openItemsCmd(m.sessionAPI, sessionID))
+		}
+	} else if provider == "codex" {
+		if m.codexStream != nil && !m.codexStream.HasStream() {
+			cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
+		}
 	}
-	return historyCmd
+	cmds = append(cmds, historyCmd)
+	if shouldStreamItems(provider) && providerSupportsApprovals(provider) {
+		cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, sessionID, ctx))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) composeActivityLine(now time.Time) string {

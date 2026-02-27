@@ -802,7 +802,7 @@ func undismissManySessionsCmd(api SessionUndismissAPI, ids []string) tea.Cmd {
 func sendSessionCmd(api SessionSendAPI, id, text string, token int) tea.Cmd {
 	return func() tea.Msg {
 		log.Printf("ui send: id=%s text_len=%d", id, len(text))
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		resp, err := api.SendMessage(ctx, id, client.SendSessionRequest{Text: text})
 		turnID := ""

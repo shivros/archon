@@ -51,8 +51,8 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	if opencode.Username != "archon" {
 		t.Fatalf("unexpected opencode username: %q", opencode.Username)
 	}
-	if opencode.Timeout != 30*time.Second {
-		t.Fatalf("expected opencode default timeout 30s, got %s", opencode.Timeout)
+	if opencode.Timeout != 180*time.Second {
+		t.Fatalf("expected opencode default timeout 180s, got %s", opencode.Timeout)
 	}
 
 	kilocode := resolveOpenCodeClientConfig("kilocode", coreCfg)
@@ -62,8 +62,8 @@ func TestResolveOpenCodeClientConfigEnvOverridesToken(t *testing.T) {
 	if kilocode.Username != "archon-kilo" {
 		t.Fatalf("unexpected kilocode username: %q", kilocode.Username)
 	}
-	if kilocode.Timeout != 30*time.Second {
-		t.Fatalf("expected kilocode default timeout 30s, got %s", kilocode.Timeout)
+	if kilocode.Timeout != 180*time.Second {
+		t.Fatalf("expected kilocode default timeout 180s, got %s", kilocode.Timeout)
 	}
 }
 

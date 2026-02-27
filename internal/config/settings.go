@@ -569,7 +569,7 @@ func (c CoreConfig) OpenCodeTimeoutSeconds(provider string) int {
 	if cfg.TimeoutSeconds > 0 {
 		return cfg.TimeoutSeconds
 	}
-	return 30
+	return 180
 }
 
 func (c CoreConfig) openCodeProviderConfig(provider string) CoreOpenCodeProviderConfig {
