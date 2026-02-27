@@ -462,6 +462,9 @@ func TestNewGuidedWorkflowRunServiceWiresMissingRunContextResolverFromStores(t *
 	if metaStore.listCalls == 0 {
 		t.Fatalf("expected session metadata lookup for missing run context")
 	}
+	if impl, ok := service.(*guidedworkflows.InMemoryRunService); ok {
+		impl.WaitForPendingPersists()
+	}
 	if runStore.upsertCalls == 0 {
 		t.Fatalf("expected dismissed missing run tombstone to be persisted")
 	}

@@ -3515,6 +3515,7 @@ func TestRunLifecycleDismissMissingRunCreatesTombstone(t *testing.T) {
 	if dismissed.WorkspaceID != "ws-1" || dismissed.WorktreeID != "wt-1" || dismissed.SessionID != "sess-1" {
 		t.Fatalf("expected resolver context to be applied, got %#v", dismissed)
 	}
+	service.WaitForPendingPersists()
 	if len(snapshotStore.savedByRunID) != 1 {
 		t.Fatalf("expected dismissed tombstone to be persisted, got %d", len(snapshotStore.savedByRunID))
 	}
