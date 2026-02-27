@@ -4,6 +4,8 @@ Archon is a TUI-based session manager for AI coding agents. It lets you run, mon
 
 > **Alpha software.** Archon is under active development and changing rapidly. Feature support varies across providers and may break between releases. See the support grid below for current status.
 
+![Archon UI](ui.png)
+
 ## Provider Support
 
 Codex is the primary and most thoroughly tested provider. Support for other providers is in progress.
@@ -17,7 +19,7 @@ Codex is the primary and most thoroughly tested provider. Support for other prov
 | **Approvals** | Full | - | Partial |
 | **Interrupt** | Full | - | Full |
 | **Session Resume** | Full | Full | Full |
-| **Guided Workflows** | Full | - | - |
+| **Guided Workflows** | Full | Full | - |
 | **Notifications** | Full | Partial | Partial |
 
 **Full** = well-tested and reliable, **Partial** = works but incomplete or lightly tested, **-** = not supported.
@@ -95,7 +97,7 @@ checkpoint_style = "confidence_weighted"
 mode = "guarded_autopilot"
 
 [guided_workflows.defaults]
-provider = "codex" # codex | opencode | kilocode (unsupported values fail explicitly)
+provider = "codex" # codex | claude | opencode | kilocode (unsupported values fail explicitly)
 model = "gpt-5.1-codex"
 access = "on_request" # read_only | on_request | full_access
 reasoning = "medium" # low | medium | high | extra_high
