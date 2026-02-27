@@ -29,7 +29,13 @@ func (p *SelectPicker) SetSize(width, height int) {
 }
 
 func (p *SelectPicker) SetOptions(options []selectOption) {
-	p.options = append(p.options[:0], options...)
+	p.options = p.options[:0]
+	for _, option := range options {
+		option.id = strings.TrimSpace(option.id)
+		option.label = sanitizePickerOptionText(option.label)
+		option.search = sanitizePickerOptionText(option.search)
+		p.options = append(p.options, option)
+	}
 	p.rebuildVisible()
 }
 
@@ -271,4 +277,8 @@ func (p *SelectPicker) rebuildVisible() {
 		p.cursor = 0
 	}
 	p.ensureVisible()
+}
+
+func sanitizePickerOptionText(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }

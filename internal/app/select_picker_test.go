@@ -94,3 +94,20 @@ func TestSelectPickerHandleClickUsesRowsAfterFilterLine(t *testing.T) {
 		t.Fatalf("expected beta to be selected, got %q", picker.SelectedID())
 	}
 }
+
+func TestSelectPickerSanitizesOptionLabelNewlines(t *testing.T) {
+	picker := NewSelectPicker(40, 6)
+	picker.SetOptions([]selectOption{
+		{id: "one", label: "One\n"},
+		{id: "two", label: "Two\r\n"},
+		{id: "three", label: "Three\tItem"},
+	})
+
+	view := picker.View()
+	if strings.Contains(view, "One\n\n") || strings.Contains(view, "Two\n\n") {
+		t.Fatalf("expected no blank line between picker items, got %q", view)
+	}
+	if !strings.Contains(view, " One") || !strings.Contains(view, " Two") || !strings.Contains(view, " Three Item") {
+		t.Fatalf("expected sanitized single-line labels, got %q", view)
+	}
+}
