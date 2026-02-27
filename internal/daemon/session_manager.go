@@ -523,6 +523,24 @@ func (m *SessionManager) SubscribeItems(id string) (<-chan map[string]any, func(
 	return ch, cancel, nil
 }
 
+func (m *SessionManager) BroadcastItems(id string, items []map[string]any) {
+	if m == nil || strings.TrimSpace(id) == "" || len(items) == 0 {
+		return
+	}
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok || state == nil || state.itemsHub == nil {
+		return
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		state.itemsHub.Broadcast(item)
+	}
+}
+
 func (m *SessionManager) SubscribeDebug(id string) (<-chan types.DebugEvent, func(), error) {
 	m.mu.Lock()
 	state, ok := m.sessions[id]

@@ -167,6 +167,7 @@ func (s *SessionService) appendSessionItems(id string, items []map[string]any) e
 		return err
 	}
 	defer file.Close()
+	appended := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		prepared := prepareItemForPersistence(item, time.Now().UTC())
 		if prepared == nil {
@@ -180,6 +181,10 @@ func (s *SessionService) appendSessionItems(id string, items []map[string]any) e
 		if _, err := file.Write(data); err != nil {
 			return err
 		}
+		appended = append(appended, prepared)
+	}
+	if len(appended) > 0 && s.manager != nil {
+		s.manager.BroadcastItems(id, appended)
 	}
 	return nil
 }

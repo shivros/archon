@@ -12,6 +12,7 @@ import (
 
 type fileSessionItemsRepository struct {
 	baseDirResolver func() (string, error)
+	broadcastItems  func(sessionID string, items []map[string]any)
 }
 
 func newFileSessionItemsRepository(manager *SessionManager) TurnArtifactRepository {
@@ -23,6 +24,12 @@ func newFileSessionItemsRepository(manager *SessionManager) TurnArtifactReposito
 				}
 			}
 			return config.SessionsDir()
+		},
+		broadcastItems: func(sessionID string, items []map[string]any) {
+			if manager == nil {
+				return
+			}
+			manager.BroadcastItems(sessionID, items)
 		},
 	}
 }
@@ -86,6 +93,7 @@ func (r *fileSessionItemsRepository) AppendItems(sessionID string, items []map[s
 		return err
 	}
 	defer file.Close()
+	appended := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		prepared := prepareItemForPersistence(item, time.Now().UTC())
 		if prepared == nil {
@@ -98,6 +106,10 @@ func (r *fileSessionItemsRepository) AppendItems(sessionID string, items []map[s
 		if _, err := file.Write(append(data, '\n')); err != nil {
 			return err
 		}
+		appended = append(appended, prepared)
+	}
+	if len(appended) > 0 && r.broadcastItems != nil {
+		r.broadcastItems(sessionID, appended)
 	}
 	return nil
 }

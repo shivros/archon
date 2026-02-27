@@ -87,3 +87,41 @@ func TestFileSessionItemsRepositoryAppendItemsNoopForEmptyInput(t *testing.T) {
 		t.Fatalf("expected nil error for empty session id, got %v", err)
 	}
 }
+
+func TestFileSessionItemsRepositoryAppendBroadcastsPreparedItems(t *testing.T) {
+	baseDir := t.TempDir()
+	calls := 0
+	var gotSession string
+	var gotItems []map[string]any
+	repo := &fileSessionItemsRepository{
+		baseDirResolver: func() (string, error) { return baseDir, nil },
+		broadcastItems: func(sessionID string, items []map[string]any) {
+			calls++
+			gotSession = sessionID
+			gotItems = append([]map[string]any(nil), items...)
+		},
+	}
+	err := repo.AppendItems("sess-broadcast", []map[string]any{
+		{
+			"type": "assistant",
+			"message": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": "hello"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendItems: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one broadcast call, got %d", calls)
+	}
+	if gotSession != "sess-broadcast" {
+		t.Fatalf("expected broadcast for sess-broadcast, got %q", gotSession)
+	}
+	if len(gotItems) != 1 {
+		t.Fatalf("expected one broadcast item, got %d", len(gotItems))
+	}
+	if strings.TrimSpace(asString(gotItems[0]["type"])) != "assistant" {
+		t.Fatalf("expected assistant broadcast item, got %#v", gotItems[0])
+	}
+}
