@@ -1220,3 +1220,15 @@ func (m *Model) reflowGuidedWorkflowLayout() {
 	}
 	m.renderGuidedWorkflowContent()
 }
+
+func (m *Model) guidedWorkflowPickerBodyView() string {
+	if m == nil || m.mode != uiModeGuidedWorkflow || m.guidedWorkflow == nil {
+		return ""
+	}
+	switch m.guidedWorkflow.Stage() {
+	case guidedWorkflowStageLauncher, guidedWorkflowStageProvider, guidedWorkflowStagePolicy:
+		return strings.TrimRight(m.guidedWorkflow.Render(), "\n")
+	default:
+		return ""
+	}
+}

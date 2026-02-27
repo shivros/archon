@@ -470,17 +470,17 @@ func (c *GuidedWorkflowUIController) LauncherRequiresRawANSIRender() bool {
 		if c.templatePicker.Loading() || c.templatePicker.Error() != "" || len(c.templatePicker.Options()) == 0 {
 			return false
 		}
-		return strings.Contains(c.templatePicker.View(), "\x1b[")
+		return strings.TrimSpace(c.templatePicker.View()) != ""
 	case guidedWorkflowStageProvider:
 		if c.providerPicker == nil {
 			return false
 		}
-		return strings.Contains(c.providerPicker.View(), "\x1b[")
+		return strings.TrimSpace(c.providerPicker.View()) != ""
 	case guidedWorkflowStagePolicy:
 		if c.policyPicker == nil {
 			return false
 		}
-		return strings.Contains(c.policyPicker.View(), "\x1b[")
+		return strings.TrimSpace(c.policyPicker.View()) != ""
 	default:
 		return false
 	}

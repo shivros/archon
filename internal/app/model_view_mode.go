@@ -99,6 +99,9 @@ func (m *Model) modeViewContent() (headerText, bodyText string) {
 		}
 	case uiModeGuidedWorkflow:
 		headerText = "Guided Workflow"
+		if pickerView := m.guidedWorkflowPickerBodyView(); pickerView != "" {
+			bodyText = pickerView
+		}
 	}
 	return headerText, bodyText
 }

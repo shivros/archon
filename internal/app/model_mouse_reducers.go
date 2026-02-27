@@ -679,7 +679,10 @@ func (m *Model) reduceGuidedWorkflowLauncherLeftPressMouse(msg tea.MouseMsg, lay
 	if start < 0 {
 		return false
 	}
-	absolute := m.viewport.YOffset() + mouse.Y - 1
+	absolute := mouse.Y - 1
+	if m.guidedWorkflowPickerBodyView() == "" {
+		absolute = m.viewport.YOffset() + mouse.Y - 1
+	}
 	row := absolute - start
 	if row < 0 || row >= pickerLayout.height {
 		return false
@@ -729,9 +732,14 @@ func (m *Model) guidedWorkflowLauncherPickerStartRow(layout guidedWorkflowLaunch
 	if m == nil {
 		return -1
 	}
-	rendered := m.renderedPlain
-	if len(rendered) == 0 && m.renderedText != "" {
-		rendered = strings.Split(xansi.Strip(m.renderedText), "\n")
+	rendered := []string(nil)
+	if pickerView := m.guidedWorkflowPickerBodyView(); pickerView != "" {
+		rendered = strings.Split(xansi.Strip(pickerView), "\n")
+	} else {
+		rendered = m.renderedPlain
+		if len(rendered) == 0 && m.renderedText != "" {
+			rendered = strings.Split(xansi.Strip(m.renderedText), "\n")
+		}
 	}
 	if len(rendered) == 0 {
 		return -1

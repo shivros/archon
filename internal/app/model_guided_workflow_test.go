@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"control/internal/client"
 	"control/internal/config"
@@ -475,6 +476,35 @@ func TestGuidedWorkflowLauncherPreservesANSIPickerRendering(t *testing.T) {
 	}
 	if !strings.Contains(m.renderedText, "\x1b[") {
 		t.Fatalf("expected rendered launcher text to retain ANSI styling, got %q", m.renderedText)
+	}
+}
+
+func TestGuidedWorkflowLauncherUsesRawPickerRenderingWithoutANSIStyles(t *testing.T) {
+	previousSelectedStyle := selectedStyle
+	selectedStyle = lipgloss.NewStyle()
+	t.Cleanup(func() {
+		selectedStyle = previousSelectedStyle
+	})
+
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if !m.guidedWorkflow.LauncherRequiresRawANSIRender() {
+		t.Fatalf("expected launcher picker to require raw rendering even without ANSI styles")
+	}
+	if !m.contentRenderRaw {
+		t.Fatalf("expected launcher content to use raw rendering when styles are plain text")
+	}
+	if strings.Contains(m.renderedText, "\x1b[") {
+		t.Fatalf("expected rendered launcher text without ANSI styling, got %q", m.renderedText)
 	}
 }
 
@@ -2604,6 +2634,32 @@ func TestGuidedWorkflowControllerTemplateAndRefreshGuards(t *testing.T) {
 	controller.SetRun(newWorkflowRunFixture("gwf-refresh", guidedworkflows.WorkflowRunStatusCompleted, now))
 	if controller.CanRefresh(now, time.Second) {
 		t.Fatalf("expected completed run to disable refresh")
+	}
+}
+
+func TestGuidedWorkflowProviderStageUsesDirectPickerBodyView(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if !m.guidedWorkflow.OpenProvider() {
+		t.Fatalf("expected provider stage to open")
+	}
+	m.renderGuidedWorkflowContent()
+
+	header, body := m.modeViewContent()
+	if header != "Guided Workflow" {
+		t.Fatalf("expected guided workflow header, got %q", header)
+	}
+	expected := strings.TrimRight(m.guidedWorkflow.Render(), "\n")
+	if body != expected {
+		t.Fatalf("expected direct provider picker body view, got %q", body)
 	}
 }
 
