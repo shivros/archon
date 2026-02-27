@@ -458,6 +458,187 @@ func TestSidebarDelegateRenderWorkflowOmitsRunID(t *testing.T) {
 	if strings.Contains(plain, "gwf-123") {
 		t.Fatalf("expected workflow row to hide run id, got %q", plain)
 	}
+	if !strings.Contains(plain, activeDot+" [WFL] SOLID Phase Delivery • running") {
+		t.Fatalf("expected workflow row to show running indicator, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowRowOmitsCountWhenSessionCountPositive(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind: sidebarWorkflow,
+		workflow: &guidedworkflows.WorkflowRun{
+			ID:           "gwf-456",
+			TemplateName: "Ship Dashboard",
+			Status:       guidedworkflows.WorkflowRunStatusRunning,
+		},
+		sessionCount: 3,
+		collapsible:  true,
+		expanded:     true,
+		depth:        1,
+	})
+	plain := xansi.Strip(buf.String())
+	if !strings.Contains(plain, "[WFL] Ship Dashboard") {
+		t.Fatalf("expected workflow label, got %q", plain)
+	}
+	if strings.Contains(plain, "sessions") || strings.Contains(plain, "(3)") {
+		t.Fatalf("expected workflow row to omit count text, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowShowsDismissedIndicator(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	dismissedAt := time.Now().UTC()
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind: sidebarWorkflow,
+		workflow: &guidedworkflows.WorkflowRun{
+			ID:           "gwf-123",
+			TemplateName: "SOLID Phase Delivery",
+			Status:       guidedworkflows.WorkflowRunStatusCompleted,
+			DismissedAt:  &dismissedAt,
+		},
+		collapsible: true,
+		expanded:    true,
+		depth:       1,
+	})
+	plain := xansi.Strip(buf.String())
+	if !strings.Contains(plain, dismissedDot+" [WFL] SOLID Phase Delivery • dismissed") {
+		t.Fatalf("expected workflow row to show dismissed indicator, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowPlaceholderRow(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind:        sidebarWorkflow,
+		workflow:    nil,
+		workflowID:  "gwf-missing",
+		collapsible: true,
+		expanded:    false,
+		depth:       1,
+	})
+	plain := xansi.Strip(buf.String())
+	if strings.Contains(plain, "gwf-missing") {
+		t.Fatalf("expected workflow placeholder row to hide run id, got %q", plain)
+	}
+	if !strings.Contains(plain, inactiveDot+" [WFL] Guided Workflow") {
+		t.Fatalf("expected placeholder row to use inactive indicator and default title, got %q", plain)
+	}
+	if strings.Contains(plain, "• ") {
+		t.Fatalf("expected placeholder row to omit status suffix, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorkspaceRowOmitsCount(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind:         sidebarWorkspace,
+		workspace:    &types.Workspace{ID: "ws1", Name: "Workspace One"},
+		collapsible:  true,
+		expanded:     false,
+		sessionCount: 7,
+	})
+	plain := xansi.Strip(buf.String())
+	if !strings.Contains(plain, "▸ Workspace One") {
+		t.Fatalf("expected workspace row label and collapse marker, got %q", plain)
+	}
+	if strings.Contains(plain, "(7)") {
+		t.Fatalf("expected workspace row to omit count, got %q", plain)
+	}
+}
+
+func TestSidebarIndicatorForRowStateMapping(t *testing.T) {
+	cases := []struct {
+		state sidebarRowState
+		want  string
+	}{
+		{state: sidebarRowStateInactive, want: inactiveDot},
+		{state: sidebarRowStateActive, want: activeDot},
+		{state: sidebarRowStateDismissed, want: dismissedDot},
+	}
+	for _, tc := range cases {
+		if got := indicatorForRowState(tc.state); got != tc.want {
+			t.Fatalf("state %v: expected %q, got %q", tc.state, tc.want, got)
+		}
+	}
+}
+
+func TestSidebarWorkflowRowStatePrecedence(t *testing.T) {
+	if got := workflowRowState(nil); got != sidebarRowStateInactive {
+		t.Fatalf("expected nil workflow to be inactive, got %v", got)
+	}
+	running := &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusRunning}
+	if got := workflowRowState(running); got != sidebarRowStateActive {
+		t.Fatalf("expected running workflow to be active, got %v", got)
+	}
+	paused := &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusPaused}
+	if got := workflowRowState(paused); got != sidebarRowStateInactive {
+		t.Fatalf("expected paused workflow without dismissal to be inactive, got %v", got)
+	}
+	now := time.Now().UTC()
+	running.DismissedAt = &now
+	if got := workflowRowState(running); got != sidebarRowStateDismissed {
+		t.Fatalf("expected dismissed workflow to take precedence, got %v", got)
+	}
+}
+
+func TestSidebarDelegateRenderRecentsRowsIncludeCounts(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	cases := []struct {
+		name string
+		item *sidebarItem
+		want string
+	}{
+		{
+			name: "all",
+			item: &sidebarItem{kind: sidebarRecentsAll, recentsCount: 5},
+			want: "Recents (5)",
+		},
+		{
+			name: "ready",
+			item: &sidebarItem{kind: sidebarRecentsReady, recentsCount: 2},
+			want: "Ready (2)",
+		},
+		{
+			name: "running",
+			item: &sidebarItem{kind: sidebarRecentsRunning, recentsCount: 1},
+			want: "Running (1)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			delegate.Render(&buf, model, 0, tc.item)
+			plain := xansi.Strip(buf.String())
+			if !strings.Contains(plain, tc.want) {
+				t.Fatalf("expected recents row to include count %q, got %q", tc.want, plain)
+			}
+		})
+	}
+}
+
+func TestSidebarSessionRowStatePrecedence(t *testing.T) {
+	if got := sessionRowState(nil, nil); got != sidebarRowStateInactive {
+		t.Fatalf("expected nil session to be inactive, got %v", got)
+	}
+	running := &types.Session{Status: types.SessionStatusRunning}
+	if got := sessionRowState(running, nil); got != sidebarRowStateActive {
+		t.Fatalf("expected running session to be active, got %v", got)
+	}
+	now := time.Now().UTC()
+	meta := &types.SessionMeta{DismissedAt: &now}
+	if got := sessionRowState(running, meta); got != sidebarRowStateDismissed {
+		t.Fatalf("expected dismissed session to take precedence, got %v", got)
+	}
 }
 
 func TestSidebarDelegateRenderWorktreeRowVariants(t *testing.T) {
@@ -478,8 +659,11 @@ func TestSidebarDelegateRenderWorktreeRowVariants(t *testing.T) {
 		depth:        1,
 		sessionCount: 2,
 	})
-	if !strings.Contains(collapsed, "▸ Feature A (2)") {
-		t.Fatalf("expected collapsed marker and count in worktree row, got %q", collapsed)
+	if !strings.Contains(collapsed, "▸ Feature A") {
+		t.Fatalf("expected collapsed marker in worktree row, got %q", collapsed)
+	}
+	if strings.Contains(collapsed, "(2)") {
+		t.Fatalf("expected worktree row to omit count, got %q", collapsed)
 	}
 
 	expanded := rendered(&sidebarItem{

@@ -241,6 +241,14 @@ type sidebarSessionLayoutEngine interface {
 	Layout(title, right string, width int) (string, string)
 }
 
+type sidebarRowState int
+
+const (
+	sidebarRowStateInactive sidebarRowState = iota
+	sidebarRowStateActive
+	sidebarRowStateDismissed
+)
+
 type defaultSidebarSessionLayoutEngine struct{}
 
 func (defaultSidebarSessionLayoutEngine) Layout(title, right string, width int) (string, string) {
@@ -314,9 +322,6 @@ func (d *sidebarDelegate) renderRecentsRunningRow(entry *sidebarItem, maxWidth i
 
 func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
 	label := entry.Title()
-	if entry.sessionCount > 0 {
-		label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
-	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
 	prefix := "  "
 	if entry.collapsible {
@@ -336,9 +341,6 @@ func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, i
 
 func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
 	label := entry.Title()
-	if entry.sessionCount > 0 {
-		label = fmt.Sprintf("%s (%d)", label, entry.sessionCount)
-	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
 	marker := " "
 	if entry.collapsible {
@@ -358,9 +360,6 @@ func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, is
 
 func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
 	label := entry.Title()
-	if entry.sessionCount > 0 {
-		label = fmt.Sprintf("%s • %d sessions", label, entry.sessionCount)
-	}
 	statusText := workflowRunStatusText(entry.workflow)
 	if strings.TrimSpace(statusText) != "" {
 		label = fmt.Sprintf("%s • %s", label, statusText)
@@ -374,8 +373,42 @@ func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, is
 		}
 	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
-	line := truncateToWidth(indent+marker+" [WFL] "+label, maxWidth)
+	line := truncateToWidth(indent+marker+" "+indicatorForRowState(workflowRowState(entry.workflow))+" [WFL] "+label, maxWidth)
 	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+}
+
+func indicatorForRowState(state sidebarRowState) string {
+	switch state {
+	case sidebarRowStateActive:
+		return activeDot
+	case sidebarRowStateDismissed:
+		return dismissedDot
+	default:
+		return inactiveDot
+	}
+}
+
+func workflowRowState(run *guidedworkflows.WorkflowRun) sidebarRowState {
+	if run == nil {
+		return sidebarRowStateInactive
+	}
+	if run.DismissedAt != nil {
+		return sidebarRowStateDismissed
+	}
+	if run.Status == guidedworkflows.WorkflowRunStatusRunning {
+		return sidebarRowStateActive
+	}
+	return sidebarRowStateInactive
+}
+
+func sessionRowState(session *types.Session, meta *types.SessionMeta) sidebarRowState {
+	if isDismissedSession(session, meta) {
+		return sidebarRowStateDismissed
+	}
+	if session != nil && isActiveStatus(session.Status) {
+		return sidebarRowStateActive
+	}
+	return sidebarRowStateInactive
 }
 
 func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
@@ -400,15 +433,8 @@ func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isS
 }
 
 func (d *sidebarDelegate) buildSessionRowViewModel(entry *sidebarItem, maxWidth int) sidebarSessionRowViewModel {
-	indicator := inactiveDot
-	if entry.session != nil && isActiveStatus(entry.session.Status) {
-		indicator = activeDot
-	}
-	if isDismissedSession(entry.session, entry.meta) {
-		indicator = dismissedDot
-	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
-	prefix := indent + fmt.Sprintf(" %s ", indicator)
+	prefix := indent + fmt.Sprintf(" %s ", indicatorForRowState(sessionRowState(entry.session, entry.meta)))
 	badgeConfig := resolveProviderBadge(entry.sessionProvider(), d.providerBadges)
 	badgeText := strings.TrimSpace(badgeConfig.Prefix)
 	badgeWidth := 0
