@@ -55,9 +55,7 @@ func (s *claudeLiveSession) StartTurn(ctx context.Context, input []map[string]an
 		meta.RuntimeOptions = types.CloneRuntimeOptions(opts)
 	}
 
-	// The orchestrator's Send takes *SessionService, but our custom transport
-	// and state store implementations don't use it — pass nil.
-	turnID, err := s.orchestrator.Send(ctx, nil, session, meta, input)
+	turnID, err := s.orchestrator.Send(ctx, claudeSendContext{}, session, meta, input)
 	if err != nil {
 		return "", err
 	}
@@ -175,7 +173,7 @@ type claudeLiveSessionTransport struct {
 
 func (t claudeLiveSessionTransport) Send(
 	_ context.Context,
-	_ *SessionService,
+	_ claudeSendContext,
 	session *types.Session,
 	meta *types.SessionMeta,
 	payload []byte,

@@ -44,7 +44,7 @@ type stubClaudeTransport struct {
 	err error
 }
 
-func (s stubClaudeTransport) Send(context.Context, *SessionService, *types.Session, *types.SessionMeta, []byte, *types.SessionRuntimeOptions) error {
+func (s stubClaudeTransport) Send(context.Context, claudeSendContext, *types.Session, *types.SessionMeta, []byte, *types.SessionRuntimeOptions) error {
 	return s.err
 }
 
@@ -184,9 +184,9 @@ func TestClaudeSendOrchestratorSendUsesDefaultPolicyWhenNil(t *testing.T) {
 		completionReader:    stubClaudeCompletionReader{items: []map[string]any{{"type": "agentMessage"}}, err: nil},
 		completionPublisher: pub,
 	}
-	service := &SessionService{manager: &SessionManager{}}
+	sendCtx := claudeSendContext{Manager: &SessionManager{}}
 	session := &types.Session{ID: "s1", Provider: "claude"}
-	turnID, err := o.Send(context.Background(), service, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
+	turnID, err := o.Send(context.Background(), sendCtx, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -205,9 +205,9 @@ func TestClaudeSendOrchestratorSendValidatorError(t *testing.T) {
 	o := claudeSendOrchestrator{
 		validator: stubClaudeInputValidator{err: errors.New("bad input")},
 	}
-	service := &SessionService{manager: &SessionManager{}}
+	sendCtx := claudeSendContext{Manager: &SessionManager{}}
 	session := &types.Session{ID: "s1", Provider: "claude"}
-	_, err := o.Send(context.Background(), service, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
+	_, err := o.Send(context.Background(), sendCtx, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
 	if err == nil || !strings.Contains(err.Error(), "bad input") {
 		t.Fatalf("expected validator error, got %v", err)
 	}
@@ -219,9 +219,9 @@ func TestClaudeSendOrchestratorSendRejectsEmptyTurnID(t *testing.T) {
 		transport: stubClaudeTransport{},
 		turnIDs:   stubTurnIDGenerator{id: "   "},
 	}
-	service := &SessionService{manager: &SessionManager{}}
+	sendCtx := claudeSendContext{Manager: &SessionManager{}}
 	session := &types.Session{ID: "s1", Provider: "claude"}
-	_, err := o.Send(context.Background(), service, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
+	_, err := o.Send(context.Background(), sendCtx, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
 	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
@@ -231,9 +231,9 @@ func TestClaudeSendOrchestratorSendPropagatesTransportError(t *testing.T) {
 		transport: stubClaudeTransport{err: errors.New("send failed")},
 		turnIDs:   stubTurnIDGenerator{id: "claude-turn-1"},
 	}
-	service := &SessionService{manager: &SessionManager{}}
+	sendCtx := claudeSendContext{Manager: &SessionManager{}}
 	session := &types.Session{ID: "s1", Provider: "claude"}
-	_, err := o.Send(context.Background(), service, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
+	_, err := o.Send(context.Background(), sendCtx, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
 	if err == nil || !strings.Contains(err.Error(), "send failed") {
 		t.Fatalf("expected transport error, got %v", err)
 	}
@@ -246,9 +246,9 @@ func TestClaudeSendOrchestratorSendNoPublisherStillSucceeds(t *testing.T) {
 		turnIDs:          stubTurnIDGenerator{id: "claude-turn-1"},
 		completionReader: stubClaudeCompletionReader{items: []map[string]any{{"type": "agentMessage"}}, err: nil},
 	}
-	service := &SessionService{manager: &SessionManager{}}
+	sendCtx := claudeSendContext{Manager: &SessionManager{}}
 	session := &types.Session{ID: "s1", Provider: "claude"}
-	turnID, err := o.Send(context.Background(), service, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
+	turnID, err := o.Send(context.Background(), sendCtx, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -266,9 +266,9 @@ func TestClaudeSendOrchestratorSendToleratesCompletionReadError(t *testing.T) {
 		completionReader:    stubClaudeCompletionReader{err: errors.New("read failed")},
 		completionPublisher: pub,
 	}
-	service := &SessionService{manager: &SessionManager{}}
+	sendCtx := claudeSendContext{Manager: &SessionManager{}}
 	session := &types.Session{ID: "s1", Provider: "claude"}
-	_, err := o.Send(context.Background(), service, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
+	_, err := o.Send(context.Background(), sendCtx, session, nil, []map[string]any{{"type": "text", "text": "hi"}})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -280,11 +280,11 @@ func TestClaudeSendOrchestratorSendToleratesCompletionReadError(t *testing.T) {
 func TestDefaultClaudeSendTransportBranches(t *testing.T) {
 	transport := defaultClaudeSendTransport{}
 	t.Run("nil_manager", func(t *testing.T) {
-		err := transport.Send(context.Background(), &SessionService{}, &types.Session{ID: "s1"}, nil, []byte("x"), nil)
+		err := transport.Send(context.Background(), claudeSendContext{}, &types.Session{ID: "s1"}, nil, []byte("x"), nil)
 		expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 	})
 	t.Run("nil_session", func(t *testing.T) {
-		err := transport.Send(context.Background(), &SessionService{manager: &SessionManager{}}, nil, nil, []byte("x"), nil)
+		err := transport.Send(context.Background(), claudeSendContext{Manager: &SessionManager{}}, nil, nil, []byte("x"), nil)
 		expectServiceErrorKind(t, err, ServiceErrorInvalid)
 	})
 	t.Run("send_non_session_not_found", func(t *testing.T) {
@@ -300,8 +300,8 @@ func TestDefaultClaudeSendTransportBranches(t *testing.T) {
 				},
 			},
 		}
-		service := &SessionService{manager: manager}
-		err := transport.Send(context.Background(), service, &types.Session{
+		sendCtx := claudeSendContext{Manager: manager}
+		err := transport.Send(context.Background(), sendCtx, &types.Session{
 			ID:       sessionID,
 			Provider: "claude",
 			Cwd:      t.TempDir(),
@@ -329,8 +329,8 @@ func TestDefaultClaudeSendTransportBranches(t *testing.T) {
 				},
 			},
 		}
-		service := &SessionService{manager: manager}
-		err := transport.Send(context.Background(), service, &types.Session{
+		sendCtx := claudeSendContext{Manager: manager}
+		err := transport.Send(context.Background(), sendCtx, &types.Session{
 			ID:       sessionID,
 			Provider: "claude",
 			Cwd:      t.TempDir(),
@@ -358,8 +358,8 @@ func TestDefaultClaudeSendTransportBranches(t *testing.T) {
 				},
 			},
 		}
-		service := &SessionService{manager: manager}
-		err := transport.Send(context.Background(), service, &types.Session{
+		sendCtx := claudeSendContext{Manager: manager}
+		err := transport.Send(context.Background(), sendCtx, &types.Session{
 			ID:       sessionID,
 			Provider: "claude",
 			Cwd:      t.TempDir(),

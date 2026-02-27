@@ -26,7 +26,7 @@ func (defaultClaudeInputValidator) TextFromInput(input []map[string]any) (string
 type claudeSendTransport interface {
 	Send(
 		ctx context.Context,
-		service *SessionService,
+		sendCtx claudeSendContext,
 		session *types.Session,
 		meta *types.SessionMeta,
 		payload []byte,
@@ -34,23 +34,33 @@ type claudeSendTransport interface {
 	) error
 }
 
+type claudeSessionManager interface {
+	SendInput(sessionID string, payload []byte) error
+	ResumeSession(cfg StartSessionConfig, existing *types.Session) (*types.Session, error)
+}
+
+type claudeSendContext struct {
+	Manager                      claudeSessionManager
+	ResolveAdditionalDirectories func(ctx context.Context, session *types.Session, meta *types.SessionMeta) ([]string, error)
+}
+
 type defaultClaudeSendTransport struct{}
 
 func (defaultClaudeSendTransport) Send(
 	ctx context.Context,
-	service *SessionService,
+	sendCtx claudeSendContext,
 	session *types.Session,
 	meta *types.SessionMeta,
 	payload []byte,
 	runtimeOptions *types.SessionRuntimeOptions,
 ) error {
-	if service == nil || service.manager == nil {
+	if sendCtx.Manager == nil {
 		return unavailableError("session manager not available", nil)
 	}
 	if session == nil {
 		return invalidError("session is required", nil)
 	}
-	if err := service.manager.SendInput(session.ID, payload); err != nil {
+	if err := sendCtx.Manager.SendInput(session.ID, payload); err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
 			return invalidError(err.Error(), err)
 		}
@@ -64,11 +74,15 @@ func (defaultClaudeSendTransport) Send(
 		if strings.TrimSpace(session.Cwd) == "" {
 			return invalidError("session cwd is required", nil)
 		}
-		additionalDirectories, dirsErr := service.resolveAdditionalDirectoriesForSession(ctx, session, meta)
-		if dirsErr != nil {
-			return invalidError(dirsErr.Error(), dirsErr)
+		additionalDirectories := []string{}
+		if sendCtx.ResolveAdditionalDirectories != nil {
+			var dirsErr error
+			additionalDirectories, dirsErr = sendCtx.ResolveAdditionalDirectories(ctx, session, meta)
+			if dirsErr != nil {
+				return invalidError(dirsErr.Error(), dirsErr)
+			}
 		}
-		_, resumeErr := service.manager.ResumeSession(StartSessionConfig{
+		_, resumeErr := sendCtx.Manager.ResumeSession(StartSessionConfig{
 			Provider:              session.Provider,
 			Cwd:                   session.Cwd,
 			AdditionalDirectories: additionalDirectories,
@@ -80,7 +94,7 @@ func (defaultClaudeSendTransport) Send(
 		if resumeErr != nil {
 			return invalidError(resumeErr.Error(), resumeErr)
 		}
-		if err := service.manager.SendInput(session.ID, payload); err != nil {
+		if err := sendCtx.Manager.SendInput(session.ID, payload); err != nil {
 			return invalidError(err.Error(), err)
 		}
 	}
@@ -158,7 +172,7 @@ type claudeTurnCompletionPublisher interface {
 
 func (o claudeSendOrchestrator) Send(
 	ctx context.Context,
-	service *SessionService,
+	sendCtx claudeSendContext,
 	session *types.Session,
 	meta *types.SessionMeta,
 	input []map[string]any,
@@ -166,7 +180,7 @@ func (o claudeSendOrchestrator) Send(
 	if session == nil {
 		return "", invalidError("session is required", nil)
 	}
-	if o.transport == nil && (service == nil || service.manager == nil) {
+	if o.transport == nil && sendCtx.Manager == nil {
 		return "", unavailableError("session manager not available", nil)
 	}
 	validator := o.validator
@@ -195,7 +209,7 @@ func (o claudeSendOrchestrator) Send(
 	if transport == nil {
 		transport = defaultClaudeSendTransport{}
 	}
-	if err := transport.Send(ctx, service, session, meta, payload, runtimeOptions); err != nil {
+	if err := transport.Send(ctx, sendCtx, session, meta, payload, runtimeOptions); err != nil {
 		return "", err
 	}
 	if o.stateStore != nil {
