@@ -59,6 +59,26 @@ func TestRequestActivityAutoRefreshWhenVisibleOutputIsStale(t *testing.T) {
 	}
 }
 
+func TestRequestActivityStaysActiveWhenItemStreamCloses(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	m.startRequestActivity("s1", "kilocode")
+	if !m.requestActivity.active {
+		t.Fatalf("expected request activity to start")
+	}
+	if m.itemStream == nil {
+		t.Fatalf("expected item stream controller")
+	}
+	ch := make(chan map[string]any)
+	close(ch)
+	m.itemStream.SetStream(ch, nil)
+
+	m.consumeItemTick(time.Now())
+	if !m.requestActivity.active {
+		t.Fatalf("expected request activity to remain active after item stream close")
+	}
+}
+
 func TestRequestActivityAutoExpandsNewestReasoningWhileActive(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("s1")
