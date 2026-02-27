@@ -158,6 +158,67 @@ func TestHistoryMsgCoalescesAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	}
 }
 
+func TestItemsStreamReplayDoesNotDuplicateExistingClaudeTranscript(t *testing.T) {
+	m := newPhase0ModelWithSession("claude")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	items := []map[string]any{
+		{
+			"type":       "userMessage",
+			"created_at": "2026-02-27T05:11:57.000000000Z",
+			"text":       "What's the current git status?",
+		},
+		{
+			"type":       "assistant",
+			"created_at": "2026-02-27T05:12:02.000000000Z",
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "text", "text": "On branch main."},
+				},
+			},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: items,
+	})
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	streamItems := func() chan map[string]any {
+		ch := make(chan map[string]any, len(items))
+		for _, item := range items {
+			cloned := map[string]any{}
+			for k, v := range item {
+				cloned[k] = v
+			}
+			ch <- cloned
+		}
+		close(ch)
+		return ch
+	}
+
+	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: streamItems()})
+	m.consumeItemTick(time.Now().UTC())
+	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: streamItems()})
+	m.consumeItemTick(time.Now().UTC())
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected replayed stream snapshot to remain deduped, got %#v", blocks)
+	}
+	if blocks[0].Role != ChatRoleUser || blocks[1].Role != ChatRoleAgent {
+		t.Fatalf("unexpected role order after replay: %#v", blocks)
+	}
+}
+
 func TestHistoryMsgCodexCoalescesAdjacentReasoningIDs(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.enterCompose("s1")

@@ -72,3 +72,47 @@ func TestChatTranscriptAppendItemUsesProviderCreatedAt(t *testing.T) {
 		t.Fatalf("expected created_at %s, got %s", want, blocks[0].CreatedAt)
 	}
 }
+
+func TestChatTranscriptAppendItemDedupesReplayedUserMessageByCreatedAt(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+	item := map[string]any{
+		"type":       "userMessage",
+		"created_at": "2026-02-27T05:11:57.000000000Z",
+		"text":       "What's the current git status?",
+	}
+
+	tp.AppendItem(item)
+	tp.AppendItem(item)
+
+	blocks := tp.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one deduped user block, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptAppendItemDedupesReplayedAssistantByCreatedAt(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+	item := map[string]any{
+		"type":       "assistant",
+		"created_at": "2026-02-27T05:12:02.000000000Z",
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": "On branch main."},
+			},
+		},
+	}
+
+	tp.AppendItem(item)
+	tp.AppendItem(item)
+
+	blocks := tp.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one deduped assistant block, got %#v", blocks)
+	}
+}

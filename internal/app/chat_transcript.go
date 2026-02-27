@@ -71,6 +71,9 @@ func (t *ChatTranscript) appendUserMessageWithMetaAt(text string, createdAt time
 	if strings.TrimSpace(text) == "" {
 		return -1
 	}
+	if t.hasDuplicateMessageBlock(ChatRoleUser, text, turnID, createdAt) {
+		return -1
+	}
 	headerIndex := len(t.blocks)
 	t.blocks = append(t.blocks, ChatBlock{
 		Role:      ChatRoleUser,
@@ -388,6 +391,9 @@ func (t *ChatTranscript) appendBlockWithMetaAt(role ChatRole, text string, creat
 		return
 	}
 	turnID = strings.TrimSpace(turnID)
+	if role == ChatRoleAgent && t.hasDuplicateMessageBlock(role, text, turnID, createdAt) {
+		return
+	}
 	if role == ChatRoleAgent && len(t.blocks) > 0 {
 		last := len(t.blocks) - 1
 		if t.blocks[last].Role == ChatRoleAgent {
@@ -412,6 +418,34 @@ func (t *ChatTranscript) appendBlockWithMetaAt(role ChatRole, text string, creat
 	}
 	t.blocks = append(t.blocks, block)
 	t.trim()
+}
+
+func (t *ChatTranscript) hasDuplicateMessageBlock(role ChatRole, text, turnID string, createdAt time.Time) bool {
+	if t == nil {
+		return false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	turnID = strings.TrimSpace(turnID)
+	for i := range t.blocks {
+		block := t.blocks[i]
+		if block.Role != role {
+			continue
+		}
+		if strings.TrimSpace(block.Text) != text {
+			continue
+		}
+		blockTurnID := strings.TrimSpace(block.TurnID)
+		if turnID != "" && blockTurnID == turnID {
+			return true
+		}
+		if !createdAt.IsZero() && !block.CreatedAt.IsZero() && block.CreatedAt.Equal(createdAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func itemTurnID(item map[string]any) string {
