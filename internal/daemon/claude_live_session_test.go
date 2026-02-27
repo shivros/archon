@@ -216,6 +216,45 @@ func TestClaudeLiveSessionCompletionPublisherNilSession(t *testing.T) {
 	}
 }
 
+func TestClaudeLiveSessionCompletionPublisherDeferredWiring(t *testing.T) {
+	// Reproduces the daemon.go initialization order: turnNotifier is created
+	// with nil publisher, used in a claudeLiveSessionCompletionPublisher, then
+	// receives the real publisher via SetNotificationPublisher after construction.
+	turnNotifier := NewTurnCompletionNotifier(nil, nil)
+	publisher := claudeLiveSessionCompletionPublisher{notifier: turnNotifier}
+
+	// Before wiring: publish should be silently dropped (notifier.notifier == nil).
+	session := &types.Session{ID: "s1", Provider: "claude"}
+	publisher.PublishTurnCompleted(session, nil, "turn-dropped", "test_source")
+
+	// Wire the real notification publisher.
+	capture := &capturingNotificationPublisher{}
+	turnNotifier.SetNotificationPublisher(capture)
+
+	// After wiring: publish should flow through to the notification publisher.
+	publisher.PublishTurnCompleted(session, nil, "turn-delivered", "test_source")
+
+	if len(capture.events) != 1 {
+		t.Fatalf("expected 1 captured event after wiring, got %d", len(capture.events))
+	}
+	if capture.events[0].TurnID != "turn-delivered" {
+		t.Fatalf("expected turnID turn-delivered, got %q", capture.events[0].TurnID)
+	}
+	if capture.events[0].SessionID != "s1" {
+		t.Fatalf("expected sessionID s1, got %q", capture.events[0].SessionID)
+	}
+}
+
+type capturingNotificationPublisher struct {
+	events []types.NotificationEvent
+}
+
+func (c *capturingNotificationPublisher) Publish(event types.NotificationEvent) {
+	c.events = append(c.events, event)
+}
+
+func (c *capturingNotificationPublisher) Close() {}
+
 type stubTurnCompletionNotifier struct {
 	calls     int
 	lastEvent TurnCompletionEvent

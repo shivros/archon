@@ -197,6 +197,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.LiveCodex = liveCodex
 	api.LiveCodex.SetNotificationPublisher(eventPublisher)
 	compositeLive.SetNotificationPublisher(eventPublisher)
+	turnNotifier.SetNotificationPublisher(eventPublisher)
 	api.LiveManager = compositeLive
 	approvalSync := NewApprovalResyncService(d.stores, d.logger)
 
