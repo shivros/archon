@@ -15,16 +15,28 @@ type openCodeHistorySyncResult struct {
 }
 
 type openCodeHistoryReconciler struct {
-	service *SessionService
 	session *types.Session
 	meta    *types.SessionMeta
+	store   openCodeHistoryReconcilerStore
+	logger  logging.Logger
 }
 
-func newOpenCodeHistoryReconciler(service *SessionService, session *types.Session, meta *types.SessionMeta) openCodeHistoryReconciler {
+type openCodeHistoryReconcilerStore struct {
+	readSessionItems   func(sessionID string, lines int) ([]map[string]any, error)
+	appendSessionItems func(sessionID string, items []map[string]any) error
+}
+
+func newOpenCodeHistoryReconciler(
+	session *types.Session,
+	meta *types.SessionMeta,
+	store openCodeHistoryReconcilerStore,
+	logger logging.Logger,
+) openCodeHistoryReconciler {
 	return openCodeHistoryReconciler{
-		service: service,
 		session: session,
 		meta:    meta,
+		store:   store,
+		logger:  logger,
 	}
 }
 
@@ -70,10 +82,13 @@ func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCod
 	}
 
 	items := trimItemsToLimit(openCodeSessionMessagesToItems(messages), lines)
-	if len(items) == 0 || r.service == nil {
+	if len(items) == 0 {
 		return openCodeHistorySyncResult{items: items}, nil
 	}
-	localItems, _, localErr := r.service.readSessionItems(r.session.ID, limit)
+	if r.store.readSessionItems == nil {
+		return openCodeHistorySyncResult{items: items}, nil
+	}
+	localItems, localErr := r.store.readSessionItems(r.session.ID, limit)
 	if localErr != nil {
 		return openCodeHistorySyncResult{items: items}, nil
 	}
@@ -81,7 +96,10 @@ func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCod
 	if len(missing) == 0 {
 		return openCodeHistorySyncResult{items: items}, nil
 	}
-	if appendErr := r.service.appendSessionItems(r.session.ID, missing); appendErr != nil {
+	if r.store.appendSessionItems == nil {
+		return openCodeHistorySyncResult{items: items}, nil
+	}
+	if appendErr := r.store.appendSessionItems(r.session.ID, missing); appendErr != nil {
 		r.logWarn("opencode_history_backfill_failed",
 			append(
 				append(
@@ -110,15 +128,15 @@ func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCod
 }
 
 func (r openCodeHistoryReconciler) logWarn(message string, fields ...logging.Field) {
-	if r.service == nil || r.service.logger == nil {
+	if r.logger == nil {
 		return
 	}
-	r.service.logger.Warn(message, fields...)
+	r.logger.Warn(message, fields...)
 }
 
 func (r openCodeHistoryReconciler) logDebug(message string, fields ...logging.Field) {
-	if r.service == nil || r.service.logger == nil || !r.service.logger.Enabled(logging.Debug) {
+	if r.logger == nil || !r.logger.Enabled(logging.Debug) {
 		return
 	}
-	r.service.logger.Debug(message, fields...)
+	r.logger.Debug(message, fields...)
 }

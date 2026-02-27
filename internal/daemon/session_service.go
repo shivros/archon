@@ -22,7 +22,6 @@ type SessionService struct {
 	paths        WorkspacePathResolver
 	notifier     NotificationPublisher
 	adapters     *conversationAdapterRegistry
-	history      *conversationHistoryStrategyRegistry
 	codexPool    CodexHistoryPool
 	approvalSync *ApprovalResyncService
 	guided       guidedworkflows.Orchestrator
@@ -36,15 +35,6 @@ type SendMessageOptions struct {
 var ErrRuntimeOptionsPersistFailed = errors.New("runtime options persistence failed")
 
 type SessionServiceOption func(*SessionService)
-
-func WithSessionHistoryStrategies(history *conversationHistoryStrategyRegistry) SessionServiceOption {
-	return func(s *SessionService) {
-		if s == nil || history == nil {
-			return
-		}
-		s.history = history
-	}
-}
 
 func WithCodexHistoryPool(pool CodexHistoryPool) SessionServiceOption {
 	return func(s *SessionService) {
@@ -61,6 +51,15 @@ func WithNotificationPublisher(notifier NotificationPublisher) SessionServiceOpt
 			return
 		}
 		s.notifier = notifier
+	}
+}
+
+func WithConversationAdapters(adapters *conversationAdapterRegistry) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || adapters == nil {
+			return
+		}
+		s.adapters = adapters
 	}
 }
 
@@ -104,7 +103,6 @@ func NewSessionService(manager *SessionManager, stores *Stores, logger logging.L
 		logger:       logger,
 		paths:        NewWorkspacePathResolver(),
 		adapters:     newConversationAdapterRegistry(),
-		history:      newConversationHistoryStrategyRegistry(),
 		codexPool:    NewCodexHistoryPool(logger),
 		approvalSync: NewApprovalResyncService(stores, logger),
 	}
@@ -112,9 +110,6 @@ func NewSessionService(manager *SessionManager, stores *Stores, logger logging.L
 		if opt != nil {
 			opt(svc)
 		}
-	}
-	if svc.history == nil {
-		svc.history = newConversationHistoryStrategyRegistry()
 	}
 	if svc.codexPool == nil {
 		svc.codexPool = NewCodexHistoryPool(logger)
@@ -757,7 +752,7 @@ func (s *SessionService) History(ctx context.Context, id string, lines int) ([]m
 	if strings.TrimSpace(id) == "" {
 		return nil, invalidError("session id is required", nil)
 	}
-	session, source, err := s.getSessionRecord(ctx, id)
+	session, _, err := s.getSessionRecord(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -765,7 +760,7 @@ func (s *SessionService) History(ctx context.Context, id string, lines int) ([]m
 		return nil, notFoundError("session not found", ErrSessionNotFound)
 	}
 	meta := s.getSessionMeta(ctx, id)
-	return s.historyStrategy(session.Provider).History(ctx, s, session, meta, source, lines)
+	return s.historyReader(session.Provider).History(ctx, s.historyDeps(), session, meta, lines)
 }
 
 func (s *SessionService) SendMessage(ctx context.Context, id string, input []map[string]any) (string, error) {
@@ -809,7 +804,7 @@ func (s *SessionService) SendMessageWithOptions(ctx context.Context, id string, 
 		}
 	}
 	s.ensureSessionCwd(ctx, session, effectiveMeta)
-	turnID, sendErr := s.conversationAdapter(session.Provider).SendMessage(ctx, s.conversationAdapterDeps(), session, effectiveMeta, input)
+	turnID, sendErr := s.sender(session.Provider).SendMessage(ctx, s.sendDeps(), session, effectiveMeta, input)
 	if sendErr != nil {
 		return "", sendErr
 	}
@@ -877,7 +872,7 @@ func (s *SessionService) Approve(ctx context.Context, id string, requestID int, 
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).Approve(ctx, s.conversationAdapterDeps(), session, meta, requestID, decision, responses, acceptSettings)
+	return s.approver(session.Provider).Approve(ctx, s.approvalDeps(), session, meta, requestID, decision, responses, acceptSettings)
 }
 
 func (s *SessionService) ListApprovals(ctx context.Context, id string) ([]*types.Approval, error) {
@@ -923,7 +918,7 @@ func (s *SessionService) InterruptTurn(ctx context.Context, id string) error {
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).Interrupt(ctx, s.conversationAdapterDeps(), session, meta)
+	return s.interrupter(session.Provider).Interrupt(ctx, s.interruptDeps(), session, meta)
 }
 
 func (s *SessionService) Get(ctx context.Context, id string) (*types.Session, error) {
@@ -1275,28 +1270,93 @@ func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).SubscribeEvents(ctx, s.conversationAdapterDeps(), session, meta)
+	return s.eventSubscriber(session.Provider).SubscribeEvents(ctx, s.eventDeps(), session, meta)
 }
 
-func (s *SessionService) conversationAdapter(provider string) conversationAdapter {
+func (s *SessionService) sender(provider string) conversationSender {
 	if s.adapters == nil {
 		s.adapters = newConversationAdapterRegistry()
 	}
-	return s.adapters.adapterFor(provider)
+	return s.adapters.senderFor(provider)
 }
 
-func (s *SessionService) conversationAdapterDeps() adapterDeps {
-	return adapterDeps{
+func (s *SessionService) historyReader(provider string) conversationHistoryReader {
+	if s.adapters == nil {
+		s.adapters = newConversationAdapterRegistry()
+	}
+	return s.adapters.historyFor(provider)
+}
+
+func (s *SessionService) eventSubscriber(provider string) conversationEventSubscriber {
+	if s.adapters == nil {
+		s.adapters = newConversationAdapterRegistry()
+	}
+	return s.adapters.eventsFor(provider)
+}
+
+func (s *SessionService) approver(provider string) conversationApprover {
+	if s.adapters == nil {
+		s.adapters = newConversationAdapterRegistry()
+	}
+	return s.adapters.approverFor(provider)
+}
+
+func (s *SessionService) interrupter(provider string) conversationInterrupter {
+	if s.adapters == nil {
+		s.adapters = newConversationAdapterRegistry()
+	}
+	return s.adapters.interrupterFor(provider)
+}
+
+func (s *SessionService) sendDeps() sendDeps {
+	return sendDeps{
 		liveManager: s.liveManager,
-		stores:      s.stores,
+		sessionMetaStore: func() SessionMetaStore {
+			if s == nil || s.stores == nil {
+				return nil
+			}
+			return s.stores.SessionMeta
+		}(),
 	}
 }
 
-func (s *SessionService) historyStrategy(provider string) conversationHistoryStrategy {
-	if s.history == nil {
-		s.history = newConversationHistoryStrategyRegistry()
+func (s *SessionService) historyDeps() historyDeps {
+	return historyDeps{
+		manager: s.manager,
+		logger:  s.logger,
+		readSessionItems: func(sessionID string, lines int) ([]map[string]any, error) {
+			items, _, err := s.readSessionItems(sessionID, lines)
+			return items, err
+		},
+		readSessionLogs: func(sessionID string, lines int) ([]string, error) {
+			out, _, _, err := s.readSessionLogs(sessionID, lines)
+			return out, err
+		},
+		appendSessionItems: s.appendSessionItems,
+		tailCodexThread:    s.tailCodexThread,
 	}
-	return s.history.strategyFor(provider)
+}
+
+func (s *SessionService) eventDeps() eventDeps {
+	return eventDeps{liveManager: s.liveManager}
+}
+
+func (s *SessionService) approvalDeps() approvalDeps {
+	var approvalStore ApprovalStore
+	var metaStore SessionMetaStore
+	if s != nil && s.stores != nil {
+		approvalStore = s.stores.Approvals
+		metaStore = s.stores.SessionMeta
+	}
+	return approvalDeps{
+		liveManager:      s.liveManager,
+		approvalStore:    approvalStore,
+		sessionMetaStore: metaStore,
+	}
+}
+
+func (s *SessionService) interruptDeps() interruptDeps {
+	return interruptDeps{liveManager: s.liveManager}
 }
 
 func (s *SessionService) ensureSessionCwd(ctx context.Context, session *types.Session, meta *types.SessionMeta) {

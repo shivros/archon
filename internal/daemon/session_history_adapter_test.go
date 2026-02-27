@@ -8,7 +8,20 @@ import (
 	"control/internal/types"
 )
 
-func TestSessionServiceHistoryDelegatesToRegisteredHistoryStrategy(t *testing.T) {
+type testHistoryConversationAdapter struct {
+	provider string
+	calls    int
+	items    []map[string]any
+}
+
+func (a *testHistoryConversationAdapter) Provider() string { return a.provider }
+
+func (a *testHistoryConversationAdapter) History(context.Context, historyDeps, *types.Session, *types.SessionMeta, int) ([]map[string]any, error) {
+	a.calls++
+	return a.items, nil
+}
+
+func TestSessionServiceHistoryDelegatesToRegisteredConversationAdapter(t *testing.T) {
 	store := &stubSessionIndexStore{
 		records: map[string]*types.SessionRecord{
 			"s1": {
@@ -23,7 +36,7 @@ func TestSessionServiceHistoryDelegatesToRegisteredHistoryStrategy(t *testing.T)
 			},
 		},
 	}
-	strategy := &testConversationHistoryStrategy{
+	adapter := &testHistoryConversationAdapter{
 		provider: "mock-provider",
 		items:    []map[string]any{{"type": "log", "text": "ok"}},
 	}
@@ -31,33 +44,17 @@ func TestSessionServiceHistoryDelegatesToRegisteredHistoryStrategy(t *testing.T)
 		nil,
 		&Stores{Sessions: store},
 		nil,
-		nil,
-		WithSessionHistoryStrategies(newConversationHistoryStrategyRegistry(strategy)),
+		WithConversationAdapters(newConversationAdapterRegistry(adapter)),
 	)
 
 	items, err := service.History(context.Background(), "s1", 50)
 	if err != nil {
 		t.Fatalf("expected history success, got err=%v", err)
 	}
-	if strategy.calls != 1 {
-		t.Fatalf("expected strategy to be called once, got %d", strategy.calls)
+	if adapter.calls != 1 {
+		t.Fatalf("expected adapter history to be called once, got %d", adapter.calls)
 	}
 	if len(items) != 1 || items[0]["text"] != "ok" {
 		t.Fatalf("unexpected history items: %#v", items)
 	}
-}
-
-type testConversationHistoryStrategy struct {
-	provider string
-	calls    int
-	items    []map[string]any
-}
-
-func (s *testConversationHistoryStrategy) Provider() string {
-	return s.provider
-}
-
-func (s *testConversationHistoryStrategy) History(context.Context, *SessionService, *types.Session, *types.SessionMeta, string, int) ([]map[string]any, error) {
-	s.calls++
-	return s.items, nil
 }

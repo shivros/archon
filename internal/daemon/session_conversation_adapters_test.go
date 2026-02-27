@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/store"
 	"control/internal/types"
 )
@@ -510,16 +512,16 @@ func (s stubClaudeCompletionDecisionPolicy) Decide(int, []map[string]any, error)
 	return s.publish, s.source
 }
 
-func TestLiveManagerConversationAdapterSendRequiresLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationSenderRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationSender{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 
-	_, err := adapter.SendMessage(context.Background(), adapterDeps{}, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
+	_, err := adapter.SendMessage(context.Background(), sendDeps{}, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
 	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestLiveManagerConversationAdapterSendDelegatesToLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationSenderDelegatesToLiveManager(t *testing.T) {
+	adapter := liveManagerConversationSender{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{
 		startTurnResults: []stubLiveTurnResult{
@@ -527,9 +529,9 @@ func TestLiveManagerConversationAdapterSendDelegatesToLiveManager(t *testing.T) 
 		},
 	}
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
-	deps := adapterDeps{
-		liveManager: live,
-		stores:      &Stores{SessionMeta: metaStore},
+	deps := sendDeps{
+		liveManager:      live,
+		sessionMetaStore: metaStore,
 	}
 
 	turnID, err := adapter.SendMessage(context.Background(), deps, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
@@ -544,46 +546,46 @@ func TestLiveManagerConversationAdapterSendDelegatesToLiveManager(t *testing.T) 
 	}
 }
 
-func TestLiveManagerConversationAdapterSubscribeRequiresLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationEventSubscriberRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 
-	_, _, err := adapter.SubscribeEvents(context.Background(), adapterDeps{}, session, nil)
+	_, _, err := adapter.SubscribeEvents(context.Background(), eventDeps{}, session, nil)
 	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestLiveManagerConversationAdapterApproveRequiresLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationApproverRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationApprover{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 
-	err := adapter.Approve(context.Background(), adapterDeps{}, session, nil, 1, "accept", nil, nil)
+	err := adapter.Approve(context.Background(), approvalDeps{}, session, nil, 1, "accept", nil, nil)
 	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestLiveManagerConversationAdapterInterruptRequiresLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationInterrupterRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationInterrupter{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 
-	err := adapter.Interrupt(context.Background(), adapterDeps{}, session, nil)
+	err := adapter.Interrupt(context.Background(), interruptDeps{}, session, nil)
 	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestLiveManagerConversationAdapterSendRequiresSession(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationSenderRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationSender{providerName: "test"}
 
-	_, err := adapter.SendMessage(context.Background(), adapterDeps{}, nil, nil, []map[string]any{{"type": "text", "text": "hello"}})
+	_, err := adapter.SendMessage(context.Background(), sendDeps{}, nil, nil, []map[string]any{{"type": "text", "text": "hello"}})
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
-func TestLiveManagerConversationAdapterSendStartTurnError(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationSenderStartTurnError(t *testing.T) {
+	adapter := liveManagerConversationSender{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{
 		startTurnResults: []stubLiveTurnResult{
 			{err: errors.New("start failed")},
 		},
 	}
-	deps := adapterDeps{liveManager: live}
+	deps := sendDeps{liveManager: live}
 
 	_, err := adapter.SendMessage(context.Background(), deps, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
@@ -592,20 +594,20 @@ func TestLiveManagerConversationAdapterSendStartTurnError(t *testing.T) {
 	}
 }
 
-func TestLiveManagerConversationAdapterSubscribeRequiresSession(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationEventSubscriberRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
 	live := &stubLiveManager{}
-	deps := adapterDeps{liveManager: live}
+	deps := eventDeps{liveManager: live}
 
 	_, _, err := adapter.SubscribeEvents(context.Background(), deps, nil, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
-func TestLiveManagerConversationAdapterSubscribeError(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationEventSubscriberError(t *testing.T) {
+	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{subscribeErr: errors.New("subscribe failed")}
-	deps := adapterDeps{liveManager: live}
+	deps := eventDeps{liveManager: live}
 
 	_, _, err := adapter.SubscribeEvents(context.Background(), deps, session, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
@@ -614,11 +616,11 @@ func TestLiveManagerConversationAdapterSubscribeError(t *testing.T) {
 	}
 }
 
-func TestLiveManagerConversationAdapterSubscribeDelegatesToLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationEventSubscriberDelegatesToLiveManager(t *testing.T) {
+	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{}
-	deps := adapterDeps{liveManager: live}
+	deps := eventDeps{liveManager: live}
 
 	ch, cancel, err := adapter.SubscribeEvents(context.Background(), deps, session, nil)
 	if err != nil {
@@ -633,11 +635,11 @@ func TestLiveManagerConversationAdapterSubscribeDelegatesToLiveManager(t *testin
 	cancel()
 }
 
-func TestLiveManagerConversationAdapterInterruptDelegatesToLiveManager(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationInterrupterDelegatesToLiveManager(t *testing.T) {
+	adapter := liveManagerConversationInterrupter{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{}
-	deps := adapterDeps{liveManager: live}
+	deps := interruptDeps{liveManager: live}
 
 	err := adapter.Interrupt(context.Background(), deps, session, nil)
 	if err != nil {
@@ -648,24 +650,25 @@ func TestLiveManagerConversationAdapterInterruptDelegatesToLiveManager(t *testin
 	}
 }
 
-func TestLiveManagerConversationAdapterApproveRequiresSession(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationApproverRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationApprover{providerName: "test"}
 	live := &stubLiveManager{}
-	deps := adapterDeps{liveManager: live}
+	deps := approvalDeps{liveManager: live}
 
 	err := adapter.Approve(context.Background(), deps, nil, nil, 1, "accept", nil, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
-func TestLiveManagerConversationAdapterApproveHappyPath(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationApproverHappyPath(t *testing.T) {
+	adapter := liveManagerConversationApprover{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{}
 	approvals := &stubApprovalStore{}
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
-	deps := adapterDeps{
-		liveManager: live,
-		stores:      &Stores{Approvals: approvals, SessionMeta: metaStore},
+	deps := approvalDeps{
+		liveManager:      live,
+		approvalStore:    approvals,
+		sessionMetaStore: metaStore,
 	}
 
 	responses := []string{"yes", "confirmed"}
@@ -707,11 +710,11 @@ func TestLiveManagerConversationAdapterApproveHappyPath(t *testing.T) {
 	}
 }
 
-func TestLiveManagerConversationAdapterApproveRespondError(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationApproverRespondError(t *testing.T) {
+	adapter := liveManagerConversationApprover{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{respondErr: errors.New("respond failed")}
-	deps := adapterDeps{liveManager: live}
+	deps := approvalDeps{liveManager: live}
 
 	err := adapter.Approve(context.Background(), deps, session, nil, 1, "accept", nil, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
@@ -720,20 +723,20 @@ func TestLiveManagerConversationAdapterApproveRespondError(t *testing.T) {
 	}
 }
 
-func TestLiveManagerConversationAdapterInterruptRequiresSession(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationInterrupterRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationInterrupter{providerName: "test"}
 	live := &stubLiveManager{}
-	deps := adapterDeps{liveManager: live}
+	deps := interruptDeps{liveManager: live}
 
 	err := adapter.Interrupt(context.Background(), deps, nil, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
-func TestLiveManagerConversationAdapterInterruptError(t *testing.T) {
-	adapter := liveManagerConversationAdapter{providerName: "test"}
+func TestLiveManagerConversationInterrupterError(t *testing.T) {
+	adapter := liveManagerConversationInterrupter{providerName: "test"}
 	session := &types.Session{ID: "s1", Provider: "test"}
 	live := &stubLiveManager{interruptErr: errors.New("interrupt failed")}
-	deps := adapterDeps{liveManager: live}
+	deps := interruptDeps{liveManager: live}
 
 	err := adapter.Interrupt(context.Background(), deps, session, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
@@ -1042,6 +1045,266 @@ func TestOpenCodeConversationAdapterHistoryBackfillsMissingItemsWithoutDuplicate
 	}
 }
 
+func TestUnsupportedConversationPortsReturnInvalidErrors(t *testing.T) {
+	t.Run("sender", func(t *testing.T) {
+		sender := unsupportedConversationSender{}
+		if sender.Provider() != "*" {
+			t.Fatalf("expected wildcard provider, got %q", sender.Provider())
+		}
+		_, err := sender.SendMessage(context.Background(), sendDeps{}, &types.Session{ID: "s1"}, nil, []map[string]any{{"type": "text", "text": "hello"}})
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	})
+
+	t.Run("subscriber", func(t *testing.T) {
+		subscriber := unsupportedConversationEventSubscriber{}
+		if subscriber.Provider() != "*" {
+			t.Fatalf("expected wildcard provider, got %q", subscriber.Provider())
+		}
+		_, _, err := subscriber.SubscribeEvents(context.Background(), eventDeps{}, &types.Session{ID: "s1"}, nil)
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	})
+
+	t.Run("approver", func(t *testing.T) {
+		approver := unsupportedConversationApprover{}
+		if approver.Provider() != "*" {
+			t.Fatalf("expected wildcard provider, got %q", approver.Provider())
+		}
+		err := approver.Approve(context.Background(), approvalDeps{}, &types.Session{ID: "s1"}, nil, 1, "accept", nil, nil)
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	})
+
+	t.Run("interrupter", func(t *testing.T) {
+		interrupter := unsupportedConversationInterrupter{}
+		if interrupter.Provider() != "*" {
+			t.Fatalf("expected wildcard provider, got %q", interrupter.Provider())
+		}
+		err := interrupter.Interrupt(context.Background(), interruptDeps{}, &types.Session{ID: "s1"}, nil)
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	})
+}
+
+func TestConversationAdapterRegistryNilAndEmptyFallbackPaths(t *testing.T) {
+	var nilRegistry *conversationAdapterRegistry
+	_, err := nilRegistry.senderFor("unknown").SendMessage(context.Background(), sendDeps{}, &types.Session{ID: "s1"}, nil, []map[string]any{{"type": "text", "text": "hello"}})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+
+	_, _, err = nilRegistry.eventsFor("unknown").SubscribeEvents(context.Background(), eventDeps{}, &types.Session{ID: "s1"}, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+
+	err = nilRegistry.approverFor("unknown").Approve(context.Background(), approvalDeps{}, &types.Session{ID: "s1"}, nil, 1, "accept", nil, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+
+	err = nilRegistry.interrupterFor("unknown").Interrupt(context.Background(), interruptDeps{}, &types.Session{ID: "s1"}, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+
+	items, err := nilRegistry.historyFor("unknown").History(context.Background(), historyDeps{
+		readSessionLogs: func(string, int) ([]string, error) { return []string{"fallback"}, nil },
+	}, &types.Session{ID: "s1", Provider: "unknown"}, nil, 20)
+	if err != nil {
+		t.Fatalf("history fallback: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one fallback item, got %#v", items)
+	}
+
+	emptyRegistry := &conversationAdapterRegistry{
+		senders:      map[string]conversationSender{},
+		history:      map[string]conversationHistoryReader{},
+		subscribers:  map[string]conversationEventSubscriber{},
+		approvers:    map[string]conversationApprover{},
+		interrupters: map[string]conversationInterrupter{},
+	}
+	_, err = emptyRegistry.senderFor("unknown").SendMessage(context.Background(), sendDeps{}, &types.Session{ID: "s1"}, nil, []map[string]any{{"type": "text", "text": "hello"}})
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+}
+
+func TestConversationAdapterRegistryUsesConfiguredFallbackMembers(t *testing.T) {
+	registry := &conversationAdapterRegistry{
+		fallbackSender:      testSenderPort{provider: "fb-sender", turnID: "t-fallback"},
+		fallbackHistory:     testHistoryPort{provider: "fb-history", items: []map[string]any{{"type": "log", "text": "from-fallback"}}},
+		fallbackSubscriber:  testEventSubscriberPort{provider: "fb-subscriber"},
+		fallbackApprover:    testApproverPort{provider: "fb-approver"},
+		fallbackInterrupter: testInterrupterPort{provider: "fb-interrupter"},
+		senders:             map[string]conversationSender{},
+		history:             map[string]conversationHistoryReader{},
+		subscribers:         map[string]conversationEventSubscriber{},
+		approvers:           map[string]conversationApprover{},
+		interrupters:        map[string]conversationInterrupter{},
+	}
+
+	turnID, err := registry.senderFor("unknown").SendMessage(context.Background(), sendDeps{}, &types.Session{ID: "s1"}, nil, []map[string]any{{"type": "text", "text": "hello"}})
+	if err != nil {
+		t.Fatalf("fallback sender err: %v", err)
+	}
+	if turnID != "t-fallback" {
+		t.Fatalf("expected fallback sender turn id, got %q", turnID)
+	}
+
+	items, err := registry.historyFor("unknown").History(context.Background(), historyDeps{}, &types.Session{ID: "s1", Provider: "unknown"}, nil, 5)
+	if err != nil {
+		t.Fatalf("fallback history err: %v", err)
+	}
+	if len(items) != 1 || items[0]["text"] != "from-fallback" {
+		t.Fatalf("unexpected fallback history: %#v", items)
+	}
+
+	ch, cancel, err := registry.eventsFor("unknown").SubscribeEvents(context.Background(), eventDeps{}, &types.Session{ID: "s1"}, nil)
+	if err != nil {
+		t.Fatalf("fallback subscriber err: %v", err)
+	}
+	if ch == nil || cancel == nil {
+		t.Fatalf("expected fallback subscriber channel+cancel")
+	}
+	cancel()
+
+	err = registry.approverFor("unknown").Approve(context.Background(), approvalDeps{}, &types.Session{ID: "s1"}, nil, 1, "accept", nil, nil)
+	if err != nil {
+		t.Fatalf("fallback approver err: %v", err)
+	}
+
+	err = registry.interrupterFor("unknown").Interrupt(context.Background(), interruptDeps{}, &types.Session{ID: "s1"}, nil)
+	if err != nil {
+		t.Fatalf("fallback interrupter err: %v", err)
+	}
+}
+
+func TestHistoryReadersAdditionalBranches(t *testing.T) {
+	t.Run("default_history_nil_logs_reader", func(t *testing.T) {
+		reader := defaultHistoryReader{}
+		_, err := reader.History(context.Background(), historyDeps{}, &types.Session{ID: "s1", Provider: "unknown"}, nil, 10)
+		expectServiceErrorKind(t, err, ServiceErrorUnavailable)
+	})
+
+	t.Run("default_history_nil_session", func(t *testing.T) {
+		reader := defaultHistoryReader{}
+		_, err := reader.History(context.Background(), historyDeps{}, nil, nil, 10)
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	})
+
+	t.Run("codex_tail_unavailable", func(t *testing.T) {
+		reader := codexHistoryReader{providerName: "codex", fallback: defaultHistoryReader{}}
+		_, err := reader.History(context.Background(), historyDeps{}, &types.Session{ID: "s1", Provider: "codex"}, &types.SessionMeta{ThreadID: "thread-1"}, 10)
+		expectServiceErrorKind(t, err, ServiceErrorUnavailable)
+	})
+
+	t.Run("open_code_nil_session", func(t *testing.T) {
+		reader := openCodeHistoryReader{providerName: "opencode", fallback: defaultHistoryReader{}}
+		_, err := reader.History(context.Background(), historyDeps{}, nil, nil, 10)
+		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	})
+
+	t.Run("open_code_remote_empty_falls_back_to_logs", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/session/remote-empty/message":
+				writeJSON(w, http.StatusOK, []map[string]any{})
+				return
+			default:
+				http.NotFound(w, r)
+				return
+			}
+		}))
+		defer server.Close()
+		t.Setenv("OPENCODE_BASE_URL", server.URL)
+
+		reader := openCodeHistoryReader{providerName: "opencode", fallback: defaultHistoryReader{}}
+		items, err := reader.History(context.Background(), historyDeps{
+			readSessionLogs: func(string, int) ([]string, error) {
+				return []string{"local-fallback-log"}, nil
+			},
+		}, &types.Session{
+			ID:       "s1",
+			Provider: "opencode",
+			Cwd:      "/tmp/opencode-empty",
+		}, &types.SessionMeta{
+			SessionID:         "s1",
+			ProviderSessionID: "remote-empty",
+		}, 20)
+		if err != nil {
+			t.Fatalf("History: %v", err)
+		}
+		if len(items) != 1 || items[0]["text"] != "local-fallback-log" {
+			t.Fatalf("expected local fallback item, got %#v", items)
+		}
+	})
+
+	t.Run("open_code_remote_error_falls_back_to_logs", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		defer server.Close()
+		t.Setenv("OPENCODE_BASE_URL", server.URL)
+
+		reader := openCodeHistoryReader{providerName: "opencode", fallback: defaultHistoryReader{}}
+		items, err := reader.History(context.Background(), historyDeps{
+			readSessionLogs: func(string, int) ([]string, error) {
+				return []string{"local-fallback-on-error"}, nil
+			},
+		}, &types.Session{
+			ID:       "s2",
+			Provider: "opencode",
+			Cwd:      "/tmp/opencode-error",
+		}, &types.SessionMeta{
+			SessionID:         "s2",
+			ProviderSessionID: "remote-error",
+		}, 20)
+		if err != nil {
+			t.Fatalf("History: %v", err)
+		}
+		if len(items) != 1 || items[0]["text"] != "local-fallback-on-error" {
+			t.Fatalf("expected local fallback item on error, got %#v", items)
+		}
+	})
+}
+
+func TestLiveManagerPortProviderNames(t *testing.T) {
+	if got := (liveManagerConversationSender{providerName: "p1"}).Provider(); got != "p1" {
+		t.Fatalf("unexpected sender provider: %q", got)
+	}
+	if got := (liveManagerConversationEventSubscriber{providerName: "p2"}).Provider(); got != "p2" {
+		t.Fatalf("unexpected subscriber provider: %q", got)
+	}
+	if got := (liveManagerConversationApprover{providerName: "p3"}).Provider(); got != "p3" {
+		t.Fatalf("unexpected approver provider: %q", got)
+	}
+	if got := (liveManagerConversationInterrupter{providerName: "p4"}).Provider(); got != "p4" {
+		t.Fatalf("unexpected interrupter provider: %q", got)
+	}
+	if got := (defaultHistoryReader{}).Provider(); got != "*" {
+		t.Fatalf("unexpected default history provider: %q", got)
+	}
+	if got := (codexHistoryReader{providerName: "codex"}).Provider(); got != "codex" {
+		t.Fatalf("unexpected codex history provider: %q", got)
+	}
+	if got := (openCodeHistoryReader{providerName: "opencode"}).Provider(); got != "opencode" {
+		t.Fatalf("unexpected opencode history provider: %q", got)
+	}
+}
+
+func TestOpenCodeHistoryReconcilerLogHelpers(t *testing.T) {
+	// nil logger should be a no-op
+	openCodeHistoryReconciler{}.logWarn("warn")
+	openCodeHistoryReconciler{}.logDebug("debug")
+
+	var debugBuf bytes.Buffer
+	debugLogger := logging.New(&debugBuf, logging.Debug)
+	rec := openCodeHistoryReconciler{logger: debugLogger}
+	rec.logWarn("warn_message")
+	rec.logDebug("debug_message")
+	logs := debugBuf.String()
+	if !strings.Contains(logs, "warn_message") || !strings.Contains(logs, "debug_message") {
+		t.Fatalf("expected both warn and debug messages in logs, got %q", logs)
+	}
+
+	var infoBuf bytes.Buffer
+	infoLogger := logging.New(&infoBuf, logging.Info)
+	rec = openCodeHistoryReconciler{logger: infoLogger}
+	rec.logDebug("debug_filtered")
+	if strings.Contains(infoBuf.String(), "debug_filtered") {
+		t.Fatalf("expected debug message to be filtered at info level, got %q", infoBuf.String())
+	}
+}
+
 func expectServiceErrorKind(t *testing.T, err error, kind ServiceErrorKind) {
 	t.Helper()
 	if err == nil {
@@ -1097,6 +1360,60 @@ type testConversationAdapter struct {
 	sendCalls            int
 	lastRuntimeOptions   *types.SessionRuntimeOptions
 	runtimeOptionsBySend []*types.SessionRuntimeOptions
+}
+
+type testSenderPort struct {
+	provider string
+	turnID   string
+}
+
+func (p testSenderPort) Provider() string { return p.provider }
+
+func (p testSenderPort) SendMessage(context.Context, sendDeps, *types.Session, *types.SessionMeta, []map[string]any) (string, error) {
+	return p.turnID, nil
+}
+
+type testHistoryPort struct {
+	provider string
+	items    []map[string]any
+}
+
+func (p testHistoryPort) Provider() string { return p.provider }
+
+func (p testHistoryPort) History(context.Context, historyDeps, *types.Session, *types.SessionMeta, int) ([]map[string]any, error) {
+	return p.items, nil
+}
+
+type testEventSubscriberPort struct {
+	provider string
+}
+
+func (p testEventSubscriberPort) Provider() string { return p.provider }
+
+func (p testEventSubscriberPort) SubscribeEvents(context.Context, eventDeps, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+	ch := make(chan types.CodexEvent)
+	close(ch)
+	return ch, func() {}, nil
+}
+
+type testApproverPort struct {
+	provider string
+}
+
+func (p testApproverPort) Provider() string { return p.provider }
+
+func (p testApproverPort) Approve(context.Context, approvalDeps, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
+	return nil
+}
+
+type testInterrupterPort struct {
+	provider string
+}
+
+func (p testInterrupterPort) Provider() string { return p.provider }
+
+func (p testInterrupterPort) Interrupt(context.Context, interruptDeps, *types.Session, *types.SessionMeta) error {
+	return nil
 }
 
 type stubLiveTurnResult struct {
@@ -1214,7 +1531,11 @@ func (a *testConversationAdapter) Provider() string {
 	return a.provider
 }
 
-func (a *testConversationAdapter) SendMessage(_ context.Context, _ adapterDeps, _ *types.Session, meta *types.SessionMeta, _ []map[string]any) (string, error) {
+func (a *testConversationAdapter) History(context.Context, historyDeps, *types.Session, *types.SessionMeta, int) ([]map[string]any, error) {
+	return []map[string]any{{"type": "log", "text": "adapter-history"}}, nil
+}
+
+func (a *testConversationAdapter) SendMessage(_ context.Context, _ sendDeps, _ *types.Session, meta *types.SessionMeta, _ []map[string]any) (string, error) {
 	a.sendCalls++
 	if meta != nil {
 		a.lastRuntimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
@@ -1225,16 +1546,16 @@ func (a *testConversationAdapter) SendMessage(_ context.Context, _ adapterDeps, 
 	return a.sendTurnID, nil
 }
 
-func (a *testConversationAdapter) SubscribeEvents(context.Context, adapterDeps, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+func (a *testConversationAdapter) SubscribeEvents(context.Context, eventDeps, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
 	ch := make(chan types.CodexEvent)
 	close(ch)
 	return ch, func() {}, nil
 }
 
-func (a *testConversationAdapter) Approve(context.Context, adapterDeps, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
+func (a *testConversationAdapter) Approve(context.Context, approvalDeps, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
 	return nil
 }
 
-func (a *testConversationAdapter) Interrupt(context.Context, adapterDeps, *types.Session, *types.SessionMeta) error {
+func (a *testConversationAdapter) Interrupt(context.Context, interruptDeps, *types.Session, *types.SessionMeta) error {
 	return nil
 }
