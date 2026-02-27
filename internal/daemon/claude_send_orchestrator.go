@@ -166,7 +166,7 @@ func (o claudeSendOrchestrator) Send(
 	if session == nil {
 		return "", invalidError("session is required", nil)
 	}
-	if service == nil || service.manager == nil {
+	if o.transport == nil && (service == nil || service.manager == nil) {
 		return "", unavailableError("session manager not available", nil)
 	}
 	validator := o.validator
@@ -222,4 +222,67 @@ func readClaudeCompletionItems(reader claudeCompletionReader, sessionID string) 
 		return nil, err
 	}
 	return items, nil
+}
+
+type turnCompletionStrategy interface {
+	ShouldPublishCompletion(beforeCount int, items []map[string]any) bool
+	Source() string
+}
+
+type claudeItemDeltaCompletionStrategy struct{}
+
+func (claudeItemDeltaCompletionStrategy) Source() string {
+	return "claude_items_post_send"
+}
+
+func (claudeItemDeltaCompletionStrategy) ShouldPublishCompletion(beforeCount int, items []map[string]any) bool {
+	if beforeCount < 0 {
+		beforeCount = 0
+	}
+	if beforeCount > len(items) {
+		beforeCount = len(items)
+	}
+	for _, item := range items[beforeCount:] {
+		if claudeCompletionItemSignalsTurnCompletion(item) {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeCompletionItemSignalsTurnCompletion(item map[string]any) bool {
+	if item == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(asString(item["type"]))) {
+	case "agentmessage", "agentmessagedelta", "agentmessageend", "assistant", "reasoning", "result":
+		return true
+	default:
+		return false
+	}
+}
+
+func claudeCompletionProbeItemCount(io claudeCompletionReader, sessionID string) int {
+	if io == nil || strings.TrimSpace(sessionID) == "" {
+		return 0
+	}
+	items, err := io.ReadSessionItems(sessionID, 10_000)
+	if err != nil {
+		return 0
+	}
+	return len(items)
+}
+
+func claudeCompletionProbeHasTerminalOutput(io claudeCompletionReader, strategy turnCompletionStrategy, sessionID string, baselineCount int) bool {
+	if io == nil || strategy == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	if baselineCount < 0 {
+		baselineCount = 0
+	}
+	items, err := io.ReadSessionItems(sessionID, 10_000)
+	if err != nil || len(items) == 0 {
+		return false
+	}
+	return strategy.ShouldPublishCompletion(baselineCount, items)
 }

@@ -294,3 +294,150 @@ func (s *captureApprovalStorage) StoreApproval(_ context.Context, sessionID stri
 	s.params = params
 	return nil
 }
+
+func (s *captureApprovalStorage) GetApproval(_ context.Context, _ string, _ int) (*types.Approval, bool, error) {
+	return nil, false, nil
+}
+
+func (s *captureApprovalStorage) DeleteApproval(_ context.Context, _ string, _ int) error {
+	return nil
+}
+
+func TestOpenCodeLiveSessionRespondSuccess(t *testing.T) {
+	const providerSessionID = "remote-respond"
+	replyReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/permissions/") {
+			replyReceived = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{
+		BaseURL:  server.URL,
+		Username: "opencode",
+		Timeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+
+	store := &respondApprovalStorage{
+		approvals: map[int]*types.Approval{
+			42: {
+				SessionID: "s1",
+				RequestID: 42,
+				Method:    "item/commandExecution/requestApproval",
+				Params:    json.RawMessage(`{"permission_id":"perm-abc"}`),
+			},
+		},
+	}
+
+	ls := &openCodeLiveSession{
+		sessionID:     "s1",
+		providerName:  "opencode",
+		providerID:    providerSessionID,
+		directory:     "/tmp/respond-test",
+		client:        client,
+		approvalStore: store,
+	}
+
+	err = ls.Respond(context.Background(), 42, map[string]any{
+		"decision": "accept",
+	})
+	if err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	if !replyReceived {
+		t.Fatal("expected ReplyPermission to be called")
+	}
+	if store.deleteCalled != 1 {
+		t.Fatalf("expected approval to be deleted, deleteCalled=%d", store.deleteCalled)
+	}
+	if _, ok := store.approvals[42]; ok {
+		t.Fatal("expected approval 42 to be removed from store")
+	}
+}
+
+func TestOpenCodeLiveSessionRespondApprovalNotFound(t *testing.T) {
+	store := &respondApprovalStorage{approvals: map[int]*types.Approval{}}
+	ls := &openCodeLiveSession{
+		sessionID:     "s1",
+		approvalStore: store,
+	}
+
+	err := ls.Respond(context.Background(), 99, map[string]any{"decision": "accept"})
+	if err == nil {
+		t.Fatal("expected error for missing approval")
+	}
+}
+
+func TestOpenCodeLiveSessionRespondMissingPermissionID(t *testing.T) {
+	store := &respondApprovalStorage{
+		approvals: map[int]*types.Approval{
+			1: {
+				SessionID: "s1",
+				RequestID: 1,
+				Params:    json.RawMessage(`{}`),
+			},
+		},
+	}
+	ls := &openCodeLiveSession{
+		sessionID:     "s1",
+		approvalStore: store,
+	}
+
+	err := ls.Respond(context.Background(), 1, map[string]any{"decision": "accept"})
+	if err == nil {
+		t.Fatal("expected error for missing permission_id")
+	}
+}
+
+func TestOpenCodeLiveSessionRespondNilApprovalStore(t *testing.T) {
+	ls := &openCodeLiveSession{
+		sessionID: "s1",
+	}
+	err := ls.Respond(context.Background(), 1, map[string]any{"decision": "accept"})
+	if err == nil {
+		t.Fatal("expected error for nil approval store")
+	}
+}
+
+type respondApprovalStorage struct {
+	approvals    map[int]*types.Approval
+	deleteCalled int
+}
+
+func (s *respondApprovalStorage) StoreApproval(_ context.Context, sessionID string, requestID int, method string, params json.RawMessage) error {
+	if s.approvals == nil {
+		s.approvals = map[int]*types.Approval{}
+	}
+	s.approvals[requestID] = &types.Approval{
+		SessionID: sessionID,
+		RequestID: requestID,
+		Method:    method,
+		Params:    params,
+	}
+	return nil
+}
+
+func (s *respondApprovalStorage) GetApproval(_ context.Context, _ string, requestID int) (*types.Approval, bool, error) {
+	if s.approvals == nil {
+		return nil, false, nil
+	}
+	a, ok := s.approvals[requestID]
+	return a, ok, nil
+}
+
+func (s *respondApprovalStorage) DeleteApproval(_ context.Context, _ string, requestID int) error {
+	s.deleteCalled++
+	if s.approvals != nil {
+		delete(s.approvals, requestID)
+	}
+	return nil
+}

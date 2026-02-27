@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -29,9 +30,10 @@ type openCodeLiveSession struct {
 }
 
 var (
-	_ LiveSession        = (*openCodeLiveSession)(nil)
-	_ TurnCapableSession = (*openCodeLiveSession)(nil)
-	_ NotifiableSession  = (*openCodeLiveSession)(nil)
+	_ LiveSession            = (*openCodeLiveSession)(nil)
+	_ TurnCapableSession     = (*openCodeLiveSession)(nil)
+	_ ApprovalCapableSession = (*openCodeLiveSession)(nil)
+	_ NotifiableSession      = (*openCodeLiveSession)(nil)
 )
 
 func (s *openCodeLiveSession) Events() (<-chan types.CodexEvent, func()) {
@@ -77,6 +79,42 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 
 func (s *openCodeLiveSession) Interrupt(ctx context.Context) error {
 	return s.client.AbortSession(ctx, s.providerID, s.directory)
+}
+
+func (s *openCodeLiveSession) Respond(ctx context.Context, requestID int, result map[string]any) error {
+	if s.approvalStore == nil {
+		return invalidError("approval store not available", nil)
+	}
+	record, ok, err := s.approvalStore.GetApproval(ctx, s.sessionID, requestID)
+	if err != nil {
+		return unavailableError(err.Error(), err)
+	}
+	if !ok || record == nil {
+		return notFoundError("approval not found", nil)
+	}
+	params := map[string]any{}
+	if len(record.Params) > 0 {
+		_ = json.Unmarshal(record.Params, &params)
+	}
+	permissionID := strings.TrimSpace(asString(params["permission_id"]))
+	if permissionID == "" {
+		permissionID = strings.TrimSpace(asString(params["permissionID"]))
+	}
+	if permissionID == "" {
+		return invalidError("provider permission id not available", nil)
+	}
+	decision := asString(result["decision"])
+	var responses []string
+	if raw, ok := result["responses"]; ok {
+		if arr, ok := raw.([]string); ok {
+			responses = arr
+		}
+	}
+	if err := s.client.ReplyPermission(ctx, s.providerID, permissionID, decision, responses, s.directory); err != nil {
+		return invalidError(err.Error(), err)
+	}
+	_ = s.approvalStore.DeleteApproval(ctx, s.sessionID, requestID)
+	return nil
 }
 
 func (s *openCodeLiveSession) Close() {

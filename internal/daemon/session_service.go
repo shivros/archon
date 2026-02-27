@@ -809,7 +809,7 @@ func (s *SessionService) SendMessageWithOptions(ctx context.Context, id string, 
 		}
 	}
 	s.ensureSessionCwd(ctx, session, effectiveMeta)
-	turnID, sendErr := s.conversationAdapter(session.Provider).SendMessage(ctx, s, session, effectiveMeta, input)
+	turnID, sendErr := s.conversationAdapter(session.Provider).SendMessage(ctx, s.conversationAdapterDeps(), session, effectiveMeta, input)
 	if sendErr != nil {
 		return "", sendErr
 	}
@@ -877,7 +877,7 @@ func (s *SessionService) Approve(ctx context.Context, id string, requestID int, 
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).Approve(ctx, s, session, meta, requestID, decision, responses, acceptSettings)
+	return s.conversationAdapter(session.Provider).Approve(ctx, s.conversationAdapterDeps(), session, meta, requestID, decision, responses, acceptSettings)
 }
 
 func (s *SessionService) ListApprovals(ctx context.Context, id string) ([]*types.Approval, error) {
@@ -923,7 +923,7 @@ func (s *SessionService) InterruptTurn(ctx context.Context, id string) error {
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).Interrupt(ctx, s, session, meta)
+	return s.conversationAdapter(session.Provider).Interrupt(ctx, s.conversationAdapterDeps(), session, meta)
 }
 
 func (s *SessionService) Get(ctx context.Context, id string) (*types.Session, error) {
@@ -1275,7 +1275,7 @@ func (s *SessionService) SubscribeEvents(ctx context.Context, id string) (<-chan
 	}
 	meta := s.getSessionMeta(ctx, session.ID)
 	s.ensureSessionCwd(ctx, session, meta)
-	return s.conversationAdapter(session.Provider).SubscribeEvents(ctx, s, session, meta)
+	return s.conversationAdapter(session.Provider).SubscribeEvents(ctx, s.conversationAdapterDeps(), session, meta)
 }
 
 func (s *SessionService) conversationAdapter(provider string) conversationAdapter {
@@ -1283,6 +1283,13 @@ func (s *SessionService) conversationAdapter(provider string) conversationAdapte
 		s.adapters = newConversationAdapterRegistry()
 	}
 	return s.adapters.adapterFor(provider)
+}
+
+func (s *SessionService) conversationAdapterDeps() adapterDeps {
+	return adapterDeps{
+		liveManager: s.liveManager,
+		stores:      s.stores,
+	}
 }
 
 func (s *SessionService) historyStrategy(provider string) conversationHistoryStrategy {

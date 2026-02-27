@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -323,22 +321,6 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 	})
 }
 
-func TestConversationAdapterContractHistoryRequiresSession(t *testing.T) {
-	registry := newConversationAdapterRegistry()
-	service := NewSessionService(nil, nil, nil)
-
-	for _, provider := range []string{"codex", "claude", "opencode", "kilocode"} {
-		t.Run(provider, func(t *testing.T) {
-			adapter := registry.adapterFor(provider)
-			items, err := adapter.History(context.Background(), service, nil, nil, sessionSourceInternal, 10)
-			if items != nil {
-				t.Fatalf("expected nil items for invalid call, got %#v", items)
-			}
-			expectServiceErrorKind(t, err, ServiceErrorInvalid)
-		})
-	}
-}
-
 func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) {
 	for _, provider := range []string{"codex", "claude", "opencode", "kilocode"} {
 		t.Run(provider, func(t *testing.T) {
@@ -519,18 +501,6 @@ func TestClaudeCompletionItemSignalsTurnCompletion(t *testing.T) {
 	}
 }
 
-func TestClaudeCompletionStrategyOrDefault(t *testing.T) {
-	adapter := claudeConversationAdapter{}
-	if _, ok := adapter.completionStrategyOrDefault().(claudeItemDeltaCompletionStrategy); !ok {
-		t.Fatalf("expected default claude completion strategy")
-	}
-	custom := stubTurnCompletionStrategy{shouldPublish: true, source: "custom"}
-	adapter.completionStrategy = custom
-	if got := adapter.completionStrategyOrDefault(); got.Source() != "custom" {
-		t.Fatalf("expected custom strategy source, got %q", got.Source())
-	}
-}
-
 type stubClaudeCompletionDecisionPolicy struct {
 	publish bool
 	source  string
@@ -540,800 +510,235 @@ func (s stubClaudeCompletionDecisionPolicy) Decide(int, []map[string]any, error)
 	return s.publish, s.source
 }
 
-type stubAdapterInputValidator struct{}
+func TestLiveManagerConversationAdapterSendRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
 
-func (stubAdapterInputValidator) TextFromInput([]map[string]any) (string, error) {
-	return "validated", nil
+	_, err := adapter.SendMessage(context.Background(), adapterDeps{}, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
+	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestClaudeCompletionPolicyOrDefault(t *testing.T) {
-	adapter := claudeConversationAdapter{}
-	policy := adapter.completionPolicyOrDefault()
-	publish, source := policy.Decide(0, nil, nil)
-	if !publish || source == "" {
-		t.Fatalf("expected default policy to publish with source, got publish=%v source=%q", publish, source)
-	}
-	custom := stubClaudeCompletionDecisionPolicy{publish: true, source: "custom_source"}
-	adapter.completionPolicy = custom
-	policy = adapter.completionPolicyOrDefault()
-	publish, source = policy.Decide(0, nil, nil)
-	if !publish || source != "custom_source" {
-		t.Fatalf("expected custom policy source, got publish=%v source=%q", publish, source)
-	}
-}
-
-func TestClaudeInputValidatorOrDefault(t *testing.T) {
-	adapter := claudeConversationAdapter{}
-	validator := adapter.inputValidatorOrDefault()
-	if _, err := validator.TextFromInput([]map[string]any{{"type": "text", "text": "ok"}}); err != nil {
-		t.Fatalf("default validator should accept text input, got %v", err)
-	}
-	adapter.inputValidator = stubAdapterInputValidator{}
-	validator = adapter.inputValidatorOrDefault()
-	text, err := validator.TextFromInput(nil)
-	if err != nil {
-		t.Fatalf("custom validator error: %v", err)
-	}
-	if text != "validated" {
-		t.Fatalf("expected custom validator output, got %q", text)
-	}
-}
-
-func TestSessionServiceClaudeCompletionIONilService(t *testing.T) {
-	io := sessionServiceClaudeCompletionIO{}
-	items, err := io.ReadSessionItems("s1", 10)
-	if err != nil {
-		t.Fatalf("ReadSessionItems err: %v", err)
-	}
-	if items != nil {
-		t.Fatalf("expected nil items for nil service, got %#v", items)
-	}
-	io.PublishTurnCompleted(nil, nil, "", "")
-}
-
-func TestClaudeConversationAdapterSendMessageDoesNotPublishCompletionWithoutAssistantOutput(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-no-complete"
-	baseDir := t.TempDir()
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	sessionStore := &stubSessionIndexStore{
-		records: map[string]*types.SessionRecord{
-			sessionID: {
-				Session: session,
-				Source:  sessionSourceInternal,
-			},
+func TestLiveManagerConversationAdapterSendDelegatesToLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{
+		startTurnResults: []stubLiveTurnResult{
+			{turnID: "turn-live-1"},
 		},
 	}
-	var service *SessionService
-	manager := &SessionManager{
-		baseDir: baseDir,
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return service.appendSessionItems(sessionID, []map[string]any{
-						{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
-					})
-				},
-			},
-		},
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+	deps := adapterDeps{
+		liveManager: live,
+		stores:      &Stores{SessionMeta: metaStore},
 	}
-	publisher := &captureSessionServiceNotificationPublisher{}
-	service = NewSessionService(manager, &Stores{Sessions: sessionStore}, nil, WithNotificationPublisher(publisher))
 
-	turnID, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
+	turnID, err := adapter.SendMessage(context.Background(), deps, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if strings.TrimSpace(turnID) == "" {
-		t.Fatalf("expected non-empty turn id for claude send")
+	if turnID != "turn-live-1" {
+		t.Fatalf("expected turn-live-1, got %q", turnID)
 	}
-	if len(publisher.events) != 1 {
-		t.Fatalf("expected one turn-completed event for synchronous claude send, got %#v", publisher.events)
-	}
-	if publisher.events[0].TurnID != turnID {
-		t.Fatalf("expected completion turn id %q, got %q", turnID, publisher.events[0].TurnID)
-	}
-	if publisher.events[0].Source != "claude_sync_send_completed" {
-		t.Fatalf("unexpected completion source: %q", publisher.events[0].Source)
+	if live.startTurnCalls != 1 {
+		t.Fatalf("expected 1 StartTurn call, got %d", live.startTurnCalls)
 	}
 }
 
-func TestClaudeConversationAdapterSendMessageRequiresProviderSessionIDOnRecovery(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-missing-provider-session"
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	service := NewSessionService(&SessionManager{
-		baseDir: t.TempDir(),
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return ErrSessionNotFound
-				},
-			},
-		},
-	}, &Stores{
-		Sessions: &stubSessionIndexStore{
-			records: map[string]*types.SessionRecord{
-				sessionID: {Session: session, Source: sessionSourceInternal},
-			},
-		},
-	}, nil)
-	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
-	expectServiceErrorKind(t, err, ServiceErrorInvalid)
-	if !strings.Contains(err.Error(), "provider session id not available") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func TestLiveManagerConversationAdapterSubscribeRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+
+	_, _, err := adapter.SubscribeEvents(context.Background(), adapterDeps{}, session, nil)
+	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestClaudeConversationAdapterSendMessageRequiresCwdOnRecovery(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-missing-cwd"
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       "   ",
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	service := NewSessionService(&SessionManager{
-		baseDir: t.TempDir(),
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return ErrSessionNotFound
-				},
-			},
-		},
-	}, &Stores{
-		Sessions: &stubSessionIndexStore{
-			records: map[string]*types.SessionRecord{
-				sessionID: {Session: session, Source: sessionSourceInternal},
-			},
-		},
-		SessionMeta: &failingSessionMetaStore{
-			entry: &types.SessionMeta{
-				SessionID:         sessionID,
-				ProviderSessionID: "provider-sess-1",
-			},
-		},
-	}, nil)
-	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
-	expectServiceErrorKind(t, err, ServiceErrorInvalid)
-	if !strings.Contains(err.Error(), "session cwd is required") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func TestLiveManagerConversationAdapterApproveRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+
+	err := adapter.Approve(context.Background(), adapterDeps{}, session, nil, 1, "accept", nil, nil)
+	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestClaudeConversationAdapterSendMessageRecoveryAdditionalDirectoriesError(t *testing.T) {
-	ctx := context.Background()
-	base := t.TempDir()
-	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
-	repoDir := filepath.Join(base, "repo")
-	if err := ensureDir(repoDir); err != nil {
-		t.Fatalf("mkdir repo: %v", err)
-	}
-	ws, err := workspaceStore.Add(ctx, &types.Workspace{
-		RepoPath:              repoDir,
-		AdditionalDirectories: []string{"../missing"},
-	})
-	if err != nil {
-		t.Fatalf("add workspace: %v", err)
-	}
-	sessionID := "s-claude-dirs-err"
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       repoDir,
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	service := NewSessionService(&SessionManager{
-		baseDir: t.TempDir(),
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return ErrSessionNotFound
-				},
-			},
-		},
-	}, &Stores{
-		Sessions: &stubSessionIndexStore{
-			records: map[string]*types.SessionRecord{
-				sessionID: {Session: session, Source: sessionSourceInternal},
-			},
-		},
-		SessionMeta: &failingSessionMetaStore{
-			entry: &types.SessionMeta{
-				SessionID:         sessionID,
-				ProviderSessionID: "provider-sess-1",
-				WorkspaceID:       ws.ID,
-			},
-		},
-		Workspaces: workspaceStore,
-	}, nil)
-	_, err = service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
-	expectServiceErrorKind(t, err, ServiceErrorInvalid)
-	if !strings.Contains(strings.ToLower(err.Error()), "no such file") {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func TestLiveManagerConversationAdapterInterruptRequiresLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+
+	err := adapter.Interrupt(context.Background(), adapterDeps{}, session, nil)
+	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
 }
 
-func TestClaudeConversationAdapterSendMessageRecoveryResumeError(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-resume-err"
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	baseFile := filepath.Join(t.TempDir(), "sessions-base-file")
-	if err := os.WriteFile(baseFile, []byte("not a dir"), 0o600); err != nil {
-		t.Fatalf("write base file: %v", err)
-	}
-	service := NewSessionService(&SessionManager{
-		baseDir:  baseFile,
-		sessions: map[string]*sessionRuntime{},
-	}, &Stores{
-		Sessions: &stubSessionIndexStore{
-			records: map[string]*types.SessionRecord{
-				sessionID: {Session: session, Source: sessionSourceInternal},
-			},
-		},
-		SessionMeta: &failingSessionMetaStore{
-			entry: &types.SessionMeta{
-				SessionID:         sessionID,
-				ProviderSessionID: "provider-sess-1",
-			},
-		},
-	}, nil)
-	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
+func TestLiveManagerConversationAdapterSendRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+
+	_, err := adapter.SendMessage(context.Background(), adapterDeps{}, nil, nil, []map[string]any{{"type": "text", "text": "hello"}})
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
-func TestClaudeConversationAdapterSendMessageRecoverySecondSendFailure(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-retry-send-fail"
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
+func TestLiveManagerConversationAdapterSendStartTurnError(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{
+		startTurnResults: []stubLiveTurnResult{
+			{err: errors.New("start failed")},
+		},
 	}
-	sendCalls := 0
-	service := NewSessionService(&SessionManager{
-		baseDir: t.TempDir(),
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					sendCalls++
-					if sendCalls == 1 {
-						return ErrSessionNotFound
-					}
-					return errors.New("second send failed")
-				},
-			},
-		},
-	}, &Stores{
-		Sessions: &stubSessionIndexStore{
-			records: map[string]*types.SessionRecord{
-				sessionID: {Session: session, Source: sessionSourceInternal},
-			},
-		},
-		SessionMeta: &failingSessionMetaStore{
-			entry: &types.SessionMeta{
-				SessionID:         sessionID,
-				ProviderSessionID: "provider-sess-1",
-			},
-		},
-	}, nil)
-	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
+	deps := adapterDeps{liveManager: live}
+
+	_, err := adapter.SendMessage(context.Background(), deps, session, nil, []map[string]any{{"type": "text", "text": "hello"}})
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
-	if !strings.Contains(err.Error(), "second send failed") {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(err.Error(), "start failed") {
+		t.Fatalf("expected wrapped error message, got %v", err)
 	}
 }
 
-func TestClaudeConversationAdapterSendMessageRecoverySecondSendSuccess(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-retry-send-ok"
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	sendCalls := 0
-	service := NewSessionService(&SessionManager{
-		baseDir: t.TempDir(),
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					sendCalls++
-					if sendCalls == 1 {
-						return ErrSessionNotFound
-					}
-					return nil
-				},
-			},
-		},
-	}, &Stores{
-		Sessions: &stubSessionIndexStore{
-			records: map[string]*types.SessionRecord{
-				sessionID: {Session: session, Source: sessionSourceInternal},
-			},
-		},
-		SessionMeta: &failingSessionMetaStore{
-			entry: &types.SessionMeta{
-				SessionID:         sessionID,
-				ProviderSessionID: "provider-sess-1",
-			},
-		},
-	}, nil)
-	if _, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	}); err != nil {
-		t.Fatalf("SendMessage: %v", err)
-	}
-	if sendCalls != 2 {
-		t.Fatalf("expected two send attempts, got %d", sendCalls)
-	}
-}
+func TestLiveManagerConversationAdapterSubscribeRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	live := &stubLiveManager{}
+	deps := adapterDeps{liveManager: live}
 
-func TestClaudeConversationAdapterSendMessageUsesInjectedCompletionStrategy(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-injected-strategy"
-	baseDir := t.TempDir()
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	sessionStore := &stubSessionIndexStore{
-		records: map[string]*types.SessionRecord{
-			sessionID: {
-				Session: session,
-				Source:  sessionSourceInternal,
-			},
-		},
-	}
-	var service *SessionService
-	manager := &SessionManager{
-		baseDir: baseDir,
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return service.appendSessionItems(sessionID, []map[string]any{
-						{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
-					})
-				},
-			},
-		},
-	}
-	publisher := &captureSessionServiceNotificationPublisher{}
-	service = NewSessionService(manager, &Stores{Sessions: sessionStore}, nil, WithNotificationPublisher(publisher))
-	service.adapters = newConversationAdapterRegistry(claudeConversationAdapter{
-		fallback: defaultConversationAdapter{},
-		completionStrategy: stubTurnCompletionStrategy{
-			shouldPublish: true,
-			source:        "injected_strategy",
-		},
-	})
-
-	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
-	if err != nil {
-		t.Fatalf("SendMessage: %v", err)
-	}
-	if len(publisher.events) != 1 {
-		t.Fatalf("expected one completion event from injected strategy, got %d", len(publisher.events))
-	}
-	if publisher.events[0].Source != "injected_strategy" {
-		t.Fatalf("unexpected completion source: %q", publisher.events[0].Source)
-	}
-}
-
-func TestClaudeConversationAdapterSendMessagePublishesCompletionAfterAssistantOutput(t *testing.T) {
-	ctx := context.Background()
-	sessionID := "s-claude-complete"
-	baseDir := t.TempDir()
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "claude",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	sessionStore := &stubSessionIndexStore{
-		records: map[string]*types.SessionRecord{
-			sessionID: {
-				Session: session,
-				Source:  sessionSourceInternal,
-			},
-		},
-	}
-	var service *SessionService
-	manager := &SessionManager{
-		baseDir: baseDir,
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return service.appendSessionItems(sessionID, []map[string]any{
-						{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
-						{"type": "agentMessage", "text": "done"},
-					})
-				},
-			},
-		},
-	}
-	publisher := &captureSessionServiceNotificationPublisher{}
-	service = NewSessionService(manager, &Stores{Sessions: sessionStore}, nil, WithNotificationPublisher(publisher))
-
-	turnID, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
-	if err != nil {
-		t.Fatalf("SendMessage: %v", err)
-	}
-	if strings.TrimSpace(turnID) == "" {
-		t.Fatalf("expected non-empty turn id for claude send")
-	}
-	if len(publisher.events) != 1 {
-		t.Fatalf("expected one turn-completed event, got %d", len(publisher.events))
-	}
-	event := publisher.events[0]
-	if event.Trigger != types.NotificationTriggerTurnCompleted {
-		t.Fatalf("unexpected trigger: %q", event.Trigger)
-	}
-	if event.Source != "claude_items_post_send" {
-		t.Fatalf("expected claude post-send completion source, got %q", event.Source)
-	}
-	if event.TurnID != turnID {
-		t.Fatalf("expected event turn id %q, got %q", turnID, event.TurnID)
-	}
-}
-
-func TestClaudeConversationAdapterUnsupportedOperationsReturnInvalid(t *testing.T) {
-	adapter := newClaudeConversationAdapter(defaultConversationAdapter{})
-	_, _, err := adapter.SubscribeEvents(context.Background(), nil, &types.Session{ID: "s1"}, nil)
+	_, _, err := adapter.SubscribeEvents(context.Background(), deps, nil, nil)
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
-	if err := adapter.Approve(context.Background(), nil, &types.Session{ID: "s1"}, nil, 1, "accept", nil, nil); err == nil {
-		t.Fatalf("expected approve to return error")
-	} else {
-		expectServiceErrorKind(t, err, ServiceErrorInvalid)
-	}
-	if err := adapter.Interrupt(context.Background(), nil, &types.Session{ID: "s1"}, nil); err == nil {
-		t.Fatalf("expected interrupt to return error")
-	} else {
-		expectServiceErrorKind(t, err, ServiceErrorInvalid)
+}
+
+func TestLiveManagerConversationAdapterSubscribeError(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{subscribeErr: errors.New("subscribe failed")}
+	deps := adapterDeps{liveManager: live}
+
+	_, _, err := adapter.SubscribeEvents(context.Background(), deps, session, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(err.Error(), "subscribe failed") {
+		t.Fatalf("expected wrapped error message, got %v", err)
 	}
 }
 
-func TestOpenCodeConversationAdapterApproveRepliesPermission(t *testing.T) {
-	var (
-		receivedPath string
-		receivedBody map[string]any
-	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedPath = r.URL.Path
-		auth := r.Header.Get("Authorization")
-		want := "Basic " + base64.StdEncoding.EncodeToString([]byte("opencode:token-123"))
-		if auth != want {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	}))
-	defer server.Close()
+func TestLiveManagerConversationAdapterSubscribeDelegatesToLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{}
+	deps := adapterDeps{liveManager: live}
 
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("OPENCODE_BASE_URL", server.URL)
-	t.Setenv("OPENCODE_TOKEN", "token-123")
-	ctx := context.Background()
-	base := t.TempDir()
-	approvalStore := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
-	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
-
-	session := &types.Session{
-		ID:        "s-open",
-		Provider:  "opencode",
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: session,
-		Source:  sessionSourceInternal,
-	})
-	if err != nil {
-		t.Fatalf("seed session record: %v", err)
-	}
-	params, _ := json.Marshal(map[string]any{"permission_id": "perm-123"})
-	_, err = approvalStore.Upsert(ctx, &types.Approval{
-		SessionID: session.ID,
-		RequestID: 77,
-		Method:    "tool/requestUserInput",
-		Params:    params,
-		CreatedAt: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("seed approval: %v", err)
-	}
-
-	service := NewSessionService(nil, &Stores{
-		Sessions:  sessionStore,
-		Approvals: approvalStore,
-	}, nil, nil)
-
-	if err := service.Approve(ctx, session.ID, 77, "accept", nil, nil); err != nil {
-		t.Fatalf("Approve: %v", err)
-	}
-	if receivedPath != "/permission/perm-123/reply" {
-		t.Fatalf("unexpected permission reply path: %q", receivedPath)
-	}
-	if decision := receivedBody["decision"]; decision != "accept" {
-		t.Fatalf("unexpected approval decision payload: %#v", receivedBody)
-	}
-	_, ok, err := approvalStore.Get(ctx, session.ID, 77)
-	if err != nil {
-		t.Fatalf("get approval after delete: %v", err)
-	}
-	if ok {
-		t.Fatalf("expected approval to be deleted after successful reply")
-	}
-}
-
-func TestOpenCodeConversationAdapterApproveForwardsResponsesToSessionEndpoint(t *testing.T) {
-	var (
-		receivedPath string
-		receivedBody map[string]any
-	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedPath = r.URL.Path
-		auth := r.Header.Get("Authorization")
-		want := "Basic " + base64.StdEncoding.EncodeToString([]byte("opencode:token-123"))
-		if auth != want {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	}))
-	defer server.Close()
-
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("OPENCODE_BASE_URL", server.URL)
-	t.Setenv("OPENCODE_TOKEN", "token-123")
-	ctx := context.Background()
-	base := t.TempDir()
-	approvalStore := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
-	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
-	sessionMetaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
-
-	session := &types.Session{
-		ID:        "s-open-session-endpoint",
-		Provider:  "opencode",
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: session,
-		Source:  sessionSourceInternal,
-	})
-	if err != nil {
-		t.Fatalf("seed session record: %v", err)
-	}
-	_, err = sessionMetaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:         session.ID,
-		ProviderSessionID: "remote-s-1",
-	})
-	if err != nil {
-		t.Fatalf("seed session meta: %v", err)
-	}
-	params, _ := json.Marshal(map[string]any{"permission_id": "perm-123"})
-	_, err = approvalStore.Upsert(ctx, &types.Approval{
-		SessionID: session.ID,
-		RequestID: 77,
-		Method:    "tool/requestUserInput",
-		Params:    params,
-		CreatedAt: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("seed approval: %v", err)
-	}
-
-	service := NewSessionService(nil, &Stores{
-		Sessions:    sessionStore,
-		SessionMeta: sessionMetaStore,
-		Approvals:   approvalStore,
-	}, nil, nil)
-
-	if err := service.Approve(ctx, session.ID, 77, "accept", []string{"first answer", "second answer"}, nil); err != nil {
-		t.Fatalf("Approve: %v", err)
-	}
-	if receivedPath != "/session/remote-s-1/permissions/perm-123" {
-		t.Fatalf("unexpected permission reply path: %q", receivedPath)
-	}
-	if response := strings.TrimSpace(asString(receivedBody["response"])); response != "once" {
-		t.Fatalf("unexpected approval response payload: %#v", receivedBody)
-	}
-	rawResponses, _ := receivedBody["responses"].([]any)
-	if len(rawResponses) != 2 || asString(rawResponses[0]) != "first answer" || asString(rawResponses[1]) != "second answer" {
-		t.Fatalf("unexpected approval responses payload: %#v", receivedBody)
-	}
-	_, ok, err := approvalStore.Get(ctx, session.ID, 77)
-	if err != nil {
-		t.Fatalf("get approval after delete: %v", err)
-	}
-	if ok {
-		t.Fatalf("expected approval to be deleted after successful reply")
-	}
-}
-
-func TestOpenCodeConversationAdapterSubscribeEventsSyncsApprovals(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/event":
-			w.Header().Set("Content-Type", "text/event-stream")
-			flusher, ok := w.(http.Flusher)
-			if !ok {
-				t.Fatalf("expected http flusher")
-			}
-			send := func(payload map[string]any) {
-				data, _ := json.Marshal(payload)
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", string(data))
-				flusher.Flush()
-			}
-			send(map[string]any{
-				"type": "permission.updated",
-				"properties": map[string]any{
-					"id":        "perm-abc",
-					"sessionID": "remote-s-1",
-					"type":      "command",
-					"title":     "run command",
-					"metadata": map[string]any{
-						"command": "echo one",
-					},
-				},
-			})
-			send(map[string]any{
-				"type": "permission.replied",
-				"properties": map[string]any{
-					"permissionID": "perm-abc",
-					"sessionID":    "remote-s-1",
-					"response":     "once",
-				},
-			})
-			send(map[string]any{
-				"type": "session.idle",
-				"properties": map[string]any{
-					"sessionID": "remote-s-1",
-				},
-			})
-			return
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("OPENCODE_BASE_URL", server.URL)
-	ctx := context.Background()
-	base := t.TempDir()
-	approvalStore := store.NewFileApprovalStore(filepath.Join(base, "approvals.json"))
-	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions.json"))
-	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
-
-	session := &types.Session{
-		ID:        "s-open-events",
-		Provider:  "opencode",
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: session,
-		Source:  sessionSourceInternal,
-	})
-	if err != nil {
-		t.Fatalf("seed session record: %v", err)
-	}
-	_, err = metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:         session.ID,
-		ProviderSessionID: "remote-s-1",
-	})
-	if err != nil {
-		t.Fatalf("seed session meta: %v", err)
-	}
-
-	service := NewSessionService(nil, &Stores{
-		Sessions:    sessionStore,
-		SessionMeta: metaStore,
-		Approvals:   approvalStore,
-	}, nil, nil)
-
-	streamCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	events, closeFn, err := service.SubscribeEvents(streamCtx, session.ID)
+	ch, cancel, err := adapter.SubscribeEvents(context.Background(), deps, session, nil)
 	if err != nil {
 		t.Fatalf("SubscribeEvents: %v", err)
 	}
-	defer closeFn()
-
-	receivedApproval := false
-	receivedResolved := false
-	for i := 0; i < 3; i++ {
-		select {
-		case event, ok := <-events:
-			if !ok {
-				t.Fatalf("stream closed early")
-			}
-			switch event.Method {
-			case "item/commandExecution/requestApproval":
-				receivedApproval = true
-			case "permission/replied":
-				receivedResolved = true
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatalf("timeout waiting for mapped events")
-		}
+	if ch == nil {
+		t.Fatalf("expected non-nil channel")
 	}
-	if !receivedApproval || !receivedResolved {
-		t.Fatalf("expected approval lifecycle events, got approval=%v resolved=%v", receivedApproval, receivedResolved)
+	if cancel == nil {
+		t.Fatalf("expected non-nil cancel func")
 	}
+	cancel()
+}
 
-	approvals, err := approvalStore.ListBySession(ctx, session.ID)
+func TestLiveManagerConversationAdapterInterruptDelegatesToLiveManager(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{}
+	deps := adapterDeps{liveManager: live}
+
+	err := adapter.Interrupt(context.Background(), deps, session, nil)
 	if err != nil {
-		t.Fatalf("ListBySession: %v", err)
+		t.Fatalf("Interrupt: %v", err)
 	}
-	if len(approvals) != 0 {
-		t.Fatalf("expected approval store to be reconciled, got %#v", approvals)
+	if live.interruptCalls != 1 {
+		t.Fatalf("expected 1 Interrupt call, got %d", live.interruptCalls)
+	}
+}
+
+func TestLiveManagerConversationAdapterApproveRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	live := &stubLiveManager{}
+	deps := adapterDeps{liveManager: live}
+
+	err := adapter.Approve(context.Background(), deps, nil, nil, 1, "accept", nil, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+}
+
+func TestLiveManagerConversationAdapterApproveHappyPath(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{}
+	approvals := &stubApprovalStore{}
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+	deps := adapterDeps{
+		liveManager: live,
+		stores:      &Stores{Approvals: approvals, SessionMeta: metaStore},
+	}
+
+	responses := []string{"yes", "confirmed"}
+	acceptSettings := map[string]any{"always": true}
+	err := adapter.Approve(context.Background(), deps, session, nil, 42, "accept", responses, acceptSettings)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+
+	// Verify Respond was called with responses and acceptSettings
+	if live.respondCalls != 1 {
+		t.Fatalf("expected 1 Respond call, got %d", live.respondCalls)
+	}
+	if live.lastRespondArgs["decision"] != "accept" {
+		t.Fatalf("expected decision=accept, got %v", live.lastRespondArgs["decision"])
+	}
+	if _, ok := live.lastRespondArgs["responses"]; !ok {
+		t.Fatalf("expected responses in Respond args")
+	}
+	if _, ok := live.lastRespondArgs["acceptSettings"]; !ok {
+		t.Fatalf("expected acceptSettings in Respond args")
+	}
+
+	// Verify approval deletion
+	if len(approvals.deleteCalls) != 1 {
+		t.Fatalf("expected 1 approval delete call, got %d", len(approvals.deleteCalls))
+	}
+	if approvals.deleteCalls[0].sessionID != "s1" || approvals.deleteCalls[0].requestID != 42 {
+		t.Fatalf("unexpected delete args: %+v", approvals.deleteCalls[0])
+	}
+
+	// Verify meta LastActiveAt was updated
+	meta, ok, err := metaStore.Get(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("get meta: %v", err)
+	}
+	if !ok || meta == nil || meta.LastActiveAt == nil {
+		t.Fatalf("expected LastActiveAt to be set after approve")
+	}
+}
+
+func TestLiveManagerConversationAdapterApproveRespondError(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{respondErr: errors.New("respond failed")}
+	deps := adapterDeps{liveManager: live}
+
+	err := adapter.Approve(context.Background(), deps, session, nil, 1, "accept", nil, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(err.Error(), "respond failed") {
+		t.Fatalf("expected wrapped error message, got %v", err)
+	}
+}
+
+func TestLiveManagerConversationAdapterInterruptRequiresSession(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	live := &stubLiveManager{}
+	deps := adapterDeps{liveManager: live}
+
+	err := adapter.Interrupt(context.Background(), deps, nil, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+}
+
+func TestLiveManagerConversationAdapterInterruptError(t *testing.T) {
+	adapter := liveManagerConversationAdapter{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test"}
+	live := &stubLiveManager{interruptErr: errors.New("interrupt failed")}
+	deps := adapterDeps{liveManager: live}
+
+	err := adapter.Interrupt(context.Background(), deps, session, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
+	if !strings.Contains(err.Error(), "interrupt failed") {
+		t.Fatalf("expected wrapped error message, got %v", err)
 	}
 }
 
@@ -1637,284 +1042,6 @@ func TestOpenCodeConversationAdapterHistoryBackfillsMissingItemsWithoutDuplicate
 	}
 }
 
-func TestOpenCodeConversationAdapterSendMessageReconcilesHistoryOnSendFailure(t *testing.T) {
-	const (
-		sessionID         = "s-open-send-reconcile"
-		providerSessionID = "remote-s-send"
-		directory         = "/tmp/open-send-reconcile"
-	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/session/" + providerSessionID + "/message":
-			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
-				http.Error(w, "missing directory", http.StatusBadRequest)
-				return
-			}
-			writeJSON(w, http.StatusOK, []map[string]any{
-				{
-					"info": map[string]any{
-						"id":        "msg-user-send",
-						"role":      "user",
-						"createdAt": "2026-02-13T02:00:00Z",
-					},
-					"parts": []map[string]any{
-						{"type": "text", "text": "hello send"},
-					},
-				},
-				{
-					"info": map[string]any{
-						"id":        "msg-assistant-send",
-						"role":      "assistant",
-						"createdAt": "2026-02-13T02:00:01Z",
-					},
-					"parts": []map[string]any{
-						{"type": "text", "text": "recovered send reply"},
-					},
-				},
-			})
-			return
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("OPENCODE_BASE_URL", server.URL)
-	rememberOpenCodeRuntimeBaseURL("opencode", server.URL)
-	sessionsBaseDir := filepath.Join(home, ".archon", "sessions")
-	if err := os.MkdirAll(sessionsBaseDir, 0o700); err != nil {
-		t.Fatalf("mkdir sessions dir: %v", err)
-	}
-
-	ctx := context.Background()
-	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
-	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:         sessionID,
-		ProviderSessionID: providerSessionID,
-	}); err != nil {
-		t.Fatalf("seed session meta: %v", err)
-	}
-
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "opencode",
-		Cwd:       directory,
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	manager := &SessionManager{
-		baseDir: sessionsBaseDir,
-		sessions: map[string]*sessionRuntime{
-			sessionID: {
-				session: session,
-				send: func([]byte) error {
-					return errors.New("simulated send timeout")
-				},
-			},
-		},
-	}
-	service := NewSessionService(manager, &Stores{SessionMeta: metaStore}, nil)
-
-	_, err := service.SendMessage(ctx, sessionID, []map[string]any{
-		{"type": "text", "text": "hello send"},
-	})
-	expectServiceErrorKind(t, err, ServiceErrorInvalid)
-
-	items, _, readErr := service.readSessionItems(sessionID, 50)
-	if readErr != nil {
-		t.Fatalf("readSessionItems: %v", readErr)
-	}
-	if len(items) == 0 {
-		t.Fatalf("expected reconciled items, got none")
-	}
-	foundAssistant := false
-	for _, item := range items {
-		if strings.ToLower(strings.TrimSpace(asString(item["type"]))) != "assistant" {
-			continue
-		}
-		if strings.TrimSpace(asString(item["provider_message_id"])) == "msg-assistant-send" {
-			foundAssistant = true
-			break
-		}
-	}
-	if !foundAssistant {
-		t.Fatalf("expected assistant recovery in items, got %#v", items)
-	}
-}
-
-func TestOpenCodeConversationAdapterLiveTurnResumesOnSessionNotFound(t *testing.T) {
-	ctx := context.Background()
-	session := &types.Session{
-		ID:        "s-open-live-resume",
-		Provider:  "opencode",
-		Cwd:       t.TempDir(),
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	sessionStore := &stubSessionIndexStore{
-		records: map[string]*types.SessionRecord{
-			session.ID: {
-				Session: session,
-				Source:  sessionSourceInternal,
-			},
-		},
-	}
-	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
-	if _, err := metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:         session.ID,
-		ProviderSessionID: "remote-live-resume",
-	}); err != nil {
-		t.Fatalf("seed session meta: %v", err)
-	}
-	manager := &SessionManager{
-		baseDir: t.TempDir(),
-		sessions: map[string]*sessionRuntime{
-			session.ID: {session: session},
-		},
-	}
-	live := &stubLiveManager{
-		startTurnResults: []stubLiveTurnResult{
-			{err: ErrSessionNotFound},
-			{turnID: "turn-live-recovered"},
-		},
-	}
-	service := NewSessionService(manager, &Stores{
-		Sessions:    sessionStore,
-		SessionMeta: metaStore,
-	}, nil, nil)
-	service.liveManager = live
-
-	turnID, err := service.SendMessage(ctx, session.ID, []map[string]any{
-		{"type": "text", "text": "hello"},
-	})
-	if err != nil {
-		t.Fatalf("SendMessage: %v", err)
-	}
-	if turnID != "turn-live-recovered" {
-		t.Fatalf("expected recovered turn id, got %q", turnID)
-	}
-	if live.startTurnCalls != 2 {
-		t.Fatalf("expected two live start attempts, got %d", live.startTurnCalls)
-	}
-}
-
-func TestOpenCodeConversationAdapterSubscribeEventsRecoversMissedAssistantOnStreamClose(t *testing.T) {
-	const (
-		sessionID         = "s-open-event-reconcile"
-		providerSessionID = "remote-s-events"
-		directory         = "/tmp/open-event-reconcile"
-	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/event":
-			if got := strings.TrimSpace(r.URL.Query().Get("parentID")); got != providerSessionID {
-				http.Error(w, "missing parentID", http.StatusBadRequest)
-				return
-			}
-			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
-				http.Error(w, "missing directory", http.StatusBadRequest)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			if flusher, ok := w.(http.Flusher); ok {
-				_, _ = w.Write([]byte(":\n\n"))
-				flusher.Flush()
-			}
-			return
-		case "/session/" + providerSessionID + "/message":
-			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
-				http.Error(w, "missing directory", http.StatusBadRequest)
-				return
-			}
-			writeJSON(w, http.StatusOK, []map[string]any{
-				{
-					"info": map[string]any{
-						"id":        "msg-user-event",
-						"role":      "user",
-						"createdAt": "2026-02-13T02:10:00Z",
-					},
-					"parts": []map[string]any{
-						{"type": "text", "text": "hello event"},
-					},
-				},
-				{
-					"info": map[string]any{
-						"id":        "msg-assistant-event",
-						"role":      "assistant",
-						"createdAt": "2026-02-13T02:10:01Z",
-					},
-					"parts": []map[string]any{
-						{"type": "text", "text": "recovered event reply"},
-					},
-				},
-			})
-			return
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("OPENCODE_BASE_URL", server.URL)
-	rememberOpenCodeRuntimeBaseURL("opencode", server.URL)
-	service := NewSessionService(nil, nil, nil)
-	adapter := openCodeConversationAdapter{providerName: "opencode"}
-	session := &types.Session{
-		ID:        sessionID,
-		Provider:  "opencode",
-		Cwd:       directory,
-		Status:    types.SessionStatusRunning,
-		CreatedAt: time.Now().UTC(),
-	}
-	meta := &types.SessionMeta{
-		SessionID:         sessionID,
-		ProviderSessionID: providerSessionID,
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	events, closeFn, err := adapter.SubscribeEvents(ctx, service, session, meta)
-	if err != nil {
-		t.Fatalf("SubscribeEvents: %v", err)
-	}
-	defer closeFn()
-
-	methods := make([]string, 0, 8)
-	for event := range events {
-		methods = append(methods, event.Method)
-	}
-	if len(methods) == 0 {
-		t.Fatalf("expected recovered events, got none")
-	}
-	if !containsString(methods, "item/agentMessage/delta") {
-		t.Fatalf("expected recovered assistant delta event, got %v", methods)
-	}
-	if !containsString(methods, "turn/completed") {
-		t.Fatalf("expected recovered turn completion event, got %v", methods)
-	}
-
-	items, _, readErr := service.readSessionItems(sessionID, 50)
-	if readErr != nil {
-		t.Fatalf("readSessionItems: %v", readErr)
-	}
-	if len(items) == 0 {
-		t.Fatalf("expected recovered items, got none")
-	}
-}
-
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
-
 func expectServiceErrorKind(t *testing.T, err error, kind ServiceErrorKind) {
 	t.Helper()
 	if err == nil {
@@ -1980,6 +1107,13 @@ type stubLiveTurnResult struct {
 type stubLiveManager struct {
 	startTurnResults []stubLiveTurnResult
 	startTurnCalls   int
+
+	subscribeErr    error
+	respondErr      error
+	respondCalls    int
+	lastRespondArgs map[string]any
+	interruptErr    error
+	interruptCalls  int
 }
 
 func (s *stubLiveManager) StartTurn(_ context.Context, _ *types.Session, _ *types.SessionMeta, _ []map[string]any, _ *types.SessionRuntimeOptions) (string, error) {
@@ -1992,17 +1126,23 @@ func (s *stubLiveManager) StartTurn(_ context.Context, _ *types.Session, _ *type
 }
 
 func (s *stubLiveManager) Subscribe(_ *types.Session, _ *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+	if s.subscribeErr != nil {
+		return nil, nil, s.subscribeErr
+	}
 	ch := make(chan types.CodexEvent)
 	close(ch)
 	return ch, func() {}, nil
 }
 
-func (s *stubLiveManager) Respond(context.Context, *types.Session, *types.SessionMeta, int, map[string]any) error {
-	return nil
+func (s *stubLiveManager) Respond(_ context.Context, _ *types.Session, _ *types.SessionMeta, _ int, result map[string]any) error {
+	s.respondCalls++
+	s.lastRespondArgs = result
+	return s.respondErr
 }
 
 func (s *stubLiveManager) Interrupt(context.Context, *types.Session, *types.SessionMeta) error {
-	return nil
+	s.interruptCalls++
+	return s.interruptErr
 }
 
 func (s *stubLiveManager) SetNotificationPublisher(NotificationPublisher) {}
@@ -2039,15 +1179,42 @@ func (s *failingSessionMetaStore) Delete(context.Context, string) error {
 	return nil
 }
 
+type stubApprovalStore struct {
+	deleteCalls []struct {
+		sessionID string
+		requestID int
+	}
+}
+
+func (s *stubApprovalStore) ListBySession(context.Context, string) ([]*types.Approval, error) {
+	return nil, nil
+}
+
+func (s *stubApprovalStore) Get(context.Context, string, int) (*types.Approval, bool, error) {
+	return nil, false, nil
+}
+
+func (s *stubApprovalStore) Upsert(context.Context, *types.Approval) (*types.Approval, error) {
+	return nil, nil
+}
+
+func (s *stubApprovalStore) Delete(_ context.Context, sessionID string, requestID int) error {
+	s.deleteCalls = append(s.deleteCalls, struct {
+		sessionID string
+		requestID int
+	}{sessionID, requestID})
+	return nil
+}
+
+func (s *stubApprovalStore) DeleteSession(context.Context, string) error {
+	return nil
+}
+
 func (a *testConversationAdapter) Provider() string {
 	return a.provider
 }
 
-func (a *testConversationAdapter) History(context.Context, *SessionService, *types.Session, *types.SessionMeta, string, int) ([]map[string]any, error) {
-	return []map[string]any{{"type": "log", "text": "ok"}}, nil
-}
-
-func (a *testConversationAdapter) SendMessage(_ context.Context, _ *SessionService, _ *types.Session, meta *types.SessionMeta, _ []map[string]any) (string, error) {
+func (a *testConversationAdapter) SendMessage(_ context.Context, _ adapterDeps, _ *types.Session, meta *types.SessionMeta, _ []map[string]any) (string, error) {
 	a.sendCalls++
 	if meta != nil {
 		a.lastRuntimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
@@ -2058,16 +1225,16 @@ func (a *testConversationAdapter) SendMessage(_ context.Context, _ *SessionServi
 	return a.sendTurnID, nil
 }
 
-func (a *testConversationAdapter) SubscribeEvents(context.Context, *SessionService, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
+func (a *testConversationAdapter) SubscribeEvents(context.Context, adapterDeps, *types.Session, *types.SessionMeta) (<-chan types.CodexEvent, func(), error) {
 	ch := make(chan types.CodexEvent)
 	close(ch)
 	return ch, func() {}, nil
 }
 
-func (a *testConversationAdapter) Approve(context.Context, *SessionService, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
+func (a *testConversationAdapter) Approve(context.Context, adapterDeps, *types.Session, *types.SessionMeta, int, string, []string, map[string]any) error {
 	return nil
 }
 
-func (a *testConversationAdapter) Interrupt(context.Context, *SessionService, *types.Session, *types.SessionMeta) error {
+func (a *testConversationAdapter) Interrupt(context.Context, adapterDeps, *types.Session, *types.SessionMeta) error {
 	return nil
 }

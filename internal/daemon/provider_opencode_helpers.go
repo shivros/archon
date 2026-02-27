@@ -594,21 +594,40 @@ func openCodeMissingHistoryItems(localItems, remoteItems []map[string]any) []map
 		return nil
 	}
 	seen := map[string]struct{}{}
+	semanticCounts := map[string]int{}
 	for _, item := range localItems {
 		if key := openCodeHistoryItemKey(item); key != "" {
 			seen[key] = struct{}{}
+		}
+		if semantic := openCodeHistoryItemSemanticKey(item); semantic != "" {
+			semanticCounts[semantic]++
 		}
 	}
 	missing := make([]map[string]any, 0, len(remoteItems))
 	for _, item := range remoteItems {
 		key := openCodeHistoryItemKey(item)
+		semantic := openCodeHistoryItemSemanticKey(item)
 		if key == "" {
 			continue
 		}
 		if _, ok := seen[key]; ok {
+			if semantic != "" && semanticCounts[semantic] > 0 {
+				semanticCounts[semantic]--
+			}
+			continue
+		}
+		// Backfill often returns the same message again with provider IDs populated.
+		// If a semantically equivalent local item already exists, consume that match
+		// and skip appending to avoid duplicate chat rows.
+		if semantic != "" && semanticCounts[semantic] > 0 {
+			semanticCounts[semantic]--
+			seen[key] = struct{}{}
 			continue
 		}
 		seen[key] = struct{}{}
+		if semantic != "" {
+			semanticCounts[semantic]++
+		}
 		missing = append(missing, item)
 	}
 	return missing
@@ -654,6 +673,58 @@ func openCodeHistoryItemText(item map[string]any) string {
 		return text
 	}
 	return strings.TrimSpace(openCodeContentText(item["content"]))
+}
+
+func openCodeHistoryItemSemanticKey(item map[string]any) string {
+	if item == nil {
+		return ""
+	}
+	itemType := strings.ToLower(strings.TrimSpace(asString(item["type"])))
+	if itemType == "" {
+		return ""
+	}
+	text := strings.TrimSpace(openCodeHistoryItemText(item))
+	if text == "" {
+		return ""
+	}
+	return "type:" + itemType + "|text:" + text
+}
+
+func openCodeCompactShadowItems(items []map[string]any) []map[string]any {
+	if len(items) == 0 {
+		return nil
+	}
+	withIDCounts := map[string]int{}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if strings.TrimSpace(asString(item["provider_message_id"])) == "" {
+			continue
+		}
+		semantic := openCodeHistoryItemSemanticKey(item)
+		if semantic == "" {
+			continue
+		}
+		withIDCounts[semantic]++
+	}
+	if len(withIDCounts) == 0 {
+		return items
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		semantic := openCodeHistoryItemSemanticKey(item)
+		hasID := strings.TrimSpace(asString(item["provider_message_id"])) != ""
+		if !hasID && semantic != "" && withIDCounts[semantic] > 0 {
+			withIDCounts[semantic]--
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func openCodeContentText(raw any) string {

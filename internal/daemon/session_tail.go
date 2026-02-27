@@ -107,6 +107,7 @@ func (s *SessionService) readSessionItems(id string, lines int) ([]map[string]an
 			items = append(items, payload)
 		}
 	}
+	items = openCodeCompactShadowItems(items)
 	return items, truncated, nil
 }
 
