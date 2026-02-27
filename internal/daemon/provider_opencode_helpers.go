@@ -978,7 +978,7 @@ func openCodePermissionMethod(permission openCodePermission) string {
 	case strings.TrimSpace(permission.Reason) != "":
 		return "item/fileChange/requestApproval"
 	default:
-		return "tool/requestUserInput"
+		return "item/fileChange/requestApproval"
 	}
 }
 
