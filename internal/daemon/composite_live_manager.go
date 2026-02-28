@@ -368,7 +368,7 @@ func (s *codexManagedSession) ensureLive(ctx context.Context) (*codexLiveSession
 		return nil, errors.New("codex session is not initialized")
 	}
 	meta := s.currentMeta()
-	ls, err := s.manager.ensure(ctx, s.session, meta, s.codexHome, false)
+	ls, err := s.manager.ensure(ctx, s.session, meta, s.codexHome, true)
 	if err != nil {
 		return nil, err
 	}

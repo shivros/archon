@@ -504,7 +504,7 @@ func TestCodexLiveStartTurnRecoversMissingThreadForFreshSession(t *testing.T) {
 	live.dropSession(session.ID)
 }
 
-func TestCodexLiveStartTurnFailsWhenThreadIDUnavailable(t *testing.T) {
+func TestCodexLiveStartTurnBootstrapsWhenThreadIDUnavailable(t *testing.T) {
 	wrapper := codexLiveHelperWrapper(t)
 	home := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
@@ -542,11 +542,11 @@ func TestCodexLiveStartTurnFailsWhenThreadIDUnavailable(t *testing.T) {
 	turnID, err := live.StartTurn(ctx, session, meta, t.TempDir(), []map[string]any{
 		{"type": "text", "text": "hello"},
 	}, nil)
-	if err == nil {
-		t.Fatalf("expected StartTurn error when thread id is unavailable; turn=%q", turnID)
+	if err != nil {
+		t.Fatalf("expected StartTurn to bootstrap a fresh thread, got error: %v", err)
 	}
-	if !isCodexMissingThreadError(err) {
-		t.Fatalf("expected missing-thread error, got %v", err)
+	if turnID == "" {
+		t.Fatalf("expected non-empty turn id after bootstrap")
 	}
 	updatedMeta, ok, err := metaStore.Get(context.Background(), session.ID)
 	if err != nil {
@@ -555,8 +555,8 @@ func TestCodexLiveStartTurnFailsWhenThreadIDUnavailable(t *testing.T) {
 	if !ok || updatedMeta == nil {
 		t.Fatalf("expected session meta to remain present")
 	}
-	if strings.TrimSpace(updatedMeta.ThreadID) != "" {
-		t.Fatalf("expected missing thread id to remain unset, got %q", strings.TrimSpace(updatedMeta.ThreadID))
+	if strings.TrimSpace(updatedMeta.ThreadID) == "" {
+		t.Fatalf("expected thread id to be set after bootstrap")
 	}
 	live.dropSession(session.ID)
 }

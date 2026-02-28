@@ -635,10 +635,15 @@ func shouldBootstrapMissingThread(session *types.Session, meta *types.SessionMet
 	if session == nil {
 		return false
 	}
-	if meta == nil || strings.TrimSpace(meta.ThreadID) == "" {
+	// Allow bootstrap when there is a known thread ID that went missing OR
+	// when the session is brand-new and never had a thread at all (e.g.
+	// workflow-created sessions that start without initial text).
+	hasThread := meta != nil && strings.TrimSpace(meta.ThreadID) != ""
+	hasPriorTurn := meta != nil && strings.TrimSpace(meta.LastTurnID) != ""
+	if !hasThread && hasPriorTurn {
 		return false
 	}
-	if strings.TrimSpace(meta.LastTurnID) != "" {
+	if hasPriorTurn {
 		return false
 	}
 	createdAt := session.CreatedAt.UTC()
