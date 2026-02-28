@@ -7,7 +7,7 @@ import (
 	"control/internal/types"
 )
 
-func TestChatTranscriptCoalescesAdjacentAgentItems(t *testing.T) {
+func TestChatTranscriptSplitsAdjacentNonDeltaAgentItemsByDefault(t *testing.T) {
 	tp := NewChatTranscript(0)
 	if tp == nil {
 		t.Fatalf("expected transcript")
@@ -17,14 +17,14 @@ func TestChatTranscriptCoalescesAdjacentAgentItems(t *testing.T) {
 	tp.AppendItem(map[string]any{"type": "agentMessage", "text": "Second answer."})
 
 	blocks := tp.Blocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected one coalesced block, got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected two split blocks, got %d", len(blocks))
 	}
-	if blocks[0].Role != ChatRoleAgent {
-		t.Fatalf("expected agent role, got %s", blocks[0].Role)
+	if blocks[0].Role != ChatRoleAgent || blocks[1].Role != ChatRoleAgent {
+		t.Fatalf("expected agent roles, got %#v", blocks)
 	}
-	if blocks[0].Text != "First answer.Second answer." {
-		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
+	if blocks[0].Text != "First answer." || blocks[1].Text != "Second answer." {
+		t.Fatalf("unexpected split text %#v", blocks)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestChatTranscriptDoesNotCoalesceAcrossReasoning(t *testing.T) {
 	}
 }
 
-func TestChatTranscriptCoalescesAdjacentCodexAgentStreams(t *testing.T) {
+func TestChatTranscriptSplitsCodexAgentStreamsAcrossCompletedItems(t *testing.T) {
 	stream := NewCodexStreamController(0, 32)
 	events := make(chan types.CodexEvent, 8)
 	stream.SetStream(events, nil)
@@ -74,18 +74,50 @@ func TestChatTranscriptCoalescesAdjacentCodexAgentStreams(t *testing.T) {
 	}
 
 	blocks := stream.Blocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected one coalesced stream block, got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected split stream blocks, got %d", len(blocks))
 	}
-	if blocks[0].Role != ChatRoleAgent {
-		t.Fatalf("expected agent role, got %s", blocks[0].Role)
+	if blocks[0].Role != ChatRoleAgent || blocks[1].Role != ChatRoleAgent {
+		t.Fatalf("expected agent roles, got %#v", blocks)
 	}
-	if blocks[0].Text != "First streamed answer.Second streamed answer." {
-		t.Fatalf("unexpected stream text %q", blocks[0].Text)
+	if blocks[0].Text != "First streamed answer." || blocks[1].Text != "Second streamed answer." {
+		t.Fatalf("unexpected stream text %#v", blocks)
 	}
 }
 
-func TestChatTranscriptCoalescesAdjacentItemStreamAssistantMessages(t *testing.T) {
+func TestChatTranscriptCodexStreamCarriesItemIdentityMetadata(t *testing.T) {
+	stream := NewCodexStreamController(0, 32)
+	events := make(chan types.CodexEvent, 8)
+	stream.SetStream(events, nil)
+
+	events <- codexItemStartedEventWithTurn("a1", "turn-1")
+	events <- codexAgentDeltaEvent("First streamed answer.")
+	events <- codexItemCompletedEvent("a1")
+	events <- codexItemStartedEventWithTurn("a2", "turn-2")
+	events <- codexAgentDeltaEvent("Second streamed answer.")
+	events <- codexItemCompletedEvent("a2")
+	close(events)
+
+	for {
+		_, closed, _ := stream.ConsumeTick()
+		if closed {
+			break
+		}
+	}
+
+	blocks := stream.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected two blocks, got %#v", blocks)
+	}
+	if blocks[0].ProviderMessageID != "a1" || blocks[1].ProviderMessageID != "a2" {
+		t.Fatalf("expected provider message ids to track item ids, got %#v", blocks)
+	}
+	if blocks[0].TurnID != "turn-1" || blocks[1].TurnID != "turn-2" {
+		t.Fatalf("expected turn ids to propagate from stream items, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptSplitsAdjacentItemStreamAssistantMessagesByDefault(t *testing.T) {
 	stream := NewItemStreamController(0, 32)
 	items := make(chan map[string]any, 4)
 	stream.SetStream(items, nil)
@@ -110,25 +142,113 @@ func TestChatTranscriptCoalescesAdjacentItemStreamAssistantMessages(t *testing.T
 	}
 
 	blocks := stream.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected split stream blocks, got %d", len(blocks))
+	}
+	if blocks[0].Role != ChatRoleAgent || blocks[1].Role != ChatRoleAgent {
+		t.Fatalf("expected agent roles, got %#v", blocks)
+	}
+	if blocks[0].Text != "First streamed answer." || blocks[1].Text != "Second streamed answer." {
+		t.Fatalf("unexpected stream text %#v", blocks)
+	}
+}
+
+func TestChatTranscriptMergesAssistantItemsWithSameProviderMessageID(t *testing.T) {
+	tp := NewChatTranscript(0)
+
+	tp.AppendItem(map[string]any{
+		"type":                "assistant",
+		"provider_message_id": "msg-1",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Hello"}},
+		},
+	})
+	tp.AppendItem(map[string]any{
+		"type":                "assistant",
+		"provider_message_id": "msg-1",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": " world"}},
+		},
+	})
+
+	blocks := tp.Blocks()
 	if len(blocks) != 1 {
-		t.Fatalf("expected one coalesced stream block, got %d", len(blocks))
+		t.Fatalf("expected one merged block, got %#v", blocks)
 	}
-	if blocks[0].Role != ChatRoleAgent {
-		t.Fatalf("expected agent role, got %s", blocks[0].Role)
+	if blocks[0].Text != "Hello world" {
+		t.Fatalf("unexpected merged text %q", blocks[0].Text)
 	}
-	if blocks[0].Text != "First streamed answer.Second streamed answer." {
-		t.Fatalf("unexpected stream text %q", blocks[0].Text)
+}
+
+func TestChatTranscriptSplitsAssistantItemsWithDifferentProviderMessageIDs(t *testing.T) {
+	tp := NewChatTranscript(0)
+
+	tp.AppendItem(map[string]any{"type": "assistant", "provider_message_id": "msg-1", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "One"}}}})
+	tp.AppendItem(map[string]any{"type": "assistant", "provider_message_id": "msg-2", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "Two"}}}})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected split blocks for different message ids, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptSplitsAssistantItemsAcrossTurnChange(t *testing.T) {
+	tp := NewChatTranscript(0)
+
+	tp.AppendItem(map[string]any{"type": "assistant", "turn_id": "turn-1", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "First"}}}})
+	tp.AppendItem(map[string]any{"type": "assistant", "turn_id": "turn-2", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "Second"}}}})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected split blocks across turn ids, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptCoalescesDeltaLifecycleFragments(t *testing.T) {
+	tp := NewChatTranscript(0)
+	tp.AppendItem(map[string]any{"type": "agentMessageDelta", "delta": "stream "})
+	tp.AppendItem(map[string]any{"type": "agentMessageDelta", "delta": "fragment"})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one streaming block, got %#v", blocks)
+	}
+	if blocks[0].Text != "stream fragment" {
+		t.Fatalf("unexpected delta text %q", blocks[0].Text)
+	}
+}
+
+func TestChatTranscriptSplitsAfterExplicitEndMarkerByDefault(t *testing.T) {
+	tp := NewChatTranscript(0)
+	tp.AppendItem(map[string]any{"type": "agentMessageDelta", "delta": "first"})
+	tp.AppendItem(map[string]any{"type": "agentMessageEnd"})
+	tp.AppendItem(map[string]any{"type": "agentMessage", "text": "Second reply."})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected split blocks after explicit end marker, got %#v", blocks)
+	}
+	if blocks[0].Text != "first" || blocks[1].Text != "Second reply." {
+		t.Fatalf("unexpected blocks %#v", blocks)
 	}
 }
 
 func codexItemStartedEvent(id string) types.CodexEvent {
+	return codexItemStartedEventWithTurn(id, "")
+}
+
+func codexItemStartedEventWithTurn(id, turnID string) types.CodexEvent {
+	item := map[string]any{
+		"type": "agentMessage",
+		"id":   id,
+	}
+	if turnID != "" {
+		item["turn_id"] = turnID
+	}
 	return types.CodexEvent{
 		Method: "item/started",
 		Params: mustRawJSON(map[string]any{
-			"item": map[string]any{
-				"type": "agentMessage",
-				"id":   id,
-			},
+			"item": item,
 		}),
 	}
 }

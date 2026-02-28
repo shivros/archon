@@ -9,32 +9,65 @@ import (
 )
 
 type ChatTranscript struct {
-	blocks            []ChatBlock
-	maxBlocks         int
-	activeAgentIndex  int
-	pendingAgentBlock bool
-	agentSegmentBreak bool
-	presenter         TranscriptItemPresenter
-	nowFn             func() time.Time
+	blocks                  []ChatBlock
+	maxBlocks               int
+	activeAgentIndex        int
+	pendingAgentBlock       bool
+	agentSegmentBreak       bool
+	forceNextAssistantSplit bool
+	mergePolicy             assistantMergePolicy
+	metadataExtractor       assistantItemMetadataExtractor
+	presenter               TranscriptItemPresenter
+	nowFn                   func() time.Time
+}
+
+type ChatTranscriptOption func(*ChatTranscript)
+
+func WithAssistantMergePolicy(policy assistantMergePolicy) ChatTranscriptOption {
+	return func(t *ChatTranscript) {
+		if t == nil || policy == nil {
+			return
+		}
+		t.mergePolicy = policy
+	}
+}
+
+func WithAssistantMetadataExtractor(extractor assistantItemMetadataExtractor) ChatTranscriptOption {
+	return func(t *ChatTranscript) {
+		if t == nil || extractor == nil {
+			return
+		}
+		t.metadataExtractor = extractor
+	}
 }
 
 func NewChatTranscript(maxLines int) *ChatTranscript {
 	return NewChatTranscriptWithDependencies(maxLines, nil, nil)
 }
 
-func NewChatTranscriptWithDependencies(maxLines int, presenter TranscriptItemPresenter, nowFn func() time.Time) *ChatTranscript {
+func NewChatTranscriptWithDependencies(maxLines int, presenter TranscriptItemPresenter, nowFn func() time.Time, opts ...ChatTranscriptOption) *ChatTranscript {
 	if presenter == nil {
 		presenter = NewDefaultTranscriptItemPresenter(DefaultProviderDisplayPolicy())
 	}
 	if nowFn == nil {
 		nowFn = time.Now
 	}
-	return &ChatTranscript{
+	transcript := &ChatTranscript{
 		maxBlocks:        maxLines,
 		activeAgentIndex: -1,
-		presenter:        presenter,
-		nowFn:            nowFn,
+		mergePolicy:      defaultAssistantMergePolicy{},
+		metadataExtractor: defaultAssistantItemMetadataExtractor{
+			identityResolver: defaultProviderMessageIdentityResolver{},
+		},
+		presenter: presenter,
+		nowFn:     nowFn,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(transcript)
+		}
+	}
+	return transcript
 }
 
 func (t *ChatTranscript) Reset() {
@@ -45,6 +78,7 @@ func (t *ChatTranscript) Reset() {
 	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
 	t.agentSegmentBreak = false
+	t.forceNextAssistantSplit = false
 }
 
 func (t *ChatTranscript) SetBlocks(blocks []ChatBlock) {
@@ -60,6 +94,7 @@ func (t *ChatTranscript) SetBlocks(blocks []ChatBlock) {
 	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
 	t.agentSegmentBreak = false
+	t.forceNextAssistantSplit = false
 }
 
 func (t *ChatTranscript) Blocks() []ChatBlock {
@@ -105,24 +140,40 @@ func (t *ChatTranscript) StartAgentBlock() {
 }
 
 func (t *ChatTranscript) StartAgentBlockAt(createdAt time.Time) {
+	t.StartAgentBlockWithMetaAt(createdAt, "", "")
+}
+
+func (t *ChatTranscript) StartAgentBlockWithMetaAt(createdAt time.Time, turnID, providerMessageID string) {
 	if t == nil {
 		return
 	}
-	if len(t.blocks) > 0 && t.blocks[len(t.blocks)-1].Role == ChatRoleAgent {
+	turnID = strings.TrimSpace(turnID)
+	providerMessageID = strings.TrimSpace(providerMessageID)
+	if !t.forceNextAssistantSplit && len(t.blocks) > 0 && t.blocks[len(t.blocks)-1].Role == ChatRoleAgent {
 		t.activeAgentIndex = len(t.blocks) - 1
 		t.pendingAgentBlock = true
 		t.agentSegmentBreak = strings.TrimSpace(t.blocks[t.activeAgentIndex].Text) != ""
+		if strings.TrimSpace(t.blocks[t.activeAgentIndex].TurnID) == "" {
+			t.blocks[t.activeAgentIndex].TurnID = turnID
+		}
+		if strings.TrimSpace(t.blocks[t.activeAgentIndex].ProviderMessageID) == "" {
+			t.blocks[t.activeAgentIndex].ProviderMessageID = providerMessageID
+		}
+		t.forceNextAssistantSplit = false
 		return
 	}
 	t.blocks = append(t.blocks, ChatBlock{
-		Role:      ChatRoleAgent,
-		Text:      "",
-		Status:    ChatStatusNone,
-		CreatedAt: createdAt,
+		Role:              ChatRoleAgent,
+		Text:              "",
+		Status:            ChatStatusNone,
+		CreatedAt:         createdAt,
+		TurnID:            turnID,
+		ProviderMessageID: providerMessageID,
 	})
 	t.activeAgentIndex = len(t.blocks) - 1
 	t.pendingAgentBlock = true
 	t.agentSegmentBreak = false
+	t.forceNextAssistantSplit = false
 	t.trim()
 }
 
@@ -161,6 +212,7 @@ func (t *ChatTranscript) FinishAgentBlock() {
 	t.activeAgentIndex = -1
 	t.pendingAgentBlock = false
 	t.agentSegmentBreak = false
+	t.forceNextAssistantSplit = true
 	t.trim()
 }
 
@@ -278,8 +330,8 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		t.appendPresentedBlock(block)
 		return
 	}
-	turnID := itemTurnID(item)
 	typ, _ := item["type"].(string)
+	metadata := t.assistantMetadataExtractor().Extract(item, createdAt, typ)
 	switch typ {
 	case "log":
 		if text := asString(item["text"]); text != "" {
@@ -293,38 +345,38 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		t.FinishAgentBlock()
 	case "userMessage":
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendUserMessageWithMetaAt(text, createdAt, turnID)
+			t.appendUserMessageWithMetaAt(text, createdAt, metadata.turnID)
 			return
 		}
 		if text := asString(item["text"]); text != "" {
-			t.appendUserMessageWithMetaAt(text, createdAt, turnID)
+			t.appendUserMessageWithMetaAt(text, createdAt, metadata.turnID)
 		}
 	case "agentMessage":
 		if text := asString(item["text"]); text != "" {
-			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
+			t.appendAssistantTextAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 			return
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
+			t.appendAssistantTextAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 		}
 	case "assistant":
 		if msg, ok := item["message"].(map[string]any); ok {
 			if text := extractContentText(msg["content"]); text != "" {
-				t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
+				t.appendAssistantTextAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 				return
 			}
 		}
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
+			t.appendAssistantTextAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 		}
 	case "result":
 		if text := asString(item["result"]); text != "" {
-			t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
+			t.appendAssistantTextAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 			return
 		}
 		if result, ok := item["result"].(map[string]any); ok {
 			if text := asString(result["result"]); text != "" {
-				t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID)
+				t.appendAssistantTextAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 				return
 			}
 		}
@@ -423,41 +475,76 @@ func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
 }
 
 func (t *ChatTranscript) appendBlockAt(role ChatRole, text string, createdAt time.Time) {
-	t.appendBlockWithMetaAt(role, text, createdAt, "")
+	t.appendBlockWithMetaAt(role, text, createdAt, "", "")
 }
 
-func (t *ChatTranscript) appendBlockWithMetaAt(role ChatRole, text string, createdAt time.Time, turnID string) {
+func (t *ChatTranscript) appendAssistantTextAt(text string, createdAt time.Time, turnID, providerMessageID string) {
+	t.appendBlockWithMetaAt(ChatRoleAgent, text, createdAt, turnID, providerMessageID)
+}
+
+func (t *ChatTranscript) appendBlockWithMetaAt(role ChatRole, text string, createdAt time.Time, turnID, providerMessageID string) {
 	if t == nil || strings.TrimSpace(text) == "" {
 		return
 	}
 	turnID = strings.TrimSpace(turnID)
+	providerMessageID = strings.TrimSpace(providerMessageID)
 	if role == ChatRoleAgent && t.hasDuplicateMessageBlock(role, text, turnID, createdAt) {
+		t.forceNextAssistantSplit = false
 		return
 	}
 	if role == ChatRoleAgent && len(t.blocks) > 0 {
 		last := len(t.blocks) - 1
-		if t.blocks[last].Role == ChatRoleAgent {
+		if t.blocks[last].Role == ChatRoleAgent && t.assistantMergePolicy().ShouldMerge(t.blocks[last], text, assistantAppendContext{
+			createdAt:         createdAt,
+			turnID:            turnID,
+			providerMessageID: providerMessageID,
+			forceSplit:        t.forceNextAssistantSplit,
+		}) {
 			t.blocks[last].Text = concatAdjacentAgentText(t.blocks[last].Text, text)
 			if strings.TrimSpace(t.blocks[last].TurnID) == "" {
 				t.blocks[last].TurnID = turnID
 			}
+			if strings.TrimSpace(t.blocks[last].ProviderMessageID) == "" {
+				t.blocks[last].ProviderMessageID = providerMessageID
+			}
 			if t.blocks[last].CreatedAt.IsZero() || (!createdAt.IsZero() && createdAt.Before(t.blocks[last].CreatedAt)) {
 				t.blocks[last].CreatedAt = createdAt
 			}
+			t.forceNextAssistantSplit = false
 			return
 		}
 	}
 	block := ChatBlock{
-		ID:        makeChatBlockID(role, len(t.blocks), text),
-		Role:      role,
-		Text:      text,
-		Status:    ChatStatusNone,
-		CreatedAt: createdAt,
-		Collapsed: role == ChatRoleReasoning,
-		TurnID:    turnID,
+		ID:                makeChatBlockID(role, len(t.blocks), text),
+		Role:              role,
+		Text:              text,
+		Status:            ChatStatusNone,
+		CreatedAt:         createdAt,
+		Collapsed:         role == ChatRoleReasoning,
+		TurnID:            turnID,
+		ProviderMessageID: providerMessageID,
 	}
 	t.blocks = append(t.blocks, block)
+	if role == ChatRoleAgent {
+		t.forceNextAssistantSplit = false
+	}
 	t.trim()
+}
+
+func (t *ChatTranscript) assistantMergePolicy() assistantMergePolicy {
+	if t == nil || t.mergePolicy == nil {
+		return defaultAssistantMergePolicy{}
+	}
+	return t.mergePolicy
+}
+
+func (t *ChatTranscript) assistantMetadataExtractor() assistantItemMetadataExtractor {
+	if t == nil || t.metadataExtractor == nil {
+		return defaultAssistantItemMetadataExtractor{
+			identityResolver: defaultProviderMessageIdentityResolver{},
+		}
+	}
+	return t.metadataExtractor
 }
 
 func (t *ChatTranscript) hasDuplicateMessageBlock(role ChatRole, text, turnID string, createdAt time.Time) bool {

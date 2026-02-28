@@ -99,7 +99,6 @@ func (s *claudeTurnScheduler) Close() {
 	}
 	s.closed = true
 	queue := s.queue
-	s.queue = nil
 	s.mu.Unlock()
 	if queue != nil {
 		close(queue)

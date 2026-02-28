@@ -90,7 +90,7 @@ func TestHistoryMsgCodexUsesCodexStreamSnapshotWhenApplyingHistory(t *testing.T)
 	}
 }
 
-func TestHistoryMsgCoalescesAdjacentAgentBlocksForCodex(t *testing.T) {
+func TestHistoryMsgSplitsAdjacentAgentBlocksForCodex(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.enterCompose("s1")
 	m.pendingSessionKey = "sess:s1"
@@ -113,18 +113,18 @@ func TestHistoryMsgCoalescesAdjacentAgentBlocksForCodex(t *testing.T) {
 	}
 
 	blocks := m.currentBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected one coalesced assistant block, got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected split assistant blocks, got %d", len(blocks))
 	}
-	if blocks[0].Role != ChatRoleAgent {
-		t.Fatalf("expected agent role, got %s", blocks[0].Role)
+	if blocks[0].Role != ChatRoleAgent || blocks[1].Role != ChatRoleAgent {
+		t.Fatalf("expected agent roles, got %#v", blocks)
 	}
-	if blocks[0].Text != "First sentence.Second sentence." {
-		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
+	if blocks[0].Text != "First sentence." || blocks[1].Text != "Second sentence." {
+		t.Fatalf("unexpected split text %#v", blocks)
 	}
 }
 
-func TestHistoryMsgCoalescesAdjacentAgentBlocksForItemsProvider(t *testing.T) {
+func TestHistoryMsgSplitsAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	m := newPhase0ModelWithSession("claude")
 	m.enterCompose("s1")
 	m.pendingSessionKey = "sess:s1"
@@ -147,14 +147,14 @@ func TestHistoryMsgCoalescesAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	}
 
 	blocks := m.currentBlocks()
-	if len(blocks) != 1 {
-		t.Fatalf("expected one coalesced assistant block, got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected split assistant blocks, got %d", len(blocks))
 	}
-	if blocks[0].Role != ChatRoleAgent {
-		t.Fatalf("expected agent role, got %s", blocks[0].Role)
+	if blocks[0].Role != ChatRoleAgent || blocks[1].Role != ChatRoleAgent {
+		t.Fatalf("expected agent roles, got %#v", blocks)
 	}
-	if blocks[0].Text != "First sentence.Second sentence." {
-		t.Fatalf("unexpected coalesced text %q", blocks[0].Text)
+	if blocks[0].Text != "First sentence." || blocks[1].Text != "Second sentence." {
+		t.Fatalf("unexpected split text %#v", blocks)
 	}
 }
 
@@ -465,5 +465,48 @@ func TestHistoryMsgClaudeDoesNotMergeApprovals(t *testing.T) {
 	}
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected assistant role, got %#v", blocks[0])
+	}
+}
+
+func TestHistoryMsgKiloCodeSplitsBackfillAssistantItemsByProviderMessageID(t *testing.T) {
+	m := newPhase0ModelWithSession("kilocode")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	msg := historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{
+				"type":                "assistant",
+				"provider_message_id": "msg-1",
+				"message": map[string]any{
+					"content": []any{map[string]any{"type": "text", "text": "Backfill one."}},
+				},
+			},
+			{
+				"type":                "assistant",
+				"provider_message_id": "msg-2",
+				"message": map[string]any{
+					"content": []any{map[string]any{"type": "text", "text": "Backfill two."}},
+				},
+			},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected split assistant blocks for backfill, got %#v", blocks)
+	}
+	if blocks[0].Text != "Backfill one." || blocks[1].Text != "Backfill two." {
+		t.Fatalf("unexpected backfill block order %#v", blocks)
 	}
 }

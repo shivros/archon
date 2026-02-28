@@ -191,7 +191,7 @@ func (c *CodexStreamController) applyEvent(event types.CodexEvent) bool {
 			}
 			c.agentDeltaSeen = false
 			if c.transcript != nil {
-				c.transcript.StartAgentBlockAt(eventAt)
+				c.transcript.StartAgentBlockWithMetaAt(eventAt, itemTurnID(item), strings.TrimSpace(asString(item["id"])))
 			}
 			return true
 		}

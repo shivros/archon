@@ -58,15 +58,16 @@ type ChatBlockMetaPresentation struct {
 }
 
 type ChatBlock struct {
-	ID        string
-	Role      ChatRole
-	Text      string
-	Status    ChatStatus
-	CreatedAt time.Time
-	Collapsed bool
-	RequestID int
-	SessionID string
-	TurnID    string
+	ID                string
+	Role              ChatRole
+	Text              string
+	Status            ChatStatus
+	CreatedAt         time.Time
+	Collapsed         bool
+	RequestID         int
+	SessionID         string
+	TurnID            string
+	ProviderMessageID string
 }
 
 type renderedBlockSpan struct {
