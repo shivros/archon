@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ type stubRunMetricsStore struct {
 }
 
 type stubRunSnapshotStore struct {
+	mu            sync.RWMutex
 	loadSnapshots []RunStatusSnapshot
 	loadErr       error
 	savedByRunID  map[string]RunStatusSnapshot
@@ -253,6 +255,8 @@ func (s *stubRunSnapshotStore) ListWorkflowRuns(context.Context) ([]RunStatusSna
 	if s == nil {
 		return nil, nil
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.loadErr != nil {
 		return nil, s.loadErr
 	}
@@ -274,6 +278,8 @@ func (s *stubRunSnapshotStore) UpsertWorkflowRun(_ context.Context, snapshot Run
 	if s == nil || snapshot.Run == nil || strings.TrimSpace(snapshot.Run.ID) == "" {
 		return nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.savedByRunID == nil {
 		s.savedByRunID = map[string]RunStatusSnapshot{}
 	}
@@ -281,6 +287,28 @@ func (s *stubRunSnapshotStore) UpsertWorkflowRun(_ context.Context, snapshot Run
 	snapshot.Run.ID = runID
 	s.savedByRunID[runID] = cloneRunSnapshotForTest(snapshot)
 	return nil
+}
+
+func (s *stubRunSnapshotStore) SavedCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.savedByRunID)
+}
+
+func (s *stubRunSnapshotStore) SavedByRunID(runID string) (RunStatusSnapshot, bool) {
+	if s == nil {
+		return RunStatusSnapshot{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot, ok := s.savedByRunID[strings.TrimSpace(runID)]
+	if !ok {
+		return RunStatusSnapshot{}, false
+	}
+	return cloneRunSnapshotForTest(snapshot), true
 }
 
 func cloneRunSnapshotForTest(in RunStatusSnapshot) RunStatusSnapshot {
@@ -3516,10 +3544,10 @@ func TestRunLifecycleDismissMissingRunCreatesTombstone(t *testing.T) {
 		t.Fatalf("expected resolver context to be applied, got %#v", dismissed)
 	}
 	service.WaitForPendingPersists()
-	if len(snapshotStore.savedByRunID) != 1 {
-		t.Fatalf("expected dismissed tombstone to be persisted, got %d", len(snapshotStore.savedByRunID))
+	if snapshotStore.SavedCount() != 1 {
+		t.Fatalf("expected dismissed tombstone to be persisted, got %d", snapshotStore.SavedCount())
 	}
-	saved := snapshotStore.savedByRunID["gwf-missing"]
+	saved, _ := snapshotStore.SavedByRunID("gwf-missing")
 	if saved.Run == nil || saved.Run.DismissedAt == nil {
 		t.Fatalf("expected persisted tombstone with dismissed_at, got %#v", saved.Run)
 	}
@@ -3745,7 +3773,8 @@ func TestRunLifecyclePersistsSnapshotsAcrossServiceRestart(t *testing.T) {
 	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if len(snapshotStore.savedByRunID) == 0 {
+	service.WaitForPendingPersists()
+	if snapshotStore.SavedCount() == 0 {
 		t.Fatalf("expected run snapshots to be persisted")
 	}
 
@@ -3810,7 +3839,7 @@ func TestRunLifecycleRestoreRunningRunMarksInterrupted(t *testing.T) {
 	if len(timeline) == 0 || timeline[len(timeline)-1].Type != "run_interrupted" {
 		t.Fatalf("expected run_interrupted timeline event, got %#v", timeline)
 	}
-	saved, ok := snapshotStore.savedByRunID[runID]
+	saved, ok := snapshotStore.SavedByRunID(runID)
 	if !ok || saved.Run == nil {
 		t.Fatalf("expected interrupted run snapshot to be persisted")
 	}

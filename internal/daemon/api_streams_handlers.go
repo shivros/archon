@@ -4,10 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"control/internal/logging"
 	"control/internal/types"
 )
+
+const sseHeartbeatInterval = 15 * time.Second
+
+func writeSSEHeartbeat(w http.ResponseWriter, flusher http.Flusher) bool {
+	if _, err := w.Write([]byte(":\n\n")); err != nil {
+		return false
+	}
+	flusher.Flush()
+	return true
+}
 
 type debugStreamService interface {
 	ReadDebug(ctx context.Context, id string, lines int) ([]types.DebugEvent, bool, error)
@@ -36,10 +47,16 @@ func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	ctx := r.Context()
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			if !writeSSEHeartbeat(w, flusher) {
+				return
+			}
 		case event, ok := <-ch:
 			if !ok {
 				return
@@ -89,10 +106,10 @@ func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	_, _ = w.Write([]byte(":\n\n"))
-	flusher.Flush()
 
 	ctx := r.Context()
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 	var count int
 	firstMethod := ""
 	reason := "unknown"
@@ -107,11 +124,20 @@ func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
 			)
 		}
 	}()
+	if !writeSSEHeartbeat(w, flusher) {
+		reason = "initial_heartbeat_write_error"
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			reason = "ctx_done"
 			return
+		case <-heartbeat.C:
+			if !writeSSEHeartbeat(w, flusher) {
+				reason = "heartbeat_write_error"
+				return
+			}
 		case event, ok := <-ch:
 			if !ok {
 				reason = "channel_closed"
@@ -194,6 +220,8 @@ func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
 	defer cancel()
 
 	ctx := r.Context()
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 	var count int
 	firstType := ""
 	reason := "unknown"
@@ -213,6 +241,11 @@ func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
 		case <-ctx.Done():
 			reason = "ctx_done"
 			return
+		case <-heartbeat.C:
+			if !writeSSEHeartbeat(w, flusher) {
+				reason = "heartbeat_write_error"
+				return
+			}
 		case item, ok := <-ch:
 			if !ok {
 				reason = "channel_closed"
@@ -280,10 +313,16 @@ func (a *API) streamDebugWithService(w http.ResponseWriter, r *http.Request, id 
 	}
 	defer cancel()
 	ctx := r.Context()
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			if !writeSSEHeartbeat(w, flusher) {
+				return
+			}
 		case event, ok := <-ch:
 			if !ok {
 				return

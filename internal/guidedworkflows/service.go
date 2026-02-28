@@ -103,20 +103,22 @@ type InMemoryRunService struct {
 	dispatchClassifier     DispatchErrorClassifier
 	dispatchRetryPolicy    DispatchRetryPolicy
 	dispatchRetryScheduler DispatchRetryScheduler
+	dispatchQueue          DispatchQueue
 
-	mu              sync.RWMutex
-	runs            map[string]*WorkflowRun
-	timelines       map[string][]RunTimelineEvent
-	turnSeen        map[string]struct{}
-	actions         map[string]struct{}
-	pendingPersists sync.WaitGroup
-	runLocks        RunLockManager
+	mu        sync.RWMutex
+	runs      map[string]*WorkflowRun
+	timelines map[string][]RunTimelineEvent
+	turnSeen  map[string]struct{}
+	actions   map[string]struct{}
+	runLocks  RunLockManager
 
 	maxActiveRuns    int
 	telemetryEnabled bool
 	metrics          runServiceMetrics
 	metricsStore     RunMetricsStore
 	runStore         RunSnapshotStore
+	persistence      RunPersistenceService
+	state            RunStateStore
 	contextResolver  MissingRunContextResolver
 	tombstoneFactory MissingRunTombstoneFactory
 }
@@ -237,6 +239,15 @@ func WithDispatchRetryScheduler(scheduler DispatchRetryScheduler) RunServiceOpti
 	}
 }
 
+func WithDispatchQueue(queue DispatchQueue) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || queue == nil {
+			return
+		}
+		s.dispatchQueue = queue
+	}
+}
+
 func WithRunExecutionControls(controls ExecutionControls) RunServiceOption {
 	return func(s *InMemoryRunService) {
 		if s == nil {
@@ -304,6 +315,24 @@ func WithRunSnapshotStore(store RunSnapshotStore) RunServiceOption {
 	}
 }
 
+func WithRunPersistenceService(persistence RunPersistenceService) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || persistence == nil {
+			return
+		}
+		s.persistence = persistence
+	}
+}
+
+func WithRunStateStore(state RunStateStore) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || state == nil {
+			return
+		}
+		s.state = state
+	}
+}
+
 func WithMissingRunContextResolver(resolver MissingRunContextResolver) RunServiceOption {
 	return func(s *InMemoryRunService) {
 		if s == nil || resolver == nil {
@@ -343,6 +372,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 			interventionCauses: map[string]int{},
 		},
 	}
+	service.state = NewSharedLockedRunStateStore(&service.mu, service.runs, service.timelines)
 	for _, opt := range opts {
 		if opt != nil {
 			opt(service)
@@ -357,11 +387,17 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	if service.dispatchRetryPolicy == nil {
 		service.dispatchRetryPolicy = defaultDispatchRetryPolicy()
 	}
+	if service.dispatchQueue == nil {
+		service.dispatchQueue = NewChannelDispatchQueue(128, 1, service.processDispatchQueueRequest)
+	}
 	if service.dispatchRetryScheduler == nil {
-		service.dispatchRetryScheduler = NewDispatchRetryScheduler(service.dispatchRetryPolicy, service.retryDeferredDispatch)
+		service.dispatchRetryScheduler = NewDispatchRetryScheduler(service.dispatchRetryPolicy, service.enqueueDeferredDispatchAttempt)
 	}
 	if service.dispatchProviderPolicy == nil {
 		service.dispatchProviderPolicy = registryDispatchProviderPolicy{}
+	}
+	if service.persistence == nil {
+		service.persistence = newRunPersistenceService(service.runStore)
 	}
 	service.restoreMetrics(context.Background())
 	service.restoreRuns(context.Background())
@@ -375,9 +411,18 @@ func (s *InMemoryRunService) Close() {
 	s.mu.Lock()
 	scheduler := s.dispatchRetryScheduler
 	s.dispatchRetryScheduler = nil
+	queue := s.dispatchQueue
+	s.dispatchQueue = nil
+	persistence := s.persistence
 	s.mu.Unlock()
 	if scheduler != nil {
 		scheduler.Close()
+	}
+	if queue != nil {
+		queue.Close()
+	}
+	if persistence != nil {
+		persistence.Flush()
 	}
 }
 
@@ -452,7 +497,7 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		run.Policy.ConditionalGates.PreCommitApproval = true
 		run.Policy = NormalizeCheckpointPolicy(run.Policy)
 	}
-	s.runs[runID] = run
+	s.setRunLocked(runID, run)
 	appendRunAudit(run, RunAuditEntry{
 		At:      now,
 		Scope:   "run",
@@ -460,7 +505,7 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		Outcome: "created",
 		Detail:  "template=" + template.ID,
 	})
-	s.timelines[runID] = append(s.timelines[runID], RunTimelineEvent{
+	s.appendTimelineEventLocked(runID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_created",
 		RunID:   runID,
@@ -579,6 +624,9 @@ func (s *InMemoryRunService) StartRun(ctx context.Context, runID string) (*Workf
 }
 
 func (s *InMemoryRunService) PauseRun(ctx context.Context, runID string) (*WorkflowRun, error) {
+	releaseRunLock := s.runLocks.Lock(strings.TrimSpace(runID))
+	defer releaseRunLock()
+
 	s.mu.Lock()
 	run, err := s.mustRunLocked(runID)
 	if err != nil {
@@ -598,6 +646,9 @@ func (s *InMemoryRunService) PauseRun(ctx context.Context, runID string) (*Workf
 }
 
 func (s *InMemoryRunService) StopRun(ctx context.Context, runID string) (*WorkflowRun, error) {
+	releaseRunLock := s.runLocks.Lock(strings.TrimSpace(runID))
+	defer releaseRunLock()
+
 	s.mu.Lock()
 	run, err := s.mustRunLocked(runID)
 	if err != nil {
@@ -633,19 +684,25 @@ func (s *InMemoryRunService) ResumeRun(ctx context.Context, runID string) (*Work
 }
 
 func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, req ResumeFailedRunRequest) (*WorkflowRun, error) {
-	s.mu.Lock()
 	defer s.persistMetrics(ctx)
-	defer s.mu.Unlock()
-	run, err := s.mustRunLocked(runID)
+
+	normalizedRunID := strings.TrimSpace(runID)
+	releaseRunLock := s.runLocks.Lock(normalizedRunID)
+	defer releaseRunLock()
+
+	s.mu.Lock()
+	run, err := s.mustRunLocked(normalizedRunID)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
-	defer s.persistRunSnapshotLocked(ctx, run.ID)
 	if run.Status != WorkflowRunStatusFailed {
+		s.mu.Unlock()
 		return nil, invalidTransitionError("resume_failed", run.Status)
 	}
 	phaseIndex, stepIndex, ok := findResumeTargetStep(run)
 	if !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: no resumable workflow step found", ErrInvalidTransition)
 	}
 	now := s.engine.now()
@@ -679,7 +736,7 @@ func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, 
 		Outcome: "running",
 		Detail:  message,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_resumed_after_failure",
 		RunID:   run.ID,
@@ -687,19 +744,43 @@ func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, 
 		StepID:  step.ID,
 		Message: message,
 	})
-	dispatched, err := s.dispatchPromptForStepLocked(ctx, run, phaseIndex, stepIndex, message)
-	if err != nil {
-		return nil, err
+	dispatchCtx := stepDispatchContext{
+		runID:          strings.TrimSpace(run.ID),
+		phaseIndex:     phaseIndex,
+		stepIndex:      stepIndex,
+		dispatchPrompt: message,
+		req:            s.buildStepDispatchRequest(run, phaseIndex, stepIndex, message),
+		beforeStatus:   run.Status,
+	}
+	s.mu.Unlock()
+
+	result, dispatchErr := s.dispatchStepPrompt(ctx, dispatchCtx.req)
+
+	s.mu.Lock()
+	run, _ = s.getRunByIDLocked(dispatchCtx.runID)
+	if run == nil {
+		s.mu.Unlock()
+		return nil, ErrRunNotFound
+	}
+	dispatched, applyErr := s.applyStepDispatchResult(ctx, dispatchCtx, result, dispatchErr)
+	clone := cloneWorkflowRun(run)
+	snapshot := s.captureRunSnapshot(run.ID)
+	s.mu.Unlock()
+
+	s.persistRunSnapshotAsync(ctx, snapshot)
+	if applyErr != nil {
+		return nil, applyErr
 	}
 	if !dispatched {
-		cause := fmt.Errorf("%w: resume dispatch was not attempted", ErrStepDispatch)
-		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
-		return nil, cause
+		return nil, fmt.Errorf("%w: resume dispatch was not attempted", ErrStepDispatch)
 	}
-	return cloneWorkflowRun(run), nil
+	return clone, nil
 }
 
 func (s *InMemoryRunService) AdvanceRun(ctx context.Context, runID string) (*WorkflowRun, error) {
+	releaseRunLock := s.runLocks.Lock(strings.TrimSpace(runID))
+	defer releaseRunLock()
+
 	s.mu.Lock()
 	defer s.persistMetrics(ctx)
 	defer s.mu.Unlock()
@@ -718,6 +799,9 @@ func (s *InMemoryRunService) AdvanceRun(ctx context.Context, runID string) (*Wor
 }
 
 func (s *InMemoryRunService) HandleDecision(ctx context.Context, runID string, req DecisionActionRequest) (*WorkflowRun, error) {
+	releaseRunLock := s.runLocks.Lock(strings.TrimSpace(runID))
+	defer releaseRunLock()
+
 	s.mu.Lock()
 	defer s.persistMetrics(ctx)
 	defer s.mu.Unlock()
@@ -797,7 +881,7 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 	s.recordTurnEventReceivedLocked()
 
 	matchingRunIDs := make([]string, 0)
-	for _, run := range s.runs {
+	for _, run := range s.listRunsIncludingDismissedLocked() {
 		if run == nil || run.Status != WorkflowRunStatusRunning {
 			continue
 		}
@@ -827,7 +911,7 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID string, signal TurnSignal) (*WorkflowRun, error) {
 	s.mu.Lock()
 
-	run, ok := s.runs[runID]
+	run, ok := s.getRunByIDLocked(runID)
 	if !ok || run == nil || run.Status != WorkflowRunStatusRunning {
 		s.mu.Unlock()
 		return nil, nil
@@ -873,7 +957,7 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 
 	s.mu.Unlock()
 
-	if err := s.advanceOnceWithDispatch(ctx, run.ID); err != nil {
+	if err := s.advanceViaQueue(ctx, run.ID, "turn_completed"); err != nil {
 		s.mu.Lock()
 		snapshot := s.captureRunSnapshot(run.ID)
 		s.mu.Unlock()
@@ -904,17 +988,25 @@ func (s *InMemoryRunService) listRuns(includeDismissed bool) ([]*WorkflowRun, er
 	if s == nil {
 		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]*WorkflowRun, 0, len(s.runs))
-	for _, run := range s.runs {
-		if run == nil {
-			continue
+	var out []*WorkflowRun
+	if s.state != nil {
+		s.mu.RLock()
+		out = s.state.ListCloned(includeDismissed)
+		s.mu.RUnlock()
+	} else {
+		s.mu.RLock()
+		runs := s.listRunsIncludingDismissedLocked()
+		out = make([]*WorkflowRun, 0, len(runs))
+		for _, run := range runs {
+			if run == nil {
+				continue
+			}
+			if !includeDismissed && run.DismissedAt != nil {
+				continue
+			}
+			out = append(out, cloneWorkflowRun(run))
 		}
-		if !includeDismissed && run.DismissedAt != nil {
-			continue
-		}
-		out = append(out, cloneWorkflowRun(run))
+		s.mu.RUnlock()
 	}
 	sort.Slice(out, func(i, j int) bool {
 		left := runListSortTime(out[i])
@@ -959,7 +1051,7 @@ func (s *InMemoryRunService) RenameRun(ctx context.Context, runID, name string) 
 		Outcome: "renamed",
 		Detail:  "name=" + normalizedName,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_renamed",
 		RunID:   run.ID,
@@ -1033,7 +1125,7 @@ func (s *InMemoryRunService) prepareRunForDismissalLocked(
 		return nil, err
 	}
 	tombstone := s.buildMissingRunTombstone(runID, resolvedContext, contextResolved, s.engine.now())
-	s.runs[runID] = tombstone
+	s.setRunLocked(runID, tombstone)
 	s.ensureRunTimelineLocked(runID)
 	return tombstone, nil
 }
@@ -1091,10 +1183,10 @@ func (s *InMemoryRunService) ensureRunTimelineLocked(runID string) {
 	if s == nil {
 		return
 	}
-	if _, exists := s.timelines[runID]; exists {
+	if timeline := s.getTimelineLocked(runID); timeline != nil {
 		return
 	}
-	s.timelines[runID] = []RunTimelineEvent{}
+	s.setTimelineLocked(runID, []RunTimelineEvent{})
 }
 
 func (s *InMemoryRunService) applyDismissedStateLocked(run *WorkflowRun, now time.Time) {
@@ -1109,7 +1201,7 @@ func (s *InMemoryRunService) applyDismissedStateLocked(run *WorkflowRun, now tim
 		Outcome: "dismissed",
 		Detail:  "run dismissed",
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_dismissed",
 		RunID:   run.ID,
@@ -1142,7 +1234,7 @@ func (s *InMemoryRunService) UndismissRun(ctx context.Context, runID string) (*W
 		Outcome: "visible",
 		Detail:  "run restored",
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_undismissed",
 		RunID:   run.ID,
@@ -1155,6 +1247,15 @@ func (s *InMemoryRunService) UndismissRun(ctx context.Context, runID string) (*W
 }
 
 func (s *InMemoryRunService) GetRun(_ context.Context, runID string) (*WorkflowRun, error) {
+	if s.state != nil {
+		s.mu.RLock()
+		run, ok := s.state.GetCloned(strings.TrimSpace(runID))
+		s.mu.RUnlock()
+		if !ok || run == nil {
+			return nil, ErrRunNotFound
+		}
+		return run, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	run, err := s.mustRunLocked(runID)
@@ -1199,13 +1300,24 @@ func newWorkflowRunID() string {
 }
 
 func (s *InMemoryRunService) GetRunTimeline(_ context.Context, runID string) ([]RunTimelineEvent, error) {
+	if s.state != nil {
+		s.mu.RLock()
+		run, ok := s.state.GetCloned(strings.TrimSpace(runID))
+		if !ok || run == nil {
+			s.mu.RUnlock()
+			return nil, ErrRunNotFound
+		}
+		timeline := s.state.GetTimelineCloned(run.ID)
+		s.mu.RUnlock()
+		return timeline, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	run, err := s.mustRunLocked(runID)
 	if err != nil {
 		return nil, err
 	}
-	events := s.timelines[run.ID]
+	events := s.getTimelineLocked(run.ID)
 	out := make([]RunTimelineEvent, len(events))
 	copy(out, events)
 	return out, nil
@@ -1296,7 +1408,7 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 			Outcome: "running",
 			Detail:  "start requested",
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:    now,
 			Type:  "run_started",
 			RunID: run.ID,
@@ -1315,7 +1427,7 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 			Outcome: "running",
 			Detail:  "resume requested",
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:    now,
 			Type:  "run_resumed",
 			RunID: run.ID,
@@ -1329,7 +1441,7 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 	s.mu.Unlock()
 	s.persistRunSnapshotAsync(ctx, snapshot)
 
-	if err := s.advanceOnceWithDispatch(ctx, runID); err != nil {
+	if err := s.advanceViaQueue(ctx, runID, "transition_"+action); err != nil {
 		return nil, err
 	}
 
@@ -1355,7 +1467,7 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 		s.mu.Unlock()
 		result, err := s.dispatchStepPrompt(ctx, dispatchCtx.req)
 		s.mu.Lock()
-		run, _ = s.runs[dispatchCtx.runID]
+		run, _ = s.getRunByIDLocked(dispatchCtx.runID)
 		if run == nil {
 			return ErrRunNotFound
 		}
@@ -1368,15 +1480,7 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 			return nil
 		}
 	}
-	timeline := s.timelines[run.ID]
-	if err := s.engine.Advance(ctx, run, &timeline); err != nil {
-		s.timelines[run.ID] = timeline
-		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
-		return err
-	}
-	s.timelines[run.ID] = timeline
-	s.recordTerminalTransitionLocked(beforeStatus, run.Status)
-	return nil
+	return s.advanceWithEngineUnlocked(ctx, run, beforeStatus)
 }
 
 // advanceOnceWithDispatch performs an advance that may include dispatch I/O.
@@ -1405,7 +1509,7 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 		s.mu.Unlock()
 		result, err := s.dispatchStepPrompt(ctx, dispatchCtx.req)
 		s.mu.Lock()
-		run, _ = s.runs[dispatchCtx.runID]
+		run, _ = s.getRunByIDLocked(dispatchCtx.runID)
 		if run == nil {
 			s.mu.Unlock()
 			return ErrRunNotFound
@@ -1421,15 +1525,10 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 		}
 		s.mu.Lock()
 	}
-	timeline := s.timelines[run.ID]
-	if err := s.engine.Advance(ctx, run, &timeline); err != nil {
-		s.timelines[run.ID] = timeline
-		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+	if err := s.advanceWithEngineUnlocked(ctx, run, beforeStatus); err != nil {
 		s.mu.Unlock()
 		return err
 	}
-	s.timelines[run.ID] = timeline
-	s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 	s.mu.Unlock()
 	return nil
 }
@@ -1531,7 +1630,7 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 			Outcome: "running",
 			Detail:  phase.Name,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "phase_started",
 			RunID:   run.ID,
@@ -1556,7 +1655,7 @@ func (s *InMemoryRunService) dispatchPromptForStepLocked(
 		Outcome: "awaiting_turn",
 		Detail:  "session=" + strings.TrimSpace(result.SessionID),
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_dispatched",
 		RunID:   run.ID,
@@ -1616,7 +1715,7 @@ func (s *InMemoryRunService) failRunForStepDispatchLocked(run *WorkflowRun, phas
 		Outcome: "failed",
 		Detail:  run.LastError,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_failed",
 		RunID:   run.ID,
@@ -1624,7 +1723,7 @@ func (s *InMemoryRunService) failRunForStepDispatchLocked(run *WorkflowRun, phas
 		StepID:  step.ID,
 		Message: run.LastError,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_failed",
 		RunID:   run.ID,
@@ -1658,7 +1757,7 @@ func (s *InMemoryRunService) deferRunForStepDispatchLocked(run *WorkflowRun, pha
 			Outcome: "running",
 			Detail:  phase.Name,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "phase_started",
 			RunID:   run.ID,
@@ -1682,7 +1781,7 @@ func (s *InMemoryRunService) deferRunForStepDispatchLocked(run *WorkflowRun, pha
 		Outcome: "waiting_dispatch",
 		Detail:  strings.TrimSpace(cause.Error()),
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_dispatch_deferred",
 		RunID:   run.ID,
@@ -1703,21 +1802,88 @@ func (s *InMemoryRunService) retryDeferredDispatch(runID string) bool {
 	if runID == "" {
 		return true
 	}
+
+	if err := s.advanceOnceWithDispatch(context.Background(), runID); err != nil {
+		s.mu.Lock()
+		snapshot := s.captureRunSnapshot(runID)
+		s.mu.Unlock()
+		s.persistRunSnapshotAsync(context.Background(), snapshot)
+		return true
+	}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	run, ok := s.runs[runID]
+	run, ok := s.getRunByIDLocked(runID)
 	if !ok || run == nil {
+		s.mu.Unlock()
 		return true
 	}
-	if run.Status != WorkflowRunStatusRunning || !runHasDeferredDispatch(run) {
+	completed := run.Status != WorkflowRunStatusRunning || !runHasDeferredDispatch(run)
+	snapshot := s.captureRunSnapshot(run.ID)
+	s.mu.Unlock()
+	s.persistRunSnapshotAsync(context.Background(), snapshot)
+	return completed
+}
+
+func (s *InMemoryRunService) enqueueDeferredDispatchAttempt(runID string) bool {
+	if s == nil {
 		return true
 	}
-	if err := s.advanceOnceLocked(context.Background(), run); err != nil {
-		s.persistRunSnapshotLocked(context.Background(), run.ID)
+	queue := s.dispatchQueue
+	if queue == nil {
+		return s.retryDeferredDispatch(runID)
+	}
+	result, ok := queue.Enqueue(context.Background(), DispatchRequest{
+		RunID:  strings.TrimSpace(runID),
+		Reason: "retry_deferred_dispatch",
+	})
+	if !ok {
+		// Queue unavailable/closed: stop retry loop.
 		return true
 	}
-	s.persistRunSnapshotLocked(context.Background(), run.ID)
-	return run.Status != WorkflowRunStatusRunning || !runHasDeferredDispatch(run)
+	return result.Done
+}
+
+func (s *InMemoryRunService) processDispatchQueueRequest(req DispatchRequest) DispatchQueueResult {
+	if s == nil {
+		return DispatchQueueResult{Done: true}
+	}
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" {
+		return DispatchQueueResult{Done: true}
+	}
+	switch strings.TrimSpace(req.Reason) {
+	case "retry_deferred_dispatch":
+		return DispatchQueueResult{Done: s.retryDeferredDispatch(runID)}
+	case "transition_start", "transition_resume", "turn_completed":
+		return DispatchQueueResult{Done: true, Err: s.advanceOnceWithDispatch(context.Background(), runID)}
+	default:
+		return DispatchQueueResult{Done: true, Err: s.advanceOnceWithDispatch(context.Background(), runID)}
+	}
+}
+
+func (s *InMemoryRunService) advanceViaQueue(ctx context.Context, runID, reason string) error {
+	if s == nil {
+		return nil
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return fmt.Errorf("%w: run id is required", ErrInvalidTransition)
+	}
+	queue := s.dispatchQueue
+	if queue == nil {
+		return s.advanceOnceWithDispatch(ctx, runID)
+	}
+	result, ok := queue.Enqueue(ctx, DispatchRequest{
+		RunID:  runID,
+		Reason: strings.TrimSpace(reason),
+	})
+	if !ok {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: dispatch queue unavailable", ErrStepDispatch)
+	}
+	return result.Err
 }
 
 func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context, run *WorkflowRun, signal TurnSignal) (bool, error) {
@@ -1752,7 +1918,7 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 			Outcome: "awaiting_turn",
 			Detail:  "missing turn_id while step awaits " + expectedTurnID,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "step_turn_signal_ignored",
 			RunID:   run.ID,
@@ -1773,7 +1939,7 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 			Outcome: "awaiting_turn",
 			Detail:  "turn_id mismatch expected=" + expectedTurnID + " got=" + signalTurnID,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "step_turn_signal_ignored",
 			RunID:   run.ID,
@@ -1818,7 +1984,7 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 			Outcome: "success",
 			Detail:  phase.Name,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "phase_completed",
 			RunID:   run.ID,
@@ -1841,7 +2007,7 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 		Outcome: "success",
 		Detail:  "all workflow steps completed",
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:    now,
 		Type:  "run_completed",
 		RunID: run.ID,
@@ -1903,7 +2069,7 @@ func (s *InMemoryRunService) applyStepOutcomeFailure(
 		Outcome: "failed",
 		Detail:  failure,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_failed",
 		RunID:   run.ID,
@@ -1911,7 +2077,7 @@ func (s *InMemoryRunService) applyStepOutcomeFailure(
 		StepID:  step.ID,
 		Message: failure,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_failed",
 		RunID:   run.ID,
@@ -1944,7 +2110,7 @@ func (s *InMemoryRunService) applyStepOutcomeUndetermined(
 		Outcome: "awaiting_turn",
 		Detail:  detail,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_turn_outcome_deferred",
 		RunID:   run.ID,
@@ -1990,7 +2156,7 @@ func (s *InMemoryRunService) applyStepOutcomeSuccess(
 		Outcome: outcome,
 		Detail:  firstNonEmpty(evaluation.SuccessDetail, "completed by turn signal"),
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_completed",
 		RunID:   run.ID,
@@ -2014,7 +2180,7 @@ func (s *InMemoryRunService) resumeAndAdvanceWithoutPolicyLocked(ctx context.Con
 		Outcome: "running",
 		Detail:  strings.TrimSpace(note),
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_resumed_by_decision",
 		RunID:   run.ID,
@@ -2022,16 +2188,36 @@ func (s *InMemoryRunService) resumeAndAdvanceWithoutPolicyLocked(ctx context.Con
 	})
 	s.appendDecisionTimelineLocked(run, "decision_approved_continue", "", note)
 
-	timeline := s.timelines[run.ID]
 	beforeStatus := run.Status
-	if err := s.engine.Advance(ctx, run, &timeline); err != nil {
-		s.timelines[run.ID] = timeline
-		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
-		return err
+	return s.advanceWithEngineUnlocked(ctx, run, beforeStatus)
+}
+
+// advanceWithEngineUnlocked advances a run by executing engine.Advance without holding the service mutex.
+// Callers must hold s.mu on entry and exit.
+func (s *InMemoryRunService) advanceWithEngineUnlocked(ctx context.Context, run *WorkflowRun, beforeStatus WorkflowRunStatus) error {
+	if s == nil || run == nil {
+		return fmt.Errorf("%w: run is required", ErrInvalidTransition)
 	}
-	s.timelines[run.ID] = timeline
-	s.recordTerminalTransitionLocked(beforeStatus, run.Status)
-	return nil
+	runID := strings.TrimSpace(run.ID)
+	if runID == "" {
+		return fmt.Errorf("%w: run id is required", ErrInvalidTransition)
+	}
+	workingRun := cloneWorkflowRun(run)
+	if workingRun == nil {
+		return fmt.Errorf("%w: run clone failed", ErrInvalidTransition)
+	}
+	workingTimeline := append([]RunTimelineEvent(nil), s.getTimelineLocked(runID)...)
+	s.mu.Unlock()
+	advanceErr := s.engine.Advance(ctx, workingRun, &workingTimeline)
+	s.mu.Lock()
+	current, ok := s.getRunByIDLocked(runID)
+	if !ok || current == nil {
+		return ErrRunNotFound
+	}
+	*current = *workingRun
+	s.setTimelineLocked(runID, workingTimeline)
+	s.recordTerminalTransitionLocked(beforeStatus, current.Status)
+	return advanceErr
 }
 
 func (s *InMemoryRunService) setRunPausedLocked(run *WorkflowRun, eventType, detail string) {
@@ -2056,7 +2242,7 @@ func (s *InMemoryRunService) setRunPausedLocked(run *WorkflowRun, eventType, det
 		Outcome: "paused",
 		Detail:  detail,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:    now,
 		Type:  strings.TrimSpace(eventType),
 		RunID: run.ID,
@@ -2100,7 +2286,7 @@ func (s *InMemoryRunService) stopRunLocked(run *WorkflowRun, reason string) {
 				Outcome: "stopped",
 				Detail:  reason,
 			})
-			s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 				At:      now,
 				Type:    "step_stopped",
 				RunID:   run.ID,
@@ -2121,7 +2307,7 @@ func (s *InMemoryRunService) stopRunLocked(run *WorkflowRun, reason string) {
 				Outcome: "stopped",
 				Detail:  reason,
 			})
-			s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 				At:      now,
 				Type:    "phase_stopped",
 				RunID:   run.ID,
@@ -2142,7 +2328,7 @@ func (s *InMemoryRunService) stopRunLocked(run *WorkflowRun, reason string) {
 		Outcome: "stopped",
 		Detail:  reason,
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "run_stopped",
 		RunID:   run.ID,
@@ -2159,7 +2345,7 @@ func (s *InMemoryRunService) appendDecisionTimelineLocked(run *WorkflowRun, even
 	if message == "" {
 		message = strings.TrimSpace(decisionID)
 	}
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      s.engine.now(),
 		Type:    strings.TrimSpace(eventType),
 		RunID:   run.ID,
@@ -2553,11 +2739,102 @@ func (s *InMemoryRunService) mustRunLocked(runID string) (*WorkflowRun, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: run id is required", ErrInvalidTransition)
 	}
-	run, ok := s.runs[id]
+	run, ok := s.getRunByIDLocked(id)
 	if !ok || run == nil {
 		return nil, fmt.Errorf("%w: %s", ErrRunNotFound, id)
 	}
 	return run, nil
+}
+
+func (s *InMemoryRunService) getRunByIDLocked(runID string) (*WorkflowRun, bool) {
+	if s == nil {
+		return nil, false
+	}
+	id := strings.TrimSpace(runID)
+	if id == "" {
+		return nil, false
+	}
+	if s.state != nil {
+		return s.state.Get(id)
+	}
+	run, ok := s.runs[id]
+	return run, ok
+}
+
+func (s *InMemoryRunService) setRunLocked(runID string, run *WorkflowRun) {
+	if s == nil {
+		return
+	}
+	id := strings.TrimSpace(runID)
+	if id == "" {
+		return
+	}
+	if s.state != nil {
+		s.state.Set(id, run)
+		return
+	}
+	s.runs[id] = run
+}
+
+func (s *InMemoryRunService) listRunsIncludingDismissedLocked() []*WorkflowRun {
+	if s == nil {
+		return nil
+	}
+	if s.state != nil {
+		return s.state.ListIncludingDismissed()
+	}
+	out := make([]*WorkflowRun, 0, len(s.runs))
+	for _, run := range s.runs {
+		if run == nil {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
+}
+
+func (s *InMemoryRunService) getTimelineLocked(runID string) []RunTimelineEvent {
+	if s == nil {
+		return nil
+	}
+	id := strings.TrimSpace(runID)
+	if id == "" {
+		return nil
+	}
+	if s.state != nil {
+		return s.state.GetTimeline(id)
+	}
+	return append([]RunTimelineEvent(nil), s.timelines[id]...)
+}
+
+func (s *InMemoryRunService) setTimelineLocked(runID string, timeline []RunTimelineEvent) {
+	if s == nil {
+		return
+	}
+	id := strings.TrimSpace(runID)
+	if id == "" {
+		return
+	}
+	if s.state != nil {
+		s.state.SetTimeline(id, append([]RunTimelineEvent(nil), timeline...))
+		return
+	}
+	s.timelines[id] = append([]RunTimelineEvent(nil), timeline...)
+}
+
+func (s *InMemoryRunService) appendTimelineEventLocked(runID string, event RunTimelineEvent) {
+	if s == nil {
+		return
+	}
+	id := strings.TrimSpace(runID)
+	if id == "" {
+		return
+	}
+	if s.state != nil {
+		s.state.AppendTimeline(id, event)
+		return
+	}
+	s.timelines[id] = append(s.timelines[id], event)
 }
 
 func invalidTransitionError(action string, status WorkflowRunStatus) error {
@@ -2684,7 +2961,7 @@ func (s *InMemoryRunService) applyPolicyDecisionLocked(run *WorkflowRun, input P
 		eventType = "policy_pause"
 	}
 	message := string(metadata.Action) + " | " + string(metadata.Severity) + " | " + string(metadata.Tier)
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    eventType,
 		RunID:   run.ID,
@@ -2712,7 +2989,7 @@ func (s *InMemoryRunService) applyPolicyDecisionLocked(run *WorkflowRun, input P
 			Outcome: string(metadata.Severity),
 			Detail:  decision.Reason,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "checkpoint_requested",
 			RunID:   run.ID,
@@ -2832,7 +3109,7 @@ func findAwaitingTurn(run *WorkflowRun) (phaseIndex int, stepIndex int, ok bool)
 
 func (s *InMemoryRunService) activeRunsLocked() int {
 	count := 0
-	for _, run := range s.runs {
+	for _, run := range s.listRunsIncludingDismissedLocked() {
 		if run == nil {
 			continue
 		}
@@ -3110,8 +3387,8 @@ func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
 		if s.recoverInterruptedRunLocked(run, &timeline) {
 			recoveredRunIDs = append(recoveredRunIDs, runID)
 		}
-		s.runs[runID] = run
-		s.timelines[runID] = timeline
+		s.setRunLocked(runID, run)
+		s.setTimelineLocked(runID, timeline)
 		s.hydrateTurnReceiptsLocked(run)
 	}
 	for _, runID := range recoveredRunIDs {
@@ -3172,50 +3449,40 @@ func (s *InMemoryRunService) recoverInterruptedRunLocked(run *WorkflowRun, timel
 
 // persistRunSnapshotLocked snapshots a run and timeline while service state is locked.
 func (s *InMemoryRunService) persistRunSnapshotLocked(ctx context.Context, runID string) {
-	if s == nil || s.runStore == nil {
+	if s == nil || s.persistence == nil {
 		return
 	}
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
 		return
 	}
-	run, ok := s.runs[runID]
+	run, ok := s.getRunByIDLocked(runID)
 	if !ok || run == nil {
 		return
 	}
 	snapshot := RunStatusSnapshot{
 		Run:      cloneWorkflowRun(run),
-		Timeline: append([]RunTimelineEvent(nil), s.timelines[runID]...),
+		Timeline: s.getTimelineLocked(runID),
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	_ = s.runStore.UpsertWorkflowRun(ctx, snapshot)
+	s.persistence.PersistSync(ctx, snapshot)
 }
 
 // persistRunSnapshotAsync persists a snapshot asynchronously without blocking.
 // The snapshot must be captured before calling this method.
 func (s *InMemoryRunService) persistRunSnapshotAsync(ctx context.Context, snapshot RunStatusSnapshot) {
-	if s == nil || s.runStore == nil {
+	if s == nil || s.persistence == nil {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.pendingPersists.Add(1)
-	go func() {
-		defer s.pendingPersists.Done()
-		_ = s.runStore.UpsertWorkflowRun(ctx, snapshot)
-	}()
+	s.persistence.PersistAsync(ctx, snapshot)
 }
 
 // WaitForPendingPersists blocks until all async persistence operations complete.
 // Useful for testing.
 func (s *InMemoryRunService) WaitForPendingPersists() {
-	if s == nil {
+	if s == nil || s.persistence == nil {
 		return
 	}
-	s.pendingPersists.Wait()
+	s.persistence.Flush()
 }
 
 // captureRunSnapshot captures a snapshot of the run and timeline for async persistence.
@@ -3225,13 +3492,13 @@ func (s *InMemoryRunService) captureRunSnapshot(runID string) RunStatusSnapshot 
 	if runID == "" {
 		return RunStatusSnapshot{}
 	}
-	run, ok := s.runs[runID]
+	run, ok := s.getRunByIDLocked(runID)
 	if !ok || run == nil {
 		return RunStatusSnapshot{}
 	}
 	return RunStatusSnapshot{
 		Run:      cloneWorkflowRun(run),
-		Timeline: append([]RunTimelineEvent(nil), s.timelines[runID]...),
+		Timeline: s.getTimelineLocked(runID),
 	}
 }
 
@@ -3326,7 +3593,7 @@ func (s *InMemoryRunService) applyStepDispatchResult(
 	if s == nil {
 		return false, nil
 	}
-	run, ok := s.runs[dispatchCtx.runID]
+	run, ok := s.getRunByIDLocked(dispatchCtx.runID)
 	if !ok || run == nil {
 		return false, nil
 	}
@@ -3377,7 +3644,7 @@ func (s *InMemoryRunService) applyStepDispatchResult(
 			Outcome: "running",
 			Detail:  phase.Name,
 		})
-		s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
 			Type:    "phase_started",
 			RunID:   run.ID,
@@ -3405,7 +3672,7 @@ func (s *InMemoryRunService) applyStepDispatchResult(
 		Outcome: "awaiting_turn",
 		Detail:  "session=" + strings.TrimSpace(result.SessionID),
 	})
-	s.timelines[run.ID] = append(s.timelines[run.ID], RunTimelineEvent{
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 		At:      now,
 		Type:    "step_dispatched",
 		RunID:   run.ID,
