@@ -82,6 +82,9 @@ func TestTurnArtifactSynchronizerBackfillsAndMarksReady(t *testing.T) {
 	if result.Output != "final answer" {
 		t.Fatalf("expected output from assistant artifact, got %q", result.Output)
 	}
+	if strings.TrimSpace(result.AssistantEvidenceKey) == "" {
+		t.Fatalf("expected assistant evidence key to be set")
+	}
 	if repo.appendCalled != 1 {
 		t.Fatalf("expected one append call, got %d", repo.appendCalled)
 	}
@@ -143,7 +146,8 @@ func TestTurnArtifactSynchronizerReturnsNopWhenMissingDependencies(t *testing.T)
 func TestDefaultTurnCompletionPayloadBuilderUsesTurnOutputFallback(t *testing.T) {
 	builder := defaultTurnCompletionPayloadBuilder{}
 	output, payload := builder.Build(turnEventParams{Output: "turn output"}, TurnArtifactSyncResult{
-		Source: "sync",
+		Source:               "sync",
+		AssistantEvidenceKey: "id:assistant-1",
 	})
 	if output != "turn output" {
 		t.Fatalf("expected turn output fallback, got %q", output)
@@ -153,6 +157,9 @@ func TestDefaultTurnCompletionPayloadBuilderUsesTurnOutputFallback(t *testing.T)
 	}
 	if strings.TrimSpace(asString(payload["artifact_sync_source"])) != "sync" {
 		t.Fatalf("expected artifact_sync_source field, got %#v", payload)
+	}
+	if strings.TrimSpace(asString(payload["assistant_evidence_key"])) != "id:assistant-1" {
+		t.Fatalf("expected assistant_evidence_key field, got %#v", payload)
 	}
 }
 
@@ -172,5 +179,35 @@ func TestOpenCodeTurnArtifactRemoteSourceDelegatesToClient(t *testing.T) {
 	_, err := source.ListSessionMessages(context.Background(), "sess-1", "", 10)
 	if err == nil {
 		t.Fatalf("expected client delegation error when client session service is unavailable")
+	}
+}
+
+func TestLatestAssistantEvidenceKeyPrefersProviderMessageID(t *testing.T) {
+	key := latestAssistantEvidenceKey([]map[string]any{
+		{"type": "assistant", "provider_created_at": "2026-02-28T00:00:00Z", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "hello"}}}},
+		{"type": "assistant", "provider_message_id": "msg-1", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "world"}}}},
+	})
+	if key != "id:msg-1" {
+		t.Fatalf("expected message-id evidence key, got %q", key)
+	}
+}
+
+func TestLatestAssistantEvidenceKeyFallsBackToCreatedAtAndText(t *testing.T) {
+	key := latestAssistantEvidenceKey([]map[string]any{
+		{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "ignored"}}},
+		{"type": "assistant", "provider_created_at": "2026-02-28T00:00:00Z", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "final"}}}},
+	})
+	want := "created_at:2026-02-28T00:00:00Z|text:final"
+	if key != want {
+		t.Fatalf("expected fallback evidence key %q, got %q", want, key)
+	}
+}
+
+func TestLatestAssistantEvidenceKeyEmptyWhenNoAssistant(t *testing.T) {
+	key := latestAssistantEvidenceKey([]map[string]any{
+		{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
+	})
+	if key != "" {
+		t.Fatalf("expected empty evidence key when no assistant items, got %q", key)
 	}
 }

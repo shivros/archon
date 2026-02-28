@@ -9,6 +9,7 @@ type TurnArtifactSyncResult struct {
 	Output                 string
 	ArtifactsPersisted     bool
 	AssistantArtifactCount int
+	AssistantEvidenceKey   string
 	Source                 string
 	Error                  string
 }
@@ -115,6 +116,10 @@ func (s *openCodeTurnArtifactSynchronizer) SyncTurnArtifacts(ctx context.Context
 	}
 	result.AssistantArtifactCount = assistantCount
 	result.ArtifactsPersisted = hasAssistantArtifact(localItems)
+	result.AssistantEvidenceKey = latestAssistantEvidenceKey(remoteItems)
+	if result.AssistantEvidenceKey == "" {
+		result.AssistantEvidenceKey = latestAssistantEvidenceKey(localItems)
+	}
 	return result
 }
 
@@ -169,6 +174,7 @@ func (defaultTurnCompletionPayloadBuilder) Build(turn turnEventParams, syncResul
 	payload := map[string]any{
 		"artifacts_persisted":      syncResult.ArtifactsPersisted,
 		"assistant_artifact_count": syncResult.AssistantArtifactCount,
+		"assistant_evidence_key":   strings.TrimSpace(syncResult.AssistantEvidenceKey),
 		"artifact_sync_source":     strings.TrimSpace(syncResult.Source),
 	}
 	if errMsg := strings.TrimSpace(syncResult.Error); errMsg != "" {
@@ -178,6 +184,24 @@ func (defaultTurnCompletionPayloadBuilder) Build(turn turnEventParams, syncResul
 		payload["turn_output"] = output
 	}
 	return output, payload
+}
+
+func latestAssistantEvidenceKey(items []map[string]any) string {
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if strings.ToLower(strings.TrimSpace(asString(item["type"]))) != "assistant" {
+			continue
+		}
+		if messageID := strings.TrimSpace(asString(item["provider_message_id"])); messageID != "" {
+			return "id:" + messageID
+		}
+		createdAt := strings.TrimSpace(asString(item["provider_created_at"]))
+		text := strings.TrimSpace(openCodeHistoryItemText(item))
+		if createdAt != "" || text != "" {
+			return "created_at:" + createdAt + "|text:" + text
+		}
+	}
+	return ""
 }
 
 type openCodeTurnArtifactRemoteSource struct {

@@ -25,6 +25,7 @@ type openCodeLiveSession struct {
 	approvalStore ApprovalStorage
 	artifactSync  TurnArtifactSynchronizer
 	payloads      TurnCompletionPayloadBuilder
+	freshness     TurnEvidenceFreshnessTracker
 	activeTurn    string
 	closed        bool
 }
@@ -190,6 +191,25 @@ func (s *openCodeLiveSession) publishTurnCompleted(turn turnEventParams) {
 	} else {
 		output, payload = defaultTurnCompletionPayloadBuilder{}.Build(turn, syncResult)
 	}
+	freshness := s.freshness
+	if freshness == nil {
+		s.mu.Lock()
+		if s.freshness == nil {
+			s.freshness = NewTurnEvidenceFreshnessTracker()
+		}
+		freshness = s.freshness
+		s.mu.Unlock()
+	}
+	fresh := freshness.MarkFresh(s.sessionID, syncResult.AssistantEvidenceKey, output)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["turn_output_fresh"] = fresh
+	if !fresh {
+		output = ""
+		delete(payload, "turn_output")
+		payload["stale_turn_output_dropped"] = true
+	}
 	s.turnNotifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{
 		SessionID: strings.TrimSpace(s.sessionID),
 		TurnID:    strings.TrimSpace(turn.TurnID),
@@ -215,6 +235,7 @@ type openCodeLiveSessionFactory struct {
 	approvalStore ApprovalStorage
 	repository    TurnArtifactRepository
 	payloads      TurnCompletionPayloadBuilder
+	freshness     TurnEvidenceFreshnessTracker
 	logger        logging.Logger
 }
 
@@ -224,6 +245,7 @@ func newOpenCodeLiveSessionFactory(
 	approvalStore ApprovalStorage,
 	repository TurnArtifactRepository,
 	payloads TurnCompletionPayloadBuilder,
+	freshness TurnEvidenceFreshnessTracker,
 	logger logging.Logger,
 ) *openCodeLiveSessionFactory {
 	if logger == nil {
@@ -241,12 +263,16 @@ func newOpenCodeLiveSessionFactory(
 	if payloads == nil {
 		payloads = defaultTurnCompletionPayloadBuilder{}
 	}
+	if freshness == nil {
+		freshness = NewTurnEvidenceFreshnessTracker()
+	}
 	return &openCodeLiveSessionFactory{
 		providerName:  providerName,
 		turnNotifier:  turnNotifier,
 		approvalStore: approvalStore,
 		repository:    repository,
 		payloads:      payloads,
+		freshness:     freshness,
 		logger:        logger,
 	}
 }
@@ -299,7 +325,8 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 			openCodeTurnArtifactRemoteSource{client: client},
 			f.repository,
 		),
-		payloads: f.payloads,
+		payloads:  f.payloads,
+		freshness: f.freshness,
 	}
 	ls.start()
 

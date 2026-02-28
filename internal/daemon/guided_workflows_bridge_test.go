@@ -2765,6 +2765,7 @@ func TestGuidedWorkflowNotificationPublisherAllowsOpenCodeCompletionWithArtifact
 			"artifacts_persisted":      true,
 			"assistant_output":         "done",
 			"assistant_artifact_count": 1,
+			"turn_output_fresh":        true,
 		},
 	})
 	if len(turnProcessor.signals) != 1 {

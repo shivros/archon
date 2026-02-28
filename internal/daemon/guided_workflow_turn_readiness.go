@@ -9,7 +9,7 @@ import (
 )
 
 type turnProgressionReadinessPolicy interface {
-	AllowProgression(event types.NotificationEvent, status string, errMsg string, terminal bool, output string) bool
+	AllowProgression(event types.NotificationEvent, evidence TurnProgressionEvidence) bool
 }
 
 type turnProgressionReadinessRegistry interface {
@@ -83,7 +83,7 @@ func (r providerTurnProgressionReadinessRegistry) ForProvider(provider string) t
 
 type allowAllTurnProgressionReadinessPolicy struct{}
 
-func (allowAllTurnProgressionReadinessPolicy) AllowProgression(types.NotificationEvent, string, string, bool, string) bool {
+func (allowAllTurnProgressionReadinessPolicy) AllowProgression(types.NotificationEvent, TurnProgressionEvidence) bool {
 	return true
 }
 
@@ -91,34 +91,27 @@ type terminalTurnProgressionReadinessPolicy struct{}
 
 func (terminalTurnProgressionReadinessPolicy) AllowProgression(
 	_ types.NotificationEvent,
-	_ string,
-	_ string,
-	terminal bool,
-	_ string,
+	evidence TurnProgressionEvidence,
 ) bool {
-	return terminal
+	return evidence.Terminal
 }
 
 type openCodeTurnProgressionReadinessPolicy struct{}
 
 func (openCodeTurnProgressionReadinessPolicy) AllowProgression(
-	event types.NotificationEvent,
-	status string,
-	errMsg string,
-	terminal bool,
-	output string,
+	_ types.NotificationEvent,
+	evidence TurnProgressionEvidence,
 ) bool {
-	if terminal && (strings.TrimSpace(errMsg) != "" || guidedworkflows.IsFailedTurnStatus(status)) {
+	if evidence.Terminal && (strings.TrimSpace(evidence.Error) != "" || guidedworkflows.IsFailedTurnStatus(evidence.Status)) {
 		return true
 	}
-	if !terminal {
+	if !evidence.Terminal {
 		return false
 	}
-	if strings.TrimSpace(output) != "" {
+	if evidence.FreshOutput {
 		return true
 	}
-	if notificationPayloadBool(event.Payload, "artifacts_persisted") {
-		return true
-	}
-	return notificationPayloadInt(event.Payload, "assistant_artifact_count") > 0
+	// Legacy fallback: no explicit freshness signal, but output exists.
+	// Prefer false negatives over false positives for guided progression.
+	return strings.TrimSpace(evidence.Output) != ""
 }

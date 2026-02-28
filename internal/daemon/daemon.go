@@ -160,8 +160,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.logger,
 		newCodexLiveSessionFactory(liveCodex),
 		newClaudeLiveSessionFactory(d.manager, d.stores, artifactRepository, turnNotifier, d.logger),
-		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, d.logger),
-		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, d.logger),
+		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, NewTurnEvidenceFreshnessTracker(), d.logger),
+		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, NewTurnEvidenceFreshnessTracker(), d.logger),
 	)
 	workflowRuns := newGuidedWorkflowRunServiceFn(coreCfg, d.stores, d.manager, compositeLive, d.logger)
 	if closer, ok := any(workflowRuns).(guidedWorkflowRunCloser); ok {

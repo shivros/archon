@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -217,6 +218,48 @@ func TestOpenCodeLiveSessionPublishTurnCompletedIncludesArtifactPayload(t *testi
 	}
 	if count, _ := asInt(event.Payload["assistant_artifact_count"]); count != 2 {
 		t.Fatalf("expected assistant_artifact_count=2, got %#v", event.Payload["assistant_artifact_count"])
+	}
+	if fresh, _ := event.Payload["turn_output_fresh"].(bool); !fresh {
+		t.Fatalf("expected turn_output_fresh=true, got %#v", event.Payload["turn_output_fresh"])
+	}
+}
+
+func TestOpenCodeLiveSessionPublishTurnCompletedDropsStaleOutput(t *testing.T) {
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-stale",
+		providerName: "opencode",
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+		artifactSync: stubTurnArtifactSynchronizer{
+			result: TurnArtifactSyncResult{
+				Output:               "stale assistant output",
+				ArtifactsPersisted:   true,
+				AssistantEvidenceKey: "id:assistant-1",
+				Source:               "test_sync",
+			},
+		},
+	}
+
+	ls.publishTurnCompleted(turnEventParams{TurnID: "turn-1", Status: "completed"})
+	ls.publishTurnCompleted(turnEventParams{TurnID: "turn-2", Status: "completed"})
+
+	events := notifier.Events()
+	if len(events) != 2 {
+		t.Fatalf("expected two notifications, got %d", len(events))
+	}
+	first := events[0]
+	second := events[1]
+	if strings.TrimSpace(asString(first.Payload["turn_output"])) == "" {
+		t.Fatalf("expected first event to carry output")
+	}
+	if fresh, _ := first.Payload["turn_output_fresh"].(bool); !fresh {
+		t.Fatalf("expected first event to be fresh")
+	}
+	if got := strings.TrimSpace(asString(second.Payload["turn_output"])); got != "" {
+		t.Fatalf("expected stale second event to drop output, got %q", got)
+	}
+	if fresh, _ := second.Payload["turn_output_fresh"].(bool); fresh {
+		t.Fatalf("expected second event to be marked stale")
 	}
 }
 
@@ -440,4 +483,116 @@ func (s *respondApprovalStorage) DeleteApproval(_ context.Context, _ string, req
 		delete(s.approvals, requestID)
 	}
 	return nil
+}
+
+func TestOpenCodeLiveSessionFactoryCreateTurnCapableValidatesInputs(t *testing.T) {
+	factory := newOpenCodeLiveSessionFactory(
+		"opencode",
+		NopTurnCompletionNotifier{},
+		NopApprovalStorage{},
+		&stubTurnArtifactRepository{},
+		defaultTurnCompletionPayloadBuilder{},
+		NewTurnEvidenceFreshnessTracker(),
+		nil,
+	)
+	if _, err := factory.CreateTurnCapable(context.Background(), nil, nil); err == nil {
+		t.Fatalf("expected error for nil session")
+	}
+	if _, err := factory.CreateTurnCapable(context.Background(), &types.Session{ID: "sess-1"}, nil); err == nil {
+		t.Fatalf("expected error for missing provider session id")
+	}
+}
+
+func TestOpenCodeLiveSessionFactoryCreateTurnCapableFallsBackToEmptyDirectory(t *testing.T) {
+	const providerSessionID = "sess_remote_1"
+	var (
+		mu        sync.Mutex
+		requested []string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/event" {
+			http.NotFound(w, r)
+			return
+		}
+		parentID := strings.TrimSpace(r.URL.Query().Get("parentID"))
+		if parentID != providerSessionID {
+			http.Error(w, "missing parentID", http.StatusBadRequest)
+			return
+		}
+		dir := strings.TrimSpace(r.URL.Query().Get("directory"))
+		mu.Lock()
+		requested = append(requested, dir)
+		mu.Unlock()
+		if dir != "" {
+			http.Error(w, "directory stream not available", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		if f, ok := w.(http.Flusher); ok {
+			_, _ = fmt.Fprintf(w, "data: {\"type\":\"session.idle\",\"properties\":{\"sessionID\":\"%s\"}}\n\n", providerSessionID)
+			f.Flush()
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	t.Setenv("OPENCODE_TOKEN", "")
+	rememberOpenCodeRuntimeBaseURL("opencode", server.URL)
+
+	tracker := &captureFreshnessTracker{}
+	factory := newOpenCodeLiveSessionFactory(
+		"opencode",
+		NopTurnCompletionNotifier{},
+		NopApprovalStorage{},
+		&stubTurnArtifactRepository{},
+		defaultTurnCompletionPayloadBuilder{},
+		tracker,
+		nil,
+	)
+
+	live, err := factory.CreateTurnCapable(context.Background(), &types.Session{
+		ID:  "sess-1",
+		Cwd: "/tmp/fallback-dir",
+	}, &types.SessionMeta{
+		ProviderSessionID: providerSessionID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTurnCapable: %v", err)
+	}
+	ls, ok := live.(*openCodeLiveSession)
+	if !ok {
+		t.Fatalf("expected *openCodeLiveSession, got %T", live)
+	}
+	defer ls.Close()
+	if ls.freshness != tracker {
+		t.Fatalf("expected factory-provided freshness tracker to be injected")
+	}
+	mu.Lock()
+	gotRequests := append([]string(nil), requested...)
+	mu.Unlock()
+	if len(gotRequests) != 2 || gotRequests[0] != "/tmp/fallback-dir" || gotRequests[1] != "" {
+		t.Fatalf("expected directory then fallback subscribe sequence, got %#v", gotRequests)
+	}
+}
+
+type captureFreshnessTracker struct {
+	mu    sync.Mutex
+	calls []freshnessCall
+}
+
+type freshnessCall struct {
+	sessionID string
+	key       string
+	output    string
+}
+
+func (c *captureFreshnessTracker) MarkFresh(sessionID, evidenceKey, output string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, freshnessCall{
+		sessionID: sessionID,
+		key:       evidenceKey,
+		output:    output,
+	})
+	return true
 }
