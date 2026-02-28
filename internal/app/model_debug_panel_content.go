@@ -16,6 +16,17 @@ func (m *Model) refreshDebugPanelContent() tea.Cmd {
 	if m == nil || m.debugPanel == nil {
 		return nil
 	}
+	policy := m.debugPanelRefreshPolicyOrDefault()
+	shouldDefer := policy.ShouldDefer(DebugPanelRefreshInput{
+		DebugStreamsEnabled: m.appState.DebugStreamsEnabled,
+		PanelVisible:        m.debugPanelVisible,
+		PanelWidth:          m.debugPanelWidth,
+		ProjectionInFlight:  m.debugPanelLoading,
+	})
+	if shouldDefer {
+		m.debugPanelRefreshPending = true
+		return nil
+	}
 	m.debugPanelRefreshPending = false
 	if m.debugPanelExpandedByID == nil {
 		m.debugPanelExpandedByID = map[string]bool{}

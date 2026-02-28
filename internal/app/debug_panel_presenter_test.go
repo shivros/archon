@@ -7,7 +7,7 @@ import (
 
 func TestDefaultDebugPanelPresenterTruncatesAndAddsToggleControl(t *testing.T) {
 	presenter := NewDefaultDebugPanelPresenter(DefaultDebugPanelDisplayPolicy())
-	entries := []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6", Raw: "l1\nl2\nl3\nl4\nl5\nl6"}}
+	entries := []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9", Raw: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9"}}
 	presentation := presenter.Present(entries, 60, DebugPanelPresentationState{ExpandedByID: map[string]bool{}})
 	if len(presentation.Blocks) != 1 {
 		t.Fatalf("expected one block, got %d", len(presentation.Blocks))
@@ -21,9 +21,25 @@ func TestDefaultDebugPanelPresenterTruncatesAndAddsToggleControl(t *testing.T) {
 	}
 }
 
+func TestDefaultDebugPanelPresenterDoesNotTruncateAtEightLines(t *testing.T) {
+	presenter := NewDefaultDebugPanelPresenter(DefaultDebugPanelDisplayPolicy())
+	entries := []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8", Raw: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8"}}
+	presentation := presenter.Present(entries, 60, DebugPanelPresentationState{ExpandedByID: map[string]bool{}})
+	if len(presentation.Blocks) != 1 {
+		t.Fatalf("expected one block, got %d", len(presentation.Blocks))
+	}
+	if strings.Contains(presentation.Blocks[0].Text, "truncated") {
+		t.Fatalf("expected eight lines to remain untruncated, got %q", presentation.Blocks[0].Text)
+	}
+	meta := presentation.MetaByID["debug-1"]
+	if len(meta.Controls) != 1 || meta.Controls[0].Label != "[Copy]" {
+		t.Fatalf("expected only copy control when payload is not truncated, got %#v", meta.Controls)
+	}
+}
+
 func TestDefaultDebugPanelPresenterExpandedUsesFullPayload(t *testing.T) {
 	presenter := NewDefaultDebugPanelPresenter(DefaultDebugPanelDisplayPolicy())
-	payload := "l1\nl2\nl3\nl4\nl5\nl6"
+	payload := "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9"
 	entries := []DebugStreamEntry{{ID: "debug-1", Display: payload, Raw: payload}}
 	presentation := presenter.Present(entries, 60, DebugPanelPresentationState{ExpandedByID: map[string]bool{"debug-1": true}})
 	if presentation.Blocks[0].Text != payload {

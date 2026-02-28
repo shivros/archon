@@ -189,6 +189,27 @@ func TestModelDebugInterfacesHandleViewportScrollRoutesToDebugPanel(t *testing.T
 	}
 }
 
+func TestModelDebugInterfacesViewportTopBottomCommandsTargetDebugPanel(t *testing.T) {
+	m := NewModel(nil)
+	panel := &fakeDebugPanelView{height: 6}
+	m.debugPanel = panel
+	m.debugPanelVisible = true
+	m.appState.DebugStreamsEnabled = true
+
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: 'g', Text: "g"}) {
+		t.Fatalf("expected viewport top command to be handled")
+	}
+	if panel.gotoTop != 1 {
+		t.Fatalf("expected debug panel goto top, got %d", panel.gotoTop)
+	}
+	if !m.handleViewportScroll(tea.KeyPressMsg{Code: 'G', Text: "G"}) {
+		t.Fatalf("expected viewport bottom command to be handled")
+	}
+	if panel.gotoBottom != 1 {
+		t.Fatalf("expected debug panel goto bottom, got %d", panel.gotoBottom)
+	}
+}
+
 func TestModelDebugInterfacesHandleDebugPanelAllCommandBranches(t *testing.T) {
 	m := NewModel(nil)
 	panel := &fakeDebugPanelView{height: 6}
@@ -329,7 +350,7 @@ func TestModelDebugInterfacesDebugPanelLeftPressToggle(t *testing.T) {
 	m.debugPanelWidth = 72
 	m.debugPanel.Resize(72, 10)
 	m.debugStream = &fakeDebugStreamViewModel{
-		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6"}},
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9"}},
 	}
 	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
 	applyDebugProjectionFromCmd(&m, m.refreshDebugPanelContent())
@@ -386,7 +407,7 @@ func TestModelDebugInterfacesDebugPanelLeftPressInitializesInteractionFallback(t
 	m.debugPanel.Resize(72, 10)
 	m.debugPanelInteractionService = nil
 	m.debugStream = &fakeDebugStreamViewModel{
-		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6"}},
+		entries: []DebugStreamEntry{{ID: "debug-1", Display: "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9"}},
 	}
 	m.debugStreamSnapshot = m.debugStream.(debugStreamSnapshot)
 	applyDebugProjectionFromCmd(&m, m.refreshDebugPanelContent())

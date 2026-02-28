@@ -4,11 +4,26 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"control/internal/types"
 )
+
+type testDebugStreamConsumer struct {
+	hasStream bool
+	changed   bool
+	closed    bool
+}
+
+func (s *testDebugStreamConsumer) SetStream(<-chan types.DebugEvent, func()) {}
+func (s *testDebugStreamConsumer) Reset()                                    { s.hasStream = false }
+func (s *testDebugStreamConsumer) Close()                                    {}
+func (s *testDebugStreamConsumer) HasStream() bool                           { return s.hasStream }
+func (s *testDebugStreamConsumer) ConsumeTick() ([]string, bool, bool) {
+	return nil, s.changed, s.closed
+}
 
 func TestToggleDebugStreamsEnablesAndStartsActiveSessionStream(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
@@ -158,5 +173,67 @@ func TestRenderDebugPanelViewShowsFallbackAndStreamLines(t *testing.T) {
 	}
 	if len(m.debugPanelBlocks) == 0 || !strings.Contains(m.debugPanelBlocks[0].Text, "line one") || !strings.Contains(m.debugPanelBlocks[0].Text, "line two") {
 		t.Fatalf("expected debug block payload to include streamed content, got %#v", m.debugPanelBlocks)
+	}
+}
+
+func TestConsumeDebugTickClosedReturnsSubscribeCmdWhenEnabled(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.appState.DebugStreamsEnabled = true
+	stream := &testDebugStreamConsumer{hasStream: false, closed: true}
+	m.debugStream = stream
+
+	cmd := m.consumeDebugTick(time.Now())
+	if cmd == nil {
+		t.Fatalf("expected subscribe command when closed and enabled")
+	}
+	if !m.hasRequestScope(requestScopeDebugStream) {
+		t.Fatalf("expected debug request scope to be created for resubscribe")
+	}
+}
+
+func TestConsumeDebugTickClosedNoSubscribeWhenScopeInFlight(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.appState.DebugStreamsEnabled = true
+	m.replaceRequestScope(requestScopeDebugStream)
+	stream := &testDebugStreamConsumer{hasStream: false, closed: true}
+	m.debugStream = stream
+
+	cmd := m.consumeDebugTick(time.Now())
+	if cmd != nil {
+		t.Fatalf("expected no subscribe command when scope already in flight")
+	}
+}
+
+func TestConsumeDebugTickClosedNoSubscribeWhenDisabled(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.appState.DebugStreamsEnabled = false
+	stream := &testDebugStreamConsumer{hasStream: false, closed: true}
+	m.debugStream = stream
+
+	cmd := m.consumeDebugTick(time.Now())
+	if cmd != nil {
+		t.Fatalf("expected no subscribe command when debug streams disabled")
+	}
+}
+
+func TestEnsureDebugStreamSubscribedNoopWhenAlreadyStreaming(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.appState.DebugStreamsEnabled = true
+	m.debugStream = &testDebugStreamConsumer{hasStream: true}
+
+	if cmd := m.ensureDebugStreamSubscribed(); cmd != nil {
+		t.Fatalf("expected no subscribe command when stream already attached")
 	}
 }

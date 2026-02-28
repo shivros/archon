@@ -265,6 +265,9 @@ type Model struct {
 	debugPanelRefreshPending            bool
 	debugPanelProjectionPolicy          DebugPanelProjectionPolicy
 	debugPanelProjectionCoordinator     debugPanelProjectionCoordinator
+	debugPanelRefreshPolicy             DebugPanelRefreshPolicy
+	debugStreamSubscriptionService      DebugStreamSubscriptionService
+	viewportCommandRouter               ViewportCommandRouter
 	notesPanelPendingScopes             map[types.NoteScope]struct{}
 	notesPanelLoadErrors                int
 	notesPanelBlocks                    []ChatBlock
@@ -515,6 +518,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
 		debugPanelProjectionPolicy:          defaultDebugPanelProjectionPolicy{},
 		debugPanelProjectionCoordinator:     NewDefaultDebugPanelProjectionCoordinator(defaultDebugPanelProjectionPolicy{}, nil),
+		debugPanelRefreshPolicy:             defaultDebugPanelRefreshPolicy{},
+		debugStreamSubscriptionService:      defaultDebugStreamSubscriptionService{},
+		viewportCommandRouter:               defaultViewportCommandRouter{},
 		sessionProjectionPostProcessor:      NewDefaultSessionProjectionPostProcessor(),
 		sidebarProjectionBuilder:            NewDefaultSidebarProjectionBuilder(),
 		sidebarProjectionInvalidationPolicy: NewDefaultSidebarProjectionInvalidationPolicy(),
@@ -2334,7 +2340,9 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 		if cmd := m.refreshDebugPanelContent(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.debugPanelRefreshPending = false
+	}
+	if cmd := m.ensureDebugStreamSubscribed(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	m.consumeStreamTick(now)
 	m.consumeCodexTick(now)
@@ -2535,6 +2543,9 @@ func (m *Model) consumeDebugTick(now time.Time) tea.Cmd {
 	_, changed, closed := m.debugStream.ConsumeTick()
 	if closed {
 		m.setBackgroundStatus("debug stream closed")
+		if cmd := m.ensureDebugStreamSubscribed(); cmd != nil {
+			return cmd
+		}
 	}
 	if changed {
 		cmd := m.refreshDebugPanelContent()
@@ -3223,6 +3234,9 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	if m.mode != uiModeNormal && m.mode != uiModeCompose && m.mode != uiModeRecents && m.mode != uiModeNotes && m.mode != uiModeAddNote && m.mode != uiModeGuidedWorkflow {
 		return false
 	}
+	if m.handleViewportTopBottomCommand(msg) {
+		return true
+	}
 	if m.handleDebugPanelScrollKey(msg) {
 		return true
 	}
@@ -3247,9 +3261,6 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	case "ctrl+u":
 		m.pauseFollow(true)
 		m.viewport.HalfPageUp()
-	case "ctrl+d":
-		m.viewport.HalfPageDown()
-		scrolledDown = true
 	case "home":
 		m.pauseFollow(true)
 		m.viewport.GotoTop()
@@ -3261,6 +3272,26 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	}
 	m.maybeResumeFollowAfterManualScroll(wasFollowing, scrolledDown)
 	return true
+}
+
+func (m *Model) handleViewportTopCommand() bool {
+	router := m.viewportCommandRouterOrDefault()
+	return router.RouteTop(newModelViewportCommandContext(m))
+}
+
+func (m *Model) handleViewportBottomCommand() bool {
+	router := m.viewportCommandRouterOrDefault()
+	return router.RouteBottom(newModelViewportCommandContext(m))
+}
+
+func (m *Model) handleViewportTopBottomCommand(msg tea.KeyMsg) bool {
+	if m.keyMatchesCommand(msg, KeyCommandViewportTop, "g") {
+		return m.handleViewportTopCommand()
+	}
+	if m.keyMatchesCommand(msg, KeyCommandViewportBottom, "G") {
+		return m.handleViewportBottomCommand()
+	}
+	return false
 }
 
 func (m *Model) toggleVisibleReasoning() bool {
@@ -3730,18 +3761,41 @@ func (m *Model) toggleDebugStreams() tea.Cmd {
 	message := "debug streams enabled"
 	m.status = message
 	m.showToast(toastLevelInfo, message)
-	if strings.TrimSpace(sessionID) == "" {
-		if panelCmd != nil {
-			return tea.Batch(m.requestAppStateSaveCmd(), panelCmd)
-		}
-		return m.requestAppStateSaveCmd()
+	cmds := []tea.Cmd{m.requestAppStateSaveCmd()}
+	if cmd := m.ensureDebugStreamSubscribed(); cmd != nil {
+		cmds = append(cmds, cmd)
+	} else if strings.TrimSpace(sessionID) != "" {
+		// Keep legacy behavior if subscription helper does not schedule for any reason.
+		debugCtx := m.replaceRequestScope(requestScopeDebugStream)
+		cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, sessionID, debugCtx))
 	}
-	debugCtx := m.replaceRequestScope(requestScopeDebugStream)
-	cmds := []tea.Cmd{m.requestAppStateSaveCmd(), openDebugStreamCmdWithContext(m.sessionAPI, sessionID, debugCtx)}
 	if panelCmd != nil {
 		cmds = append(cmds, panelCmd)
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) ensureDebugStreamSubscribed() tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	service := m.debugStreamSubscriptionServiceOrDefault()
+	ctx := DebugStreamSubscriptionContext{
+		Enabled:         m.appState.DebugStreamsEnabled,
+		StreamAPIReady:  m.sessionAPI != nil,
+		ConsumerReady:   m.debugStream != nil,
+		ActiveSessionID: m.activeStreamTargetID(),
+		HasStream:       m.debugStream != nil && m.debugStream.HasStream(),
+		ScopeInFlight:   m.hasRequestScope(requestScopeDebugStream),
+		ScopeName:       requestScopeDebugStream,
+		ReplaceScope: func(name string) context.Context {
+			return m.replaceRequestScope(name)
+		},
+		Open: func(sessionID string, parent context.Context) tea.Cmd {
+			return openDebugStreamCmdWithContext(m.sessionAPI, sessionID, parent)
+		},
+	}
+	return service.Ensure(ctx)
 }
 
 func (m *Model) applyAppState(state *types.AppState) {

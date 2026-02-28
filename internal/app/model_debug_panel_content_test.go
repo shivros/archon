@@ -168,3 +168,45 @@ func TestRefreshDebugPanelContentUsesInjectedPresenter(t *testing.T) {
 		t.Fatalf("expected injected presenter/renderer output, got %q", panel.lastContent)
 	}
 }
+
+func TestRefreshDebugPanelContentDefersWhenProjectionIsInFlight(t *testing.T) {
+	m := NewModel(nil)
+	panel := &fakeDebugPanelView{height: 5}
+	m.debugPanel = panel
+	m.debugPanelVisible = true
+	m.debugPanelWidth = 40
+	stream := &fakeDebugStreamViewModel{entries: []DebugStreamEntry{{ID: "debug-1", Display: "stream"}}}
+	m.debugStream = stream
+	m.debugStreamSnapshot = stream
+	m.debugPanelLoading = true
+	m.debugPanelRefreshPending = false
+
+	cmd := m.refreshDebugPanelContent()
+	if cmd != nil {
+		t.Fatalf("expected no projection command while loading")
+	}
+	if !m.debugPanelRefreshPending {
+		t.Fatalf("expected pending refresh to be queued")
+	}
+}
+
+func TestRefreshDebugPanelContentDefersWhenPanelNotVisible(t *testing.T) {
+	m := NewModel(nil)
+	panel := &fakeDebugPanelView{height: 5}
+	m.debugPanel = panel
+	m.debugPanelVisible = false
+	m.debugPanelWidth = 40
+	m.appState.DebugStreamsEnabled = true
+	stream := &fakeDebugStreamViewModel{entries: []DebugStreamEntry{{ID: "debug-1", Display: "stream"}}}
+	m.debugStream = stream
+	m.debugStreamSnapshot = stream
+	m.debugPanelRefreshPending = false
+
+	cmd := m.refreshDebugPanelContent()
+	if cmd != nil {
+		t.Fatalf("expected no projection command when panel is hidden")
+	}
+	if !m.debugPanelRefreshPending {
+		t.Fatalf("expected hidden panel refresh to be deferred")
+	}
+}

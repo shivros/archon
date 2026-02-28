@@ -324,6 +324,24 @@ func TestComposeReducerCtrlDTogglesDebugStreamsWithToast(t *testing.T) {
 	}
 }
 
+func TestUpdateNormalModeCtrlDTogglesDebugStreamsBeforeViewportScroll(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
+	m.resize(180, 40)
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+
+	if !m.appState.DebugStreamsEnabled {
+		t.Fatalf("expected ctrl+d to toggle debug streams in normal mode")
+	}
+	if m.toastText != "debug streams enabled" {
+		t.Fatalf("expected toggle toast, got %q", m.toastText)
+	}
+}
+
 func TestUpdateComposeModePasteUpdatesInput(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("s1")

@@ -52,6 +52,18 @@ func (m *Model) requestScopeContext(name string) context.Context {
 	return scope.ctx
 }
 
+func (m *Model) hasRequestScope(name string) bool {
+	if m == nil {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || m.requestScopes == nil {
+		return false
+	}
+	_, ok := m.requestScopes[name]
+	return ok
+}
+
 func (m *Model) cancelRequestScope(name string) {
 	if m == nil {
 		return

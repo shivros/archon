@@ -18,7 +18,7 @@ type DebugPanelDisplayPolicy struct {
 
 func DefaultDebugPanelDisplayPolicy() DebugPanelDisplayPolicy {
 	return DebugPanelDisplayPolicy{
-		PreviewMaxLines:   5,
+		PreviewMaxLines:   8,
 		WrapPadding:       8,
 		TruncationHint:    "... (truncated, use [Expand])",
 		EmptyPayloadLabel: "(empty debug payload)",

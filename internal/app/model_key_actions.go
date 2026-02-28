@@ -152,13 +152,6 @@ func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	switch m.keyString(msg) {
-	case "g":
-		m.viewport.GotoTop()
-		m.pauseFollow(true)
-		return true, nil
-	case "G":
-		m.enableFollow(true)
-		return true, nil
 	case "{":
 		m.jumpSection(-1)
 		return true, nil
@@ -172,6 +165,9 @@ func (m *Model) reduceViewportNavigationKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.moveSearch(1)
 		return true, nil
 	default:
+		if m.handleViewportTopBottomCommand(msg) {
+			return true, nil
+		}
 		return false, nil
 	}
 }

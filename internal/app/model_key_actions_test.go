@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -8,6 +9,83 @@ import (
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
+
+func TestReduceViewportNavigationKeysHandlesSectionAndSearchCommands(t *testing.T) {
+	m := NewModel(nil)
+	keys := []tea.KeyMsg{
+		tea.KeyPressMsg{Text: "{"},
+		tea.KeyPressMsg{Text: "}"},
+		tea.KeyPressMsg{Text: "n"},
+		tea.KeyPressMsg{Text: "N"},
+	}
+	for _, key := range keys {
+		handled, cmd := m.reduceViewportNavigationKeys(key)
+		if !handled {
+			t.Fatalf("expected key %q to be handled", key.String())
+		}
+		if cmd != nil {
+			t.Fatalf("expected no command for key %q", key.String())
+		}
+	}
+}
+
+func TestReduceViewportNavigationKeysRoutesTopBottomToDebugPanelWhenNavigable(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	panel := &fakeDebugPanelView{height: 6}
+	m.debugPanel = panel
+	m.debugPanelVisible = true
+	m.appState.DebugStreamsEnabled = true
+
+	handled, _ := m.reduceViewportNavigationKeys(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if !handled {
+		t.Fatalf("expected g to be handled")
+	}
+	if panel.gotoTop != 1 {
+		t.Fatalf("expected debug panel goto top, got %d", panel.gotoTop)
+	}
+	handled, _ = m.reduceViewportNavigationKeys(tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if !handled {
+		t.Fatalf("expected G to be handled")
+	}
+	if panel.gotoBottom != 1 {
+		t.Fatalf("expected debug panel goto bottom, got %d", panel.gotoBottom)
+	}
+}
+
+func TestReduceViewportNavigationKeysRoutesTopBottomToTranscriptWhenDebugHidden(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 30)
+	blocks := make([]ChatBlock, 0, 120)
+	for i := 0; i < 120; i++ {
+		blocks = append(blocks, ChatBlock{Role: ChatRoleAgent, Text: fmt.Sprintf("line %d", i)})
+	}
+	m.applyBlocks(blocks)
+	m.enableFollow(false)
+	m.pauseFollow(false)
+	m.viewport.GotoBottom()
+	if m.viewport.YOffset() == 0 {
+		t.Fatalf("expected non-zero initial offset")
+	}
+
+	handled, _ := m.reduceViewportNavigationKeys(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	if !handled {
+		t.Fatalf("expected g to be handled")
+	}
+	if got := m.viewport.YOffset(); got != 0 {
+		t.Fatalf("expected transcript goto top, got %d", got)
+	}
+	if m.follow {
+		t.Fatalf("expected follow paused after top navigation")
+	}
+	handled, _ = m.reduceViewportNavigationKeys(tea.KeyPressMsg{Code: 'G', Text: "G"})
+	if !handled {
+		t.Fatalf("expected G to be handled")
+	}
+	if !m.follow {
+		t.Fatalf("expected follow enabled after bottom navigation")
+	}
+}
 
 func TestRenameHotkeyRoutesWorkspaceSelection(t *testing.T) {
 	m := NewModel(nil)
