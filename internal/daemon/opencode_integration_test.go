@@ -14,10 +14,8 @@ import (
 )
 
 const (
-	opencodeIntegrationEnv  = "ARCHON_OPENCODE_INTEGRATION"
-	opencodeIntegrationSkip = "ARCHON_OPENCODE_SKIP"
-	kilocodeIntegrationEnv  = "ARCHON_KILOCODE_INTEGRATION"
-	kilocodeIntegrationSkip = "ARCHON_KILOCODE_SKIP"
+	opencodeIntegrationEnv = "ARCHON_OPENCODE_INTEGRATION"
+	kilocodeIntegrationEnv = "ARCHON_KILOCODE_INTEGRATION"
 )
 
 func TestAPIOpenCodeSessionFlow(t *testing.T) {
@@ -151,30 +149,22 @@ func integrationOpenCodeProviders() []string {
 
 func requireOpenCodeIntegration(t *testing.T, provider string) {
 	t.Helper()
-	var (
-		enabledEnv string
-		skipEnv    string
-	)
+	var enabledEnv string
 	switch providers.Normalize(provider) {
 	case "kilocode":
 		enabledEnv = kilocodeIntegrationEnv
-		skipEnv = kilocodeIntegrationSkip
 	default:
 		enabledEnv = opencodeIntegrationEnv
-		skipEnv = opencodeIntegrationSkip
 	}
-	if strings.TrimSpace(os.Getenv(skipEnv)) != "" {
-		t.Skipf("%s set", skipEnv)
-	}
-	if strings.TrimSpace(os.Getenv(enabledEnv)) != "1" {
-		t.Skipf("set %s=1 to run %s integration tests", enabledEnv, provider)
+	if integrationEnvDisabled(enabledEnv) {
+		t.Skipf("%s disables %s integration tests", enabledEnv, provider)
 	}
 	if _, ok := providers.Lookup(provider); !ok {
 		t.Fatalf("%s provider not registered", provider)
 	}
 	cfg := resolveOpenCodeClientConfig(provider, loadCoreConfigOrDefault())
 	if _, err := newOpenCodeClient(cfg); err != nil {
-		t.Fatalf("%s client not configured: %v", provider, err)
+		t.Fatalf("%s client not configured: %v (set %s=disabled to skip)", provider, err, enabledEnv)
 	}
 }
 

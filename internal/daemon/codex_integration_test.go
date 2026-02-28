@@ -21,10 +21,7 @@ import (
 	"control/internal/types"
 )
 
-const (
-	codexIntegrationEnv  = "ARCHON_CODEX_INTEGRATION"
-	codexIntegrationSkip = "ARCHON_CODEX_SKIP"
-)
+const codexIntegrationEnv = "ARCHON_CODEX_INTEGRATION"
 
 func TestCodexAppServerIntegration(t *testing.T) {
 	requireCodexIntegration(t)
@@ -299,18 +296,15 @@ func TestCodexApprovalFlow(t *testing.T) {
 
 func requireCodexIntegration(t *testing.T) {
 	t.Helper()
-	if os.Getenv(codexIntegrationSkip) == "1" {
-		t.Skipf("%s=1 set; skipping codex integration tests", codexIntegrationSkip)
+	if integrationEnvDisabled(codexIntegrationEnv) {
+		t.Skipf("%s disables codex integration tests", codexIntegrationEnv)
 	}
 	cmd := strings.TrimSpace(os.Getenv("ARCHON_CODEX_CMD"))
 	if cmd == "" {
 		cmd = "codex"
 	}
 	if _, err := exec.LookPath(cmd); err != nil {
-		if os.Getenv(codexIntegrationEnv) == "1" {
-			t.Fatalf("codex command not found (%s): %v", cmd, err)
-		}
-		t.Skipf("codex command not found (%s); set %s=1 to require or install codex", cmd, codexIntegrationEnv)
+		t.Fatalf("codex command not found (%s): %v (set %s=disabled to skip)", cmd, err, codexIntegrationEnv)
 	}
 }
 
@@ -568,7 +562,12 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 		Logger:  logger,
 	}
 	api.LiveCodex = NewCodexLiveManager(stores, logger)
-	api.LiveManager = NewCompositeLiveManager(stores, logger, newCodexLiveSessionFactory(api.LiveCodex))
+	api.LiveManager = NewCompositeLiveManager(stores, logger,
+		newCodexLiveSessionFactory(api.LiveCodex),
+		newClaudeLiveSessionFactory(manager, stores, nil, nil, logger),
+		newOpenCodeLiveSessionFactory("opencode", nil, nil, nil, nil, nil, logger),
+		newOpenCodeLiveSessionFactory("kilocode", nil, nil, nil, nil, nil, logger),
+	)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)

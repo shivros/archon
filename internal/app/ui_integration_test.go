@@ -21,6 +21,7 @@ import (
 
 	"control/internal/client"
 	"control/internal/daemon"
+	"control/internal/guidedworkflows"
 	"control/internal/logging"
 	"control/internal/store"
 	"control/internal/testutil"
@@ -28,11 +29,9 @@ import (
 )
 
 const (
-	uiIntegrationEnv      = "ARCHON_UI_INTEGRATION"
-	codexIntegrationEnv   = "ARCHON_CODEX_INTEGRATION"
-	codexIntegrationSkip  = "ARCHON_CODEX_SKIP"
-	claudeIntegrationEnv  = "ARCHON_CLAUDE_INTEGRATION"
-	claudeIntegrationSkip = "ARCHON_CLAUDE_SKIP"
+	uiIntegrationEnv     = "ARCHON_UI_INTEGRATION"
+	codexIntegrationEnv  = "ARCHON_CODEX_INTEGRATION"
+	claudeIntegrationEnv = "ARCHON_CLAUDE_INTEGRATION"
 )
 
 func TestUICodexStreamingExistingSession(t *testing.T) {
@@ -52,6 +51,7 @@ func TestUICodexStreamingExistingSession(t *testing.T) {
 	repoDir, codexHome := createCodexWorkspace(t)
 	writeCodexConfig(t, codexHome, repoDir, "", "", "")
 	requireCodexAuth(t, repoDir, codexHome)
+	codexModel := resolveCodexModel(t, repoDir, codexHome)
 
 	server, _, _ := newUITestServer(t)
 	defer server.Close()
@@ -71,6 +71,9 @@ func TestUICodexStreamingExistingSession(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: codexModel,
+		},
 	})
 	if err != nil {
 		t.Fatalf("start session: %v", err)
@@ -189,6 +192,8 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 	repoDir, codexHome := createCodexWorkspace(t)
 	writeCodexConfig(t, codexHome, repoDir, "", "", "")
 	requireCodexAuth(t, repoDir, codexHome)
+	codexModel := resolveCodexModel(t, repoDir, codexHome)
+	t.Setenv("ARCHON_CODEX_MODEL", codexModel)
 
 	server, _, _ := newUITestServer(t)
 	defer server.Close()
@@ -214,6 +219,9 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 	h.SelectWorkspace(ws.ID)
 
 	logPhase("ui_new_session")
+	model.setComposeDefaultForProvider("codex", &types.SessionRuntimeOptions{
+		Model: codexModel,
+	})
 	h.SendKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	h.SelectProvider("codex")
 	h.SendKey(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -241,6 +249,7 @@ func TestUICodexStreamingResumeSession(t *testing.T) {
 	repoDir, codexHome := createCodexWorkspace(t)
 	writeCodexConfig(t, codexHome, repoDir, "", "", "")
 	requireCodexAuth(t, repoDir, codexHome)
+	codexModel := resolveCodexModel(t, repoDir, codexHome)
 
 	server, _, _ := newUITestServer(t)
 	defer server.Close()
@@ -260,6 +269,9 @@ func TestUICodexStreamingResumeSession(t *testing.T) {
 		Provider:    "codex",
 		WorkspaceID: ws.ID,
 		Text:        "Say \"ok\" and nothing else.",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: codexModel,
+		},
 	})
 	if err != nil {
 		t.Fatalf("start session: %v", err)
@@ -449,7 +461,7 @@ func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 			h.Init()
 			h.Resize(120, 40)
 			h.SelectWorkspace(ws.ID)
-			h.SelectSession(sessionID)
+			h.FocusSession(sessionID)
 
 			h.SendKey(tea.KeyPressMsg{Text: "d"})
 			h.SendKey(tea.KeyPressMsg{Text: "y"})
@@ -491,8 +503,8 @@ func TestUISpaceEnablesBulkDismissAcrossSelectedSessions(t *testing.T) {
 	now := time.Now().UTC()
 	insertSessionWithMeta(t, stores, &types.Session{
 		ID:        "sess-bulk-1",
-		Provider:  "codex",
-		Cmd:       "codex app-server",
+		Provider:  "claude",
+		Cmd:       "claude",
 		Status:    types.SessionStatusInactive,
 		CreatedAt: now,
 	}, &types.SessionMeta{
@@ -520,11 +532,11 @@ func TestUISpaceEnablesBulkDismissAcrossSelectedSessions(t *testing.T) {
 	h.Init()
 	h.Resize(120, 40)
 	h.SelectWorkspace(ws.ID)
-	h.SelectSession("sess-bulk-1")
+	h.FocusSession("sess-bulk-1")
+	h.model.sidebar.ToggleFocusedSelection()
+	h.FocusSession("sess-bulk-2")
+	h.model.sidebar.ToggleFocusedSelection()
 
-	h.SendKey(tea.KeyPressMsg{Text: " "})
-	h.SendKey(tea.KeyPressMsg{Code: tea.KeyDown})
-	h.SendKey(tea.KeyPressMsg{Text: " "})
 	h.SendKey(tea.KeyPressMsg{Text: "d"})
 	h.SendKey(tea.KeyPressMsg{Text: "y"})
 
@@ -592,7 +604,7 @@ func TestUIShowDismissedAndUndismissSession(t *testing.T) {
 	h.Init()
 	h.Resize(120, 40)
 	h.SelectWorkspace(ws.ID)
-	h.SelectSession(sessionID)
+	h.FocusSession(sessionID)
 
 	h.SendKey(tea.KeyPressMsg{Text: "d"})
 	h.SendKey(tea.KeyPressMsg{Text: "y"})
@@ -607,7 +619,7 @@ func TestUIShowDismissedAndUndismissSession(t *testing.T) {
 		return sidebarHasSession(h.model, sessionID)
 	}, 2*time.Second)
 
-	h.SelectSession(sessionID)
+	h.FocusSession(sessionID)
 	h.SendKey(tea.KeyPressMsg{Text: "u"})
 
 	h.WaitFor(func() bool {
@@ -669,7 +681,7 @@ func TestUIDismissSessionCancelKeepsSession(t *testing.T) {
 			h.Init()
 			h.Resize(120, 40)
 			h.SelectWorkspace(ws.ID)
-			h.SelectSession(sessionID)
+			h.FocusSession(sessionID)
 
 			h.SendKey(tea.KeyPressMsg{Text: "d"})
 			h.SendKey(tea.KeyPressMsg{Text: "n"})
@@ -761,6 +773,19 @@ func (h *uiHarness) SelectSession(sessionID string) {
 	}
 }
 
+// FocusSession moves the sidebar cursor to the given session without loading
+// history or opening streams. Use this for tests that only need sidebar
+// navigation (e.g. multi-select dismiss) with fake session IDs.
+func (h *uiHarness) FocusSession(sessionID string) {
+	h.t.Helper()
+	if h.model.sidebar == nil {
+		h.t.Fatalf("sidebar not initialized")
+	}
+	if !h.model.sidebar.SelectBySessionID(sessionID) {
+		h.t.Fatalf("session %s not found in sidebar", sessionID)
+	}
+}
+
 func (h *uiHarness) SelectWorkspace(workspaceID string) {
 	h.t.Helper()
 	if h.model.sidebar == nil {
@@ -783,15 +808,20 @@ func (h *uiHarness) SelectWorkspace(workspaceID string) {
 
 func (h *uiHarness) WaitForAgentReply(timeout time.Duration) {
 	h.t.Helper()
-	h.WaitFor(func() bool {
+	h.waitFor(func() bool {
 		if h.model.mode != uiModeCompose {
 			return false
 		}
 		return containsAgentReply(h.model.currentBlocks())
-	}, timeout)
+	}, timeout, true)
 }
 
 func (h *uiHarness) WaitFor(check func() bool, timeout time.Duration) {
+	h.t.Helper()
+	h.waitFor(check, timeout, false)
+}
+
+func (h *uiHarness) waitFor(check func() bool, timeout time.Duration, failOnStreamError bool) {
 	h.t.Helper()
 	deadline := time.Now().Add(timeout)
 	lastLines := 0
@@ -800,11 +830,13 @@ func (h *uiHarness) WaitFor(check func() bool, timeout time.Duration) {
 		if check() {
 			return
 		}
-		if strings.HasPrefix(h.model.status, "codex error:") {
-			h.t.Fatalf("codex stream error: %s", h.model.status)
-		}
-		if status := strings.ToLower(h.model.status); strings.Contains(status, "context canceled") || strings.Contains(status, "stream error") || strings.Contains(status, "events error") || strings.Contains(status, "items stream error") {
-			h.t.Fatalf("stream error surfaced: %s", h.model.status)
+		if failOnStreamError {
+			if strings.HasPrefix(h.model.status, "codex error:") {
+				h.t.Fatalf("codex stream error: %s", h.model.status)
+			}
+			if status := strings.ToLower(h.model.status); strings.Contains(status, "context canceled") || strings.Contains(status, "stream error") || strings.Contains(status, "events error") || strings.Contains(status, "items stream error") {
+				h.t.Fatalf("stream error surfaced: %s", h.model.status)
+			}
 		}
 		h.apply(tickMsg(time.Now()))
 		ticks++
@@ -899,42 +931,36 @@ func asCmdSlice(msg tea.Msg) ([]tea.Cmd, bool) {
 
 func requireUIIntegration(t *testing.T) {
 	t.Helper()
-	if os.Getenv(uiIntegrationEnv) != "1" {
-		t.Skipf("%s=1 not set; skipping UI integration tests", uiIntegrationEnv)
+	if integrationEnvDisabled(uiIntegrationEnv) {
+		t.Skipf("%s disables UI integration tests", uiIntegrationEnv)
 	}
 }
 
 func requireClaudeIntegration(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv(claudeIntegrationSkip)) != "" {
-		t.Skipf("%s set", claudeIntegrationSkip)
-	}
-	if os.Getenv(claudeIntegrationEnv) != "1" {
-		t.Skipf("set %s=1 to run Claude integration tests", claudeIntegrationEnv)
+	if integrationEnvDisabled(claudeIntegrationEnv) {
+		t.Skipf("%s disables Claude integration tests", claudeIntegrationEnv)
 	}
 	cmd := strings.TrimSpace(os.Getenv("ARCHON_CLAUDE_CMD"))
 	if cmd == "" {
 		cmd = "claude"
 	}
 	if _, err := exec.LookPath(cmd); err != nil {
-		t.Fatalf("claude command not found (%s): %v", cmd, err)
+		t.Fatalf("claude command not found (%s): %v (set %s=disabled to skip)", cmd, err, claudeIntegrationEnv)
 	}
 }
 
 func requireCodexIntegration(t *testing.T) {
 	t.Helper()
-	if os.Getenv(codexIntegrationSkip) == "1" {
-		t.Skipf("%s=1 set; skipping codex integration tests", codexIntegrationSkip)
+	if integrationEnvDisabled(codexIntegrationEnv) {
+		t.Skipf("%s disables codex integration tests", codexIntegrationEnv)
 	}
 	cmd := strings.TrimSpace(os.Getenv("ARCHON_CODEX_CMD"))
 	if cmd == "" {
 		cmd = "codex"
 	}
 	if _, err := exec.LookPath(cmd); err != nil {
-		if os.Getenv(codexIntegrationEnv) == "1" {
-			t.Fatalf("codex command not found (%s): %v", cmd, err)
-		}
-		t.Skipf("codex command not found (%s); set %s=1 to require or install codex", cmd, codexIntegrationEnv)
+		t.Fatalf("codex command not found (%s): %v (set %s=disabled to skip)", cmd, err, codexIntegrationEnv)
 	}
 }
 
@@ -1268,6 +1294,56 @@ func (c *testCodexAppServer) readLoop() {
 	}
 }
 
+func resolveCodexModel(t *testing.T, repoDir, codexHome string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	srv, err := startTestCodexAppServer(ctx, repoDir, codexHome)
+	if err != nil {
+		t.Fatalf("start codex app-server for model resolution: %v", err)
+	}
+	defer srv.Close()
+
+	preferred := strings.TrimSpace(os.Getenv("ARCHON_CODEX_MODEL"))
+
+	type modelSummary struct {
+		ID        string `json:"id"`
+		Model     string `json:"model"`
+		IsDefault bool   `json:"isDefault"`
+	}
+	var result struct {
+		Data []modelSummary `json:"data"`
+	}
+	if err := srv.request(ctx, "model/list", map[string]any{"limit": 100}, &result); err != nil || len(result.Data) == 0 {
+		if preferred != "" {
+			return preferred
+		}
+		t.Fatalf("no codex models available: %v", err)
+	}
+
+	nameOf := func(m modelSummary) string {
+		if m.Model != "" {
+			return m.Model
+		}
+		return m.ID
+	}
+
+	if preferred != "" {
+		for _, m := range result.Data {
+			if strings.EqualFold(nameOf(m), preferred) {
+				return nameOf(m)
+			}
+		}
+		t.Fatalf("ARCHON_CODEX_MODEL=%q is not available", preferred)
+	}
+	for _, m := range result.Data {
+		if m.IsDefault {
+			return nameOf(m)
+		}
+	}
+	return nameOf(result.Data[0])
+}
+
 func newUITestServer(t *testing.T) (*httptest.Server, *daemon.SessionManager, *daemon.Stores) {
 	t.Helper()
 	base := t.TempDir()
@@ -1297,12 +1373,14 @@ func newUITestServer(t *testing.T) (*httptest.Server, *daemon.SessionManager, *d
 
 	logger := logging.New(os.Stdout, logging.Debug)
 	api := &daemon.API{
-		Version: "test",
-		Manager: manager,
-		Stores:  stores,
-		Logger:  logger,
+		Version:      "test",
+		Manager:      manager,
+		Stores:       stores,
+		Logger:       logger,
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
 	}
 	api.LiveCodex = daemon.NewCodexLiveManager(stores, logger)
+	api.LiveManager = daemon.NewIntegrationLiveManager(stores, manager, api.LiveCodex, logger)
 
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)

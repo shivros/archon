@@ -14,10 +14,7 @@ import (
 	"control/internal/providers"
 )
 
-const (
-	claudeIntegrationEnv  = "ARCHON_CLAUDE_INTEGRATION"
-	claudeIntegrationSkip = "ARCHON_CLAUDE_SKIP"
-)
+const claudeIntegrationEnv = "ARCHON_CLAUDE_INTEGRATION"
 
 // These tests require the real Claude CLI to be installed and authenticated.
 
@@ -38,14 +35,10 @@ func TestAPIClaudeSessionFlow(t *testing.T) {
 		t.Fatalf("session id missing")
 	}
 
-	waitForHistoryItemsClaude(t, server, manager, session.ID, claudeIntegrationTimeout())
+	waitForAgentReply(t, server, manager, session.ID, "ok", claudeIntegrationTimeout())
 
 	sendClaudeMessage(t, server, session.ID, "Say \"ok\" again.")
-	waitForHistoryItemsClaude(t, server, manager, session.ID, claudeIntegrationTimeout())
-	history := historySession(t, server, session.ID)
-	if !historyHasAgentText(history.Items, "ok") {
-		t.Fatalf("agent reply missing\n%s", sessionDiagnostics(manager, session.ID))
-	}
+	waitForAgentReply(t, server, manager, session.ID, "ok", claudeIntegrationTimeout())
 }
 
 func TestClaudeItemsStream(t *testing.T) {
@@ -105,18 +98,15 @@ func sendClaudeMessage(t *testing.T, server *httptest.Server, sessionID, text st
 
 func requireClaudeIntegration(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv(claudeIntegrationSkip)) != "" {
-		t.Skipf("%s set", claudeIntegrationSkip)
-	}
-	if os.Getenv(claudeIntegrationEnv) != "1" {
-		t.Skipf("set %s=1 to run Claude integration tests", claudeIntegrationEnv)
+	if integrationEnvDisabled(claudeIntegrationEnv) {
+		t.Skipf("%s disables Claude integration tests", claudeIntegrationEnv)
 	}
 	def, ok := providers.Lookup("claude")
 	if !ok {
 		t.Fatalf("claude provider not registered")
 	}
 	if _, err := resolveProviderCommandName(def, ""); err != nil {
-		t.Fatalf("claude command not found: %v", err)
+		t.Fatalf("claude command not found: %v (set %s=disabled to skip)", err, claudeIntegrationEnv)
 	}
 }
 
@@ -149,6 +139,19 @@ func waitForHistoryItemsClaude(t *testing.T, server *httptest.Server, manager *S
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("timeout waiting for history items\n%s", sessionDiagnostics(manager, sessionID))
+}
+
+func waitForAgentReply(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		history := historySession(t, server, sessionID)
+		if historyHasAgentText(history.Items, needle) {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for agent reply containing %q\n%s", needle, sessionDiagnostics(manager, sessionID))
 }
 
 func sessionDiagnostics(manager *SessionManager, sessionID string) string {

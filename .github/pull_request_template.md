@@ -12,7 +12,7 @@
 - [ ] Approval visibility behavior is unchanged (approvals list + stream-driven approvals).
 - [ ] `go test ./...` passes locally.
 - [ ] `go test -race ./internal/app ./internal/daemon` passes locally.
-- [ ] Provider integration tests were not regressed (Codex + Claude suites where enabled).
+- [ ] Provider integration tests were not regressed (Codex + Claude + OpenCode suites; opt-out via `ARCHON_*_INTEGRATION=disabled`).
 
 ## Validation Notes
 
