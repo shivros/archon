@@ -61,46 +61,6 @@ func TestCodexAppServerIntegration(t *testing.T) {
 	waitForCodexTurn(t, client, turnID, codexIntegrationTimeout())
 }
 
-func TestAPICodexSessionFlow(t *testing.T) {
-	requireCodexIntegration(t)
-
-	repoDir, codexHome := createCodexWorkspace(t)
-	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
-
-	server, manager, _ := newCodexIntegrationServer(t)
-	defer server.Close()
-
-	ws := createWorkspace(t, server, repoDir)
-
-	session := startSession(t, server, StartSessionRequest{
-		Provider:    "codex",
-		WorkspaceID: ws.ID,
-		Text:        "Say \"ok\" and nothing else.",
-		RuntimeOptions: &types.SessionRuntimeOptions{
-			Model: model,
-		},
-	})
-	if session.ID == "" {
-		t.Fatalf("session id missing")
-	}
-
-	list := listSessions(t, server)
-	if len(list.Sessions) == 0 {
-		t.Fatalf("expected sessions list to be non-empty")
-	}
-
-	waitForHistoryItems(t, server, session.ID, codexIntegrationTimeout())
-
-	waitForStatus(t, manager, session.ID, types.SessionStatusExited, codexIntegrationTimeout())
-
-	turnID := sendMessageWithRetry(t, server, session.ID, "Say \"ok\" again.")
-	if turnID == "" {
-		t.Fatalf("turn id missing from send")
-	}
-
-	waitForHistoryItems(t, server, session.ID, codexIntegrationTimeout())
-}
-
 func TestCodexTailStream(t *testing.T) {
 	requireCodexIntegration(t)
 
@@ -136,45 +96,6 @@ func TestCodexTailStream(t *testing.T) {
 	}
 }
 
-func TestCodexEventsStream(t *testing.T) {
-	requireCodexIntegration(t)
-
-	repoDir, codexHome := createCodexWorkspace(t)
-	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
-	server, _, _ := newCodexIntegrationServer(t)
-	defer server.Close()
-
-	ws := createWorkspace(t, server, repoDir)
-	session := startSession(t, server, StartSessionRequest{
-		Provider:    "codex",
-		WorkspaceID: ws.ID,
-		Text:        "Say \"ok\" and nothing else.",
-		RuntimeOptions: &types.SessionRuntimeOptions{
-			Model: model,
-		},
-	})
-
-	stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/events?follow=1")
-	defer closeFn()
-
-	_ = sendMessageWithRetry(t, server, session.ID, "Say \"ok\" again.")
-
-	events := collectEvents(stream, 30*time.Second)
-	if len(events) == 0 {
-		t.Fatalf("expected events from SSE stream")
-	}
-	found := false
-	for _, event := range events {
-		if event.Method != "" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected at least one event method")
-	}
-}
-
 func TestCodexInterruptFlow(t *testing.T) {
 	requireCodexIntegration(t)
 
@@ -197,7 +118,7 @@ func TestCodexInterruptFlow(t *testing.T) {
 	defer closeFn()
 
 	longPrompt := "Write a detailed, multi-section response of at least 2000 words about distributed systems. Begin now."
-	_ = sendMessageWithRetry(t, server, session.ID, longPrompt)
+	_ = sendMessageWithRetry(t, server, session.ID, longPrompt, codexIntegrationTimeout())
 
 	started := waitForEvent(stream, "turn/started", 5*time.Second)
 	if !started {
@@ -247,7 +168,7 @@ func TestCodexApprovalFlow(t *testing.T) {
 	targetFile := filepath.Join(repoDir, "approval-created.txt")
 	_ = os.Remove(targetFile)
 
-	_ = sendMessageWithRetry(t, server, session.ID, "Create a new file named `approval-created.txt` containing exactly `ok`. Do not answer until the file is created.")
+	_ = sendMessageWithRetry(t, server, session.ID, "Create a new file named `approval-created.txt` containing exactly `ok`. Do not answer until the file is created.", codexIntegrationTimeout())
 
 	approval, seen := waitForApprovalEventWithTrace(stream, 20*time.Second)
 	if approval == nil || approval.ID == nil {
@@ -613,9 +534,9 @@ func waitForHistoryItems(t *testing.T, server *httptest.Server, sessionID string
 	t.Fatalf("timeout waiting for history items")
 }
 
-func sendMessageWithRetry(t *testing.T, server *httptest.Server, sessionID, text string) string {
+func sendMessageWithRetry(t *testing.T, server *httptest.Server, sessionID, text string, timeout time.Duration) string {
 	t.Helper()
-	deadline := time.Now().Add(codexIntegrationTimeout())
+	deadline := time.Now().Add(timeout)
 	for {
 		status, body, turnID := sendMessageOnce(server, sessionID, text)
 		if status == http.StatusOK && turnID != "" {

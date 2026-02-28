@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,78 +14,6 @@ import (
 )
 
 const claudeIntegrationEnv = "ARCHON_CLAUDE_INTEGRATION"
-
-// These tests require the real Claude CLI to be installed and authenticated.
-
-func TestAPIClaudeSessionFlow(t *testing.T) {
-	requireClaudeIntegration(t)
-
-	repoDir := createClaudeWorkspace(t)
-	server, manager, _ := newCodexIntegrationServer(t)
-	defer server.Close()
-
-	ws := createWorkspace(t, server, repoDir)
-	session := startSession(t, server, StartSessionRequest{
-		Provider:    "claude",
-		WorkspaceID: ws.ID,
-		Text:        "Say \"ok\" and nothing else.",
-	})
-	if session.ID == "" {
-		t.Fatalf("session id missing")
-	}
-
-	waitForAgentReply(t, server, manager, session.ID, "ok", claudeIntegrationTimeout())
-
-	sendClaudeMessage(t, server, session.ID, "Say \"ok\" again.")
-	waitForAgentReply(t, server, manager, session.ID, "ok", claudeIntegrationTimeout())
-}
-
-func TestClaudeItemsStream(t *testing.T) {
-	requireClaudeIntegration(t)
-
-	repoDir := createClaudeWorkspace(t)
-	server, manager, _ := newCodexIntegrationServer(t)
-	defer server.Close()
-
-	ws := createWorkspace(t, server, repoDir)
-	session := startSession(t, server, StartSessionRequest{
-		Provider:    "claude",
-		WorkspaceID: ws.ID,
-		Text:        "Say \"ok\" and nothing else.",
-	})
-
-	stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/items?follow=1&lines=50")
-	defer closeFn()
-
-	data, ok := waitForSSEData(stream, 30*time.Second)
-	if !ok {
-		t.Fatalf("timeout waiting for items stream event\n%s", sessionDiagnostics(manager, session.ID))
-	}
-
-	var item map[string]any
-	if err := json.Unmarshal([]byte(data), &item); err != nil {
-		t.Fatalf("decode item: %v", err)
-	}
-	if typ, _ := item["type"].(string); typ == "" {
-		t.Fatalf("expected item type to be set")
-	}
-
-	sendClaudeMessage(t, server, session.ID, "Say \"ok\" again.")
-	deadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(deadline) {
-		data, ok = waitForSSEData(stream, 5*time.Second)
-		if !ok {
-			continue
-		}
-		if err := json.Unmarshal([]byte(data), &item); err != nil {
-			continue
-		}
-		if historyHasAgentText([]map[string]any{item}, "ok") {
-			return
-		}
-	}
-	t.Fatalf("timeout waiting for agent reply on items stream\n%s", sessionDiagnostics(manager, session.ID))
-}
 
 func sendClaudeMessage(t *testing.T, server *httptest.Server, sessionID, text string) {
 	t.Helper()

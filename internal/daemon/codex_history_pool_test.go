@@ -134,6 +134,82 @@ func TestCodexHistoryPoolEvictsLRUWhenOverLimit(t *testing.T) {
 	}
 }
 
+func TestCodexHistoryPoolRetriesOnNewThreadNotYetIndexed(t *testing.T) {
+	client := &stubCodexHistoryClient{
+		readErrs: []error{
+			// tryReadWithResume attempt 0: ReadThread fails
+			errors.New("rpc error -32600: thread not loaded: thread-new"),
+			// tryReadWithResume attempt 0: resume fails → no second ReadThread
+			// retry 1: ReadThread fails again
+			errors.New("rpc error -32600: thread not loaded: thread-new"),
+			// retry 1: resume succeeds → second ReadThread succeeds
+			nil,
+		},
+		readThreads: []*codexThread{
+			nil,
+			nil,
+			{ID: "thread-new"},
+		},
+		resumeErrs: []error{
+			errors.New("no rollout found for thread id thread-new"), // attempt 0
+			nil, // retry 1: resume succeeds
+		},
+	}
+
+	pool := &codexHistoryPool{
+		clients:    map[string]*pooledCodexHistoryClient{},
+		idleTTL:    0,
+		maxClients: 4,
+		logger:     logging.Nop(),
+		startFn: func(context.Context, string, string, logging.Logger) (codexHistoryClient, error) {
+			return client, nil
+		},
+	}
+
+	thread, err := pool.ReadThread(context.Background(), "/repo", "/repo/.codex", "thread-new")
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got err=%v", err)
+	}
+	if thread == nil || thread.ID != "thread-new" {
+		t.Fatalf("unexpected thread: %#v", thread)
+	}
+	if client.resumeCalls != 2 {
+		t.Fatalf("expected 2 resume calls, got %d", client.resumeCalls)
+	}
+	if client.readCalls != 3 {
+		t.Fatalf("expected 3 read calls, got %d", client.readCalls)
+	}
+}
+
+func TestCodexHistoryPoolRetryRespectsContextCancellation(t *testing.T) {
+	client := &stubCodexHistoryClient{
+		readErrs: []error{
+			errors.New("rpc error -32600: thread not loaded: thread-x"),
+		},
+		resumeErrs: []error{
+			errors.New("no rollout found for thread id thread-x"),
+		},
+	}
+
+	pool := &codexHistoryPool{
+		clients:    map[string]*pooledCodexHistoryClient{},
+		idleTTL:    0,
+		maxClients: 4,
+		logger:     logging.Nop(),
+		startFn: func(context.Context, string, string, logging.Logger) (codexHistoryClient, error) {
+			return client, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := pool.ReadThread(ctx, "/repo", "/repo/.codex", "thread-x")
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+}
+
 type stubCodexHistoryClient struct {
 	thread      *codexThread
 	err         error
@@ -142,6 +218,7 @@ type stubCodexHistoryClient struct {
 	readCalls   int
 	resumeCalls int
 	resumeErr   error
+	resumeErrs  []error
 	closeCalls  int
 }
 
@@ -166,6 +243,9 @@ func (s *stubCodexHistoryClient) ReadThread(context.Context, string) (*codexThre
 
 func (s *stubCodexHistoryClient) ResumeThread(context.Context, string) error {
 	s.resumeCalls++
+	if idx := s.resumeCalls - 1; idx >= 0 && idx < len(s.resumeErrs) {
+		return s.resumeErrs[idx]
+	}
 	return s.resumeErr
 }
 

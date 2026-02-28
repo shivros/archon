@@ -5,3 +5,6 @@
 coverage.out
 *.cover
 archon
+
+# Playwright CLI
+.playwright-cli/

@@ -91,10 +91,46 @@ func (p *codexHistoryPool) ReadThread(ctx context.Context, cwd, codexHome, threa
 	return thread, err
 }
 
+const codexHistoryRetryAttempts = 3
+const codexHistoryRetryDelay = 300 * time.Millisecond
+
 func (p *codexHistoryPool) readThreadWithRecovery(ctx context.Context, client codexHistoryClient, threadID string) (*codexThread, error) {
 	if client == nil {
 		return nil, errors.New("codex history client is required")
 	}
+	thread, err := p.tryReadWithResume(ctx, client, threadID)
+	if err == nil {
+		return thread, nil
+	}
+	if !isCodexHistoryResumeRequiredError(err) {
+		return nil, err
+	}
+	// For brand-new threads, both ReadThread and ResumeThread may fail
+	// because the pooled app-server hasn't indexed the thread yet.
+	// Retry with short backoff.
+	for attempt := 1; attempt <= codexHistoryRetryAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(codexHistoryRetryDelay):
+		}
+		p.logger.Debug("codex_history_retry",
+			logging.F("thread_id", threadID),
+			logging.F("attempt", attempt),
+			logging.F("previous_error", err.Error()),
+		)
+		thread, err = p.tryReadWithResume(ctx, client, threadID)
+		if err == nil {
+			return thread, nil
+		}
+		if !isCodexHistoryResumeRequiredError(err) {
+			return nil, err
+		}
+	}
+	return nil, err
+}
+
+func (p *codexHistoryPool) tryReadWithResume(ctx context.Context, client codexHistoryClient, threadID string) (*codexThread, error) {
 	thread, err := client.ReadThread(ctx, threadID)
 	if err == nil {
 		return thread, nil
@@ -104,6 +140,9 @@ func (p *codexHistoryPool) readThreadWithRecovery(ctx context.Context, client co
 	}
 	resumeErr := client.ResumeThread(ctx, threadID)
 	if resumeErr != nil {
+		if isCodexHistoryResumeRequiredError(resumeErr) {
+			return nil, resumeErr
+		}
 		p.logger.Warn("codex_history_resume_failed",
 			logging.F("thread_id", threadID),
 			logging.F("read_error", err.Error()),

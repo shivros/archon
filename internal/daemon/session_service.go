@@ -674,11 +674,11 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 		codexHome = resolveCodexHome(cwd, workspacePath)
 	}
 
+	usesLiveManagerSend := hasProviderDef &&
+		(providerDef.Runtime == providers.RuntimeClaude || providerDef.Runtime == providers.RuntimeOpenCodeServer)
 	initialTextForStart := initialText
-	needsAsyncInitialSend := false
-	if hasProviderDef && (providerDef.Runtime == providers.RuntimeClaude || providerDef.Runtime == providers.RuntimeOpenCodeServer) {
+	if usesLiveManagerSend {
 		initialTextForStart = ""
-		needsAsyncInitialSend = true
 	}
 	session, err := s.manager.StartSession(StartSessionConfig{
 		Provider:              req.Provider,
@@ -700,10 +700,11 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	if err != nil {
 		return nil, invalidError(err.Error(), err)
 	}
-	if needsAsyncInitialSend && initialText != "" && s.manager != nil {
-		payload := buildInitialProviderPayload(providerDef, initialText, runtimeOptions)
-		if len(payload) == 0 {
-			return session, nil
+	if usesLiveManagerSend && initialText != "" {
+		input := []map[string]any{{"type": "text", "text": initialText}}
+		opts := SendMessageOptions{
+			RuntimeOptions:       runtimeOptions,
+			PersistRuntimeOption: runtimeOptions != nil,
 		}
 		if s.logger != nil && s.logger.Enabled(logging.Debug) {
 			s.logger.Debug("provider_initial_send_enqueued",
@@ -712,40 +713,26 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 				logging.F("input_len", len(initialText)),
 			)
 		}
-		logFailure := func(name string, sessionID string, err error) {
-			if s.logger != nil {
-				s.logger.Warn(name,
-					logging.F("session_id", sessionID),
-					logging.F("provider", req.Provider),
-					logging.F("error", err),
-				)
-			}
-		}
-		go func(sessionID string) {
-			if err := s.manager.SendInput(sessionID, payload); err != nil {
-				logFailure("provider_initial_send_failed", sessionID, err)
+		go func(sessionID, provider string) {
+			if _, err := s.SendMessageWithOptions(context.Background(), sessionID, input, opts); err != nil {
+				if s.logger != nil {
+					s.logger.Warn("provider_initial_send_failed",
+						logging.F("session_id", sessionID),
+						logging.F("provider", provider),
+						logging.F("error", err),
+					)
+				}
 				return
 			}
 			if s.logger != nil && s.logger.Enabled(logging.Debug) {
 				s.logger.Debug("provider_initial_send_dispatched",
 					logging.F("session_id", sessionID),
-					logging.F("provider", req.Provider),
+					logging.F("provider", provider),
 				)
 			}
-		}(session.ID)
+		}(session.ID, req.Provider)
 	}
 	return session, nil
-}
-
-func buildInitialProviderPayload(providerDef providers.Definition, text string, runtimeOptions *types.SessionRuntimeOptions) []byte {
-	switch providerDef.Runtime {
-	case providers.RuntimeClaude:
-		return buildClaudeUserPayloadWithRuntime(text, runtimeOptions)
-	case providers.RuntimeOpenCodeServer:
-		return buildOpenCodeUserPayloadWithRuntime(text, runtimeOptions)
-	default:
-		return nil
-	}
 }
 
 func (s *SessionService) History(ctx context.Context, id string, lines int) ([]map[string]any, error) {

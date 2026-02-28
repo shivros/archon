@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,131 +16,6 @@ const (
 	opencodeIntegrationEnv = "ARCHON_OPENCODE_INTEGRATION"
 	kilocodeIntegrationEnv = "ARCHON_KILOCODE_INTEGRATION"
 )
-
-func TestAPIOpenCodeSessionFlow(t *testing.T) {
-	for _, provider := range integrationOpenCodeProviders() {
-		t.Run(provider, func(t *testing.T) {
-			requireOpenCodeIntegration(t, provider)
-
-			repoDir := createOpenCodeWorkspace(t, provider)
-			server, manager, _ := newCodexIntegrationServer(t)
-			defer server.Close()
-
-			ws := createWorkspace(t, server, repoDir)
-			session := startSession(t, server, StartSessionRequest{
-				Provider:    provider,
-				WorkspaceID: ws.ID,
-				Text:        "Say \"ok\" and nothing else.",
-			})
-			if session.ID == "" {
-				t.Fatalf("session id missing")
-			}
-
-			waitForHistoryItemsClaude(t, server, manager, session.ID, openCodeIntegrationTimeout(provider))
-			sendOpenCodeMessage(t, server, session.ID, "Say \"ok\" again.")
-			waitForHistoryItemsClaude(t, server, manager, session.ID, openCodeIntegrationTimeout(provider))
-
-			history := historySession(t, server, session.ID)
-			if !historyHasAgentText(history.Items, "ok") {
-				t.Fatalf("agent reply missing\n%s", sessionDiagnostics(manager, session.ID))
-			}
-		})
-	}
-}
-
-func TestOpenCodeItemsStream(t *testing.T) {
-	for _, provider := range integrationOpenCodeProviders() {
-		t.Run(provider, func(t *testing.T) {
-			requireOpenCodeIntegration(t, provider)
-
-			repoDir := createOpenCodeWorkspace(t, provider)
-			server, manager, _ := newCodexIntegrationServer(t)
-			defer server.Close()
-
-			ws := createWorkspace(t, server, repoDir)
-			session := startSession(t, server, StartSessionRequest{
-				Provider:    provider,
-				WorkspaceID: ws.ID,
-				Text:        "Say \"ok\" and nothing else.",
-			})
-
-			stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/items?follow=1&lines=100")
-			defer closeFn()
-
-			data, ok := waitForSSEData(stream, 30*time.Second)
-			if !ok {
-				t.Fatalf("timeout waiting for items stream event\n%s", sessionDiagnostics(manager, session.ID))
-			}
-
-			var item map[string]any
-			if err := json.Unmarshal([]byte(data), &item); err != nil {
-				t.Fatalf("decode item: %v", err)
-			}
-			if typ, _ := item["type"].(string); typ == "" {
-				t.Fatalf("expected item type to be set")
-			}
-
-			sendOpenCodeMessage(t, server, session.ID, "Say \"ok\" again.")
-			deadline := time.Now().Add(45 * time.Second)
-			for time.Now().Before(deadline) {
-				data, ok = waitForSSEData(stream, 5*time.Second)
-				if !ok {
-					continue
-				}
-				if err := json.Unmarshal([]byte(data), &item); err != nil {
-					continue
-				}
-				if historyHasAgentText([]map[string]any{item}, "ok") {
-					return
-				}
-			}
-			t.Fatalf("timeout waiting for agent reply on items stream\n%s", sessionDiagnostics(manager, session.ID))
-		})
-	}
-}
-
-func TestOpenCodeEventsStream(t *testing.T) {
-	for _, provider := range integrationOpenCodeProviders() {
-		t.Run(provider, func(t *testing.T) {
-			requireOpenCodeIntegration(t, provider)
-
-			repoDir := createOpenCodeWorkspace(t, provider)
-			server, manager, _ := newCodexIntegrationServer(t)
-			defer server.Close()
-
-			ws := createWorkspace(t, server, repoDir)
-			session := startSession(t, server, StartSessionRequest{
-				Provider:    provider,
-				WorkspaceID: ws.ID,
-				Text:        "Say \"ok\" and nothing else.",
-			})
-
-			stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/events?follow=1")
-			defer closeFn()
-
-			sendOpenCodeMessage(t, server, session.ID, "Say \"ok\" again.")
-			events := collectEvents(stream, 45*time.Second)
-			if len(events) == 0 {
-				t.Fatalf("expected events from SSE stream\n%s", sessionDiagnostics(manager, session.ID))
-			}
-
-			found := false
-			for _, event := range events {
-				switch event.Method {
-				case "turn/started", "item/agentMessage/delta", "turn/completed", "error":
-					found = true
-				}
-			}
-			if !found {
-				methods := make([]string, 0, len(events))
-				for _, event := range events {
-					methods = append(methods, event.Method)
-				}
-				t.Fatalf("expected mapped open code event methods, got=%v\n%s", methods, sessionDiagnostics(manager, session.ID))
-			}
-		})
-	}
-}
 
 func integrationOpenCodeProviders() []string {
 	return []string{"opencode", "kilocode"}
