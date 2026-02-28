@@ -340,7 +340,7 @@ func (s *codexManagedSession) SetNotificationPublisher(notifier NotificationPubl
 		return
 	}
 	manager.SetNotificationPublisher(notifier)
-	ls, err := manager.ensure(context.Background(), sess, meta, codexHome)
+	ls, err := manager.ensure(context.Background(), sess, meta, codexHome, false)
 	if err != nil || ls == nil {
 		return
 	}
@@ -368,7 +368,7 @@ func (s *codexManagedSession) ensureLive(ctx context.Context) (*codexLiveSession
 		return nil, errors.New("codex session is not initialized")
 	}
 	meta := s.currentMeta()
-	ls, err := s.manager.ensure(ctx, s.session, meta, s.codexHome)
+	ls, err := s.manager.ensure(ctx, s.session, meta, s.codexHome, false)
 	if err != nil {
 		return nil, err
 	}
@@ -402,4 +402,14 @@ func cloneSessionShallow(session *types.Session) *types.Session {
 	}
 	copy := *session
 	return &copy
+}
+
+// NewIntegrationLiveManager creates a CompositeLiveManager with factories for
+// all built-in providers (codex, claude). This is exported for use by
+// integration tests in other packages (e.g. internal/app).
+func NewIntegrationLiveManager(stores *Stores, manager *SessionManager, codex *CodexLiveManager, logger logging.Logger) *CompositeLiveManager {
+	return NewCompositeLiveManager(stores, logger,
+		newCodexLiveSessionFactory(codex),
+		newClaudeLiveSessionFactory(manager, stores, nil, nil, logger),
+	)
 }

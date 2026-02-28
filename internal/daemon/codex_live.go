@@ -22,6 +22,10 @@ type CodexLiveManager struct {
 	turnProbe turnActivityProbe
 }
 
+type codexThreadResumer interface {
+	ResumeThread(ctx context.Context, threadID string) error
+}
+
 func NewCodexLiveManager(stores *Stores, logger logging.Logger) *CodexLiveManager {
 	if logger == nil {
 		logger = logging.Nop()
@@ -74,7 +78,7 @@ func (m *CodexLiveManager) StartTurn(
 		}
 		runtimeOptions, model := codexRuntimeConfig(latestMeta)
 
-		ls, err := m.ensure(ctx, session, latestMeta, codexHome)
+		ls, err := m.ensure(ctx, session, latestMeta, codexHome, true)
 		if err != nil {
 			lastErr = err
 			if !isClosedPipeError(lastErr) {
@@ -100,6 +104,7 @@ func (m *CodexLiveManager) StartTurn(
 		}
 		turnID, err := reserveSessionTurn(ctx, ls, m.turnProbe, startTurn)
 		if err == nil {
+			m.persistSessionThreadID(session.ID, ls.threadID)
 			m.logger.Info("codex_turn_started", logging.F("session_id", session.ID), logging.F("thread_id", ls.threadID), logging.F("turn_id", turnID))
 			return turnID, nil
 		}
@@ -131,7 +136,7 @@ func (m *CodexLiveManager) Subscribe(session *types.Session, meta *types.Session
 	if session.Provider != "codex" {
 		return nil, nil, errors.New("provider does not support live events")
 	}
-	ls, err := m.ensure(context.Background(), session, meta, codexHome)
+	ls, err := m.ensure(context.Background(), session, meta, codexHome, false)
 	if err != nil {
 		m.logger.Error("codex_live_subscribe_error", logging.F("session_id", session.ID), logging.F("error", err))
 		return nil, nil, err
@@ -155,7 +160,7 @@ func (m *CodexLiveManager) Respond(ctx context.Context, session *types.Session, 
 	if requestID < 0 {
 		return errors.New("request id is required")
 	}
-	ls, err := m.ensure(ctx, session, meta, codexHome)
+	ls, err := m.ensure(ctx, session, meta, codexHome, false)
 	if err != nil {
 		return err
 	}
@@ -176,7 +181,7 @@ func (m *CodexLiveManager) Interrupt(ctx context.Context, session *types.Session
 	if session.Provider != "codex" {
 		return errors.New("provider does not support live events")
 	}
-	ls, err := m.ensure(ctx, session, meta, codexHome)
+	ls, err := m.ensure(ctx, session, meta, codexHome, false)
 	if err != nil {
 		return err
 	}
@@ -201,7 +206,7 @@ func (m *CodexLiveManager) Interrupt(ctx context.Context, session *types.Session
 	return nil
 }
 
-func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string) (*codexLiveSession, error) {
+func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string, allowBootstrap bool) (*codexLiveSession, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -224,25 +229,30 @@ func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, m
 		m.logger.Error("codex_start_error", logging.F("session_id", session.ID), logging.F("error", err))
 		return nil, err
 	}
-	threadID := strings.TrimSpace(resolveThreadID(session, latestMeta))
-	if threadID == "" {
-		client.Close()
-		return nil, errors.New("thread id not available")
-	}
-	if err := client.ResumeThread(ctx, threadID); err != nil {
-		if !isCodexMissingThreadError(err) {
-			m.logger.Error("codex_resume_error", logging.F("session_id", session.ID), logging.F("thread_id", threadID), logging.F("error", err))
+	candidates := codexThreadResumeCandidates(session, latestMeta)
+	threadID, resumeErr := tryResumeCodexThread(ctx, client, candidates)
+	if resumeErr == nil {
+		if latestMeta == nil || strings.TrimSpace(latestMeta.ThreadID) != threadID {
+			m.persistSessionThreadID(session.ID, threadID)
+		}
+	} else {
+		if !isCodexMissingThreadError(resumeErr) {
+			m.logger.Error("codex_resume_error", logging.F("session_id", session.ID), logging.F("thread_candidates", strings.Join(candidates, ",")), logging.F("error", resumeErr))
 			client.Close()
-			return nil, err
+			return nil, resumeErr
 		}
 		m.logger.Warn("codex_resume_missing_thread",
 			logging.F("session_id", session.ID),
-			logging.F("thread_id", threadID),
-			logging.F("error", err),
+			logging.F("thread_candidates", strings.Join(candidates, ",")),
+			logging.F("error", resumeErr),
 		)
+		if !allowBootstrap {
+			client.Close()
+			return nil, resumeErr
+		}
 		if !shouldBootstrapMissingThread(session, latestMeta) {
 			client.Close()
-			return nil, err
+			return nil, resumeErr
 		}
 		recoveredThreadID, startErr := client.StartThread(ctx, model, session.Cwd, runtimeOptions)
 		if startErr != nil {
@@ -258,10 +268,10 @@ func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, m
 			logging.F("session_id", session.ID),
 			logging.F("thread_id", threadID),
 		)
-		m.persistSessionThreadID(session.ID, threadID)
 	}
-	if latestMeta == nil || strings.TrimSpace(latestMeta.ThreadID) == "" {
-		m.persistSessionThreadID(session.ID, threadID)
+	if threadID == "" {
+		client.Close()
+		return nil, errors.New("thread id not available")
 	}
 
 	ls = &codexLiveSession{
@@ -636,6 +646,52 @@ func shouldBootstrapMissingThread(session *types.Session, meta *types.SessionMet
 		return true
 	}
 	return time.Since(createdAt) <= 2*time.Minute
+}
+
+func codexThreadResumeCandidates(session *types.Session, meta *types.SessionMeta) []string {
+	candidates := make([]string, 0, 2)
+	appendUnique := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+	appendUnique(resolveThreadID(session, meta))
+	if session != nil && session.Provider == "codex" {
+		appendUnique(session.ID)
+	}
+	return candidates
+}
+
+func tryResumeCodexThread(ctx context.Context, client codexThreadResumer, candidates []string) (string, error) {
+	if client == nil {
+		return "", errors.New("codex client is required")
+	}
+	var missingErr error
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if err := client.ResumeThread(ctx, candidate); err != nil {
+			if isCodexMissingThreadError(err) {
+				missingErr = err
+				continue
+			}
+			return "", err
+		}
+		return candidate, nil
+	}
+	if missingErr != nil {
+		return "", missingErr
+	}
+	return "", errors.New("thread id not available")
 }
 
 func reserveSessionTurn(ctx context.Context, ls *codexLiveSession, probe turnActivityProbe, start func() (string, error)) (string, error) {

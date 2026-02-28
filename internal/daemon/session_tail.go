@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -220,9 +221,26 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 	if s.codexPool == nil {
 		s.codexPool = NewCodexHistoryPool(s.logger)
 	}
-	thread, err := s.codexPool.ReadThread(ctx, session.Cwd, codexHome, threadID)
+	thread, resolvedThreadID, err := s.readCodexThreadWithFallback(ctx, session, codexHome, threadID)
 	if err != nil {
 		return nil, err
+	}
+	if resolvedThreadID != "" && strings.TrimSpace(resolvedThreadID) != strings.TrimSpace(threadID) {
+		s.logger.Warn(
+			"codex_history_thread_id_fallback",
+			logging.F("session_id", strings.TrimSpace(session.ID)),
+			logging.F("requested_thread_id", strings.TrimSpace(threadID)),
+			logging.F("resolved_thread_id", strings.TrimSpace(resolvedThreadID)),
+		)
+		if s.stores != nil && s.stores.SessionMeta != nil {
+			now := time.Now().UTC()
+			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
+				SessionID:    strings.TrimSpace(session.ID),
+				ThreadID:     strings.TrimSpace(resolvedThreadID),
+				LastActiveAt: &now,
+			})
+		}
+		threadID = resolvedThreadID
 	}
 	items := flattenCodexItemsWithLimit(thread, lines)
 	items, stats, hydrateErr := s.hydrateCodexHistoryItemTimestamps(session.ID, items)
@@ -252,6 +270,33 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 		)
 	}
 	return items, nil
+}
+
+func (s *SessionService) readCodexThreadWithFallback(ctx context.Context, session *types.Session, codexHome, threadID string) (*codexThread, string, error) {
+	if s == nil || s.codexPool == nil {
+		return nil, "", errors.New("codex history pool not available")
+	}
+	candidates := codexThreadResumeCandidates(session, &types.SessionMeta{ThreadID: threadID})
+	var missingErr error
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		thread, err := s.codexPool.ReadThread(ctx, session.Cwd, codexHome, candidate)
+		if err == nil {
+			return thread, candidate, nil
+		}
+		if isCodexMissingThreadError(err) {
+			missingErr = err
+			continue
+		}
+		return nil, "", err
+	}
+	if missingErr != nil {
+		return nil, "", missingErr
+	}
+	return nil, "", errors.New("thread id is required")
 }
 
 func flattenCodexItemsWithLimit(thread *codexThread, limit int) []map[string]any {

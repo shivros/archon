@@ -3,11 +3,14 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"control/internal/logging"
+	"control/internal/store"
 	"control/internal/types"
 )
 
@@ -184,6 +187,60 @@ func TestFlattenCodexItemsAnnotatesTurnID(t *testing.T) {
 	}
 }
 
+func TestTailCodexThreadFallsBackToSessionIDWhenMetadataThreadMissing(t *testing.T) {
+	base := t.TempDir()
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "session_meta.json"))
+	session := &types.Session{
+		ID:        "thread-session",
+		Provider:  "codex",
+		Cwd:       t.TempDir(),
+		Status:    types.SessionStatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}
+	if _, err := metaStore.Upsert(context.Background(), &types.SessionMeta{
+		SessionID: session.ID,
+		ThreadID:  "thread-stale",
+	}); err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+	service := NewSessionService(
+		&SessionManager{baseDir: t.TempDir()},
+		&Stores{SessionMeta: metaStore},
+		logging.Nop(),
+		WithCodexHistoryPool(&fallbackCodexHistoryPool{
+			threads: map[string]*codexThread{
+				"thread-session": {
+					ID: "thread-session",
+					Turns: []codexTurn{{
+						ID:    "turn-1",
+						Items: []map[string]any{{"id": "item-1", "type": "assistant", "text": "ok"}},
+					}},
+				},
+			},
+			errs: map[string]error{
+				"thread-stale": errors.New("rpc error -32600: no rollout found for thread id thread-stale"),
+			},
+		}),
+	)
+	items, err := service.tailCodexThread(context.Background(), session, "thread-stale", 20)
+	if err != nil {
+		t.Fatalf("tailCodexThread: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one flattened item, got %#v", items)
+	}
+	meta, ok, err := metaStore.Get(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("get healed meta: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected healed session meta")
+	}
+	if got := strings.TrimSpace(meta.ThreadID); got != "thread-session" {
+		t.Fatalf("expected metadata thread id healed to session id, got %q", got)
+	}
+}
+
 type staticCodexHistoryPool struct {
 	thread *codexThread
 }
@@ -196,3 +253,23 @@ func (s *staticCodexHistoryPool) ReadThread(context.Context, string, string, str
 }
 
 func (s *staticCodexHistoryPool) Close() {}
+
+type fallbackCodexHistoryPool struct {
+	threads map[string]*codexThread
+	errs    map[string]error
+}
+
+func (p *fallbackCodexHistoryPool) ReadThread(_ context.Context, _, _, threadID string) (*codexThread, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if err := p.errs[threadID]; err != nil {
+		return nil, err
+	}
+	if thread, ok := p.threads[threadID]; ok {
+		return thread, nil
+	}
+	return nil, errors.New("thread not found")
+}
+
+func (p *fallbackCodexHistoryPool) Close() {}

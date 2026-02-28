@@ -53,6 +53,36 @@ func TestIsCodexMissingThreadError(t *testing.T) {
 	}
 }
 
+func TestCodexThreadResumeCandidatesPrefersMetaThenSession(t *testing.T) {
+	session := &types.Session{ID: "thread-session", Provider: "codex"}
+	meta := &types.SessionMeta{ThreadID: "thread-meta"}
+	got := codexThreadResumeCandidates(session, meta)
+	if len(got) != 2 {
+		t.Fatalf("expected two candidates, got %#v", got)
+	}
+	if got[0] != "thread-meta" || got[1] != "thread-session" {
+		t.Fatalf("unexpected candidate order: %#v", got)
+	}
+}
+
+func TestTryResumeCodexThreadFallsBackToSecondaryCandidate(t *testing.T) {
+	client := &stubCodexThreadResumer{
+		errByThread: map[string]error{
+			"thread-meta": errors.New("rpc error -32600: no rollout found for thread id thread-meta"),
+		},
+	}
+	threadID, err := tryResumeCodexThread(context.Background(), client, []string{"thread-meta", "thread-session"})
+	if err != nil {
+		t.Fatalf("expected fallback resume to succeed, got %v", err)
+	}
+	if threadID != "thread-session" {
+		t.Fatalf("expected fallback thread id, got %q", threadID)
+	}
+	if len(client.calls) != 2 || client.calls[0] != "thread-meta" || client.calls[1] != "thread-session" {
+		t.Fatalf("unexpected resume call order: %#v", client.calls)
+	}
+}
+
 func TestReserveSessionTurnRejectsConcurrentStart(t *testing.T) {
 	ls := &codexLiveSession{client: &codexAppServer{}}
 	started := make(chan struct{})
@@ -354,6 +384,66 @@ func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 	live.dropSession(session.ID)
 }
 
+func TestCodexLiveSubscribeDoesNotBootstrapMissingThread(t *testing.T) {
+	wrapper := codexLiveHelperWrapper(t)
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configText := "[providers.codex]\ncommand = \"" + wrapper + "\"\n"
+	if err := os.WriteFile(filepath.Join(home, ".archon", "config.toml"), []byte(configText), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("GO_WANT_CODEX_LIVE_HELPER_PROCESS", "1")
+	t.Setenv("ARCHON_CODEX_LIVE_HELPER_MODE", "resume_missing")
+
+	base := t.TempDir()
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "session_meta.json"))
+	stores := &Stores{SessionMeta: metaStore}
+	live := NewCodexLiveManager(stores, nil)
+	session := &types.Session{
+		ID:        "sess-subscribe",
+		Provider:  "codex",
+		Cwd:       t.TempDir(),
+		CreatedAt: time.Now().UTC(),
+	}
+	initialMeta := &types.SessionMeta{
+		SessionID: session.ID,
+		ThreadID:  "thr-stale",
+		RuntimeOptions: &types.SessionRuntimeOptions{
+			Model: "gpt-5",
+		},
+	}
+	if _, err := metaStore.Upsert(context.Background(), initialMeta); err != nil {
+		t.Fatalf("seed session meta: %v", err)
+	}
+
+	events, cancel, err := live.Subscribe(session, initialMeta, t.TempDir())
+	if err == nil {
+		if cancel != nil {
+			cancel()
+		}
+		if events != nil {
+			t.Fatalf("expected subscribe to fail when thread is missing")
+		}
+		t.Fatalf("expected missing-thread error")
+	}
+	if !isCodexMissingThreadError(err) {
+		t.Fatalf("expected missing-thread error, got %v", err)
+	}
+	updatedMeta, ok, err := metaStore.Get(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("load updated meta: %v", err)
+	}
+	if !ok || updatedMeta == nil {
+		t.Fatalf("expected updated session meta")
+	}
+	if strings.TrimSpace(updatedMeta.ThreadID) != "thr-stale" {
+		t.Fatalf("expected stale thread id to remain unchanged, got %q", strings.TrimSpace(updatedMeta.ThreadID))
+	}
+}
+
 func TestCodexLiveStartTurnRecoversMissingThreadForFreshSession(t *testing.T) {
 	wrapper := codexLiveHelperWrapper(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -608,4 +698,17 @@ type captureCodexNotificationPublisher struct {
 
 func (p *captureCodexNotificationPublisher) Publish(event types.NotificationEvent) {
 	p.events = append(p.events, event)
+}
+
+type stubCodexThreadResumer struct {
+	calls       []string
+	errByThread map[string]error
+}
+
+func (s *stubCodexThreadResumer) ResumeThread(_ context.Context, threadID string) error {
+	s.calls = append(s.calls, threadID)
+	if s.errByThread == nil {
+		return nil
+	}
+	return s.errByThread[threadID]
 }
