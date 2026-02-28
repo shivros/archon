@@ -1,6 +1,9 @@
 package daemon
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestOpenCodeMissingHistoryItemsSkipsEquivalentRemoteWhenLocalLacksProviderID(t *testing.T) {
 	local := []map[string]any{
@@ -155,5 +158,73 @@ func TestOpenCodeCompactShadowItemsKeepsAllDistinctMessages(t *testing.T) {
 	}
 	if asString(compacted[0]["provider_message_id"]) == "" || asString(compacted[1]["provider_message_id"]) == "" {
 		t.Fatalf("expected provider-id items to remain, got %#v", compacted)
+	}
+}
+
+func TestMapOpenCodeEventToCodexSessionErrorEmitsTurnCompleted(t *testing.T) {
+	tests := []struct {
+		name           string
+		errorName      string
+		wantStatus     string
+		wantEventCount int
+	}{
+		{
+			name:           "api_error_produces_failed_turn",
+			errorName:      "APIError",
+			wantStatus:     "failed",
+			wantEventCount: 2,
+		},
+		{
+			name:           "abort_produces_interrupted_turn",
+			errorName:      "MessageAbortedError",
+			wantStatus:     "interrupted",
+			wantEventCount: 2,
+		},
+		{
+			name:           "generic_error_produces_failed_turn",
+			errorName:      "",
+			wantStatus:     "failed",
+			wantEventCount: 2,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errPayload := map[string]any{
+				"type": "session.error",
+				"properties": map[string]any{
+					"sessionID": "ses_test",
+					"error": map[string]any{
+						"name": tc.errorName,
+						"data": map[string]any{
+							"message": "something went wrong",
+						},
+					},
+				},
+			}
+			raw, _ := json.Marshal(errPayload)
+			events := mapOpenCodeEventToCodex(string(raw), "ses_test", nil)
+			if len(events) != tc.wantEventCount {
+				t.Fatalf("expected %d events, got %d: %+v", tc.wantEventCount, len(events), events)
+			}
+			// First event should be "error".
+			if events[0].Method != "error" {
+				t.Fatalf("expected first event method 'error', got %q", events[0].Method)
+			}
+			// Second event should be "turn/completed" with the expected status.
+			if events[1].Method != "turn/completed" {
+				t.Fatalf("expected second event method 'turn/completed', got %q", events[1].Method)
+			}
+			var params map[string]any
+			if err := json.Unmarshal(events[1].Params, &params); err != nil {
+				t.Fatalf("unmarshal turn/completed params: %v", err)
+			}
+			turn, _ := params["turn"].(map[string]any)
+			if turn == nil {
+				t.Fatalf("expected turn in params, got %+v", params)
+			}
+			if got := asString(turn["status"]); got != tc.wantStatus {
+				t.Fatalf("expected status %q, got %q", tc.wantStatus, got)
+			}
+		})
 	}
 }

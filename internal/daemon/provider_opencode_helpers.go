@@ -77,11 +77,13 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 			build("error", nil, map[string]any{"error": map[string]any{"message": msg}}),
 		}
 		name := strings.ToLower(strings.TrimSpace(asString(errData["name"])))
+		completionStatus := "failed"
 		if name == "messageabortederror" {
-			events = append(events, build("turn/completed", nil, map[string]any{
-				"turn": map[string]any{"status": "interrupted"},
-			}))
+			completionStatus = "interrupted"
 		}
+		events = append(events, build("turn/completed", nil, map[string]any{
+			"turn": map[string]any{"status": completionStatus, "error": msg},
+		}))
 		return events
 	case "message.part.updated":
 		part, _ := props["part"].(map[string]any)

@@ -152,7 +152,7 @@ func (s *openCodeLiveSession) start() {
 		for event := range s.events {
 			s.hub.Broadcast(event)
 
-			if event.Method == "turn/completed" || event.Method == "session.idle" {
+			if event.Method == "turn/completed" || event.Method == "session.idle" || event.Method == "error" {
 				turn := parseTurnEventFromParams(event.Params)
 				turnID := turn.TurnID
 				if turnID == "" {

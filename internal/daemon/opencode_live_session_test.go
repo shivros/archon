@@ -106,6 +106,40 @@ func TestOpenCodeLiveSessionPublishesTurnFailurePayload(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLiveSessionErrorEventCompletesTurn(t *testing.T) {
+	eventStream := make(chan types.CodexEvent, 2)
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-err",
+		providerName: "opencode",
+		events:       eventStream,
+		hub:          newCodexSubscriberHub(),
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+	}
+	ls.mu.Lock()
+	ls.activeTurn = "turn-err-1"
+	ls.mu.Unlock()
+	ls.start()
+	// Simulate a mapped session.error producing an "error" method event.
+	eventStream <- types.CodexEvent{
+		Method: "error",
+		Params: json.RawMessage(`{"error":{"message":"Key limit exceeded (daily limit)"}}`),
+	}
+	close(eventStream)
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for notifier.Len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	notifications := notifier.Events()
+	if len(notifications) != 1 {
+		t.Fatalf("expected one turn completion notification, got %d", len(notifications))
+	}
+	if got := ls.ActiveTurnID(); got != "" {
+		t.Fatalf("expected active turn to be cleared, got %q", got)
+	}
+}
+
 func TestOpenCodeLiveSessionSetNotificationPublisherUsesNotifierInterface(t *testing.T) {
 	aware := &stubAwareTurnCompletionNotifier{}
 	ls := &openCodeLiveSession{
