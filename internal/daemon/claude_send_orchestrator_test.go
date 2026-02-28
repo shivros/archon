@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,12 +60,15 @@ func (s *stubClaudeTurnStateStore) SaveTurnState(_ context.Context, sessionID, t
 }
 
 type stubClaudeTurnCompletionPublisher struct {
+	mu     sync.Mutex
 	calls  int
 	turnID string
 	source string
 }
 
 func (s *stubClaudeTurnCompletionPublisher) PublishTurnCompleted(_ *types.Session, _ *types.SessionMeta, turnID, source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
 	s.turnID = turnID
 	s.source = source
@@ -378,16 +382,16 @@ func TestDefaultClaudeSendTransportBranches(t *testing.T) {
 
 func TestSessionServiceClaudeTurnStateStoreSaveTurnStateGuards(t *testing.T) {
 	s := sessionServiceClaudeTurnStateStore{}
-	s.SaveTurnState(nil, "s1", "t1")
+	s.SaveTurnState(context.Background(), "s1", "t1")
 	s = sessionServiceClaudeTurnStateStore{service: &SessionService{}}
-	s.SaveTurnState(nil, "s1", "t1")
+	s.SaveTurnState(context.Background(), "s1", "t1")
 }
 
 func TestSessionServiceClaudeTurnStateStoreSaveTurnStatePersists(t *testing.T) {
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
 	service := &SessionService{stores: &Stores{SessionMeta: metaStore}}
 	s := sessionServiceClaudeTurnStateStore{service: service}
-	s.SaveTurnState(nil, "s-turn", "turn-1")
+	s.SaveTurnState(context.Background(), "s-turn", "turn-1")
 	meta, ok, err := metaStore.Get(context.Background(), "s-turn")
 	if err != nil {
 		t.Fatalf("Get: %v", err)

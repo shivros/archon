@@ -562,6 +562,23 @@ func (m *SessionManager) DebugSnapshot(id string, lines int) ([]types.DebugEvent
 	return state.debugBuf.Snapshot(lines), nil
 }
 
+func (m *SessionManager) WriteSessionDebug(id, stream string, data []byte) error {
+	if m == nil || strings.TrimSpace(id) == "" {
+		return ErrSessionNotFound
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	state, ok := m.sessions[id]
+	m.mu.Unlock()
+	if !ok || state == nil || state.sink == nil {
+		return ErrSessionNotFound
+	}
+	state.sink.WriteDebug(stream, data)
+	return nil
+}
+
 func (m *SessionManager) KillSession(id string) error {
 	m.mu.Lock()
 	state, ok := m.sessions[id]

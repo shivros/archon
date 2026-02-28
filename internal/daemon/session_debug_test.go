@@ -55,6 +55,47 @@ func TestSessionManagerSubscribeDebugNotFound(t *testing.T) {
 	}
 }
 
+func TestSessionManagerWriteSessionDebugCoverage(t *testing.T) {
+	t.Run("nil_manager", func(t *testing.T) {
+		var manager *SessionManager
+		if err := manager.WriteSessionDebug("s1", "stderr", []byte("hello")); err == nil {
+			t.Fatalf("expected not found error")
+		}
+	})
+
+	t.Run("missing_session", func(t *testing.T) {
+		manager, err := NewSessionManager(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewSessionManager: %v", err)
+		}
+		if err := manager.WriteSessionDebug("missing", "stderr", []byte("hello")); err == nil {
+			t.Fatalf("expected not found error")
+		}
+	})
+
+	t.Run("empty_payload", func(t *testing.T) {
+		manager, err := NewSessionManager(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewSessionManager: %v", err)
+		}
+		manager.sessions["s1"] = &sessionRuntime{sink: &logSink{}}
+		if err := manager.WriteSessionDebug("s1", "stderr", nil); err != nil {
+			t.Fatalf("expected nil error for empty payload, got %v", err)
+		}
+	})
+
+	t.Run("happy_path", func(t *testing.T) {
+		manager, err := NewSessionManager(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewSessionManager: %v", err)
+		}
+		manager.sessions["s1"] = &sessionRuntime{sink: &logSink{}}
+		if err := manager.WriteSessionDebug("s1", "stderr", []byte("hello")); err != nil {
+			t.Fatalf("WriteSessionDebug: %v", err)
+		}
+	})
+}
+
 func TestSessionServiceReadAndSubscribeDebug(t *testing.T) {
 	baseDir := t.TempDir()
 	manager, err := NewSessionManager(baseDir)

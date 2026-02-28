@@ -162,6 +162,13 @@ type claudeSendOrchestrator struct {
 	completionPolicy    claudeCompletionDecisionPolicy
 }
 
+type claudePreparedTurn struct {
+	TurnID         string
+	Payload        []byte
+	RuntimeOptions *types.SessionRuntimeOptions
+	PreSendCount   int
+}
+
 type claudeCompletionReader interface {
 	ReadSessionItems(sessionID string, lines int) ([]map[string]any, error)
 }
@@ -177,11 +184,26 @@ func (o claudeSendOrchestrator) Send(
 	meta *types.SessionMeta,
 	input []map[string]any,
 ) (string, error) {
-	if session == nil {
-		return "", invalidError("session is required", nil)
+	prepared, err := o.PrepareTurn(session, meta, input)
+	if err != nil {
+		return "", err
 	}
-	if o.transport == nil && sendCtx.Manager == nil {
-		return "", unavailableError("session manager not available", nil)
+	if o.stateStore != nil {
+		o.stateStore.SaveTurnState(ctx, session.ID, prepared.TurnID)
+	}
+	if err := o.ExecutePreparedTurn(ctx, sendCtx, session, meta, prepared); err != nil {
+		return "", err
+	}
+	return prepared.TurnID, nil
+}
+
+func (o claudeSendOrchestrator) PrepareTurn(
+	session *types.Session,
+	meta *types.SessionMeta,
+	input []map[string]any,
+) (claudePreparedTurn, error) {
+	if session == nil {
+		return claudePreparedTurn{}, invalidError("session is required", nil)
 	}
 	validator := o.validator
 	if validator == nil {
@@ -189,7 +211,7 @@ func (o claudeSendOrchestrator) Send(
 	}
 	text, err := validator.TextFromInput(input)
 	if err != nil {
-		return "", err
+		return claudePreparedTurn{}, err
 	}
 	turnIDGen := o.turnIDs
 	if turnIDGen == nil {
@@ -197,7 +219,7 @@ func (o claudeSendOrchestrator) Send(
 	}
 	turnID := strings.TrimSpace(turnIDGen.NewTurnID(session.Provider))
 	if turnID == "" {
-		return "", unavailableError("turn id generator failed", nil)
+		return claudePreparedTurn{}, unavailableError("turn id generator failed", nil)
 	}
 	runtimeOptions := (*types.SessionRuntimeOptions)(nil)
 	if meta != nil {
@@ -205,26 +227,49 @@ func (o claudeSendOrchestrator) Send(
 	}
 	payload := buildClaudeUserPayloadWithRuntime(text, runtimeOptions)
 	preSendCount := claudeCompletionProbeItemCount(o.completionReader, session.ID)
+
+	return claudePreparedTurn{
+		TurnID:         turnID,
+		Payload:        payload,
+		RuntimeOptions: runtimeOptions,
+		PreSendCount:   preSendCount,
+	}, nil
+}
+
+func (o claudeSendOrchestrator) ExecutePreparedTurn(
+	ctx context.Context,
+	sendCtx claudeSendContext,
+	session *types.Session,
+	meta *types.SessionMeta,
+	prepared claudePreparedTurn,
+) error {
+	if session == nil {
+		return invalidError("session is required", nil)
+	}
+	if o.transport == nil && sendCtx.Manager == nil {
+		return unavailableError("session manager not available", nil)
+	}
+	turnID := strings.TrimSpace(prepared.TurnID)
+	if turnID == "" {
+		return unavailableError("turn id generator failed", nil)
+	}
 	transport := o.transport
 	if transport == nil {
 		transport = defaultClaudeSendTransport{}
 	}
-	if err := transport.Send(ctx, sendCtx, session, meta, payload, runtimeOptions); err != nil {
-		return "", err
-	}
-	if o.stateStore != nil {
-		o.stateStore.SaveTurnState(ctx, session.ID, turnID)
+	if err := transport.Send(ctx, sendCtx, session, meta, prepared.Payload, prepared.RuntimeOptions); err != nil {
+		return err
 	}
 	items, _ := readClaudeCompletionItems(o.completionReader, session.ID)
 	policy := o.completionPolicy
 	if policy == nil {
 		policy = defaultClaudeCompletionDecisionPolicy{strategy: claudeItemDeltaCompletionStrategy{}}
 	}
-	publish, source := policy.Decide(preSendCount, items, nil)
+	publish, source := policy.Decide(prepared.PreSendCount, items, nil)
 	if publish && o.completionPublisher != nil {
 		o.completionPublisher.PublishTurnCompleted(session, meta, turnID, strings.TrimSpace(source))
 	}
-	return turnID, nil
+	return nil
 }
 
 func readClaudeCompletionItems(reader claudeCompletionReader, sessionID string) ([]map[string]any, error) {

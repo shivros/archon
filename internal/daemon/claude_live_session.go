@@ -12,16 +12,21 @@ import (
 )
 
 type claudeLiveSession struct {
-	mu           sync.Mutex
-	sessionID    string
-	session      *types.Session
-	meta         *types.SessionMeta
-	manager      *SessionManager
-	stores       *Stores
-	orchestrator claudeSendOrchestrator
-	activeTurn   string
-	closed       bool
+	mu              sync.Mutex
+	sessionID       string
+	session         *types.Session
+	meta            *types.SessionMeta
+	manager         *SessionManager
+	stores          *Stores
+	logger          logging.Logger
+	orchestrator    claudeSendOrchestrator
+	failureReporter ClaudeTurnFailureReporter
+	scheduler       ClaudeTurnScheduler
+	activeTurn      string
+	closed          bool
 }
+
+const claudeTurnQueueSize = 256
 
 var (
 	_ TurnCapableSession = (*claudeLiveSession)(nil)
@@ -55,16 +60,35 @@ func (s *claudeLiveSession) StartTurn(ctx context.Context, input []map[string]an
 		meta.RuntimeOptions = types.CloneRuntimeOptions(opts)
 	}
 
-	turnID, err := s.orchestrator.Send(ctx, claudeSendContext{}, session, meta, input)
+	prepared, err := s.orchestrator.PrepareTurn(session, meta, input)
 	if err != nil {
 		return "", err
 	}
+	if s.orchestrator.stateStore != nil {
+		s.orchestrator.stateStore.SaveTurnState(ctx, session.ID, prepared.TurnID)
+	}
 
 	s.mu.Lock()
-	s.activeTurn = turnID
+	if s.closed {
+		s.mu.Unlock()
+		return "", invalidError("session is closed", nil)
+	}
+	s.ensureSchedulerLocked()
+	if s.activeTurn == "" {
+		s.activeTurn = prepared.TurnID
+	}
+	enqueueErr := s.scheduler.Enqueue(claudeTurnJob{
+		sendCtx:  claudeSendContext{},
+		session:  session,
+		meta:     meta,
+		prepared: prepared,
+	})
 	s.mu.Unlock()
+	if enqueueErr != nil {
+		return "", enqueueErr
+	}
 
-	return turnID, nil
+	return prepared.TurnID, nil
 }
 
 func (s *claudeLiveSession) Interrupt(ctx context.Context) error {
@@ -82,8 +106,17 @@ func (s *claudeLiveSession) Events() (<-chan types.CodexEvent, func()) {
 
 func (s *claudeLiveSession) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
 	s.closed = true
+	scheduler := s.scheduler
+	s.scheduler = nil
+	s.mu.Unlock()
+	if scheduler != nil {
+		scheduler.Close()
+	}
 }
 
 func (s *claudeLiveSession) IsClosed() bool {
@@ -96,6 +129,50 @@ func (s *claudeLiveSession) SetSessionMeta(meta *types.SessionMeta) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.meta = cloneSessionMeta(meta)
+}
+
+func (s *claudeLiveSession) ensureSchedulerLocked() {
+	if s.scheduler != nil {
+		return
+	}
+	failureReporter := s.failureReporter
+	if failureReporter == nil {
+		failureReporter = defaultClaudeTurnFailureReporter{
+			sessionID:    s.sessionID,
+			providerName: "claude",
+			logger:       s.logger,
+			debugWriter:  s.manager,
+		}
+	}
+	s.scheduler = newClaudeTurnScheduler(
+		claudeTurnQueueSize,
+		s.orchestrator,
+		failureReporter,
+		s.setActiveTurn,
+		s.clearActiveTurn,
+	)
+}
+
+func (s *claudeLiveSession) setActiveTurn(turnID string) {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.activeTurn = turnID
+}
+
+func (s *claudeLiveSession) clearActiveTurn(turnID string) {
+	turnID = strings.TrimSpace(turnID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if turnID == "" || s.activeTurn == turnID {
+		s.activeTurn = ""
+	}
 }
 
 type claudeLiveSessionFactory struct {
@@ -159,7 +236,16 @@ func (f *claudeLiveSessionFactory) CreateTurnCapable(_ context.Context, session 
 		meta:         cloneSessionMeta(meta),
 		manager:      f.manager,
 		stores:       f.stores,
+		logger:       f.logger,
 		orchestrator: orchestrator,
+		failureReporter: defaultClaudeTurnFailureReporter{
+			sessionID:    session.ID,
+			providerName: "claude",
+			logger:       f.logger,
+			debugWriter:  f.manager,
+			repository:   f.repository,
+			notifier:     f.turnNotifier,
+		},
 	}
 	return ls, nil
 }

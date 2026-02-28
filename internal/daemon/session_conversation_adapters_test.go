@@ -298,7 +298,7 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 		}
 	})
 
-	t.Run("nil context persists successfully", func(t *testing.T) {
+	t.Run("context persists successfully", func(t *testing.T) {
 		metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
 		service := NewSessionService(nil, &Stores{
 			SessionMeta: metaStore,
@@ -307,7 +307,7 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 			Model:     "gpt-5.2-codex",
 			Reasoning: types.ReasoningHigh,
 		}
-		if err := service.persistRuntimeOptionsAfterSend(nil, "s1", want); err != nil {
+		if err := service.persistRuntimeOptionsAfterSend(context.Background(), "s1", want); err != nil {
 			t.Fatalf("persistRuntimeOptionsAfterSend: %v", err)
 		}
 		meta, ok, err := metaStore.Get(context.Background(), "s1")
@@ -1485,11 +1485,34 @@ func (s *failingSessionMetaStore) Get(_ context.Context, sessionID string) (*typ
 	return &copy, true, nil
 }
 
-func (s *failingSessionMetaStore) Upsert(_ context.Context, _ *types.SessionMeta) (*types.SessionMeta, error) {
-	if s == nil || s.upsertErr == nil {
+func (s *failingSessionMetaStore) Upsert(_ context.Context, meta *types.SessionMeta) (*types.SessionMeta, error) {
+	if s == nil {
 		return nil, nil
 	}
-	return nil, s.upsertErr
+	if s.upsertErr != nil {
+		return nil, s.upsertErr
+	}
+	entry := &types.SessionMeta{}
+	if s.entry != nil {
+		copy := *s.entry
+		entry = &copy
+	}
+	if meta != nil {
+		if strings.TrimSpace(meta.SessionID) != "" {
+			entry.SessionID = meta.SessionID
+		}
+		if strings.TrimSpace(meta.LastTurnID) != "" {
+			entry.LastTurnID = meta.LastTurnID
+		}
+	}
+	now := time.Now().UTC()
+	entry.LastActiveAt = &now
+	if entry.SessionID == "" {
+		entry.SessionID = "s1"
+	}
+	stored := *entry
+	s.entry = &stored
+	return entry, nil
 }
 
 func (s *failingSessionMetaStore) Delete(context.Context, string) error {
