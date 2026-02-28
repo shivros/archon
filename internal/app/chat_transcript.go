@@ -14,12 +14,26 @@ type ChatTranscript struct {
 	activeAgentIndex  int
 	pendingAgentBlock bool
 	agentSegmentBreak bool
+	presenter         TranscriptItemPresenter
+	nowFn             func() time.Time
 }
 
 func NewChatTranscript(maxLines int) *ChatTranscript {
+	return NewChatTranscriptWithDependencies(maxLines, nil, nil)
+}
+
+func NewChatTranscriptWithDependencies(maxLines int, presenter TranscriptItemPresenter, nowFn func() time.Time) *ChatTranscript {
+	if presenter == nil {
+		presenter = NewDefaultTranscriptItemPresenter(DefaultProviderDisplayPolicy())
+	}
+	if nowFn == nil {
+		nowFn = time.Now
+	}
 	return &ChatTranscript{
 		maxBlocks:        maxLines,
 		activeAgentIndex: -1,
+		presenter:        presenter,
+		nowFn:            nowFn,
 	}
 }
 
@@ -260,6 +274,10 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		return
 	}
 	createdAt := chatItemCreatedAt(item)
+	if block, ok := t.presentItem(item, createdAt); ok {
+		t.appendPresentedBlock(block)
+		return
+	}
 	turnID := itemTurnID(item)
 	typ, _ := item["type"].(string)
 	switch typ {
@@ -352,6 +370,28 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 			t.appendBlockAt(ChatRoleSystem, string(data), createdAt)
 		}
 	}
+}
+
+func (t *ChatTranscript) presentItem(item map[string]any, createdAt time.Time) (ChatBlock, bool) {
+	if t == nil || t.presenter == nil {
+		return ChatBlock{}, false
+	}
+	now := time.Now()
+	if t.nowFn != nil {
+		now = t.nowFn()
+	}
+	return t.presenter.Present(item, createdAt, now)
+}
+
+func (t *ChatTranscript) appendPresentedBlock(block ChatBlock) {
+	if t == nil {
+		return
+	}
+	if strings.TrimSpace(block.Text) == "" {
+		return
+	}
+	t.blocks = append(t.blocks, block)
+	t.trim()
 }
 
 func reasoningText(item map[string]any) string {

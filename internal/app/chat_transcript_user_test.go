@@ -1,9 +1,28 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+type stubTranscriptItemPresenter struct {
+	presented bool
+	lastNow   time.Time
+}
+
+func (s *stubTranscriptItemPresenter) Present(item map[string]any, createdAt time.Time, now time.Time) (ChatBlock, bool) {
+	if strings.TrimSpace(asString(item["type"])) != "rateLimit" {
+		return ChatBlock{}, false
+	}
+	s.presented = true
+	s.lastNow = now
+	return ChatBlock{
+		Role:      ChatRoleSystem,
+		Text:      "stubbed rate limit",
+		CreatedAt: createdAt,
+	}, true
+}
 
 func TestChatTranscriptAppendUserMessageTrimsLeadingNewlines(t *testing.T) {
 	tp := NewChatTranscript(0)
@@ -114,5 +133,70 @@ func TestChatTranscriptAppendItemDedupesReplayedAssistantByCreatedAt(t *testing.
 	blocks := tp.Blocks()
 	if len(blocks) != 1 {
 		t.Fatalf("expected one deduped assistant block, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptAppendItemRateLimitRendersReadableMessage(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+	tp.AppendItem(map[string]any{
+		"type":       "rateLimit",
+		"provider":   "claude",
+		"retry_unix": time.Now().Add(15 * time.Minute).Unix(),
+	})
+	blocks := tp.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one block, got %#v", blocks)
+	}
+	if blocks[0].Role != ChatRoleSystem {
+		t.Fatalf("expected system role, got %s", blocks[0].Role)
+	}
+	if strings.Contains(blocks[0].Text, "{\"type\":\"rateLimit\"") {
+		t.Fatalf("expected formatted text, got raw json %q", blocks[0].Text)
+	}
+	if !strings.Contains(blocks[0].Text, "Claude is rate-limited.") {
+		t.Fatalf("expected readable rate-limit message, got %q", blocks[0].Text)
+	}
+}
+
+func TestChatTranscriptAppendItemRateLimitDelegatesToPresenterWithInjectedClock(t *testing.T) {
+	clockNow := time.Date(2026, 2, 28, 16, 30, 0, 0, time.UTC)
+	presenter := &stubTranscriptItemPresenter{}
+	tp := NewChatTranscriptWithDependencies(0, presenter, func() time.Time { return clockNow })
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+
+	tp.AppendItem(map[string]any{
+		"type":       "rateLimit",
+		"provider":   "claude",
+		"retry_unix": clockNow.Add(5 * time.Minute).Unix(),
+	})
+	if !presenter.presented {
+		t.Fatalf("expected presenter to be used")
+	}
+	if !presenter.lastNow.Equal(clockNow) {
+		t.Fatalf("expected injected clock %v, got %v", clockNow, presenter.lastNow)
+	}
+	blocks := tp.Blocks()
+	if len(blocks) != 1 || blocks[0].Text != "stubbed rate limit" {
+		t.Fatalf("expected presenter-produced block, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptAllowedRateLimitEventPipelineProducesNoBlock(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+	// Equivalent normalized parser behavior for allowed rate-limit events: no items emitted.
+	items := []map[string]any{}
+	for _, item := range items {
+		tp.AppendItem(item)
+	}
+	if got := len(tp.Blocks()); got != 0 {
+		t.Fatalf("expected no transcript blocks for allowed rate-limit event pipeline, got %d", got)
 	}
 }

@@ -144,6 +144,10 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 			}
 		}
 		items = append(items, payload)
+	case "rate_limit_event":
+		if item, ok := parseClaudeRateLimitItem(payload); ok {
+			items = append(items, item)
+		}
 	default:
 		items = append(items, map[string]any{
 			"type": "log",
