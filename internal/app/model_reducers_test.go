@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 
+	"control/internal/types"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -852,5 +854,80 @@ func TestComposeCtrlPassthroughKeepsComposeForInputCommand(t *testing.T) {
 	}
 	if m.mode != uiModeCompose {
 		t.Fatalf("expected compose mode to be preserved for input command")
+	}
+}
+
+func TestEditWorkspaceGroupsReducerEnterSubmitsGroups(t *testing.T) {
+	m := NewModel(nil)
+	m.groups = []*types.WorkspaceGroup{
+		{ID: "g1", Name: "Alpha"},
+		{ID: "g2", Name: "Beta"},
+	}
+	m.mode = uiModeEditWorkspaceGroups
+	m.editWorkspaceID = "ws1"
+	if m.groupPicker == nil {
+		t.Fatalf("expected group picker from NewModel")
+	}
+	m.groupPicker.SetGroups(m.groups, map[string]bool{"g1": true})
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected command from enter on edit workspace groups")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "saving groups" {
+		t.Fatalf("expected saving status, got %q", m.status)
+	}
+}
+
+func TestEditWorkspaceGroupsReducerEnterRejectsEmptyWorkspaceID(t *testing.T) {
+	m := NewModel(nil)
+	m.groups = []*types.WorkspaceGroup{
+		{ID: "g1", Name: "Alpha"},
+	}
+	m.mode = uiModeEditWorkspaceGroups
+	m.editWorkspaceID = ""
+	if m.groupPicker == nil {
+		t.Fatalf("expected group picker from NewModel")
+	}
+	m.groupPicker.SetGroups(m.groups, nil)
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command when workspace id is missing")
+	}
+	if m.status != "no workspace selected" {
+		t.Fatalf("expected validation status, got %q", m.status)
+	}
+}
+
+func TestEditWorkspaceGroupsReducerEscCancels(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeEditWorkspaceGroups
+	m.editWorkspaceID = "ws1"
+
+	handled, cmd := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected esc to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command on esc")
+	}
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected mode to return to normal, got %v", m.mode)
+	}
+	if m.status != "edit canceled" {
+		t.Fatalf("expected cancel status, got %q", m.status)
+	}
+	if m.editWorkspaceID != "" {
+		t.Fatalf("expected edit workspace id to clear, got %q", m.editWorkspaceID)
 	}
 }

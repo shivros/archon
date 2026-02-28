@@ -9,32 +9,38 @@ import (
 )
 
 type editWorkspaceHost interface {
+	KeyResolver
 	updateWorkspaceCmd(id string, patch *types.WorkspacePatch) tea.Cmd
 	exitEditWorkspace(status string)
-	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
-	keyString(msg tea.KeyMsg) string
 	setStatus(status string)
+	workspaceGroups() []*types.WorkspaceGroup
 }
 
 type EditWorkspaceController struct {
 	input       *TextInput
+	groupPicker *GroupPicker
 	step        int
 	workspaceID string
 	path        string
 	sub         string
 	dirs        string
 	name        string
+	groupIDs    []string
 }
 
 func NewEditWorkspaceController(width int) *EditWorkspaceController {
 	input := newAddInput(width)
 	input.SetPlaceholder("/path/to/repo")
-	return &EditWorkspaceController{input: input}
+	picker := NewGroupPicker(width, 8)
+	return &EditWorkspaceController{input: input, groupPicker: picker}
 }
 
 func (c *EditWorkspaceController) Resize(width int) {
 	if c.input != nil {
 		c.input.Resize(width)
+	}
+	if c.groupPicker != nil {
+		c.groupPicker.SetSize(width, 8)
 	}
 }
 
@@ -45,6 +51,7 @@ func (c *EditWorkspaceController) Enter(workspaceID string, workspace *types.Wor
 	c.sub = ""
 	c.dirs = ""
 	c.name = ""
+	c.groupIDs = nil
 	if c.workspaceID == "" {
 		return false
 	}
@@ -64,6 +71,7 @@ func (c *EditWorkspaceController) Enter(workspaceID string, workspace *types.Wor
 		c.dirs = strings.Join(workspace.AdditionalDirectories, ", ")
 	}
 	c.name = strings.TrimSpace(workspace.Name)
+	c.groupIDs = append([]string(nil), workspace.GroupIDs...)
 	c.prepareInput()
 	if c.input != nil {
 		c.input.Focus()
@@ -78,13 +86,21 @@ func (c *EditWorkspaceController) Exit() {
 	c.sub = ""
 	c.dirs = ""
 	c.name = ""
+	c.groupIDs = nil
 	if c.input != nil {
 		c.input.SetValue("")
 		c.input.Blur()
 	}
+	if c.groupPicker != nil {
+		c.groupPicker.ClearQuery()
+		c.groupPicker.SetGroups(nil, nil)
+	}
 }
 
 func (c *EditWorkspaceController) Update(msg tea.Msg, host editWorkspaceHost) (bool, tea.Cmd) {
+	if c.step == 4 {
+		return c.updateGroupPickerStep(msg, host)
+	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		if host.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b") {
 			// Swallow global hotkey while typing.
@@ -111,14 +127,32 @@ func (c *EditWorkspaceController) Update(msg tea.Msg, host editWorkspaceHost) (b
 	return true, nil
 }
 
+func (c *EditWorkspaceController) updateGroupPickerStep(msg tea.Msg, host editWorkspaceHost) (bool, tea.Cmd) {
+	h := groupPickerStepHandler{
+		picker:    c.groupPicker,
+		keys:      host,
+		setStatus: host.setStatus,
+		onCancel:  func() { host.exitEditWorkspace("edit workspace canceled") },
+		onConfirm: func() tea.Cmd { return c.advance(host) },
+	}
+	return h.Update(msg)
+}
+
 func (c *EditWorkspaceController) View() string {
 	lines := []string{
 		renderAddField(c.input, c.step, "Path", c.path, 0),
 		renderAddField(c.input, c.step, "Session Subpath", c.sub, 1),
 		renderAddField(c.input, c.step, "Additional Dirs", c.dirs, 2),
 		renderAddField(c.input, c.step, "Name", c.name, 3),
-		"",
-		"Enter to continue • Esc to cancel",
+	}
+	if c.step == 4 {
+		lines = append(lines, "Groups:")
+		if c.groupPicker != nil {
+			lines = append(lines, c.groupPicker.View())
+		}
+		lines = append(lines, "", "Space to toggle • Enter to continue • Esc to cancel")
+	} else {
+		lines = append(lines, "", "Enter to continue • Esc to cancel")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -150,12 +184,36 @@ func (c *EditWorkspaceController) advance(host editWorkspaceHost) tea.Cmd {
 		return nil
 	case 3:
 		c.name = strings.TrimSpace(c.value())
+		c.step = 4
+		if c.input != nil {
+			c.input.Blur()
+		}
+		selected := map[string]bool{}
+		for _, id := range c.groupIDs {
+			selected[id] = true
+		}
+		if c.groupPicker != nil {
+			c.groupPicker.ClearQuery()
+			c.groupPicker.SetGroups(host.workspaceGroups(), selected)
+		}
+		host.setStatus("edit workspace: groups (optional)")
+		return nil
+	case 4:
 		if strings.TrimSpace(c.workspaceID) == "" {
 			host.setStatus("no workspace selected")
 			return nil
 		}
+		if c.groupPicker != nil {
+			c.groupIDs = c.groupPicker.SelectedIDs()
+		}
 		host.setStatus("updating workspace")
-		return host.updateWorkspaceCmd(c.workspaceID, workspacePatchFromForm(c.path, c.sub, c.dirs, c.name))
+		return host.updateWorkspaceCmd(c.workspaceID, workspacePatchFromForm(workspaceFormData{
+			Path:                     c.path,
+			SessionSubpath:           c.sub,
+			AdditionalDirectoriesRaw: c.dirs,
+			Name:                     c.name,
+			GroupIDs:                 c.groupIDs,
+		}))
 	default:
 		return nil
 	}

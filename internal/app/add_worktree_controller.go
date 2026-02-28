@@ -19,12 +19,11 @@ const (
 )
 
 type addWorktreeHost interface {
+	KeyResolver
 	addWorktreeCmd(workspaceID string, worktree *types.Worktree) tea.Cmd
 	createWorktreeCmd(workspaceID string, req client.CreateWorktreeRequest) tea.Cmd
 	exitAddWorktree(status string)
 	fetchAvailableWorktreesCmd(workspaceID, workspacePath string) tea.Cmd
-	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
-	keyString(msg tea.KeyMsg) string
 	setStatus(status string)
 }
 

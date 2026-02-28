@@ -12,7 +12,12 @@ import (
 
 func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	controller := NewAddWorkspaceController(80)
-	host := &stubAddWorkspaceHost{submitKey: "f6"}
+	host := &stubAddWorkspaceHost{
+		stubKeyResolver: stubKeyResolver{submitKey: "f6"},
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Group 1"},
+		},
+	}
 	controller.Enter()
 	if controller.input == nil {
 		t.Fatalf("expected input")
@@ -55,9 +60,22 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 	controller.input.SetValue("Repo Name")
 
+	// Step 3 → step 4 (group picker), not final submission
 	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyF6}, host)
 	if !handled {
 		t.Fatalf("expected remapped submit key to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command after name step")
+	}
+	if controller.step != 4 {
+		t.Fatalf("expected group picker step after name submit, got %d", controller.step)
+	}
+
+	// Step 4: Enter confirms group picker (no groups toggled)
+	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	if !handled {
+		t.Fatalf("expected enter to be handled on group picker step")
 	}
 	if cmd != nil {
 		t.Fatalf("expected no async command from stub host")
@@ -67,6 +85,164 @@ func TestAddWorkspaceControllerSupportsRemappedSubmit(t *testing.T) {
 	}
 	if len(host.createDirs) != 2 || host.createDirs[0] != "../backend" || host.createDirs[1] != "../shared" {
 		t.Fatalf("unexpected additional directories: %#v", host.createDirs)
+	}
+	if len(host.createGroupIDs) != 0 {
+		t.Fatalf("expected no group IDs when none toggled, got %#v", host.createGroupIDs)
+	}
+}
+
+func TestAddWorkspaceControllerGroupPickerToggle(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+			{ID: "g2", Name: "Beta"},
+		},
+	}
+	controller.Enter()
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 0 → 1
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 1 → 2
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 2 → 3
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 3 → 4
+
+	if controller.step != 4 {
+		t.Fatalf("expected step 4, got %d", controller.step)
+	}
+
+	// Toggle first group
+	controller.Update(tea.KeyPressMsg{Code: ' '}, host)
+
+	// Confirm
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+
+	if len(host.createGroupIDs) != 1 || host.createGroupIDs[0] != "g1" {
+		t.Fatalf("expected group g1 to be selected, got %#v", host.createGroupIDs)
+	}
+}
+
+func TestAddWorkspaceControllerGroupPickerEscClearsQuery(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+		},
+	}
+	controller.Enter()
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // → step 4
+
+	// Type a query character
+	controller.Update(tea.KeyPressMsg{Code: 'x'}, host)
+	if controller.groupPicker.Query() == "" {
+		t.Fatalf("expected non-empty query after typing")
+	}
+
+	// Esc should clear query, not cancel
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEsc}, host)
+	if controller.groupPicker.Query() != "" {
+		t.Fatalf("expected query to clear on esc, got %q", controller.groupPicker.Query())
+	}
+	if controller.step != 4 {
+		t.Fatalf("expected to remain on step 4 after esc clears query, got %d", controller.step)
+	}
+}
+
+func TestAddWorkspaceControllerGroupPickerEscCancels(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+		},
+	}
+	controller.Enter()
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // → step 4
+
+	// Esc with no query should cancel
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEsc}, host)
+	if host.status != "add workspace canceled" {
+		t.Fatalf("expected cancel status, got %q", host.status)
+	}
+}
+
+func TestAddWorkspaceControllerGroupPickerPasteFilters(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+			{ID: "g2", Name: "Beta"},
+		},
+	}
+	controller.Enter()
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // → step 4
+
+	if controller.step != 4 {
+		t.Fatalf("expected step 4, got %d", controller.step)
+	}
+
+	handled, _ := controller.Update(tea.PasteMsg{Content: "bet"}, host)
+	if !handled {
+		t.Fatalf("expected paste to be handled at group picker step")
+	}
+	if got := controller.groupPicker.Query(); got != "bet" {
+		t.Fatalf("expected query 'bet' after paste, got %q", got)
+	}
+}
+
+func TestAddWorkspaceControllerGroupPickerDownKeyMovesSelection(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+			{ID: "g2", Name: "Beta"},
+		},
+	}
+	controller.Enter()
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // → step 4
+
+	if controller.step != 4 {
+		t.Fatalf("expected step 4, got %d", controller.step)
+	}
+
+	// Move down to second group, toggle it
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyDown}, host)
+	controller.Update(tea.KeyPressMsg{Code: ' '}, host)
+
+	// Confirm
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+
+	if len(host.createGroupIDs) != 1 || host.createGroupIDs[0] != "g2" {
+		t.Fatalf("expected group g2 to be selected after down+toggle, got %#v", host.createGroupIDs)
 	}
 }
 
@@ -96,7 +272,7 @@ func TestAddWorkspaceControllerClearCommandClearsInput(t *testing.T) {
 
 func TestAddWorkspaceControllerSupportsRemappedClearCommand(t *testing.T) {
 	controller := NewAddWorkspaceController(80)
-	host := &stubAddWorkspaceHost{clearKey: "f7"}
+	host := &stubAddWorkspaceHost{stubKeyResolver: stubKeyResolver{clearKey: "f7"}}
 	controller.Enter()
 	if controller.input == nil {
 		t.Fatalf("expected input")
@@ -114,7 +290,7 @@ func TestAddWorkspaceControllerSupportsRemappedClearCommand(t *testing.T) {
 
 func TestAddWorktreeControllerSupportsRemappedSubmit(t *testing.T) {
 	controller := NewAddWorktreeController(80)
-	host := &stubAddWorktreeHost{submitKey: "f6"}
+	host := &stubAddWorktreeHost{stubKeyResolver: stubKeyResolver{submitKey: "f6"}}
 	controller.Enter("ws1", "/tmp/repo")
 	if controller.input == nil {
 		t.Fatalf("expected input")
@@ -237,21 +413,49 @@ func TestAddWorktreeControllerExistingClearCommandClearsFilterQuery(t *testing.T
 	}
 }
 
-type stubAddWorkspaceHost struct {
-	submitKey  string
-	clearKey   string
-	status     string
-	createPath string
-	createSub  string
-	createDirs []string
-	createName string
+// stubKeyResolver provides a shared KeyResolver implementation for test stubs.
+// Set submitKey, clearKey, or toggleSidebarMatch to simulate remapped keybindings.
+type stubKeyResolver struct {
+	submitKey          string
+	clearKey           string
+	toggleSidebarMatch bool
 }
 
-func (h *stubAddWorkspaceHost) createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd {
+func (r *stubKeyResolver) keyString(msg tea.KeyMsg) string {
+	return msg.String()
+}
+
+func (r *stubKeyResolver) keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool {
+	if command == KeyCommandToggleSidebar && r.toggleSidebarMatch {
+		return true
+	}
+	key := strings.TrimSpace(msg.String())
+	if command == KeyCommandInputSubmit && strings.TrimSpace(r.submitKey) != "" {
+		return key == strings.TrimSpace(r.submitKey)
+	}
+	if command == KeyCommandInputClear && strings.TrimSpace(r.clearKey) != "" {
+		return key == strings.TrimSpace(r.clearKey)
+	}
+	return key == strings.TrimSpace(fallback)
+}
+
+type stubAddWorkspaceHost struct {
+	stubKeyResolver
+	status         string
+	createPath     string
+	createSub      string
+	createDirs     []string
+	createName     string
+	createGroupIDs []string
+	groups         []*types.WorkspaceGroup
+}
+
+func (h *stubAddWorkspaceHost) createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories, groupIDs []string) tea.Cmd {
 	h.createPath = path
 	h.createSub = sessionSubpath
 	h.createDirs = append([]string(nil), additionalDirectories...)
 	h.createName = name
+	h.createGroupIDs = append([]string(nil), groupIDs...)
 	return nil
 }
 
@@ -259,29 +463,17 @@ func (h *stubAddWorkspaceHost) exitAddWorkspace(status string) {
 	h.status = status
 }
 
-func (h *stubAddWorkspaceHost) keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool {
-	key := strings.TrimSpace(msg.String())
-	if command == KeyCommandInputSubmit && strings.TrimSpace(h.submitKey) != "" {
-		return key == strings.TrimSpace(h.submitKey)
-	}
-	if command == KeyCommandInputClear && strings.TrimSpace(h.clearKey) != "" {
-		return key == strings.TrimSpace(h.clearKey)
-	}
-	return key == strings.TrimSpace(fallback)
-}
-
-func (h *stubAddWorkspaceHost) keyString(msg tea.KeyMsg) string {
-	return msg.String()
-}
-
 func (h *stubAddWorkspaceHost) setStatus(status string) {
 	h.status = status
 }
 
+func (h *stubAddWorkspaceHost) workspaceGroups() []*types.WorkspaceGroup {
+	return h.groups
+}
+
 type stubAddWorktreeHost struct {
-	submitKey string
-	clearKey  string
-	status    string
+	stubKeyResolver
+	status string
 }
 
 func (h *stubAddWorktreeHost) addWorktreeCmd(workspaceID string, worktree *types.Worktree) tea.Cmd {
@@ -298,21 +490,6 @@ func (h *stubAddWorktreeHost) exitAddWorktree(status string) {
 
 func (h *stubAddWorktreeHost) fetchAvailableWorktreesCmd(workspaceID, workspacePath string) tea.Cmd {
 	return nil
-}
-
-func (h *stubAddWorktreeHost) keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool {
-	key := strings.TrimSpace(msg.String())
-	if command == KeyCommandInputSubmit && strings.TrimSpace(h.submitKey) != "" {
-		return key == strings.TrimSpace(h.submitKey)
-	}
-	if command == KeyCommandInputClear && strings.TrimSpace(h.clearKey) != "" {
-		return key == strings.TrimSpace(h.clearKey)
-	}
-	return key == strings.TrimSpace(fallback)
-}
-
-func (h *stubAddWorktreeHost) keyString(msg tea.KeyMsg) string {
-	return msg.String()
 }
 
 func (h *stubAddWorktreeHost) setStatus(status string) {

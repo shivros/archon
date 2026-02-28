@@ -72,7 +72,7 @@ func TestCommandsCompileWithNarrowMocks(t *testing.T) {
 	}
 
 	createAPI := &workspaceCreateMock{}
-	createCmd := createWorkspaceCmd(createAPI, "/tmp/repo", "packages/pennies", "Repo", []string{"../backend", "../shared"})
+	createCmd := createWorkspaceCmd(createAPI, "/tmp/repo", "packages/pennies", "Repo", []string{"../backend", "../shared"}, nil)
 	if createCmd == nil {
 		t.Fatalf("expected create workspace command")
 	}

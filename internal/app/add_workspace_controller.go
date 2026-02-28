@@ -4,35 +4,43 @@ import (
 	"fmt"
 	"strings"
 
+	"control/internal/types"
+
 	tea "charm.land/bubbletea/v2"
 )
 
 type addWorkspaceHost interface {
-	createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd
+	KeyResolver
+	createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories, groupIDs []string) tea.Cmd
 	exitAddWorkspace(status string)
-	keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
-	keyString(msg tea.KeyMsg) string
 	setStatus(status string)
+	workspaceGroups() []*types.WorkspaceGroup
 }
 
 type AddWorkspaceController struct {
-	input *TextInput
-	step  int
-	path  string
-	sub   string
-	dirs  string
-	name  string
+	input       *TextInput
+	groupPicker *GroupPicker
+	step        int
+	path        string
+	sub         string
+	dirs        string
+	name        string
+	groupIDs    []string
 }
 
 func NewAddWorkspaceController(width int) *AddWorkspaceController {
 	input := newAddInput(width)
 	input.SetPlaceholder("/path/to/repo")
-	return &AddWorkspaceController{input: input}
+	picker := NewGroupPicker(width, 8)
+	return &AddWorkspaceController{input: input, groupPicker: picker}
 }
 
 func (c *AddWorkspaceController) Resize(width int) {
 	if c.input != nil {
 		c.input.Resize(width)
+	}
+	if c.groupPicker != nil {
+		c.groupPicker.SetSize(width, 8)
 	}
 }
 
@@ -42,6 +50,7 @@ func (c *AddWorkspaceController) Enter() {
 	c.sub = ""
 	c.dirs = ""
 	c.name = ""
+	c.groupIDs = nil
 	c.prepareInput()
 	if c.input != nil {
 		c.input.Focus()
@@ -54,13 +63,21 @@ func (c *AddWorkspaceController) Exit() {
 	c.sub = ""
 	c.dirs = ""
 	c.name = ""
+	c.groupIDs = nil
 	if c.input != nil {
 		c.input.SetValue("")
 		c.input.Blur()
 	}
+	if c.groupPicker != nil {
+		c.groupPicker.ClearQuery()
+		c.groupPicker.SetGroups(nil, nil)
+	}
 }
 
 func (c *AddWorkspaceController) Update(msg tea.Msg, host addWorkspaceHost) (bool, tea.Cmd) {
+	if c.step == 4 {
+		return c.updateGroupPickerStep(msg, host)
+	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		if host.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b") {
 			// Swallow global hotkey while typing.
@@ -87,14 +104,32 @@ func (c *AddWorkspaceController) Update(msg tea.Msg, host addWorkspaceHost) (boo
 	return true, nil
 }
 
+func (c *AddWorkspaceController) updateGroupPickerStep(msg tea.Msg, host addWorkspaceHost) (bool, tea.Cmd) {
+	h := groupPickerStepHandler{
+		picker:    c.groupPicker,
+		keys:      host,
+		setStatus: host.setStatus,
+		onCancel:  func() { host.exitAddWorkspace("add workspace canceled") },
+		onConfirm: func() tea.Cmd { return c.advance(host) },
+	}
+	return h.Update(msg)
+}
+
 func (c *AddWorkspaceController) View() string {
 	lines := []string{
 		renderAddField(c.input, c.step, "Path", c.path, 0),
 		renderAddField(c.input, c.step, "Session Subpath", c.sub, 1),
 		renderAddField(c.input, c.step, "Additional Dirs", c.dirs, 2),
 		renderAddField(c.input, c.step, "Name", c.name, 3),
-		"",
-		"Enter to continue • Esc to cancel",
+	}
+	if c.step == 4 {
+		lines = append(lines, "Groups:")
+		if c.groupPicker != nil {
+			lines = append(lines, c.groupPicker.View())
+		}
+		lines = append(lines, "", "Space to toggle • Enter to continue • Esc to cancel")
+	} else {
+		lines = append(lines, "", "Enter to continue • Esc to cancel")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -126,8 +161,22 @@ func (c *AddWorkspaceController) advance(host addWorkspaceHost) tea.Cmd {
 		return nil
 	case 3:
 		c.name = strings.TrimSpace(c.value())
+		c.step = 4
+		if c.input != nil {
+			c.input.Blur()
+		}
+		if c.groupPicker != nil {
+			c.groupPicker.ClearQuery()
+			c.groupPicker.SetGroups(host.workspaceGroups(), nil)
+		}
+		host.setStatus("add workspace: groups (optional)")
+		return nil
+	case 4:
+		if c.groupPicker != nil {
+			c.groupIDs = c.groupPicker.SelectedIDs()
+		}
 		host.setStatus("creating workspace")
-		return host.createWorkspaceCmd(c.path, c.sub, c.name, parseAdditionalDirectories(c.dirs))
+		return host.createWorkspaceCmd(c.path, c.sub, c.name, parseAdditionalDirectories(c.dirs), c.groupIDs)
 	default:
 		return nil
 	}

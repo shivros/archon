@@ -50,6 +50,16 @@ func TestWorkspaceEditFlowSubmitsPatchThroughModelReducer(t *testing.T) {
 	}
 
 	m.editWorkspace.input.SetValue("Workspace Two")
+	// Step 3 → step 4 (group picker)
+	handled, cmd = m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled || cmd != nil {
+		t.Fatalf("expected name step to advance to group picker without command")
+	}
+	if m.editWorkspace.step != 4 {
+		t.Fatalf("expected group picker step, got %d", m.editWorkspace.step)
+	}
+
+	// Step 4: Enter confirms group picker
 	handled, cmd = m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected final step to be handled")

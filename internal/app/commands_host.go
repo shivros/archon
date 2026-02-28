@@ -11,8 +11,12 @@ func (m *Model) setStatus(status string) {
 	m.setStatusMessage(status)
 }
 
-func (m *Model) createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd {
-	return createWorkspaceCmd(m.workspaceAPI, path, sessionSubpath, name, additionalDirectories)
+func (m *Model) createWorkspaceCmd(path, sessionSubpath, name string, additionalDirectories, groupIDs []string) tea.Cmd {
+	return createWorkspaceCmd(m.workspaceAPI, path, sessionSubpath, name, additionalDirectories, groupIDs)
+}
+
+func (m *Model) workspaceGroups() []*types.WorkspaceGroup {
+	return m.groups
 }
 
 func (m *Model) updateWorkspaceCmd(id string, patch *types.WorkspacePatch) tea.Cmd {

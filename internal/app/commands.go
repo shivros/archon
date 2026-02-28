@@ -225,7 +225,7 @@ func fetchAppStateCmd(api AppStateGetAPI) tea.Cmd {
 	}
 }
 
-func createWorkspaceCmd(api WorkspaceCreateAPI, path, sessionSubpath, name string, additionalDirectories []string) tea.Cmd {
+func createWorkspaceCmd(api WorkspaceCreateAPI, path, sessionSubpath, name string, additionalDirectories, groupIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
@@ -234,6 +234,7 @@ func createWorkspaceCmd(api WorkspaceCreateAPI, path, sessionSubpath, name strin
 			RepoPath:              path,
 			SessionSubpath:        sessionSubpath,
 			AdditionalDirectories: append([]string(nil), additionalDirectories...),
+			GroupIDs:              append([]string(nil), groupIDs...),
 		})
 		return createWorkspaceMsg{workspace: workspace, err: err}
 	}

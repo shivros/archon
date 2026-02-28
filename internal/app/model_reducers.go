@@ -166,50 +166,27 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case uiModeEditWorkspaceGroups:
-		switch msg := msg.(type) {
-		case tea.PasteMsg:
-			if m.groupPicker != nil && m.applyPickerPaste(msg, m.groupPicker) {
-				return true, nil
-			}
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				if m.groupPicker != nil && m.groupPicker.ClearQuery() {
-					m.setStatusMessage("filter cleared")
-					return true, nil
-				}
-				m.exitEditWorkspaceGroups("edit canceled")
-				return true, nil
-			case "enter":
+		h := groupPickerStepHandler{
+			picker:          m.groupPicker,
+			keys:            m,
+			pasteNormalizer: m.pickerPasteNormalizer,
+			setStatus:       m.setStatusMessage,
+			onCancel:        func() { m.exitEditWorkspaceGroups("edit canceled") },
+			onConfirm: func() tea.Cmd {
 				if m.groupPicker == nil {
-					return true, nil
+					return nil
 				}
 				ids := m.groupPicker.SelectedIDs()
 				id := m.editWorkspaceID
 				if id == "" {
 					m.setValidationStatus("no workspace selected")
-					return true, nil
+					return nil
 				}
 				m.exitEditWorkspaceGroups("saving groups")
-				return true, updateWorkspaceGroupsCmd(m.workspaceAPI, id, ids)
-			case " ", "space":
-				if m.groupPicker != nil && m.groupPicker.Toggle() {
-					return true, nil
-				}
-			case "j", "down":
-				if m.groupPicker != nil && m.groupPicker.Move(1) {
-					return true, nil
-				}
-			case "k", "up":
-				if m.groupPicker != nil && m.groupPicker.Move(-1) {
-					return true, nil
-				}
-			}
-			if m.groupPicker != nil {
-				m.applyPickerTypeAhead(msg, m.groupPicker)
-			}
+				return updateWorkspaceGroupsCmd(m.workspaceAPI, id, ids)
+			},
 		}
-		return true, nil
+		return h.Update(msg)
 	case uiModeRenameWorkspaceGroup:
 		if !isTextInputMsg(msg) {
 			return true, nil

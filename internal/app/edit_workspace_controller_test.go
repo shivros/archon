@@ -11,13 +11,18 @@ import (
 
 func TestEditWorkspaceControllerSubmitsAllWorkspaceFields(t *testing.T) {
 	controller := NewEditWorkspaceController(80)
-	host := &stubEditWorkspaceHost{}
+	host := &stubEditWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+		},
+	}
 	ok := controller.Enter("ws1", &types.Workspace{
 		ID:                    "ws1",
 		RepoPath:              "/tmp/repo",
 		SessionSubpath:        "packages/pennies",
 		AdditionalDirectories: []string{"../backend", "../shared"},
 		Name:                  "Repo",
+		GroupIDs:              []string{"g1"},
 	})
 	if !ok {
 		t.Fatalf("expected edit workspace controller to enter with workspace")
@@ -63,9 +68,22 @@ func TestEditWorkspaceControllerSubmitsAllWorkspaceFields(t *testing.T) {
 	}
 
 	controller.input.SetValue("Renamed Repo")
+	// Step 3 → step 4 (group picker)
 	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
 	if !handled {
 		t.Fatalf("expected enter to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no async command after name step")
+	}
+	if controller.step != 4 {
+		t.Fatalf("expected group picker step, got %d", controller.step)
+	}
+
+	// Step 4: Enter confirms group picker (pre-selected groups remain)
+	handled, cmd = controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	if !handled {
+		t.Fatalf("expected enter to be handled on group picker step")
 	}
 	if cmd != nil {
 		t.Fatalf("expected no async command from stub host")
@@ -87,6 +105,9 @@ func TestEditWorkspaceControllerSubmitsAllWorkspaceFields(t *testing.T) {
 	}
 	if host.updatePatch.Name == nil || *host.updatePatch.Name != "Renamed Repo" {
 		t.Fatalf("expected updated name, got %#v", host.updatePatch.Name)
+	}
+	if host.updatePatch.GroupIDs == nil || len(*host.updatePatch.GroupIDs) != 1 || (*host.updatePatch.GroupIDs)[0] != "g1" {
+		t.Fatalf("expected pre-selected group g1 in patch, got %#v", host.updatePatch.GroupIDs)
 	}
 }
 
@@ -203,7 +224,7 @@ func TestEditWorkspaceControllerEnterRejectsBlankWorkspaceID(t *testing.T) {
 
 func TestEditWorkspaceControllerUpdateSwallowsToggleSidebarHotkey(t *testing.T) {
 	controller := NewEditWorkspaceController(80)
-	host := &stubEditWorkspaceHost{toggleSidebarMatch: true}
+	host := &stubEditWorkspaceHost{stubKeyResolver: stubKeyResolver{toggleSidebarMatch: true}}
 	ok := controller.Enter("ws1", &types.Workspace{
 		ID:       "ws1",
 		RepoPath: "/tmp/repo",
@@ -264,9 +285,9 @@ func TestEditWorkspaceControllerAdvanceRequiresWorkspaceIDOnSubmit(t *testing.T)
 		t.Fatalf("expected controller to enter")
 	}
 
-	controller.step = 3
+	// The workspace ID check now happens at step 4 (group picker confirm).
+	controller.step = 4
 	controller.workspaceID = "   "
-	controller.input.SetValue("Renamed")
 	handled, cmd := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
 	if !handled {
 		t.Fatalf("expected submit to be handled")
@@ -283,7 +304,7 @@ func TestEditWorkspaceControllerAdvanceRequiresWorkspaceIDOnSubmit(t *testing.T)
 }
 
 func TestWorkspacePatchFromFormClearsEmptyAdditionalDirectories(t *testing.T) {
-	patch := workspacePatchFromForm("/tmp/repo", "", " ", "Repo")
+	patch := workspacePatchFromForm(workspaceFormData{Path: "/tmp/repo", AdditionalDirectoriesRaw: " ", Name: "Repo"})
 	if patch == nil || patch.AdditionalDirectories == nil {
 		t.Fatalf("expected non-nil additional directories patch")
 	}
@@ -293,7 +314,12 @@ func TestWorkspacePatchFromFormClearsEmptyAdditionalDirectories(t *testing.T) {
 }
 
 func TestWorkspacePatchFromFormTrimsValuesAndParsesDirectories(t *testing.T) {
-	patch := workspacePatchFromForm(" /tmp/repo ", " packages/pennies ", " ../backend,  ../shared  ", " Repo ")
+	patch := workspacePatchFromForm(workspaceFormData{
+		Path:                     " /tmp/repo ",
+		SessionSubpath:           " packages/pennies ",
+		AdditionalDirectoriesRaw: " ../backend,  ../shared  ",
+		Name:                     " Repo ",
+	})
 	if patch == nil {
 		t.Fatalf("expected non-nil patch")
 	}
@@ -348,13 +374,92 @@ func TestEditWorkspaceControllerUpdateHandlesNilInput(t *testing.T) {
 	}
 }
 
+func TestEditWorkspaceControllerGroupPickerPreSelectsExistingGroups(t *testing.T) {
+	controller := NewEditWorkspaceController(80)
+	host := &stubEditWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+			{ID: "g2", Name: "Beta"},
+		},
+	}
+	ok := controller.Enter("ws1", &types.Workspace{
+		ID:       "ws1",
+		RepoPath: "/tmp/repo",
+		Name:     "Repo",
+		GroupIDs: []string{"g2"},
+	})
+	if !ok {
+		t.Fatalf("expected controller to enter")
+	}
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 0 → 1
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 1 → 2
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 2 → 3
+	controller.input.SetValue("Repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // step 3 → 4
+
+	if controller.step != 4 {
+		t.Fatalf("expected step 4, got %d", controller.step)
+	}
+
+	// Confirm without changing selection — pre-selected g2 should carry through
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+
+	if host.updatePatch == nil || host.updatePatch.GroupIDs == nil {
+		t.Fatalf("expected group IDs in patch")
+	}
+	if len(*host.updatePatch.GroupIDs) != 1 || (*host.updatePatch.GroupIDs)[0] != "g2" {
+		t.Fatalf("expected pre-selected group g2 in patch, got %#v", host.updatePatch.GroupIDs)
+	}
+}
+
+func TestEditWorkspaceControllerGroupPickerToggle(t *testing.T) {
+	controller := NewEditWorkspaceController(80)
+	host := &stubEditWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+			{ID: "g2", Name: "Beta"},
+		},
+	}
+	ok := controller.Enter("ws1", &types.Workspace{
+		ID:       "ws1",
+		RepoPath: "/tmp/repo",
+		Name:     "Repo",
+	})
+	if !ok {
+		t.Fatalf("expected controller to enter")
+	}
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("Repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // → step 4
+
+	// Toggle first group
+	controller.Update(tea.KeyPressMsg{Code: ' '}, host)
+
+	// Confirm
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+
+	if host.updatePatch == nil || host.updatePatch.GroupIDs == nil {
+		t.Fatalf("expected group IDs in patch")
+	}
+	if len(*host.updatePatch.GroupIDs) != 1 || (*host.updatePatch.GroupIDs)[0] != "g1" {
+		t.Fatalf("expected toggled group g1, got %#v", host.updatePatch.GroupIDs)
+	}
+}
+
 type stubEditWorkspaceHost struct {
-	submitKey          string
-	clearKey           string
-	status             string
-	updateID           string
-	updatePatch        *types.WorkspacePatch
-	toggleSidebarMatch bool
+	stubKeyResolver
+	status      string
+	updateID    string
+	updatePatch *types.WorkspacePatch
+	groups      []*types.WorkspaceGroup
 }
 
 func (h *stubEditWorkspaceHost) updateWorkspaceCmd(id string, patch *types.WorkspacePatch) tea.Cmd {
@@ -367,24 +472,10 @@ func (h *stubEditWorkspaceHost) exitEditWorkspace(status string) {
 	h.status = status
 }
 
-func (h *stubEditWorkspaceHost) keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool {
-	if command == KeyCommandToggleSidebar && h.toggleSidebarMatch {
-		return true
-	}
-	key := strings.TrimSpace(msg.String())
-	if command == KeyCommandInputSubmit && strings.TrimSpace(h.submitKey) != "" {
-		return key == strings.TrimSpace(h.submitKey)
-	}
-	if command == KeyCommandInputClear && strings.TrimSpace(h.clearKey) != "" {
-		return key == strings.TrimSpace(h.clearKey)
-	}
-	return key == strings.TrimSpace(fallback)
-}
-
-func (h *stubEditWorkspaceHost) keyString(msg tea.KeyMsg) string {
-	return msg.String()
-}
-
 func (h *stubEditWorkspaceHost) setStatus(status string) {
 	h.status = status
+}
+
+func (h *stubEditWorkspaceHost) workspaceGroups() []*types.WorkspaceGroup {
+	return h.groups
 }
