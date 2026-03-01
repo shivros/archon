@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/logging"
 	"control/internal/types"
 )
 
@@ -297,9 +299,126 @@ func TestOpenCodeLiveSessionPublishTurnCompletedDropsStaleOutput(t *testing.T) {
 	}
 }
 
+func TestOpenCodeEventItemsMapsAgentDelta(t *testing.T) {
+	items := openCodeEventItems(types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"delta":"hello from delta"}`),
+	})
+	if len(items) != 1 {
+		t.Fatalf("expected one mapped item, got %d", len(items))
+	}
+	if got := strings.TrimSpace(asString(items[0]["type"])); got != "agentMessageDelta" {
+		t.Fatalf("expected mapped type agentMessageDelta, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(items[0]["text"])); got != "hello from delta" {
+		t.Fatalf("expected mapped text, got %q", got)
+	}
+}
+
+func TestOpenCodeEventItemsIgnoresUnknownMethod(t *testing.T) {
+	items := openCodeEventItems(types.CodexEvent{
+		Method: "item/updated",
+		Params: json.RawMessage(`{"item":{"type":"assistant"}}`),
+	})
+	if len(items) != 0 {
+		t.Fatalf("expected no mapped items for unknown method, got %#v", items)
+	}
+}
+
+func TestOpenCodeLiveSessionPersistEventItemsHandlesRepositoryError(t *testing.T) {
+	repo := &captureTurnArtifactRepository{appendErr: fmt.Errorf("disk full")}
+	var logs bytes.Buffer
+	ls := &openCodeLiveSession{
+		sessionID:     "sess-repo-err",
+		providerName:  "opencode",
+		repository:    repo,
+		logger:        logging.New(&logs, logging.Debug),
+		turnNotifier:  NopTurnCompletionNotifier{},
+		approvalStore: NopApprovalStorage{},
+	}
+	ls.persistEventItems(types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"delta":"hello"}`),
+	})
+	if repo.appendCalls != 1 {
+		t.Fatalf("expected one append attempt, got %d", repo.appendCalls)
+	}
+	if !strings.Contains(logs.String(), "opencode_live_item_persist_failed") {
+		t.Fatalf("expected persistence failure log, got %q", logs.String())
+	}
+}
+
+func TestOpenCodeLiveSessionStartTurnPersistsUserItem(t *testing.T) {
+	const providerSessionID = "remote-live-user-item"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/session/"+providerSessionID+"/message" {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{
+		BaseURL:  server.URL,
+		Username: "opencode",
+		Timeout:  2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	repo := &captureTurnArtifactRepository{}
+	ls := &openCodeLiveSession{
+		sessionID:    "s-live-user-item",
+		providerName: "opencode",
+		providerID:   providerSessionID,
+		client:       client,
+		repository:   repo,
+	}
+
+	if _, err := ls.StartTurn(context.Background(), []map[string]any{{"type": "text", "text": "hello from user"}}, nil); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	if repo.appendCalls == 0 {
+		t.Fatalf("expected user item persistence call")
+	}
+	if len(repo.items) == 0 {
+		t.Fatalf("expected persisted items")
+	}
+	first := repo.items[0]
+	if got := strings.TrimSpace(asString(first["type"])); got != "userMessage" {
+		t.Fatalf("expected first persisted item to be userMessage, got %#v", first)
+	}
+}
+
 type captureOpenCodeNotificationPublisher struct {
 	mu     sync.Mutex
 	events []types.NotificationEvent
+}
+
+type captureTurnArtifactRepository struct {
+	appendCalls int
+	items       []map[string]any
+	appendErr   error
+}
+
+func (r *captureTurnArtifactRepository) ReadItems(string, int) ([]map[string]any, error) {
+	return nil, nil
+}
+
+func (r *captureTurnArtifactRepository) AppendItems(_ string, items []map[string]any) error {
+	r.appendCalls++
+	r.items = append(r.items, items...)
+	return r.appendErr
 }
 
 func (p *captureOpenCodeNotificationPublisher) Publish(event types.NotificationEvent) {

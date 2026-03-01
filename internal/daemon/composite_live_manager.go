@@ -408,10 +408,11 @@ func cloneSessionShallow(session *types.Session) *types.Session {
 // all built-in providers (codex, claude, opencode, kilocode). This is exported
 // for use by integration tests in other packages (e.g. internal/app).
 func NewIntegrationLiveManager(stores *Stores, manager *SessionManager, codex *CodexLiveManager, logger logging.Logger) *CompositeLiveManager {
+	artifactRepository := newFileSessionItemsRepository(manager)
 	return NewCompositeLiveManager(stores, logger,
 		newCodexLiveSessionFactory(codex),
 		newClaudeLiveSessionFactory(manager, stores, nil, nil, logger),
-		newOpenCodeLiveSessionFactory("opencode", nil, nil, nil, nil, nil, logger),
-		newOpenCodeLiveSessionFactory("kilocode", nil, nil, nil, nil, nil, logger),
+		newOpenCodeLiveSessionFactory("opencode", nil, nil, artifactRepository, nil, nil, logger),
+		newOpenCodeLiveSessionFactory("kilocode", nil, nil, artifactRepository, nil, nil, logger),
 	)
 }

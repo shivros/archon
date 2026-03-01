@@ -18,6 +18,8 @@ type openCodeLiveSession struct {
 	providerID    string
 	directory     string
 	client        *openCodeClient
+	logger        logging.Logger
+	repository    TurnArtifactRepository
 	events        <-chan types.CodexEvent
 	cancelEvents  func()
 	hub           *codexSubscriberHub
@@ -61,6 +63,15 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 	s.mu.Lock()
 	s.activeTurn = turnID
 	s.mu.Unlock()
+
+	s.persistItems([]map[string]any{
+		{
+			"type": "userMessage",
+			"content": []map[string]any{
+				{"type": "text", "text": text},
+			},
+		},
+	})
 
 	_, err := s.client.Prompt(ctx, s.providerID, text, opts, s.directory)
 	if err != nil {
@@ -151,6 +162,7 @@ func (s *openCodeLiveSession) start() {
 		defer s.Close()
 		for event := range s.events {
 			s.hub.Broadcast(event)
+			s.persistEventItems(event)
 
 			if event.Method == "turn/completed" || event.Method == "session.idle" || event.Method == "error" {
 				turn := parseTurnEventFromParams(event.Params)
@@ -174,6 +186,56 @@ func (s *openCodeLiveSession) start() {
 			}
 		}
 	}()
+}
+
+func (s *openCodeLiveSession) persistEventItems(event types.CodexEvent) {
+	items := openCodeEventItems(event)
+	if len(items) == 0 {
+		return
+	}
+	s.persistItems(items)
+}
+
+func (s *openCodeLiveSession) persistItems(items []map[string]any) {
+	if s == nil || s.repository == nil || len(items) == 0 {
+		return
+	}
+	if err := s.repository.AppendItems(s.sessionID, items); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("opencode_live_item_persist_failed",
+				logging.F("session_id", strings.TrimSpace(s.sessionID)),
+				logging.F("provider", strings.TrimSpace(s.providerName)),
+				logging.F("items_count", len(items)),
+				logging.F("error", err),
+			)
+		}
+	}
+}
+
+func openCodeEventItems(event types.CodexEvent) []map[string]any {
+	switch strings.TrimSpace(strings.ToLower(event.Method)) {
+	case "item/agentmessage/delta":
+		var payload struct {
+			Delta string `json:"delta"`
+			Text  string `json:"text"`
+		}
+		_ = json.Unmarshal(event.Params, &payload)
+		text := strings.TrimSpace(payload.Delta)
+		if text == "" {
+			text = strings.TrimSpace(payload.Text)
+		}
+		if text == "" {
+			return nil
+		}
+		return []map[string]any{
+			{
+				"type": "agentMessageDelta",
+				"text": text,
+			},
+		}
+	default:
+		return nil
+	}
 }
 
 func (s *openCodeLiveSession) publishTurnCompleted(turn turnEventParams) {
@@ -313,6 +375,8 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 		providerID:    providerID,
 		directory:     session.Cwd,
 		client:        client,
+		logger:        f.logger,
+		repository:    f.repository,
 		events:        events,
 		cancelEvents:  cancel,
 		hub:           newCodexSubscriberHub(),
