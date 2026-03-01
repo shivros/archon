@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,11 +161,12 @@ func newWorkflowIntegrationServer(t *testing.T) (*httptest.Server, *SessionManag
 	liveCodex := NewCodexLiveManager(stores, logger)
 	turnNotifier := NewTurnCompletionNotifier(nil, stores)
 	approvalStore := NewStoreApprovalStorage(stores)
+	artifactRepository := newFileSessionItemsRepository(manager)
 	compositeLive := NewCompositeLiveManager(stores, logger,
 		newCodexLiveSessionFactory(liveCodex),
 		newClaudeLiveSessionFactory(manager, stores, nil, turnNotifier, logger),
-		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, nil, nil, nil, logger),
-		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, nil, nil, nil, logger),
+		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, artifactRepository, nil, nil, logger),
+		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, artifactRepository, nil, nil, logger),
 	)
 
 	// Build workflow RunService with a real prompt dispatcher and the test template.
@@ -224,8 +226,21 @@ var numberPattern = regexp.MustCompile(`\b(\d{1,3})\b`)
 
 func waitForNumberInHistory(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID string, timeout time.Duration) int {
 	t.Helper()
+	failures, stopFailures := startSessionTurnFailureMonitor(server, sessionID)
+	defer stopFailures()
+
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state before numeric reply: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+		}
+		select {
+		case failure, ok := <-failures:
+			if ok && strings.TrimSpace(failure) != "" {
+				t.Fatalf("provider turn failed before numeric reply: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+			}
+		default:
+		}
 		history := historySession(t, server, sessionID)
 		for _, item := range history.Items {
 			typ, _ := item["type"].(string)

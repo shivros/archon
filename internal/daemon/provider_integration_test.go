@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,8 +129,18 @@ func TestProviderItemsStream(t *testing.T) {
 			stream, closeFn := openSSE(t, server,
 				"/v1/sessions/"+session.ID+"/items?follow=1&lines=100")
 			defer closeFn()
+			failures, stopFailures := startSessionTurnFailureMonitor(server, session.ID)
+			defer stopFailures()
 
-			data, ok := waitForSSEData(stream, 30*time.Second)
+			data, failure, ok := waitForSSEDataWithFailure(stream, failures, 30*time.Second)
+			if strings.TrimSpace(failure) != "" {
+				t.Fatalf("items stream aborted by provider failure: %s\n%s",
+					failure, sessionDiagnostics(manager, session.ID))
+			}
+			if failure := sessionTerminalFailure(server, session.ID); failure != "" {
+				t.Fatalf("session entered terminal failure state before items stream event: %s\n%s",
+					failure, sessionDiagnostics(manager, session.ID))
+			}
 			if !ok {
 				t.Fatalf("timeout waiting for items stream event\n%s",
 					sessionDiagnostics(manager, session.ID))
@@ -146,7 +157,15 @@ func TestProviderItemsStream(t *testing.T) {
 			sendMessageWithRetry(t, server, session.ID, "Say \"ok\" again.", tc.timeout())
 			deadline := time.Now().Add(45 * time.Second)
 			for time.Now().Before(deadline) {
-				data, ok = waitForSSEData(stream, 5*time.Second)
+				data, failure, ok = waitForSSEDataWithFailure(stream, failures, 5*time.Second)
+				if strings.TrimSpace(failure) != "" {
+					t.Fatalf("items stream aborted by provider failure: %s\n%s",
+						failure, sessionDiagnostics(manager, session.ID))
+				}
+				if failure := sessionTerminalFailure(server, session.ID); failure != "" {
+					t.Fatalf("session entered terminal failure state while waiting for items stream reply: %s\n%s",
+						failure, sessionDiagnostics(manager, session.ID))
+				}
 				if !ok {
 					continue
 				}

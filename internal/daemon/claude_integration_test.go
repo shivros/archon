@@ -70,6 +70,9 @@ func waitForHistoryItemsClaude(t *testing.T, server *httptest.Server, manager *S
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state before history items: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+		}
 		history := historySession(t, server, sessionID)
 		if len(history.Items) > 0 {
 			return
@@ -81,8 +84,21 @@ func waitForHistoryItemsClaude(t *testing.T, server *httptest.Server, manager *S
 
 func waitForAgentReply(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {
 	t.Helper()
+	failures, stopFailures := startSessionTurnFailureMonitor(server, sessionID)
+	defer stopFailures()
+
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state before agent reply containing %q: %s\n%s", needle, failure, sessionDiagnostics(manager, sessionID))
+		}
+		select {
+		case failure, ok := <-failures:
+			if ok && strings.TrimSpace(failure) != "" {
+				t.Fatalf("provider turn failed before agent reply containing %q: %s\n%s", needle, failure, sessionDiagnostics(manager, sessionID))
+			}
+		default:
+		}
 		history := historySession(t, server, sessionID)
 		if historyHasAgentText(history.Items, needle) {
 			return
