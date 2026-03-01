@@ -1,9 +1,6 @@
 package daemon
 
 import (
-	"strings"
-
-	"control/internal/guidedworkflows"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -102,16 +99,10 @@ func (openCodeTurnProgressionReadinessPolicy) AllowProgression(
 	_ types.NotificationEvent,
 	evidence TurnProgressionEvidence,
 ) bool {
-	if evidence.Terminal && (strings.TrimSpace(evidence.Error) != "" || guidedworkflows.IsFailedTurnStatus(evidence.Status)) {
-		return true
-	}
 	if !evidence.Terminal {
 		return false
 	}
-	if evidence.FreshOutput {
-		return true
-	}
-	// Legacy fallback: no explicit freshness signal, but output exists.
-	// Prefer false negatives over false positives for guided progression.
-	return strings.TrimSpace(evidence.Output) != ""
+	// Always allow terminal OpenCode turn events to progress workflows.
+	// Turn-id matching and run-level dedupe guard against stale replays.
+	return true
 }

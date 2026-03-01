@@ -2784,6 +2784,117 @@ func TestRunLifecycleOnTurnCompletedIgnoresMismatchedTurnID(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleOnTurnCompletedTerminalFailureBeforeAwaitingTurnFailsAfterDispatchLinksTurn(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "prompted_turn_failure_before_awaiting",
+		Name: "Prompted Turn Failure Before Awaiting",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase",
+				Name: "phase",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+			},
+		},
+	}
+	dispatchStarted := make(chan struct{})
+	dispatchRelease := make(chan struct{})
+	dispatcher := &stubStepPromptDispatcher{
+		started: dispatchStarted,
+		release: dispatchRelease,
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-early"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "prompted_turn_failure_before_awaiting",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	startDone := make(chan error, 1)
+	go func() {
+		_, startErr := service.StartRun(context.Background(), run.ID)
+		startDone <- startErr
+	}()
+	select {
+	case <-dispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dispatch to start")
+	}
+
+	type turnResult struct {
+		updated []*WorkflowRun
+		err     error
+	}
+	turnDone := make(chan turnResult, 1)
+	go func() {
+		updated, turnErr := service.OnTurnCompleted(context.Background(), TurnSignal{
+			SessionID: "sess-1",
+			TurnID:    "turn-early",
+			Status:    "failed",
+			Error:     "model unsupported",
+			Terminal:  true,
+		})
+		turnDone <- turnResult{updated: updated, err: turnErr}
+	}()
+
+	close(dispatchRelease)
+
+	select {
+	case startErr := <-startDone:
+		if startErr != nil {
+			t.Fatalf("StartRun: %v", startErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for StartRun to finish")
+	}
+
+	var result turnResult
+	select {
+	case result = <-turnDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OnTurnCompleted to finish")
+	}
+	if result.err != nil {
+		t.Fatalf("OnTurnCompleted: %v", result.err)
+	}
+	if len(result.updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(result.updated))
+	}
+	if result.updated[0].Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed status from early terminal signal, got %q", result.updated[0].Status)
+	}
+	if !strings.Contains(strings.ToLower(result.updated[0].LastError), "model unsupported") {
+		t.Fatalf("expected run last error to include terminal failure detail, got %q", result.updated[0].LastError)
+	}
+
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected persisted run status failed, got %q", current.Status)
+	}
+	step := current.Phases[0].Steps[0]
+	if step.Status != StepRunStatusFailed {
+		t.Fatalf("expected failed step status, got %q", step.Status)
+	}
+	if !strings.Contains(strings.ToLower(step.Error), "model unsupported") {
+		t.Fatalf("expected step error to include terminal failure detail, got %q", step.Error)
+	}
+}
+
 func TestRunLifecycleCustomDispatchClassifierFatalFailsDeferredError(t *testing.T) {
 	template := WorkflowTemplate{
 		ID:   "prompted_classifier_fatal",

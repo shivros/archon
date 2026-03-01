@@ -78,6 +78,14 @@ type stubDispatchProviderPolicy struct {
 	validateErr    error
 }
 
+type bridgeStepPromptDispatcherStub struct {
+	calls     []guidedworkflows.StepPromptDispatchRequest
+	responses []guidedworkflows.StepPromptDispatchResult
+	errs      []error
+	started   chan struct{}
+	release   <-chan struct{}
+}
+
 func (s stubDispatchProviderPolicy) Normalize(provider string) string {
 	if strings.TrimSpace(s.normalizeValue) != "" {
 		return strings.TrimSpace(s.normalizeValue)
@@ -91,6 +99,47 @@ func (s stubDispatchProviderPolicy) SupportsDispatch(provider string) bool {
 
 func (s stubDispatchProviderPolicy) Validate(string) error {
 	return s.validateErr
+}
+
+func (s *bridgeStepPromptDispatcherStub) DispatchStepPrompt(
+	_ context.Context,
+	req guidedworkflows.StepPromptDispatchRequest,
+) (guidedworkflows.StepPromptDispatchResult, error) {
+	if s == nil {
+		return guidedworkflows.StepPromptDispatchResult{}, nil
+	}
+	s.calls = append(s.calls, req)
+	if s.started != nil {
+		select {
+		case <-s.started:
+		default:
+			close(s.started)
+		}
+	}
+	if s.release != nil {
+		<-s.release
+	}
+	if len(s.errs) > 0 {
+		err := s.errs[0]
+		if len(s.errs) == 1 {
+			s.errs = s.errs[:0]
+		} else {
+			s.errs = s.errs[1:]
+		}
+		if err != nil {
+			return guidedworkflows.StepPromptDispatchResult{}, err
+		}
+	}
+	if len(s.responses) == 0 {
+		return guidedworkflows.StepPromptDispatchResult{}, nil
+	}
+	res := s.responses[0]
+	if len(s.responses) == 1 {
+		s.responses = s.responses[:0]
+	} else {
+		s.responses = s.responses[1:]
+	}
+	return res, nil
 }
 
 func setStableWorkflowTemplatesHome(t *testing.T) string {
@@ -2671,20 +2720,32 @@ func TestGuidedWorkflowNotificationPublisherForwardsTurnContextToProcessor(t *te
 	}
 }
 
-func TestGuidedWorkflowNotificationPublisherBlocksOpenCodeCompletionWithoutArtifacts(t *testing.T) {
-	turnProcessor := &captureTurnProcessor{}
-	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
-	publisher.Publish(types.NotificationEvent{
-		Trigger:   types.NotificationTriggerTurnCompleted,
-		SessionID: "sess-open",
-		Provider:  "opencode",
-		TurnID:    "turn-1",
-		Payload: map[string]any{
-			"turn_status": "completed",
-		},
-	})
-	if len(turnProcessor.signals) != 0 {
-		t.Fatalf("expected open code completion without artifacts to be ignored, got %d signals", len(turnProcessor.signals))
+func TestGuidedWorkflowNotificationPublisherAllowsTerminalCompletionWithoutArtifactsByProvider(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+	}{
+		{name: "codex", provider: "codex"},
+		{name: "opencode", provider: "opencode"},
+		{name: "kilocode", provider: "kilocode"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			turnProcessor := &captureTurnProcessor{}
+			publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
+			publisher.Publish(types.NotificationEvent{
+				Trigger:   types.NotificationTriggerTurnCompleted,
+				SessionID: "sess-any",
+				Provider:  tc.provider,
+				TurnID:    "turn-1",
+				Payload: map[string]any{
+					"turn_status": "completed",
+				},
+			})
+			if len(turnProcessor.signals) != 1 {
+				t.Fatalf("expected terminal completion without artifacts to pass for provider %q, got %d signals", tc.provider, len(turnProcessor.signals))
+			}
+		})
 	}
 }
 
@@ -2752,7 +2813,7 @@ func TestGuidedWorkflowNotificationPublisherWithNilReadinessFallsBackToDefault(t
 	}
 }
 
-func TestGuidedWorkflowNotificationPublisherAllowsOpenCodeCompletionWithArtifacts(t *testing.T) {
+func TestGuidedWorkflowNotificationPublisherAllowsTerminalCompletionWithArtifactSignals(t *testing.T) {
 	turnProcessor := &captureTurnProcessor{}
 	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
 	publisher.Publish(types.NotificationEvent{
@@ -2769,25 +2830,250 @@ func TestGuidedWorkflowNotificationPublisherAllowsOpenCodeCompletionWithArtifact
 		},
 	})
 	if len(turnProcessor.signals) != 1 {
-		t.Fatalf("expected open code completion with artifacts to pass, got %d signals", len(turnProcessor.signals))
+		t.Fatalf("expected terminal completion with artifact signals to pass, got %d signals", len(turnProcessor.signals))
 	}
 }
 
-func TestGuidedWorkflowNotificationPublisherAllowsOpenCodeTerminalFailuresWithoutArtifacts(t *testing.T) {
-	turnProcessor := &captureTurnProcessor{}
-	publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
-	publisher.Publish(types.NotificationEvent{
-		Trigger:   types.NotificationTriggerTurnCompleted,
-		SessionID: "sess-open",
-		Provider:  "opencode",
-		TurnID:    "turn-1",
-		Payload: map[string]any{
-			"turn_status": "failed",
-			"turn_error":  "provider error",
-		},
-	})
-	if len(turnProcessor.signals) != 1 {
-		t.Fatalf("expected terminal failure to pass, got %d signals", len(turnProcessor.signals))
+func TestGuidedWorkflowNotificationPublisherAllowsTerminalFailuresWithoutArtifactsByProvider(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+	}{
+		{name: "codex", provider: "codex"},
+		{name: "opencode", provider: "opencode"},
+		{name: "kilocode", provider: "kilocode"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			turnProcessor := &captureTurnProcessor{}
+			publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, turnProcessor)
+			publisher.Publish(types.NotificationEvent{
+				Trigger:   types.NotificationTriggerTurnCompleted,
+				SessionID: "sess-any",
+				Provider:  tc.provider,
+				TurnID:    "turn-1",
+				Payload: map[string]any{
+					"turn_status": "failed",
+					"turn_error":  "provider error",
+				},
+			})
+			if len(turnProcessor.signals) != 1 {
+				t.Fatalf("expected terminal failure to pass for provider %q, got %d signals", tc.provider, len(turnProcessor.signals))
+			}
+		})
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherCompletedTurnsProgressMultiStepRunByProvider(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+	}{
+		{name: "codex", provider: "codex"},
+		{name: "opencode", provider: "opencode"},
+		{name: "kilocode", provider: "kilocode"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			downstream := &recordNotificationPublisher{}
+			template := guidedworkflows.WorkflowTemplate{
+				ID:   "prompted_provider_progress_bridge",
+				Name: "Prompted Provider Progress Bridge",
+				Phases: []guidedworkflows.WorkflowTemplatePhase{
+					{
+						ID:   "phase_1",
+						Name: "Phase 1",
+						Steps: []guidedworkflows.WorkflowTemplateStep{
+							{ID: "step_1", Name: "Step 1", Prompt: "prompt 1"},
+							{ID: "step_2", Name: "Step 2", Prompt: "prompt 2"},
+						},
+					},
+				},
+			}
+			dispatcher := &bridgeStepPromptDispatcherStub{
+				responses: []guidedworkflows.StepPromptDispatchResult{
+					{Dispatched: true, SessionID: "sess-valid", TurnID: "turn-1", Provider: tc.provider},
+					{Dispatched: true, SessionID: "sess-valid", TurnID: "turn-2", Provider: tc.provider},
+				},
+			}
+			runService := guidedworkflows.NewRunService(
+				guidedworkflows.Config{Enabled: true},
+				guidedworkflows.WithTemplate(template),
+				guidedworkflows.WithStepPromptDispatcher(dispatcher),
+			)
+			run, err := runService.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+				TemplateID:       template.ID,
+				WorkspaceID:      "ws-1",
+				WorktreeID:       "wt-1",
+				SessionID:        "sess-valid",
+				SelectedProvider: tc.provider,
+			})
+			if err != nil {
+				t.Fatalf("CreateRun: %v", err)
+			}
+			if _, err := runService.StartRun(context.Background(), run.ID); err != nil {
+				t.Fatalf("StartRun: %v", err)
+			}
+
+			publisher := NewGuidedWorkflowNotificationPublisher(downstream, nil, runService)
+			publisher.Publish(types.NotificationEvent{
+				Trigger:   types.NotificationTriggerTurnCompleted,
+				SessionID: "sess-valid",
+				Provider:  tc.provider,
+				TurnID:    "turn-1",
+				Payload: map[string]any{
+					"turn_status": "completed",
+				},
+			})
+
+			current, err := runService.GetRun(context.Background(), run.ID)
+			if err != nil {
+				t.Fatalf("GetRun after first turn: %v", err)
+			}
+			if current.Status != guidedworkflows.WorkflowRunStatusRunning {
+				t.Fatalf("expected run to remain running after first turn for provider %q, got %q", tc.provider, current.Status)
+			}
+			step1 := current.Phases[0].Steps[0]
+			step2 := current.Phases[0].Steps[1]
+			if step1.Status != guidedworkflows.StepRunStatusCompleted {
+				t.Fatalf("expected first step completed after first turn for provider %q, got %q", tc.provider, step1.Status)
+			}
+			if step2.Status != guidedworkflows.StepRunStatusRunning || !step2.AwaitingTurn {
+				t.Fatalf("expected second step awaiting turn for provider %q, got %#v", tc.provider, step2)
+			}
+
+			publisher.Publish(types.NotificationEvent{
+				Trigger:   types.NotificationTriggerTurnCompleted,
+				SessionID: "sess-valid",
+				Provider:  tc.provider,
+				TurnID:    "turn-2",
+				Payload: map[string]any{
+					"turn_status": "completed",
+				},
+			})
+
+			current, err = runService.GetRun(context.Background(), run.ID)
+			if err != nil {
+				t.Fatalf("GetRun after second turn: %v", err)
+			}
+			if current.Status != guidedworkflows.WorkflowRunStatusCompleted {
+				t.Fatalf("expected run completed after second turn for provider %q, got %q", tc.provider, current.Status)
+			}
+		})
+	}
+}
+
+func TestGuidedWorkflowNotificationPublisherEarlyTerminalFailureFailsRunByProvider(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+	}{
+		{name: "codex", provider: "codex"},
+		{name: "opencode", provider: "opencode"},
+		{name: "kilocode", provider: "kilocode"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			template := guidedworkflows.WorkflowTemplate{
+				ID:   "prompted_provider_early_failure_bridge",
+				Name: "Prompted Provider Early Failure Bridge",
+				Phases: []guidedworkflows.WorkflowTemplatePhase{
+					{
+						ID:   "phase_1",
+						Name: "Phase 1",
+						Steps: []guidedworkflows.WorkflowTemplateStep{
+							{ID: "step_1", Name: "Step 1", Prompt: "prompt 1"},
+						},
+					},
+				},
+			}
+			dispatchStarted := make(chan struct{})
+			dispatchRelease := make(chan struct{})
+			dispatcher := &bridgeStepPromptDispatcherStub{
+				started: dispatchStarted,
+				release: dispatchRelease,
+				responses: []guidedworkflows.StepPromptDispatchResult{
+					{Dispatched: true, SessionID: "sess-invalid", TurnID: "turn-bad", Provider: tc.provider},
+				},
+			}
+			runService := guidedworkflows.NewRunService(
+				guidedworkflows.Config{Enabled: true},
+				guidedworkflows.WithTemplate(template),
+				guidedworkflows.WithStepPromptDispatcher(dispatcher),
+			)
+			run, err := runService.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+				TemplateID:       template.ID,
+				WorkspaceID:      "ws-1",
+				WorktreeID:       "wt-1",
+				SessionID:        "sess-invalid",
+				SelectedProvider: tc.provider,
+			})
+			if err != nil {
+				t.Fatalf("CreateRun: %v", err)
+			}
+
+			startDone := make(chan error, 1)
+			go func() {
+				_, startErr := runService.StartRun(context.Background(), run.ID)
+				startDone <- startErr
+			}()
+			select {
+			case <-dispatchStarted:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for dispatch to start")
+			}
+
+			publisher := NewGuidedWorkflowNotificationPublisher(&recordNotificationPublisher{}, nil, runService)
+			publishDone := make(chan struct{})
+			go func() {
+				publisher.Publish(types.NotificationEvent{
+					Trigger:   types.NotificationTriggerTurnCompleted,
+					SessionID: "sess-invalid",
+					Provider:  tc.provider,
+					TurnID:    "turn-bad",
+					Payload: map[string]any{
+						"turn_status": "failed",
+						"turn_error":  "model unsupported",
+					},
+				})
+				close(publishDone)
+			}()
+
+			close(dispatchRelease)
+			select {
+			case <-publishDone:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for failure publish to finish")
+			}
+			select {
+			case startErr := <-startDone:
+				if startErr != nil {
+					t.Fatalf("StartRun: %v", startErr)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for StartRun to finish")
+			}
+
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				current, getErr := runService.GetRun(context.Background(), run.ID)
+				if getErr != nil {
+					t.Fatalf("GetRun: %v", getErr)
+				}
+				if current.Status == guidedworkflows.WorkflowRunStatusFailed {
+					if !strings.Contains(strings.ToLower(current.LastError), "model unsupported") {
+						t.Fatalf("expected LastError to include failure detail for provider %q, got %q", tc.provider, current.LastError)
+					}
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			current, err := runService.GetRun(context.Background(), run.ID)
+			if err != nil {
+				t.Fatalf("GetRun final: %v", err)
+			}
+			t.Fatalf("expected run to transition to failed for provider %q, got %q", tc.provider, current.Status)
+		})
 	}
 }
 

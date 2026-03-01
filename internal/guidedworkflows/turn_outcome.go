@@ -4,7 +4,7 @@ import "strings"
 
 func IsTerminalTurnStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "completed", "complete", "done", "failed", "error", "interrupted", "cancelled", "canceled", "rejected", "aborted", "stopped":
+	case "completed", "complete", "done", "failed", "error", "interrupted", "cancelled", "canceled", "rejected", "aborted", "stopped", "abandoned":
 		return true
 	default:
 		return false
@@ -13,7 +13,7 @@ func IsTerminalTurnStatus(status string) bool {
 
 func IsFailedTurnStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "error", "interrupted", "cancelled", "canceled", "rejected", "aborted", "stopped":
+	case "failed", "error", "interrupted", "cancelled", "canceled", "rejected", "aborted", "stopped", "abandoned":
 		return true
 	default:
 		return false

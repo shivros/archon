@@ -300,6 +300,8 @@ type RunMetricsSnapshot struct {
 	TurnEventsProgressed int            `json:"turn_events_progressed"`
 	TurnEventsBlocked    int            `json:"turn_events_blocked"`
 	StepOutcomeDeferred  int            `json:"step_outcome_deferred"`
+	TurnSignalMismatches int            `json:"turn_signal_mismatches"`
+	TurnSignalRecovered  int            `json:"turn_signal_recovered"`
 	InterventionCauses   map[string]int `json:"intervention_causes,omitempty"`
 }
 

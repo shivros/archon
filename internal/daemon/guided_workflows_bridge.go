@@ -63,6 +63,7 @@ func newGuidedWorkflowRunService(
 	opts := []guidedworkflows.RunServiceOption{
 		guidedworkflows.WithMaxActiveRuns(coreCfg.GuidedWorkflowsRolloutMaxActiveRuns()),
 		guidedworkflows.WithTelemetryEnabled(coreCfg.GuidedWorkflowsRolloutTelemetryEnabled()),
+		guidedworkflows.WithTurnMismatchRecovery(coreCfg.GuidedWorkflowsRolloutAllowTurnIDMismatchRecovery()),
 	}
 	workflowTemplatesPath, pathErr := config.WorkflowTemplatesPath()
 	if pathErr != nil {

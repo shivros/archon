@@ -20,7 +20,7 @@ func TestTurnProgressionReadinessRegistryKnownAndFallbackProviders(t *testing.T)
 	if !kiloPolicy.AllowProgression(types.NotificationEvent{
 		Payload: map[string]any{"turn_output_fresh": true},
 	}, TurnProgressionEvidence{Status: "completed", Terminal: true, FreshOutput: true}) {
-		t.Fatalf("expected kilocode policy to allow when turn output is fresh")
+		t.Fatalf("expected kilocode policy to allow terminal completions")
 	}
 	if codexPolicy.AllowProgression(types.NotificationEvent{}, TurnProgressionEvidence{Status: "in_progress", Terminal: false}) {
 		t.Fatalf("expected codex policy to block non-terminal events")
@@ -75,18 +75,18 @@ func TestOpenCodeTurnProgressionReadinessPolicyMatrix(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "terminal success with artifact count blocked",
+			name: "terminal success with artifact count allowed",
 			event: types.NotificationEvent{
 				Payload: map[string]any{"turn_status": "completed", "assistant_artifact_count": 2},
 			},
-			want: false,
+			want: true,
 		},
 		{
-			name: "terminal success without evidence blocked",
+			name: "terminal success without evidence allowed",
 			event: types.NotificationEvent{
 				Payload: map[string]any{"turn_status": "completed"},
 			},
-			want: false,
+			want: true,
 		},
 	}
 	for _, tc := range cases {

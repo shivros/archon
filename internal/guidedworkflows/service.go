@@ -100,6 +100,7 @@ type InMemoryRunService struct {
 	dispatchProviderPolicy DispatchProviderPolicy
 	turnMatcher            TurnSignalMatcher
 	stepOutcomeEvaluator   StepOutcomeEvaluator
+	turnMismatchHandler    TurnSignalMismatchHandler
 	dispatchClassifier     DispatchErrorClassifier
 	dispatchRetryPolicy    DispatchRetryPolicy
 	dispatchRetryScheduler DispatchRetryScheduler
@@ -145,6 +146,8 @@ type runServiceMetrics struct {
 	turnEventsProgressed int
 	turnEventsBlocked    int
 	stepOutcomeDeferred  int
+	turnSignalMismatches int
+	turnSignalRecovered  int
 	interventionCauses   map[string]int
 }
 
@@ -355,6 +358,15 @@ func WithMissingRunTombstoneFactory(factory MissingRunTombstoneFactory) RunServi
 	}
 }
 
+func WithTurnMismatchRecovery(enabled bool) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil {
+			return
+		}
+		s.turnMismatchHandler = NewRecoveryTurnSignalMismatchHandler(enabled)
+	}
+}
+
 func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	service := &InMemoryRunService{
 		cfg:                    NormalizeConfig(cfg),
@@ -369,6 +381,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		tombstoneFactory:       defaultMissingRunTombstoneFactory{},
 		turnMatcher:            StrictSessionTurnSignalMatcher{},
 		stepOutcomeEvaluator:   defaultStepOutcomeEvaluator{},
+		turnMismatchHandler:    NewTurnSignalMismatchHandler(),
 		dispatchClassifier:     defaultDispatchErrorClassifier{},
 		dispatchRetryPolicy:    defaultDispatchRetryPolicy(),
 		dispatchProviderPolicy: registryDispatchProviderPolicy{},
@@ -387,6 +400,9 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	}
 	if service.stepOutcomeEvaluator == nil {
 		service.stepOutcomeEvaluator = defaultStepOutcomeEvaluator{}
+	}
+	if service.turnMismatchHandler == nil {
+		service.turnMismatchHandler = NewTurnSignalMismatchHandler()
 	}
 	if service.dispatchRetryPolicy == nil {
 		service.dispatchRetryPolicy = defaultDispatchRetryPolicy()
@@ -969,6 +985,7 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 
 	s.recordTurnEventMatchedLocked()
 
+	markTurnSeen := false
 	if signal.TurnID != "" {
 		receipt := turnReceiptKey(run.ID, signal.TurnID)
 		if _, seen := s.turnSeen[receipt]; seen {
@@ -976,7 +993,12 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 			s.mu.Unlock()
 			return nil, nil
 		}
-		s.turnSeen[receipt] = struct{}{}
+	}
+
+	if signal.TurnID != "" {
+		// Mark as seen only after we have actually progressed an awaiting step.
+		// A terminal signal can legitimately arrive before dispatch links AwaitingTurn.
+		markTurnSeen = false
 	}
 
 	beforeStatus := run.Status
@@ -994,9 +1016,13 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 	}
 	if completed {
 		s.recordTurnEventStepDoneLocked()
+		markTurnSeen = true
 	}
 
 	if run.Status != WorkflowRunStatusRunning {
+		if markTurnSeen && signal.TurnID != "" {
+			s.turnSeen[turnReceiptKey(run.ID, signal.TurnID)] = struct{}{}
+		}
 		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 		clone := cloneWorkflowRun(run)
 		snapshot := s.captureRunSnapshot(run.ID)
@@ -1016,8 +1042,35 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 	}
 
 	s.mu.Lock()
-	if !completed && !wasAwaitingTurn {
+	replayedAfterAdvance := false
+	advancedBeforeAwaiting := !completed && !wasAwaitingTurn
+	terminalSignal := signal.Terminal || IsTerminalTurnStatus(signal.Status) || strings.TrimSpace(signal.Error) != ""
+	if advancedBeforeAwaiting && run.Status == WorkflowRunStatusRunning && isRunAwaitingTurn(run) {
+		replayedAfterAdvance, err = s.completeAwaitingTurnStepLocked(ctx, run, signal)
+		if err != nil {
+			snapshot := s.captureRunSnapshot(run.ID)
+			s.mu.Unlock()
+			s.persistRunSnapshotAsync(ctx, snapshot)
+			return nil, err
+		}
+		if replayedAfterAdvance {
+			s.recordTurnEventStepDoneLocked()
+			markTurnSeen = true
+		}
+	}
+	if advancedBeforeAwaiting && !replayedAfterAdvance && !terminalSignal {
+		// Non-terminal early signals can be safely deduped even if they arrived
+		// before AwaitingTurn linkage.
+		markTurnSeen = true
+	}
+	if advancedBeforeAwaiting && !replayedAfterAdvance {
 		s.recordTurnEventAdvanceLocked()
+	}
+	if markTurnSeen && signal.TurnID != "" {
+		s.turnSeen[turnReceiptKey(run.ID, signal.TurnID)] = struct{}{}
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 	}
 	clone := cloneWorkflowRun(run)
 	snapshot := s.captureRunSnapshot(run.ID)
@@ -1079,17 +1132,18 @@ func (s *InMemoryRunService) RenameRun(ctx context.Context, runID, name string) 
 	}
 
 	releaseRunLock := s.runLocks.Lock(runID)
-	defer releaseRunLock()
 
 	s.mu.Lock()
 	run, err := s.mustRunLocked(runID)
 	if err != nil {
 		s.mu.Unlock()
+		releaseRunLock()
 		return nil, err
 	}
 	if strings.TrimSpace(run.TemplateName) == normalizedName {
 		clone := cloneWorkflowRun(run)
 		s.mu.Unlock()
+		releaseRunLock()
 		return clone, nil
 	}
 	now := s.engine.now()
@@ -1108,9 +1162,14 @@ func (s *InMemoryRunService) RenameRun(ctx context.Context, runID, name string) 
 		Message: "workflow run renamed",
 	})
 	snapshot := s.captureRunSnapshot(run.ID)
+	clone := cloneWorkflowRun(run)
 	s.mu.Unlock()
+
+	releaseRunLock()
+
 	s.persistRunSnapshotAsync(ctx, snapshot)
-	return cloneWorkflowRun(run), nil
+
+	return clone, nil
 }
 
 func (s *InMemoryRunService) DismissRun(ctx context.Context, runID string) (*WorkflowRun, error) {
@@ -1398,6 +1457,8 @@ func (s *InMemoryRunService) GetRunMetrics(_ context.Context) (RunMetricsSnapsho
 		TurnEventsProgressed: s.metrics.turnEventsStepDone + s.metrics.turnEventsAdvance,
 		TurnEventsBlocked:    s.metrics.turnEventsBlocked,
 		StepOutcomeDeferred:  s.metrics.stepOutcomeDeferred,
+		TurnSignalMismatches: s.metrics.turnSignalMismatches,
+		TurnSignalRecovered:  s.metrics.turnSignalRecovered,
 		InterventionCauses:   map[string]int{},
 	}
 	for cause, count := range s.metrics.interventionCauses {
@@ -1838,8 +1899,21 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 	step := &phase.Steps[stepIndex]
 	expectedTurnID := strings.TrimSpace(step.TurnID)
 	signalTurnID := strings.TrimSpace(signal.TurnID)
-	if expectedTurnID != "" && signalTurnID == "" {
+
+	hasTurnIDMismatch := expectedTurnID != "" && (signalTurnID == "" || signalTurnID != expectedTurnID)
+
+	if hasTurnIDMismatch {
+		mismatchHandler := s.turnMismatchHandlerOrDefault()
+		mismatchResult := mismatchHandler.HandleMismatch(ctx, run, step, signal)
+
 		now := s.engine.now()
+		detail := "turn_id mismatch"
+		if expectedTurnID != "" && signalTurnID == "" {
+			detail = "missing turn_id while step awaits " + expectedTurnID
+		} else if signalTurnID != "" {
+			detail = "turn_id mismatch expected=" + expectedTurnID + " got=" + signalTurnID
+		}
+
 		appendRunAudit(run, RunAuditEntry{
 			At:      now,
 			Scope:   "step",
@@ -1847,7 +1921,7 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 			PhaseID: phase.ID,
 			StepID:  step.ID,
 			Outcome: "awaiting_turn",
-			Detail:  "missing turn_id while step awaits " + expectedTurnID,
+			Detail:  detail + " reason=" + mismatchResult.Reason,
 		})
 		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
 			At:      now,
@@ -1855,30 +1929,16 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 			RunID:   run.ID,
 			PhaseID: phase.ID,
 			StepID:  step.ID,
-			Message: "missing turn_id for awaiting step",
+			Message: detail + " (handled: " + mismatchResult.Reason + ")",
 		})
-		return false, nil
-	}
-	if expectedTurnID != "" && signalTurnID != "" && signalTurnID != expectedTurnID {
-		now := s.engine.now()
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "step",
-			Action:  "step_turn_signal_ignored",
-			PhaseID: phase.ID,
-			StepID:  step.ID,
-			Outcome: "awaiting_turn",
-			Detail:  "turn_id mismatch expected=" + expectedTurnID + " got=" + signalTurnID,
-		})
-		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
-			At:      now,
-			Type:    "step_turn_signal_ignored",
-			RunID:   run.ID,
-			PhaseID: phase.ID,
-			StepID:  step.ID,
-			Message: "turn_id mismatch for awaiting step",
-		})
-		return false, nil
+
+		s.recordTurnSignalMismatchLocked()
+
+		if mismatchResult.Proceed {
+			s.recordTurnSignalRecoveredLocked()
+		} else {
+			return false, nil
+		}
 	}
 	now := s.engine.now()
 	step.LastTurnSignal = buildStepTurnSignalContext(signal, now)
@@ -3151,6 +3211,27 @@ func (s *InMemoryRunService) recordTurnEventBlockedLocked() {
 		return
 	}
 	s.metrics.turnEventsBlocked++
+}
+
+func (s *InMemoryRunService) recordTurnSignalMismatchLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnSignalMismatches++
+}
+
+func (s *InMemoryRunService) recordTurnSignalRecoveredLocked() {
+	if s == nil || !s.telemetryEnabled {
+		return
+	}
+	s.metrics.turnSignalRecovered++
+}
+
+func (s *InMemoryRunService) turnMismatchHandlerOrDefault() TurnSignalMismatchHandler {
+	if s == nil || s.turnMismatchHandler == nil {
+		return NewTurnSignalMismatchHandler()
+	}
+	return s.turnMismatchHandler
 }
 
 func (s *InMemoryRunService) recordStepOutcomeDeferredLocked() {

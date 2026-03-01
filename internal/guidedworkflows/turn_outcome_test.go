@@ -15,6 +15,12 @@ func TestTurnStatusClassifiers(t *testing.T) {
 	if !IsFailedTurnStatus("error") {
 		t.Fatalf("expected error to be failed")
 	}
+	if !IsFailedTurnStatus("abandoned") {
+		t.Fatalf("expected abandoned to be failed")
+	}
+	if !IsTerminalTurnStatus("abandoned") {
+		t.Fatalf("expected abandoned to be terminal")
+	}
 	if IsFailedTurnStatus("completed") {
 		t.Fatalf("expected completed to be non-failed")
 	}

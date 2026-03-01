@@ -19,11 +19,12 @@ var (
 )
 
 type Config struct {
-	Enabled         bool
-	AutoStart       bool
-	CheckpointStyle string
-	Mode            string
-	Policy          CheckpointPolicy
+	Enabled                     bool
+	AutoStart                   bool
+	CheckpointStyle             string
+	Mode                        string
+	Policy                      CheckpointPolicy
+	AllowTurnIDMismatchRecovery bool
 }
 
 type StartRunRequest struct {
