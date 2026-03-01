@@ -59,7 +59,7 @@ func openCodeIntegrationTimeout(provider string) time.Duration {
 func openCodeIntegrationModel(provider string) string {
 	switch providers.Normalize(provider) {
 	case "kilocode":
-		return "kilo/auto-free"
+		return "moonshotai/kimi-k2.5"
 	case "opencode":
 		return "opencode/minimax-m2.5-free"
 	default:
