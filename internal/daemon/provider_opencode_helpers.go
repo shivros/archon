@@ -458,6 +458,13 @@ func parseOpenCodeSessionMessage(raw map[string]any) (openCodeSessionMessage, bo
 		if role := strings.TrimSpace(asString(raw["role"])); role != "" {
 			info["role"] = role
 		}
+		if typ := strings.TrimSpace(asString(raw["type"])); typ != "" {
+			info["type"] = typ
+			// Some OpenCode history payloads encode role semantics in `type`.
+			if _, hasRole := info["role"]; !hasRole {
+				info["role"] = typ
+			}
+		}
 		if id := strings.TrimSpace(asString(raw["id"])); id != "" {
 			info["id"] = id
 		}

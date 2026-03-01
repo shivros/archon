@@ -98,6 +98,7 @@ func (a *API) loadOpenCodeDynamicOptionCatalog(ctx context.Context, provider str
 		return nil
 	}
 	name := providers.Normalize(provider)
+	configuredDefaultModel := coreCfg.OpenCodeDefaultModel(name)
 	out := &types.ProviderOptionCatalog{
 		Provider: name,
 		Models:   append([]string{}, catalog.Models...),
@@ -105,6 +106,12 @@ func (a *API) loadOpenCodeDynamicOptionCatalog(ctx context.Context, provider str
 			Model:   strings.TrimSpace(catalog.DefaultModel),
 			Version: 1,
 		},
+	}
+	if strings.TrimSpace(configuredDefaultModel) != "" {
+		out.Defaults.Model = strings.TrimSpace(configuredDefaultModel)
+		if !containsFolded(out.Models, out.Defaults.Model) {
+			out.Models = append([]string{out.Defaults.Model}, out.Models...)
+		}
 	}
 	if out.Defaults.Model == "" && len(out.Models) > 0 {
 		out.Defaults.Model = out.Models[0]

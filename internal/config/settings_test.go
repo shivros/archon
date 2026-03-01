@@ -100,6 +100,7 @@ include_partial = true
 
 [providers.opencode]
 command = "/usr/local/bin/opencode"
+default_model = "openrouter/z-ai/glm-5"
 base_url = "http://127.0.0.1:4096"
 token = "config-open"
 token_env = "OPENCODE_TOKEN"
@@ -108,6 +109,7 @@ timeout_seconds = 15
 
 [providers.kilocode]
 command = "/usr/local/bin/kilocode"
+default_model = "openrouter/z-ai/glm-5:free"
 base_url = "http://127.0.0.1:4097"
 token = "config-kilo"
 token_env = "KILOCODE_TOKEN"
@@ -256,6 +258,12 @@ command = "/usr/local/bin/gemini"
 	}
 	if got := cfg.OpenCodeUsername("kilocode"); got != "archon-kilo" {
 		t.Fatalf("unexpected kilocode username: %q", got)
+	}
+	if got := cfg.OpenCodeDefaultModel("opencode"); got != "openrouter/z-ai/glm-5" {
+		t.Fatalf("unexpected opencode default model: %q", got)
+	}
+	if got := cfg.OpenCodeDefaultModel("kilocode"); got != "openrouter/z-ai/glm-5:free" {
+		t.Fatalf("unexpected kilocode default model: %q", got)
 	}
 	if got := cfg.OpenCodeTimeoutSeconds("opencode"); got != 15 {
 		t.Fatalf("unexpected opencode timeout: %d", got)
@@ -416,6 +424,12 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 	}
 	if got := cfg.OpenCodeUsername("kilocode"); got != "kilocode" {
 		t.Fatalf("unexpected default kilocode username: %q", got)
+	}
+	if got := cfg.OpenCodeDefaultModel("opencode"); got != "" {
+		t.Fatalf("unexpected default opencode model: %q", got)
+	}
+	if got := cfg.OpenCodeDefaultModel("kilocode"); got != "" {
+		t.Fatalf("unexpected default kilocode model: %q", got)
 	}
 	if got := cfg.OpenCodeBaseURL("opencode"); got != "http://127.0.0.1:4096" {
 		t.Fatalf("unexpected default opencode base url: %q", got)
@@ -637,6 +651,7 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 			},
 			OpenCode: CoreOpenCodeProviderConfig{
 				Command:        " opencode ",
+				DefaultModel:   " openrouter/z-ai/glm-5 ",
 				BaseURL:        " http://127.0.0.1:4096/ ",
 				Token:          " config-open ",
 				TokenEnv:       " OPENCODE_TOKEN ",
@@ -645,6 +660,7 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 			},
 			KiloCode: CoreOpenCodeProviderConfig{
 				Command:        " kilocode ",
+				DefaultModel:   " openrouter/z-ai/glm-5:free ",
 				BaseURL:        " http://127.0.0.1:4097/ ",
 				Token:          " config-kilo ",
 				TokenEnv:       " KILOCODE_TOKEN ",
@@ -705,6 +721,12 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	}
 	if got := cfg.OpenCodeUsername("kilocode"); got != "kilocode-user" {
 		t.Fatalf("unexpected kilocode username: %q", got)
+	}
+	if got := cfg.OpenCodeDefaultModel("opencode"); got != "openrouter/z-ai/glm-5" {
+		t.Fatalf("unexpected opencode default model: %q", got)
+	}
+	if got := cfg.OpenCodeDefaultModel("kilocode"); got != "openrouter/z-ai/glm-5:free" {
+		t.Fatalf("unexpected kilocode default model: %q", got)
 	}
 	if got := cfg.OpenCodeTimeoutSeconds("opencode"); got != 33 {
 		t.Fatalf("unexpected opencode timeout: %d", got)

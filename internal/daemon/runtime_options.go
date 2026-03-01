@@ -16,6 +16,15 @@ func providerOptionCatalog(provider string) *types.ProviderOptionCatalog {
 		return codexProviderOptionCatalog()
 	case "claude":
 		return claudeProviderOptionCatalog()
+	case "opencode", "kilocode":
+		coreCfg := loadCoreConfigOrDefault()
+		return &types.ProviderOptionCatalog{
+			Provider: name,
+			Defaults: types.SessionRuntimeOptions{
+				Model:   coreCfg.OpenCodeDefaultModel(name),
+				Version: 1,
+			},
+		}
 	default:
 		return &types.ProviderOptionCatalog{Provider: name}
 	}

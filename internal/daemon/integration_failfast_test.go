@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"control/internal/types"
@@ -97,11 +98,18 @@ func turnFailureFromEvent(event types.CodexEvent) string {
 	case "turn/completed":
 		turn := parseTurnEventFromParams(event.Params)
 		status := strings.TrimSpace(strings.ToLower(turn.Status))
-		if status == "failed" || status == "error" || status == "cancelled" || status == "canceled" || status == "interrupted" {
-			if msg := strings.TrimSpace(turn.Error); msg != "" {
-				return "turn " + status + ": " + msg
+		if status != "" {
+			switch status {
+			case "completed", "success", "succeeded", "ok":
+				return ""
+			case "in_progress", "running", "pending", "started":
+				return ""
+			default:
+				if msg := strings.TrimSpace(turn.Error); msg != "" {
+					return "turn " + status + ": " + msg
+				}
+				return "turn " + status
 			}
-			return "turn " + status
 		}
 		if status == "" && strings.TrimSpace(turn.Error) != "" {
 			return "turn error: " + strings.TrimSpace(turn.Error)
@@ -148,5 +156,34 @@ func sessionTerminalFailure(server *httptest.Server, sessionID string) string {
 		return string(session.Status)
 	default:
 		return ""
+	}
+}
+
+func TestTurnFailureFromEventTreatsAbandonedAsFailure(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"turn":{"id":"turn-1","status":"abandoned","error":{"message":"upstream turn did not emit terminal event before timeout"}}}`),
+	}
+	got := turnFailureFromEvent(event)
+	if !strings.Contains(strings.ToLower(got), "turn abandoned") {
+		t.Fatalf("expected abandoned turn to be treated as failure, got %q", got)
+	}
+}
+
+func TestTurnFailureFromEventIgnoresCompletedAndInProgressStatuses(t *testing.T) {
+	completed := turnFailureFromEvent(types.CodexEvent{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"turn":{"id":"turn-1","status":"completed"}}`),
+	})
+	if strings.TrimSpace(completed) != "" {
+		t.Fatalf("expected completed status to be non-failure, got %q", completed)
+	}
+
+	inProgress := turnFailureFromEvent(types.CodexEvent{
+		Method: "turn/completed",
+		Params: json.RawMessage(`{"turn":{"id":"turn-1","status":"in_progress"}}`),
+	})
+	if strings.TrimSpace(inProgress) != "" {
+		t.Fatalf("expected in_progress status to be non-failure, got %q", inProgress)
 	}
 }

@@ -204,6 +204,9 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 	if c == nil || c.promptService == nil {
 		return "", errors.New("prompt service is required")
 	}
+	if err := c.validateRuntimeModel(ctx, runtimeOptions); err != nil {
+		return "", err
+	}
 	return c.promptService.Prompt(ctx, sessionID, text, runtimeOptions, directory)
 }
 
@@ -223,6 +226,17 @@ func (r openCodeDefaultRuntimeModelResolver) Resolve(ctx context.Context, runtim
 		return nil
 	}
 	if !strings.Contains(raw, "/") {
+		if r.catalog != nil {
+			_, modelToProvider, err := r.catalog.openCodeModelCatalogIndex(ctx)
+			if err == nil {
+				if resolvedProvider := strings.TrimSpace(modelToProvider[raw]); resolvedProvider != "" {
+					return map[string]string{
+						"providerID": resolvedProvider,
+						"modelID":    raw,
+					}
+				}
+			}
+		}
 		return map[string]string{"modelID": raw}
 	}
 	parts := strings.SplitN(raw, "/", 2)
@@ -245,16 +259,25 @@ func (r openCodeDefaultRuntimeModelResolver) Resolve(ctx context.Context, runtim
 	if r.catalog != nil {
 		providers, modelToProvider, err := r.catalog.openCodeModelCatalogIndex(ctx)
 		if err == nil {
+			// Some providers expose model ids that already include a namespace
+			// segment (for example, "kilo/auto-free"). When that exact raw model
+			// id exists in the catalog, preserve it in modelID.
+			if resolvedProvider := strings.TrimSpace(modelToProvider[raw]); resolvedProvider != "" {
+				return map[string]string{
+					"providerID": resolvedProvider,
+					"modelID":    raw,
+				}
+			}
 			if _, ok := providers[providerID]; ok {
 				return map[string]string{
 					"providerID": providerID,
 					"modelID":    modelID,
 				}
 			}
-			if resolvedProvider := strings.TrimSpace(modelToProvider[raw]); resolvedProvider != "" {
+			if resolvedProvider := strings.TrimSpace(modelToProvider[modelID]); resolvedProvider != "" {
 				return map[string]string{
 					"providerID": resolvedProvider,
-					"modelID":    raw,
+					"modelID":    modelID,
 				}
 			}
 		}
@@ -271,6 +294,88 @@ func (c *openCodeClient) openCodeModelCatalogIndex(ctx context.Context) (map[str
 		return nil, nil, errors.New("model catalog service is required")
 	}
 	return c.catalogService.openCodeModelCatalogIndex(ctx)
+}
+
+func (c *openCodeClient) validateRuntimeModel(ctx context.Context, runtimeOptions *types.SessionRuntimeOptions) error {
+	if c == nil {
+		return nil
+	}
+	if runtimeOptions == nil {
+		return errors.New("model is required")
+	}
+	model := strings.TrimSpace(runtimeOptions.Model)
+	if model == "" {
+		return errors.New("model is required")
+	}
+	providers, modelToProvider, err := c.openCodeModelCatalogIndex(ctx)
+	if err != nil {
+		// Best-effort validation only: if the catalog is unavailable, defer to
+		// the upstream provider rather than blocking valid sends.
+		return nil
+	}
+	if openCodeModelSupportedByCatalog(model, providers, modelToProvider) {
+		return nil
+	}
+	return fmt.Errorf("model %s not supported", model)
+}
+
+func openCodeModelSupportedByCatalog(model string, providers map[string]struct{}, modelToProvider map[string]string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	if len(modelToProvider) == 0 && len(providers) == 0 {
+		return true
+	}
+
+	if _, ok := lookupStringMapFold(modelToProvider, model); ok {
+		return true
+	}
+	if !strings.Contains(model, "/") {
+		return false
+	}
+
+	parts := strings.SplitN(model, "/", 2)
+	providerID := strings.TrimSpace(parts[0])
+	modelID := strings.TrimSpace(parts[1])
+	if providerID == "" || modelID == "" {
+		return false
+	}
+	if mappedProvider, ok := lookupStringMapFold(modelToProvider, modelID); ok {
+		if !containsStringSetFold(providers, providerID) {
+			// Legacy provider prefixes (for example, "vendor/model") are still
+			// valid when the model ID is known in the catalog.
+			return true
+		}
+		return strings.EqualFold(strings.TrimSpace(mappedProvider), providerID)
+	}
+	return false
+}
+
+func lookupStringMapFold(values map[string]string, key string) (string, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", false
+	}
+	for candidate, value := range values {
+		if strings.EqualFold(strings.TrimSpace(candidate), key) {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func containsStringSetFold(values map[string]struct{}, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneStringSet(src map[string]struct{}) map[string]struct{} {

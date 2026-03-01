@@ -550,12 +550,10 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 	if innerWidth < 1 {
 		innerWidth = 1
 	}
-	if block.Role == ChatRoleReasoning && block.Collapsed {
-		preview, truncated := reasoningPreviewText(text, reasoningPreviewLines, reasoningPreviewChars)
-		if truncated {
-			preview = preview + "\n\n... (collapsed, press e or use [Expand])"
-		}
-		text = preview
+	reasoningExpandable := block.Role == ChatRoleReasoning && isReasoningExpandable(text)
+	if block.Role == ChatRoleReasoning && block.Collapsed && reasoningExpandable {
+		preview, _ := reasoningPreviewText(text, reasoningPreviewLines, reasoningPreviewChars)
+		text = preview + "\n\n... (collapsed, press e or use [Expand])"
 	}
 	renderedText := renderChatText(block.Role, text, innerWidth)
 	var bubbleStyle lipgloss.Style
@@ -602,7 +600,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 		moveLabel = "[Move]"
 		deleteLabel = "[Delete]"
 	}
-	if block.Role == ChatRoleReasoning {
+	if reasoningExpandable {
 		if block.Collapsed {
 			toggleLabel = "[Expand]"
 		} else {
@@ -1208,6 +1206,11 @@ func reasoningPreviewText(text string, maxLines int, maxChars int) (string, bool
 		truncated = true
 	}
 	return strings.TrimSpace(preview), truncated
+}
+
+func isReasoningExpandable(text string) bool {
+	_, truncated := reasoningPreviewText(text, reasoningPreviewLines, reasoningPreviewChars)
+	return truncated
 }
 
 func renderChatText(role ChatRole, text string, width int) string {

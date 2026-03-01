@@ -329,3 +329,23 @@ func TestParseOpenCodeSessionMessageDerivesPartsFromMessageContent(t *testing.T)
 		t.Fatalf("expected extracted content text, got %q", text)
 	}
 }
+
+func TestParseOpenCodeSessionMessageDerivesRoleFromTypeField(t *testing.T) {
+	raw := map[string]any{
+		"type": "assistant",
+		"id":   "msg-a2",
+		"parts": []any{
+			map[string]any{"type": "text", "text": "typed assistant content"},
+		},
+	}
+	parsed, ok := parseOpenCodeSessionMessage(raw)
+	if !ok {
+		t.Fatalf("expected parse success")
+	}
+	if role := openCodeSessionMessageRole(parsed); role != "assistant" {
+		t.Fatalf("expected assistant role from type field, got %q", role)
+	}
+	if text := extractOpenCodeSessionMessageText(parsed); text != "typed assistant content" {
+		t.Fatalf("expected text extraction from typed message, got %q", text)
+	}
+}

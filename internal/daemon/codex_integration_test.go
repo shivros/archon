@@ -126,9 +126,6 @@ func TestCodexInterruptFlow(t *testing.T) {
 
 	status, body := interruptSession(server, session.ID)
 	if status != http.StatusOK {
-		if strings.Contains(body, "no active turn") || strings.Contains(body, "turn already") {
-			t.Skipf("interrupt skipped: %s", strings.TrimSpace(body))
-		}
 		t.Fatalf("interrupt failed status=%d body=%s", status, body)
 	}
 
@@ -482,7 +479,7 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 	manager.SetMetaStore(meta)
 	manager.SetSessionStore(sessions)
 
-	logger := logging.New(io.Discard, logging.Info)
+	logger := integrationTestLogger()
 	artifactRepository := newFileSessionItemsRepository(manager)
 	api := &API{
 		Version: "test",
@@ -502,6 +499,13 @@ func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager,
 	api.RegisterRoutes(mux)
 	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
 	return server, manager, stores
+}
+
+func integrationTestLogger() logging.Logger {
+	if strings.TrimSpace(os.Getenv("ARCHON_INTEGRATION_DEBUG")) == "1" {
+		return logging.New(os.Stderr, logging.Debug)
+	}
+	return logging.New(io.Discard, logging.Info)
 }
 
 func createWorkspace(t *testing.T, server *httptest.Server, repoDir string) *types.Workspace {

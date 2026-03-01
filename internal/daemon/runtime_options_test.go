@@ -190,6 +190,12 @@ models = ["gpt-5.2-codex"]
 [providers.claude]
 default_model = "opus"
 models = ["sonnet"]
+
+[providers.opencode]
+default_model = "openrouter/z-ai/glm-5"
+
+[providers.kilocode]
+default_model = "openrouter/z-ai/glm-5:free"
 `)
 	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -210,6 +216,15 @@ models = ["sonnet"]
 	if claude.Defaults.Model != "opus" {
 		t.Fatalf("unexpected claude default model: %q", claude.Defaults.Model)
 	}
+
+	opencode := providerOptionCatalog("opencode")
+	if opencode.Defaults.Model != "openrouter/z-ai/glm-5" {
+		t.Fatalf("unexpected opencode default model: %q", opencode.Defaults.Model)
+	}
+	kilocode := providerOptionCatalog("kilocode")
+	if kilocode.Defaults.Model != "openrouter/z-ai/glm-5:free" {
+		t.Fatalf("unexpected kilocode default model: %q", kilocode.Defaults.Model)
+	}
 }
 
 func TestResolveRuntimeOptionsAllowsModelForExecProviderWithoutCatalogModels(t *testing.T) {
@@ -222,6 +237,29 @@ func TestResolveRuntimeOptionsAllowsModelForExecProviderWithoutCatalogModels(t *
 	}
 	if options == nil || options.Model != "made-up-model" {
 		t.Fatalf("expected model to pass through when provider has no catalog models, got %#v", options)
+	}
+}
+
+func TestResolveRuntimeOptionsUsesConfiguredOpenCodeDefaultModel(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte(`
+[providers.opencode]
+default_model = "openrouter/z-ai/glm-5"
+`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	options, err := resolveRuntimeOptions("opencode", nil, &types.SessionRuntimeOptions{}, true)
+	if err != nil {
+		t.Fatalf("resolveRuntimeOptions: %v", err)
+	}
+	if options == nil || options.Model != "openrouter/z-ai/glm-5" {
+		t.Fatalf("expected configured opencode default model, got %#v", options)
 	}
 }
 

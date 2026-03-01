@@ -48,6 +48,29 @@ var workflowE2ETemplate = guidedworkflows.WorkflowTemplate{
 	},
 }
 
+var workflowContextCarryTemplate = guidedworkflows.WorkflowTemplate{
+	ID:   "gwf_e2e_context_carry",
+	Name: "E2E Context Carry Arithmetic",
+	Phases: []guidedworkflows.WorkflowTemplatePhase{
+		{
+			ID:   "phase_chain",
+			Name: "Chain",
+			Steps: []guidedworkflows.WorkflowTemplateStep{
+				{
+					ID:     "step_multiply",
+					Name:   "Multiply",
+					Prompt: "Take the number from the user message and multiply it by 2. Respond only with the result.",
+				},
+				{
+					ID:     "step_add",
+					Name:   "Add",
+					Prompt: "Take the number you gave me and add 5 to it. Respond only with the result.",
+				},
+			},
+		},
+	},
+}
+
 func TestGuidedWorkflowE2E(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -89,6 +112,102 @@ func TestGuidedWorkflowE2E(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowE2EContextCarryArithmetic(t *testing.T) {
+	tests := []struct {
+		name    string
+		require func(t *testing.T)
+		setup   func(t *testing.T) (repoDir string, opts *types.SessionRuntimeOptions)
+	}{
+		{
+			name:    "codex",
+			require: requireCodexIntegration,
+			setup:   codexIntegrationSetup,
+		},
+		{
+			name:    "claude",
+			require: requireClaudeIntegration,
+			setup:   claudeIntegrationSetup,
+		},
+		{
+			name:    "opencode",
+			require: func(t *testing.T) { requireOpenCodeIntegration(t, "opencode") },
+			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
+				return openCodeIntegrationSetup(t, "opencode")
+			},
+		},
+		{
+			name:    "kilocode",
+			require: func(t *testing.T) { requireOpenCodeIntegration(t, "kilocode") },
+			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
+				return openCodeIntegrationSetup(t, "kilocode")
+			},
+		},
+	}
+
+	base := workflowContextCarryBaseNumber()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.require(t)
+			repoDir, runtimeOpts := tc.setup(t)
+			runWorkflowContextCarryE2E(t, tc.name, repoDir, runtimeOpts, base)
+		})
+	}
+}
+
+func TestGuidedWorkflowE2EInvalidModelFails(t *testing.T) {
+	tests := []struct {
+		name    string
+		require func(t *testing.T)
+		setup   func(t *testing.T) (repoDir string, opts *types.SessionRuntimeOptions)
+	}{
+		{
+			name:    "opencode",
+			require: func(t *testing.T) { requireOpenCodeIntegration(t, "opencode") },
+			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
+				return openCodeIntegrationSetup(t, "opencode")
+			},
+		},
+		{
+			name:    "kilocode",
+			require: func(t *testing.T) { requireOpenCodeIntegration(t, "kilocode") },
+			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
+				return openCodeIntegrationSetup(t, "kilocode")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.require(t)
+
+			repoDir, _ := tc.setup(t)
+			server, _, _ := newWorkflowIntegrationServer(t)
+			defer server.Close()
+
+			ws := createWorkspace(t, server, repoDir)
+			created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+				TemplateID:       workflowE2ETemplate.ID,
+				WorkspaceID:      ws.ID,
+				UserPrompt:       "Follow the instructions exactly.",
+				SelectedProvider: tc.name,
+				SelectedRuntimeOptions: &types.SessionRuntimeOptions{
+					Model: "archon/not-a-real-model",
+				},
+			})
+			postWorkflowRunAction(t, server, created.ID, "start", http.StatusInternalServerError)
+
+			timeout := openCodeIntegrationTimeout(tc.name) + 30*time.Second
+			waitForWorkflowRunStatus(t, server, created.ID, guidedworkflows.WorkflowRunStatusFailed, timeout)
+
+			run := getWorkflowRun(t, server, created.ID, http.StatusOK)
+			if !strings.Contains(strings.ToLower(run.LastError), "not supported") &&
+				!strings.Contains(strings.ToLower(run.LastError), "invalid model") {
+				t.Fatalf("expected invalid model failure detail, got %q", run.LastError)
+			}
+		})
+	}
+}
+
 func runWorkflowE2E(t *testing.T, provider, repoDir string, runtimeOpts *types.SessionRuntimeOptions) {
 	t.Helper()
 
@@ -121,6 +240,37 @@ func runWorkflowE2E(t *testing.T, provider, repoDir string, runtimeOpts *types.S
 	t.Logf("phase 2: agent replied with %d", expected)
 
 	// Verify workflow reached completed status.
+	waitForWorkflowRunStatus(t, server, created.ID, guidedworkflows.WorkflowRunStatusCompleted, timeout)
+}
+
+func runWorkflowContextCarryE2E(t *testing.T, provider, repoDir string, runtimeOpts *types.SessionRuntimeOptions, base int) {
+	t.Helper()
+
+	server, manager, _ := newWorkflowIntegrationServer(t)
+	defer server.Close()
+
+	ws := createWorkspace(t, server, repoDir)
+	timeout := workflowIntegrationTimeout(provider)
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:             workflowContextCarryTemplate.ID,
+		WorkspaceID:            ws.ID,
+		UserPrompt:             "Use this number exactly: " + strconv.Itoa(base),
+		SelectedProvider:       provider,
+		SelectedRuntimeOptions: runtimeOpts,
+	})
+	postWorkflowRunAction(t, server, created.ID, "start", http.StatusOK)
+
+	sessionID := waitForWorkflowSession(t, server, created.ID, timeout)
+
+	step1 := base * 2
+	waitForAgentReply(t, server, manager, sessionID, strconv.Itoa(step1), timeout)
+	t.Logf("step 1: agent replied with %d", step1)
+
+	final := step1 + 5
+	waitForAgentReply(t, server, manager, sessionID, strconv.Itoa(final), timeout)
+	t.Logf("step 2: agent replied with %d", final)
+
 	waitForWorkflowRunStatus(t, server, created.ID, guidedworkflows.WorkflowRunStatusCompleted, timeout)
 }
 
@@ -174,6 +324,7 @@ func newWorkflowIntegrationServer(t *testing.T) (*httptest.Server, *SessionManag
 	workflowRuns := guidedworkflows.NewRunService(
 		guidedworkflows.Config{Enabled: true},
 		guidedworkflows.WithTemplate(workflowE2ETemplate),
+		guidedworkflows.WithTemplate(workflowContextCarryTemplate),
 		guidedworkflows.WithStepPromptDispatcher(dispatcher),
 	)
 
@@ -293,4 +444,13 @@ func workflowIntegrationTimeout(provider string) time.Duration {
 		}
 		return 3 * time.Minute
 	}
+}
+
+func workflowContextCarryBaseNumber() int {
+	if raw := strings.TrimSpace(os.Getenv("ARCHON_WORKFLOW_CONTEXT_CARRY_NUMBER")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			return n
+		}
+	}
+	return 12
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"control/internal/types"
@@ -144,5 +146,77 @@ func TestAPIProviderOptionsEndpointOpenCodeDynamic(t *testing.T) {
 	}
 	if payload.Options.Defaults.Model != "anthropic/claude-sonnet-4-20250514" {
 		t.Fatalf("unexpected dynamic default model: %q", payload.Options.Defaults.Model)
+	}
+}
+
+func TestAPIProviderOptionsEndpointOpenCodeUsesConfiguredDefaultModel(t *testing.T) {
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/config/providers" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"providers": []map[string]any{
+				{
+					"id": "anthropic",
+					"models": []map[string]any{
+						{"id": "claude-sonnet-4-20250514"},
+						{"id": "claude-opus-4-20250514"},
+					},
+				},
+			},
+			"default": map[string]any{
+				"anthropic": "claude-sonnet-4-20250514",
+			},
+		})
+	}))
+	defer modelServer.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	archonDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(archonDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := []byte(`
+[providers.opencode]
+default_model = "opencode/minimax-m2.5-free"
+`)
+	if err := os.WriteFile(filepath.Join(archonDir, "config.toml"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Setenv("OPENCODE_BASE_URL", modelServer.URL)
+	api := &API{Version: "test"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/providers/", api.ProviderByName)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/providers/opencode/options", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get provider options: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Options *types.ProviderOptionCatalog `json:"options"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Options == nil {
+		t.Fatalf("expected options payload")
+	}
+	if payload.Options.Defaults.Model != "opencode/minimax-m2.5-free" {
+		t.Fatalf("expected configured default model override, got %q", payload.Options.Defaults.Model)
+	}
+	if len(payload.Options.Models) == 0 || payload.Options.Models[0] != "opencode/minimax-m2.5-free" {
+		t.Fatalf("expected configured default model first in model list, got %#v", payload.Options.Models)
 	}
 }

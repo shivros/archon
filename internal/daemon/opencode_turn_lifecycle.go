@@ -323,6 +323,25 @@ func (e *openCodeTurnLifecycleEngine) RegisterTurn(turnID string, baseline openC
 	e.order = append(e.order, turnID)
 }
 
+func (e *openCodeTurnLifecycleEngine) UnregisterTurn(turnID string) {
+	if e == nil {
+		return
+	}
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return
+	}
+	if _, ok := e.pending[turnID]; !ok {
+		return
+	}
+	delete(e.pending, turnID)
+}
+
 func (e *openCodeTurnLifecycleEngine) ActiveTurnID() string {
 	if e == nil {
 		return ""

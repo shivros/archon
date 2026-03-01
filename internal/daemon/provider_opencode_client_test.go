@@ -23,12 +23,42 @@ func (f openCodeRuntimeModelResolverFunc) Resolve(ctx context.Context, runtimeOp
 	return f(ctx, runtimeOptions)
 }
 
+func requiredOpenCodeRuntimeOptions() *types.SessionRuntimeOptions {
+	return &types.SessionRuntimeOptions{Model: "openrouter/google/gemini-2.5-flash"}
+}
+
 func TestNewOpenCodeClientValidation(t *testing.T) {
 	if _, err := newOpenCodeClient(openCodeClientConfig{}); err == nil {
 		t.Fatalf("expected missing base_url error")
 	}
 	if _, err := newOpenCodeClient(openCodeClientConfig{BaseURL: "not-a-url"}); err == nil {
 		t.Fatalf("expected invalid base_url error")
+	}
+}
+
+func TestOpenCodeClientPromptRequiresModel(t *testing.T) {
+	var postCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCalls.Add(1)
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	_, err = client.Prompt(context.Background(), "sess_1", "hello", nil, "/tmp/opencode-worktree")
+	if err == nil {
+		t.Fatalf("expected model required error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "model is required") {
+		t.Fatalf("expected model required error, got %v", err)
+	}
+	if postCalls.Load() != 0 {
+		t.Fatalf("expected no upstream prompt calls when model missing, got %d", postCalls.Load())
 	}
 }
 
@@ -507,7 +537,7 @@ func TestOpenCodeClientPromptAllowsEOFResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
 	if err != nil {
 		t.Fatalf("Prompt EOF response: %v", err)
 	}
@@ -584,7 +614,7 @@ func TestOpenCodeClientPromptRecoversAssistantAfterEOF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
 	if err != nil {
 		t.Fatalf("Prompt EOF recovery: %v", err)
 	}
@@ -668,12 +698,57 @@ func TestOpenCodeClientPromptRecoversAssistantAfterRequestTimeout(t *testing.T) 
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
 	if err != nil {
 		t.Fatalf("Prompt timeout recovery: %v", err)
 	}
 	if strings.TrimSpace(reply) != "fresh reply" {
 		t.Fatalf("expected recovered assistant text, got %q", reply)
+	}
+}
+
+func TestOpenCodeClientPromptReturnsPendingWhenSendHangsPastSubmitDeadline(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			time.Sleep(300 * time.Millisecond)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "late reply"},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			if got := strings.TrimSpace(r.URL.Query().Get("directory")); got != directory {
+				http.Error(w, "missing directory", http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{
+		BaseURL: server.URL,
+		Timeout: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	client.promptService.sendTimeout = 50 * time.Millisecond
+
+	_, err = client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
+	if !errors.Is(err, errOpenCodePromptPending) {
+		t.Fatalf("expected errOpenCodePromptPending, got %v", err)
 	}
 }
 
@@ -731,7 +806,7 @@ func TestOpenCodeClientPromptTimeoutReturnsPendingWhenNoAssistantRecovery(t *tes
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
 	if err == nil {
 		t.Fatalf("expected pending timeout error")
 	}
@@ -777,7 +852,7 @@ func TestOpenCodeClientPromptParsesMessageContentShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	reply, err := client.Prompt(context.Background(), "sess_1", "hello", nil, directory)
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
 	if err != nil {
 		t.Fatalf("Prompt message-content shape: %v", err)
 	}
@@ -841,6 +916,183 @@ func TestOpenCodeClientPromptResolvesLegacyModelValueToProvider(t *testing.T) {
 		t.Fatalf("Prompt legacy model resolution: %v", err)
 	}
 	if strings.TrimSpace(reply) != "resolved" {
+		t.Fatalf("unexpected prompt reply: %q", reply)
+	}
+}
+
+func TestOpenCodeClientPromptResolvesBareModelValueToProvider(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/config/providers":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"providers": []map[string]any{
+					{
+						"id": "zhipu",
+						"models": []map[string]any{
+							{"id": "glm-4.7-free"},
+						},
+					},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			model, _ := payload["model"].(map[string]any)
+			if got := strings.TrimSpace(asString(model["providerID"])); got != "zhipu" {
+				http.Error(w, "unexpected providerID: "+got, http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(asString(model["modelID"])); got != "glm-4.7-free" {
+				http.Error(w, "unexpected modelID: "+got, http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "resolved-bare-model"},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", &types.SessionRuntimeOptions{
+		Model: "glm-4.7-free",
+	}, directory)
+	if err != nil {
+		t.Fatalf("Prompt bare model resolution: %v", err)
+	}
+	if strings.TrimSpace(reply) != "resolved-bare-model" {
+		t.Fatalf("unexpected prompt reply: %q", reply)
+	}
+}
+
+func TestOpenCodeClientPromptResolvesLegacyVendorModelByModelID(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/config/providers":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"providers": []map[string]any{
+					{
+						"id": "openrouter",
+						"models": []map[string]any{
+							{"id": "glm-4.7-free"},
+						},
+					},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			model, _ := payload["model"].(map[string]any)
+			if got := strings.TrimSpace(asString(model["providerID"])); got != "openrouter" {
+				http.Error(w, "unexpected providerID: "+got, http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(asString(model["modelID"])); got != "glm-4.7-free" {
+				http.Error(w, "unexpected modelID: "+got, http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "resolved-legacy-vendor-model"},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", &types.SessionRuntimeOptions{
+		Model: "vendor/glm-4.7-free",
+	}, directory)
+	if err != nil {
+		t.Fatalf("Prompt legacy vendor model resolution: %v", err)
+	}
+	if strings.TrimSpace(reply) != "resolved-legacy-vendor-model" {
+		t.Fatalf("unexpected prompt reply: %q", reply)
+	}
+}
+
+func TestOpenCodeClientPromptPreservesCatalogKnownSlashModelID(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/config/providers":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"providers": []map[string]any{
+					{
+						"id": "kilo",
+						"models": []map[string]any{
+							{"id": "kilo/auto-free"},
+						},
+					},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			model, _ := payload["model"].(map[string]any)
+			if got := strings.TrimSpace(asString(model["providerID"])); got != "kilo" {
+				http.Error(w, "unexpected providerID: "+got, http.StatusBadRequest)
+				return
+			}
+			if got := strings.TrimSpace(asString(model["modelID"])); got != "kilo/auto-free" {
+				http.Error(w, "unexpected modelID: "+got, http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{
+					{"type": "text", "text": "resolved-catalog-slash-id"},
+				},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", &types.SessionRuntimeOptions{
+		Model: "kilo/auto-free",
+	}, directory)
+	if err != nil {
+		t.Fatalf("Prompt catalog-known slash model id: %v", err)
+	}
+	if strings.TrimSpace(reply) != "resolved-catalog-slash-id" {
 		t.Fatalf("unexpected prompt reply: %q", reply)
 	}
 }
@@ -945,6 +1197,94 @@ func TestOpenCodeClientPromptUsesInjectedRuntimeModelResolver(t *testing.T) {
 		t.Fatalf("Prompt injected resolver: %v", err)
 	}
 	if strings.TrimSpace(reply) != "resolver-injected" {
+		t.Fatalf("unexpected prompt reply: %q", reply)
+	}
+}
+
+func TestOpenCodeClientPromptFailsFastForUnsupportedModel(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	var postCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/config/providers":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"providers": []map[string]any{
+					{
+						"id": "openrouter",
+						"models": []map[string]any{
+							{"id": "google/gemini-2.5-flash"},
+						},
+					},
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			postCalls.Add(1)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{{"type": "text", "text": "should-not-send"}},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	_, err = client.Prompt(context.Background(), "sess_1", "hello", &types.SessionRuntimeOptions{
+		Model: "openrouter/does-not-exist",
+	}, directory)
+	if err == nil {
+		t.Fatalf("expected unsupported model error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not supported") {
+		t.Fatalf("expected unsupported model message, got %v", err)
+	}
+	if got := postCalls.Load(); got != 0 {
+		t.Fatalf("expected no prompt send on unsupported model, post calls=%d", got)
+	}
+}
+
+func TestOpenCodeClientPromptSkipsModelValidationWhenCatalogUnavailable(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/config/providers":
+			http.NotFound(w, r)
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/session/sess_1/message":
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess_1/message":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"parts": []map[string]any{{"type": "text", "text": "sent"}},
+			})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	reply, err := client.Prompt(context.Background(), "sess_1", "hello", &types.SessionRuntimeOptions{
+		Model: "openrouter/unknown",
+	}, directory)
+	if err != nil {
+		t.Fatalf("expected prompt to continue when catalog unavailable, got %v", err)
+	}
+	if strings.TrimSpace(reply) != "sent" {
 		t.Fatalf("unexpected prompt reply: %q", reply)
 	}
 }

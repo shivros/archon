@@ -88,9 +88,18 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 			// the active turn open so completion can arrive through events/recovery.
 			return turnID, nil
 		}
-		s.mu.Lock()
-		s.activeTurn = ""
-		s.mu.Unlock()
+		if s.lifecycle != nil {
+			s.lifecycle.UnregisterTurn(turnID)
+		}
+		s.onTurnTerminal(openCodeTerminalResult{
+			TurnID:         turnID,
+			Status:         turnTerminalFailed,
+			Error:          strings.TrimSpace(err.Error()),
+			Reason:         "prompt_error",
+			Source:         "prompt_send",
+			StartedAt:      startedAt,
+			TerminalizedAt: time.Now().UTC(),
+		})
 		return "", err
 	}
 
@@ -284,7 +293,7 @@ func (s *openCodeLiveSession) onTurnTerminal(result openCodeTerminalResult) {
 	}
 	s.publishTurnCompletedWithPayload(turn, payload)
 
-	if strings.TrimSpace(result.Source) != "live_event" {
+	if strings.TrimSpace(result.Source) != "live_event" && s.hub != nil {
 		s.hub.Broadcast(types.CodexEvent{
 			Method: "turn/completed",
 			Params: encodeTurnCompletedEventParams(result),

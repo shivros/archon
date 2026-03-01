@@ -1479,7 +1479,9 @@ func (m *Model) reconcileGuidedWorkflowRuntimeAfterProviderOptions(provider stri
 func (m *Model) reopenPendingComposeOptionPicker(provider string) tea.Cmd {
 	target := m.pendingComposeOptionTarget
 	m.clearPendingComposeOptionRequest()
-	if m.mode == uiModeCompose && strings.EqualFold(m.composeProvider(), provider) {
+	canOpen := m.mode == uiModeCompose ||
+		(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup)
+	if canOpen && strings.EqualFold(m.composeProvider(), provider) {
 		if m.openComposeOptionPicker(target) {
 			m.setStatusMessage("select " + composeOptionLabel(target))
 		} else {

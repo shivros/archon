@@ -14,11 +14,6 @@ import (
 	"control/internal/types"
 )
 
-const (
-	opencodeIntegrationEnv = "ARCHON_OPENCODE_INTEGRATION"
-	kilocodeIntegrationEnv = "ARCHON_KILOCODE_INTEGRATION"
-)
-
 type openCodeModelCatalogReader interface {
 	ListModels(ctx context.Context) (*openCodeModelCatalog, error)
 }
@@ -41,7 +36,20 @@ func newOpenCodeIntegrationModelSelector() openCodeIntegrationModelSelector {
 
 func defaultOpenCodeCatalogReaderFactory(provider string) (openCodeModelCatalogReader, error) {
 	cfg := resolveOpenCodeClientConfig(provider, loadCoreConfigOrDefault())
-	return newOpenCodeClient(cfg)
+	client, err := newOpenCodeClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	// Integration setup should be resilient when the local OpenCode/KiloCode
+	// server is not already running. Start it on-demand so model discovery can
+	// select a valid explicit runtime model.
+	startedBaseURL, startErr := maybeAutoStartOpenCodeServer(provider, client.baseURL, client.token, nil)
+	if startErr == nil && strings.TrimSpace(startedBaseURL) != "" && !strings.EqualFold(strings.TrimSpace(startedBaseURL), strings.TrimSpace(client.baseURL)) {
+		if switched, switchErr := cloneOpenCodeClientWithBaseURL(client, startedBaseURL); switchErr == nil {
+			client = switched
+		}
+	}
+	return client, nil
 }
 
 func integrationOpenCodeProviders() []string {
@@ -93,6 +101,9 @@ func openCodeConfiguredIntegrationModel(provider string) string {
 		if model := strings.TrimSpace(os.Getenv("ARCHON_OPENCODE_MODEL")); model != "" {
 			return model
 		}
+	}
+	if fallback := strings.TrimSpace(openCodeIntegrationFallbackModels[normalized]); fallback != "" {
+		return fallback
 	}
 	return ""
 }
@@ -174,6 +185,15 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 		got := selector.SelectModel(t, "opencode")
 		if got != "openrouter/google/gemini-2.5-flash" {
 			t.Fatalf("expected configured model, got %q", got)
+		}
+	})
+
+	t.Run("uses deterministic provider fallback when env/config are empty", func(t *testing.T) {
+		if got := openCodeConfiguredIntegrationModel("opencode"); got != "openrouter/google/gemini-2.5-flash" {
+			t.Fatalf("expected opencode fallback model, got %q", got)
+		}
+		if got := openCodeConfiguredIntegrationModel("kilocode"); got != "moonshotai/kimi-k2.5" {
+			t.Fatalf("expected kilocode fallback model, got %q", got)
 		}
 	})
 

@@ -1305,7 +1305,7 @@ func TestMouseReducerReasoningButtonClickToggles(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.applyBlocks([]ChatBlock{
-		{Role: ChatRoleReasoning, Text: "line one\nline two", Collapsed: true},
+		{Role: ChatRoleReasoning, Text: "line one\nline two\nline three\nline four\nline five", Collapsed: true},
 	})
 	if len(m.contentBlockSpans) != 1 {
 		t.Fatalf("expected rendered span metadata, got %d", len(m.contentBlockSpans))

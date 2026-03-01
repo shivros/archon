@@ -21,6 +21,8 @@ import (
 
 var errOpenCodePromptPending = errors.New("opencode prompt pending")
 
+const defaultOpenCodePromptSendTimeout = 12 * time.Second
+
 type openCodeJSONRequester interface {
 	doJSON(ctx context.Context, method, path string, body any, out any) error
 }
@@ -37,6 +39,7 @@ type openCodePromptService struct {
 	requester     openCodeJSONRequester
 	sessions      *openCodeSessionService
 	modelProvider openCodeRuntimeModelProvider
+	sendTimeout   time.Duration
 }
 
 type openCodeCatalogService struct {
@@ -68,6 +71,7 @@ func newOpenCodePromptService(requester openCodeJSONRequester, sessions *openCod
 		requester:     requester,
 		sessions:      sessions,
 		modelProvider: modelProvider,
+		sendTimeout:   defaultOpenCodePromptSendTimeout,
 	}
 }
 
@@ -300,7 +304,9 @@ func (s *openCodePromptService) Prompt(ctx context.Context, sessionID, text stri
 	}
 	var lastErr error
 	for idx, path := range paths {
-		err := s.requester.doJSON(ctx, http.MethodPost, path, body, &result)
+		sendCtx, cancel := s.promptSendContext(ctx)
+		err := s.requester.doJSON(sendCtx, http.MethodPost, path, body, &result)
+		cancel()
 		if err == nil {
 			reply := extractOpenCodeSessionMessageText(result)
 			if reply != "" {
@@ -336,6 +342,22 @@ func (s *openCodePromptService) Prompt(ctx context.Context, sessionID, text stri
 		return "", err
 	}
 	return "", lastErr
+}
+
+func (s *openCodePromptService) promptSendContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sendTimeout := s.sendTimeout
+	if sendTimeout <= 0 {
+		sendTimeout = defaultOpenCodePromptSendTimeout
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if time.Until(deadline) <= sendTimeout {
+			return context.WithCancel(ctx)
+		}
+	}
+	return context.WithTimeout(ctx, sendTimeout)
 }
 
 func openCodeRequestTimedOut(err error) bool {

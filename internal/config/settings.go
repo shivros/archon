@@ -115,13 +115,14 @@ type CoreGuidedWorkflowsPolicyGatesConfig struct {
 }
 
 type CoreGuidedWorkflowsRolloutConfig struct {
-	TelemetryEnabled      *bool `toml:"telemetry_enabled"`
-	MaxActiveRuns         int   `toml:"max_active_runs"`
-	AutomationEnabled     *bool `toml:"automation_enabled"`
-	AllowQualityChecks    *bool `toml:"allow_quality_checks"`
-	AllowCommit           *bool `toml:"allow_commit"`
-	RequireCommitApproval *bool `toml:"require_commit_approval"`
-	MaxRetryAttempts      int   `toml:"max_retry_attempts"`
+	TelemetryEnabled            *bool `toml:"telemetry_enabled"`
+	MaxActiveRuns               int   `toml:"max_active_runs"`
+	AutomationEnabled           *bool `toml:"automation_enabled"`
+	AllowQualityChecks          *bool `toml:"allow_quality_checks"`
+	AllowCommit                 *bool `toml:"allow_commit"`
+	RequireCommitApproval       *bool `toml:"require_commit_approval"`
+	MaxRetryAttempts            int   `toml:"max_retry_attempts"`
+	AllowTurnIDMismatchRecovery *bool `toml:"allow_turn_id_mismatch_recovery"`
 }
 
 type CoreProvidersConfig struct {
@@ -138,6 +139,7 @@ type CoreCommandProviderConfig struct {
 
 type CoreOpenCodeProviderConfig struct {
 	Command        string `toml:"command"`
+	DefaultModel   string `toml:"default_model"`
 	BaseURL        string `toml:"base_url"`
 	Token          string `toml:"token"`
 	TokenEnv       string `toml:"token_env"`
@@ -510,6 +512,10 @@ func (c CoreConfig) GuidedWorkflowsRolloutMaxRetryAttempts() int {
 	return value
 }
 
+func (c CoreConfig) GuidedWorkflowsRolloutAllowTurnIDMismatchRecovery() bool {
+	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.AllowTurnIDMismatchRecovery, false)
+}
+
 func (c CoreConfig) ProviderCommand(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "codex":
@@ -570,6 +576,11 @@ func (c CoreConfig) OpenCodeTimeoutSeconds(provider string) int {
 		return cfg.TimeoutSeconds
 	}
 	return 180
+}
+
+func (c CoreConfig) OpenCodeDefaultModel(provider string) string {
+	cfg := c.openCodeProviderConfig(provider)
+	return strings.TrimSpace(cfg.DefaultModel)
 }
 
 func (c CoreConfig) openCodeProviderConfig(provider string) CoreOpenCodeProviderConfig {
