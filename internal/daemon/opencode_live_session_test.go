@@ -59,7 +59,7 @@ func TestOpenCodeLiveSessionStartTurnAcceptsPromptPending(t *testing.T) {
 		client:       client,
 	}
 
-	turnID, err := ls.StartTurn(context.Background(), []map[string]any{{"type": "text", "text": "hello"}}, nil)
+	turnID, err := ls.StartTurn(context.Background(), []map[string]any{{"type": "text", "text": "hello"}}, requiredOpenCodeLiveRuntimeOptions())
 	if err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestOpenCodeLiveSessionStartTurnPersistsUserItem(t *testing.T) {
 		repository:   repo,
 	}
 
-	if _, err := ls.StartTurn(context.Background(), []map[string]any{{"type": "text", "text": "hello from user"}}, nil); err != nil {
+	if _, err := ls.StartTurn(context.Background(), []map[string]any{{"type": "text", "text": "hello from user"}}, requiredOpenCodeLiveRuntimeOptions()); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
 	if repo.appendCalls == 0 {
@@ -541,6 +541,10 @@ func TestOpenCodeLiveSessionStartTurnPersistsUserItem(t *testing.T) {
 	if got := strings.TrimSpace(asString(first["type"])); got != "userMessage" {
 		t.Fatalf("expected first persisted item to be userMessage, got %#v", first)
 	}
+}
+
+func requiredOpenCodeLiveRuntimeOptions() *types.SessionRuntimeOptions {
+	return &types.SessionRuntimeOptions{Model: "openrouter/google/gemini-2.5-flash"}
 }
 
 type captureOpenCodeNotificationPublisher struct {

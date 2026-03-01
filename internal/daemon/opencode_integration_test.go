@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,31 @@ const (
 	opencodeIntegrationEnv = "ARCHON_OPENCODE_INTEGRATION"
 	kilocodeIntegrationEnv = "ARCHON_KILOCODE_INTEGRATION"
 )
+
+type openCodeModelCatalogReader interface {
+	ListModels(ctx context.Context) (*openCodeModelCatalog, error)
+}
+
+type openCodeCatalogReaderFactory func(provider string) (openCodeModelCatalogReader, error)
+
+type openCodeIntegrationModelSelector struct {
+	configuredModel  func(provider string) string
+	catalogReaderFor openCodeCatalogReaderFactory
+	catalogTimeout   time.Duration
+}
+
+func newOpenCodeIntegrationModelSelector() openCodeIntegrationModelSelector {
+	return openCodeIntegrationModelSelector{
+		configuredModel:  openCodeConfiguredIntegrationModel,
+		catalogReaderFor: defaultOpenCodeCatalogReaderFactory,
+		catalogTimeout:   8 * time.Second,
+	}
+}
+
+func defaultOpenCodeCatalogReaderFactory(provider string) (openCodeModelCatalogReader, error) {
+	cfg := resolveOpenCodeClientConfig(provider, loadCoreConfigOrDefault())
+	return newOpenCodeClient(cfg)
+}
 
 func integrationOpenCodeProviders() []string {
 	return []string{"opencode", "kilocode"}
@@ -56,24 +82,208 @@ func openCodeIntegrationTimeout(provider string) time.Duration {
 	return 2 * time.Minute
 }
 
-func openCodeIntegrationModel(provider string) string {
-	switch providers.Normalize(provider) {
+func openCodeConfiguredIntegrationModel(provider string) string {
+	normalized := providers.Normalize(provider)
+	switch normalized {
 	case "kilocode":
-		return "moonshotai/kimi-k2.5"
+		if model := strings.TrimSpace(os.Getenv("ARCHON_KILOCODE_MODEL")); model != "" {
+			return model
+		}
 	case "opencode":
-		return "opencode/minimax-m2.5-free"
-	default:
-		return ""
+		if model := strings.TrimSpace(os.Getenv("ARCHON_OPENCODE_MODEL")); model != "" {
+			return model
+		}
 	}
+	return ""
+}
+
+func openCodeIntegrationModel(t *testing.T, provider string) string {
+	t.Helper()
+	return newOpenCodeIntegrationModelSelector().SelectModel(t, provider)
+}
+
+func (s openCodeIntegrationModelSelector) SelectModel(t *testing.T, provider string) string {
+	t.Helper()
+
+	preferred := ""
+	if s.configuredModel != nil {
+		preferred = strings.TrimSpace(s.configuredModel(provider))
+	}
+	if s.catalogReaderFor == nil {
+		return preferred
+	}
+
+	reader, err := s.catalogReaderFor(provider)
+	if err != nil {
+		return preferred
+	}
+
+	timeout := s.catalogTimeout
+	if timeout <= 0 {
+		timeout = 8 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	catalog, err := reader.ListModels(ctx)
+	if err != nil || catalog == nil {
+		return preferred
+	}
+
+	if preferred != "" && containsFolded(catalog.Models, preferred) {
+		return preferred
+	}
+	if preferred != "" && strings.EqualFold(strings.TrimSpace(catalog.DefaultModel), preferred) {
+		return preferred
+	}
+	if model := strings.TrimSpace(catalog.DefaultModel); model != "" {
+		return model
+	}
+	for _, candidate := range catalog.Models {
+		if model := strings.TrimSpace(candidate); model != "" {
+			return model
+		}
+	}
+	return preferred
+}
+
+type stubOpenCodeModelCatalogReader struct {
+	catalog *openCodeModelCatalog
+	err     error
+	called  bool
+}
+
+func (s *stubOpenCodeModelCatalogReader) ListModels(_ context.Context) (*openCodeModelCatalog, error) {
+	s.called = true
+	return s.catalog, s.err
+}
+
+func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
+	makeFactory := func(reader openCodeModelCatalogReader, err error) openCodeCatalogReaderFactory {
+		return func(string) (openCodeModelCatalogReader, error) {
+			if err != nil {
+				return nil, err
+			}
+			return reader, nil
+		}
+	}
+
+	t.Run("returns configured when reader factory missing", func(t *testing.T) {
+		selector := openCodeIntegrationModelSelector{
+			configuredModel: func(string) string { return "openrouter/google/gemini-2.5-flash" },
+		}
+		got := selector.SelectModel(t, "opencode")
+		if got != "openrouter/google/gemini-2.5-flash" {
+			t.Fatalf("expected configured model, got %q", got)
+		}
+	})
+
+	t.Run("returns configured when factory errors", func(t *testing.T) {
+		selector := openCodeIntegrationModelSelector{
+			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			catalogReaderFor: makeFactory(nil, context.DeadlineExceeded),
+		}
+		got := selector.SelectModel(t, "opencode")
+		if got != "openrouter/google/gemini-2.5-flash" {
+			t.Fatalf("expected configured model, got %q", got)
+		}
+	})
+
+	t.Run("returns configured when catalog lookup fails", func(t *testing.T) {
+		reader := &stubOpenCodeModelCatalogReader{err: context.DeadlineExceeded}
+		selector := openCodeIntegrationModelSelector{
+			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			catalogReaderFor: makeFactory(reader, nil),
+		}
+		got := selector.SelectModel(t, "opencode")
+		if !reader.called {
+			t.Fatalf("expected catalog reader to be called")
+		}
+		if got != "openrouter/google/gemini-2.5-flash" {
+			t.Fatalf("expected configured model, got %q", got)
+		}
+	})
+
+	t.Run("keeps configured when present in catalog models", func(t *testing.T) {
+		reader := &stubOpenCodeModelCatalogReader{
+			catalog: &openCodeModelCatalog{
+				Models: []string{
+					"openrouter/google/gemini-2.5-flash",
+					"openrouter/anthropic/claude-sonnet-4",
+				},
+				DefaultModel: "openrouter/anthropic/claude-sonnet-4",
+			},
+		}
+		selector := openCodeIntegrationModelSelector{
+			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			catalogReaderFor: makeFactory(reader, nil),
+		}
+		got := selector.SelectModel(t, "opencode")
+		if got != "openrouter/google/gemini-2.5-flash" {
+			t.Fatalf("expected configured model, got %q", got)
+		}
+	})
+
+	t.Run("uses catalog default when configured missing from catalog", func(t *testing.T) {
+		reader := &stubOpenCodeModelCatalogReader{
+			catalog: &openCodeModelCatalog{
+				Models:       []string{"openrouter/anthropic/claude-sonnet-4"},
+				DefaultModel: "openrouter/anthropic/claude-sonnet-4",
+			},
+		}
+		selector := openCodeIntegrationModelSelector{
+			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			catalogReaderFor: makeFactory(reader, nil),
+		}
+		got := selector.SelectModel(t, "opencode")
+		if got != "openrouter/anthropic/claude-sonnet-4" {
+			t.Fatalf("expected catalog default model, got %q", got)
+		}
+	})
+
+	t.Run("uses first catalog model when default missing", func(t *testing.T) {
+		reader := &stubOpenCodeModelCatalogReader{
+			catalog: &openCodeModelCatalog{
+				Models: []string{"openrouter/anthropic/claude-sonnet-4"},
+			},
+		}
+		selector := openCodeIntegrationModelSelector{
+			configuredModel:  func(string) string { return "" },
+			catalogReaderFor: makeFactory(reader, nil),
+			catalogTimeout:   0, // Exercise default-timeout branch.
+		}
+		got := selector.SelectModel(t, "opencode")
+		if got != "openrouter/anthropic/claude-sonnet-4" {
+			t.Fatalf("expected first catalog model, got %q", got)
+		}
+	})
+
+	t.Run("returns configured when catalog empty", func(t *testing.T) {
+		reader := &stubOpenCodeModelCatalogReader{
+			catalog: &openCodeModelCatalog{},
+		}
+		selector := openCodeIntegrationModelSelector{
+			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			catalogReaderFor: makeFactory(reader, nil),
+		}
+		got := selector.SelectModel(t, "opencode")
+		if got != "openrouter/google/gemini-2.5-flash" {
+			t.Fatalf("expected configured model, got %q", got)
+		}
+	})
 }
 
 func openCodeIntegrationSetup(t *testing.T, provider string) (string, *types.SessionRuntimeOptions) {
 	t.Helper()
-	model := openCodeIntegrationModel(provider)
-	var opts *types.SessionRuntimeOptions
-	if model != "" {
-		opts = &types.SessionRuntimeOptions{Model: model}
+	model := openCodeIntegrationModel(t, provider)
+	if model == "" {
+		switch providers.Normalize(provider) {
+		case "kilocode":
+			t.Fatalf("no model configured for %s integration test (set ARCHON_KILOCODE_MODEL, provider default model in config, or expose provider catalog defaults)", provider)
+		default:
+			t.Fatalf("no model configured for %s integration test (set ARCHON_OPENCODE_MODEL, provider default model in config, or expose provider catalog defaults)", provider)
+		}
 	}
+	opts := &types.SessionRuntimeOptions{Model: model}
 	return createOpenCodeWorkspace(t, provider), opts
 }
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,69 @@ type providerTestCase struct {
 	require func(t *testing.T)
 	setup   func(t *testing.T) (repoDir string, runtimeOpts *types.SessionRuntimeOptions)
 	timeout func() time.Duration
+}
+
+type providerCapabilitiesResolver interface {
+	Capabilities(provider string) providers.Capabilities
+}
+
+type defaultProviderCapabilitiesResolver struct{}
+
+func (defaultProviderCapabilitiesResolver) Capabilities(provider string) providers.Capabilities {
+	return providers.CapabilitiesFor(provider)
+}
+
+type providerAgentReplyWaiter func(
+	t *testing.T,
+	server *httptest.Server,
+	manager *SessionManager,
+	sessionID string,
+	needle string,
+	timeout time.Duration,
+)
+
+type providerAgentReplyWaitStrategyRegistry struct {
+	resolver       providerCapabilitiesResolver
+	waiters        map[string]providerAgentReplyWaiter
+	fallbackWaiter providerAgentReplyWaiter
+}
+
+func newProviderAgentReplyWaitStrategyRegistry(resolver providerCapabilitiesResolver) providerAgentReplyWaitStrategyRegistry {
+	if resolver == nil {
+		resolver = defaultProviderCapabilitiesResolver{}
+	}
+	return providerAgentReplyWaitStrategyRegistry{
+		resolver: resolver,
+		waiters: map[string]providerAgentReplyWaiter{
+			"history": waitForAgentReply,
+			"items":   waitForAgentReplyFromItems,
+		},
+		fallbackWaiter: waitForAgentReply,
+	}
+}
+
+func (r providerAgentReplyWaitStrategyRegistry) Wait(
+	t *testing.T,
+	server *httptest.Server,
+	manager *SessionManager,
+	provider string,
+	sessionID string,
+	needle string,
+	timeout time.Duration,
+) {
+	t.Helper()
+	key := "history"
+	if r.resolver != nil && r.resolver.Capabilities(provider).UsesItems {
+		key = "items"
+	}
+	waiter := r.waiters[key]
+	if waiter == nil {
+		waiter = r.fallbackWaiter
+	}
+	if waiter == nil {
+		waiter = waitForAgentReply
+	}
+	waiter(t, server, manager, sessionID, needle, timeout)
 }
 
 func allProviderTestCases() []providerTestCase {
@@ -65,6 +129,7 @@ func allProviderTestCases() []providerTestCase {
 // ensures consistent assertion strength and prevents regressions like the initial-
 // message silent drop that affected OpenCode/KiloCode.
 func TestProviderSessionFlow(t *testing.T) {
+	waitStrategy := newProviderAgentReplyWaitStrategyRegistry(defaultProviderCapabilitiesResolver{})
 	for _, tc := range allProviderTestCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.require(t)
@@ -91,15 +156,227 @@ func TestProviderSessionFlow(t *testing.T) {
 
 			// Wait for the initial agent reply (strong assertion for all providers).
 			timeout := tc.timeout()
-			waitForAgentReply(t, server, manager, session.ID, "ok", timeout)
+			waitStrategy.Wait(t, server, manager, tc.name, session.ID, "ok", timeout)
 
 			// Send a follow-up and wait for reply.
 			turnID := sendMessageWithRetry(t, server, session.ID, "Say \"ok\" again.", timeout)
 			if turnID == "" {
 				t.Fatalf("turn id missing from send")
 			}
-			waitForAgentReply(t, server, manager, session.ID, "ok", timeout)
+			waitStrategy.Wait(t, server, manager, tc.name, session.ID, "ok", timeout)
 		})
+	}
+}
+
+func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {
+	t.Helper()
+	stream, closeFn := openSSE(t, server, "/v1/sessions/"+sessionID+"/items?follow=1&lines=200")
+	defer closeFn()
+
+	failures, stopFailures := startSessionTurnFailureMonitor(server, sessionID)
+	defer stopFailures()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state before agent reply containing %q: %s\n%s", needle, failure, sessionDiagnostics(manager, sessionID))
+		}
+		data, failure, ok := waitForSSEDataWithFailure(stream, failures, 5*time.Second)
+		if strings.TrimSpace(failure) != "" {
+			t.Fatalf("provider turn failed before agent reply containing %q: %s\n%s", needle, failure, sessionDiagnostics(manager, sessionID))
+		}
+		if !ok {
+			continue
+		}
+		var item map[string]any
+		if err := json.Unmarshal([]byte(data), &item); err != nil {
+			continue
+		}
+		if historyHasAgentText([]map[string]any{item}, needle) {
+			return
+		}
+	}
+	t.Fatalf("timeout waiting for agent reply containing %q\n%s", needle, sessionDiagnostics(manager, sessionID))
+}
+
+// TestProviderMissingModelFailsFast ensures OpenCode-family providers do not
+// attempt upstream work when no runtime model is provided.
+func TestProviderMissingModelFailsFast(t *testing.T) {
+	for _, provider := range integrationOpenCodeProviders() {
+		t.Run(provider, func(t *testing.T) {
+			requireOpenCodeIntegration(t, provider)
+
+			repoDir := createOpenCodeWorkspace(t, provider)
+			server, manager, _ := newCodexIntegrationServer(t)
+			defer server.Close()
+
+			ws := createWorkspace(t, server, repoDir)
+			session := startSession(t, server, StartSessionRequest{
+				Provider:    provider,
+				WorkspaceID: ws.ID,
+				Text:        "Say \"ok\" and nothing else.",
+				// Intentionally omitted to verify fail-fast behavior.
+				RuntimeOptions: nil,
+			})
+
+			failures, stopFailures := startSessionTurnFailureMonitor(server, session.ID)
+			defer stopFailures()
+			assertSessionFailsFastWithModelRequired(t, server, manager, session.ID, failures, 15*time.Second)
+		})
+	}
+}
+
+func assertSessionFailsFastWithModelRequired(
+	t *testing.T,
+	server *httptest.Server,
+	manager *SessionManager,
+	sessionID string,
+	failures <-chan string,
+	timeout time.Duration,
+) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			select {
+			case msg, ok := <-failures:
+				if ok && isModelRequiredFailure(msg) {
+					return
+				}
+			case <-time.After(500 * time.Millisecond):
+			}
+			t.Fatalf("session entered terminal state %q without model-required error\n%s", failure, sessionDiagnostics(manager, sessionID))
+		}
+		select {
+		case msg, ok := <-failures:
+			if !ok {
+				break
+			}
+			if isModelRequiredFailure(msg) {
+				return
+			}
+			t.Fatalf("expected model-required failure, got %q\n%s", msg, sessionDiagnostics(manager, sessionID))
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	t.Fatalf("timeout waiting for model-required failure\n%s", sessionDiagnostics(manager, sessionID))
+}
+
+func isModelRequiredFailure(msg string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(msg)), "model is required")
+}
+
+type stubProviderCapabilitiesResolver struct {
+	capabilities map[string]providers.Capabilities
+}
+
+func (s stubProviderCapabilitiesResolver) Capabilities(provider string) providers.Capabilities {
+	if s.capabilities == nil {
+		return providers.Capabilities{}
+	}
+	return s.capabilities[provider]
+}
+
+func TestProviderAgentReplyWaitStrategyRegistryWaitSelectsItemsWaiter(t *testing.T) {
+	var historyCalls int
+	var itemCalls int
+	registry := providerAgentReplyWaitStrategyRegistry{
+		resolver: stubProviderCapabilitiesResolver{
+			capabilities: map[string]providers.Capabilities{
+				"opencode": {UsesItems: true},
+			},
+		},
+		waiters: map[string]providerAgentReplyWaiter{
+			"history": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {
+				historyCalls++
+			},
+			"items": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {
+				itemCalls++
+			},
+		},
+	}
+
+	registry.Wait(t, nil, nil, "opencode", "sess-1", "ok", time.Second)
+	if itemCalls != 1 {
+		t.Fatalf("expected items waiter call, got %d", itemCalls)
+	}
+	if historyCalls != 0 {
+		t.Fatalf("expected no history waiter call, got %d", historyCalls)
+	}
+}
+
+func TestProviderAgentReplyWaitStrategyRegistryWaitSelectsHistoryWaiter(t *testing.T) {
+	var historyCalls int
+	var itemCalls int
+	registry := providerAgentReplyWaitStrategyRegistry{
+		resolver: stubProviderCapabilitiesResolver{
+			capabilities: map[string]providers.Capabilities{
+				"codex": {UsesItems: false},
+			},
+		},
+		waiters: map[string]providerAgentReplyWaiter{
+			"history": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {
+				historyCalls++
+			},
+			"items": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {
+				itemCalls++
+			},
+		},
+	}
+
+	registry.Wait(t, nil, nil, "codex", "sess-1", "ok", time.Second)
+	if historyCalls != 1 {
+		t.Fatalf("expected history waiter call, got %d", historyCalls)
+	}
+	if itemCalls != 0 {
+		t.Fatalf("expected no items waiter call, got %d", itemCalls)
+	}
+}
+
+func TestProviderAgentReplyWaitStrategyRegistryWaitUsesFallbackWhenStrategyMissing(t *testing.T) {
+	var fallbackCalls int
+	registry := providerAgentReplyWaitStrategyRegistry{
+		resolver: stubProviderCapabilitiesResolver{
+			capabilities: map[string]providers.Capabilities{
+				"opencode": {UsesItems: true},
+			},
+		},
+		waiters: map[string]providerAgentReplyWaiter{
+			"history": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {},
+			"items":   nil,
+		},
+		fallbackWaiter: func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {
+			fallbackCalls++
+		},
+	}
+
+	registry.Wait(t, nil, nil, "opencode", "sess-1", "ok", time.Second)
+	if fallbackCalls != 1 {
+		t.Fatalf("expected fallback waiter call, got %d", fallbackCalls)
+	}
+}
+
+func TestNewProviderAgentReplyWaitStrategyRegistryDefaultsResolver(t *testing.T) {
+	var itemCalls int
+	registry := newProviderAgentReplyWaitStrategyRegistry(nil)
+	registry.waiters["items"] = func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {
+		itemCalls++
+	}
+	registry.waiters["history"] = func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {}
+	registry.fallbackWaiter = func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) {}
+
+	registry.Wait(t, nil, nil, "opencode", "sess-1", "ok", time.Second)
+	if itemCalls != 1 {
+		t.Fatalf("expected default resolver to route opencode to items waiter, got %d", itemCalls)
+	}
+}
+
+func TestIsModelRequiredFailure(t *testing.T) {
+	if !isModelRequiredFailure("  MODEL is REQUIRED  ") {
+		t.Fatalf("expected case-insensitive match")
+	}
+	if isModelRequiredFailure("model unsupported") {
+		t.Fatalf("expected non-match for unrelated error")
 	}
 }
 
