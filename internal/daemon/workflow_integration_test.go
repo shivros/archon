@@ -56,22 +56,26 @@ func TestGuidedWorkflowE2E(t *testing.T) {
 		{
 			name:    "codex",
 			require: requireCodexIntegration,
-			setup:   setupCodexWorkflow,
+			setup:   codexIntegrationSetup,
 		},
 		{
 			name:    "claude",
 			require: requireClaudeIntegration,
-			setup:   setupClaudeWorkflow,
+			setup:   claudeIntegrationSetup,
 		},
 		{
 			name:    "opencode",
 			require: func(t *testing.T) { requireOpenCodeIntegration(t, "opencode") },
-			setup:   setupOpenCodeWorkflow("opencode"),
+			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
+				return openCodeIntegrationSetup(t, "opencode")
+			},
 		},
 		{
 			name:    "kilocode",
 			require: func(t *testing.T) { requireOpenCodeIntegration(t, "kilocode") },
-			setup:   setupOpenCodeWorkflow("kilocode"),
+			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
+				return openCodeIntegrationSetup(t, "kilocode")
+			},
 		},
 	}
 
@@ -196,39 +200,6 @@ func newWorkflowIntegrationServer(t *testing.T) (*httptest.Server, *SessionManag
 	api.RegisterRoutes(mux)
 	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
 	return server, manager, stores
-}
-
-// ---------------------------------------------------------------------------
-// Per-provider setup
-// ---------------------------------------------------------------------------
-
-func setupCodexWorkflow(t *testing.T) (string, *types.SessionRuntimeOptions) {
-	t.Helper()
-	repoDir, codexHome := createCodexWorkspace(t)
-	requireCodexAuth(t, repoDir, codexHome)
-	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
-	return repoDir, &types.SessionRuntimeOptions{Model: model}
-}
-
-func setupClaudeWorkflow(t *testing.T) (string, *types.SessionRuntimeOptions) {
-	t.Helper()
-	// Clear env vars that prevent the claude CLI from running inside a
-	// Claude Code session. The nested invocation is a separate process
-	// managed by the daemon, not a true recursive session.
-	t.Setenv("CLAUDECODE", "")
-	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "")
-	repoDir := filepath.Join(t.TempDir(), "claude-repo")
-	if err := os.MkdirAll(repoDir, 0o700); err != nil {
-		t.Fatalf("mkdir repo: %v", err)
-	}
-	return repoDir, nil
-}
-
-func setupOpenCodeWorkflow(provider string) func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-	return func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-		t.Helper()
-		return createOpenCodeWorkspace(t, provider), nil
-	}
 }
 
 // ---------------------------------------------------------------------------

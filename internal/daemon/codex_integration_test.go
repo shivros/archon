@@ -238,6 +238,14 @@ func codexIntegrationTimeout() time.Duration {
 	return 2 * time.Minute
 }
 
+func codexIntegrationSetup(t *testing.T) (string, *types.SessionRuntimeOptions) {
+	t.Helper()
+	repoDir, codexHome := createCodexWorkspace(t)
+	requireCodexAuth(t, repoDir, codexHome)
+	model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
+	return repoDir, &types.SessionRuntimeOptions{Model: model}
+}
+
 func resolveCodexIntegrationModelForWorkspace(t *testing.T, repoDir, codexHome string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

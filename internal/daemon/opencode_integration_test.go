@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"control/internal/providers"
+	"control/internal/types"
 )
 
 const (
@@ -53,6 +54,27 @@ func openCodeIntegrationTimeout(provider string) time.Duration {
 		}
 	}
 	return 2 * time.Minute
+}
+
+func openCodeIntegrationModel(provider string) string {
+	switch providers.Normalize(provider) {
+	case "kilocode":
+		return "kilo/auto-free"
+	case "opencode":
+		return "opencode/minimax-m2.5-free"
+	default:
+		return ""
+	}
+}
+
+func openCodeIntegrationSetup(t *testing.T, provider string) (string, *types.SessionRuntimeOptions) {
+	t.Helper()
+	model := openCodeIntegrationModel(provider)
+	var opts *types.SessionRuntimeOptions
+	if model != "" {
+		opts = &types.SessionRuntimeOptions{Model: model}
+	}
+	return createOpenCodeWorkspace(t, provider), opts
 }
 
 func createOpenCodeWorkspace(t *testing.T, provider string) string {

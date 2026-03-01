@@ -22,21 +22,13 @@ func allProviderTestCases() []providerTestCase {
 		{
 			name:    "codex",
 			require: requireCodexIntegration,
-			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-				t.Helper()
-				repoDir, codexHome := createCodexWorkspace(t)
-				model := resolveCodexIntegrationModelForWorkspace(t, repoDir, codexHome)
-				return repoDir, &types.SessionRuntimeOptions{Model: model}
-			},
+			setup:   codexIntegrationSetup,
 			timeout: codexIntegrationTimeout,
 		},
 		{
 			name:    "claude",
 			require: requireClaudeIntegration,
-			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-				t.Helper()
-				return createClaudeWorkspace(t), nil
-			},
+			setup:   claudeIntegrationSetup,
 			timeout: claudeIntegrationTimeout,
 		},
 		{
@@ -47,7 +39,7 @@ func allProviderTestCases() []providerTestCase {
 			},
 			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
 				t.Helper()
-				return createOpenCodeWorkspace(t, "opencode"), nil
+				return openCodeIntegrationSetup(t, "opencode")
 			},
 			timeout: func() time.Duration { return openCodeIntegrationTimeout("opencode") },
 		},
@@ -59,7 +51,7 @@ func allProviderTestCases() []providerTestCase {
 			},
 			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
 				t.Helper()
-				return createOpenCodeWorkspace(t, "kilocode"), nil
+				return openCodeIntegrationSetup(t, "kilocode")
 			},
 			timeout: func() time.Duration { return openCodeIntegrationTimeout("kilocode") },
 		},
