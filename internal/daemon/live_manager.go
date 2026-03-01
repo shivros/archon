@@ -43,3 +43,9 @@ type TurnCapableSessionFactory interface {
 	CreateTurnCapable(ctx context.Context, session *types.Session, meta *types.SessionMeta) (TurnCapableSession, error)
 	ProviderName() string
 }
+
+// LifecycleWiringValidator allows factories to fail fast when required
+// lifecycle dependencies are missing.
+type LifecycleWiringValidator interface {
+	ValidateLifecycleWiring() error
+}

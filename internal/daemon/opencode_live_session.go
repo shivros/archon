@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"control/internal/logging"
 	"control/internal/types"
@@ -28,7 +29,9 @@ type openCodeLiveSession struct {
 	artifactSync  TurnArtifactSynchronizer
 	payloads      TurnCompletionPayloadBuilder
 	freshness     TurnEvidenceFreshnessTracker
+	finalizer     openCodeTurnFinalizer
 	activeTurn    string
+	lifecycle     *openCodeTurnLifecycleEngine
 	closed        bool
 }
 
@@ -60,9 +63,14 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 	}
 
 	turnID := generateTurnID()
+	baseline := s.fetchLatestAssistantSnapshot(ctx)
+	startedAt := time.Now().UTC()
 	s.mu.Lock()
 	s.activeTurn = turnID
 	s.mu.Unlock()
+	if s.lifecycle != nil {
+		s.lifecycle.RegisterTurn(turnID, baseline, startedAt)
+	}
 
 	s.persistItems([]map[string]any{
 		{
@@ -141,6 +149,9 @@ func (s *openCodeLiveSession) Close() {
 	if s.cancelEvents != nil {
 		s.cancelEvents()
 	}
+	if s.lifecycle != nil {
+		s.lifecycle.Close()
+	}
 }
 
 func (s *openCodeLiveSession) isClosed() bool {
@@ -158,13 +169,18 @@ func (s *openCodeLiveSession) SetNotificationPublisher(notifier NotificationPubl
 }
 
 func (s *openCodeLiveSession) start() {
+	if s.lifecycle != nil {
+		s.lifecycle.Start()
+	}
 	go func() {
 		defer s.Close()
 		for event := range s.events {
 			s.hub.Broadcast(event)
 			s.persistEventItems(event)
 
-			if event.Method == "turn/completed" || event.Method == "session.idle" || event.Method == "error" {
+			if s.lifecycle != nil {
+				s.lifecycle.ObserveEvent(event)
+			} else if event.Method == "turn/completed" || event.Method == "session.idle" || event.Method == "error" {
 				turn := parseTurnEventFromParams(event.Params)
 				turnID := turn.TurnID
 				if turnID == "" {
@@ -212,6 +228,71 @@ func (s *openCodeLiveSession) persistItems(items []map[string]any) {
 	}
 }
 
+func (s *openCodeLiveSession) fetchLatestAssistantSnapshot(ctx context.Context) openCodeAssistantSnapshot {
+	if s == nil || s.client == nil || strings.TrimSpace(s.providerID) == "" {
+		return openCodeAssistantSnapshot{}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
+	defer cancel()
+	messages, err := s.client.ListSessionMessages(callCtx, s.providerID, s.directory, 40)
+	if err != nil && strings.TrimSpace(s.directory) != "" {
+		messages, err = s.client.ListSessionMessages(callCtx, s.providerID, "", 40)
+	}
+	if err != nil {
+		return openCodeAssistantSnapshot{}
+	}
+	return openCodeLatestAssistantSnapshot(messages)
+}
+
+func (s *openCodeLiveSession) onTurnTerminal(result openCodeTerminalResult) {
+	if s == nil {
+		return
+	}
+	turnID := strings.TrimSpace(result.TurnID)
+	s.mu.Lock()
+	if strings.TrimSpace(s.activeTurn) == turnID {
+		s.activeTurn = ""
+	}
+	s.mu.Unlock()
+
+	payload := map[string]any{
+		"terminalization_reason": strings.TrimSpace(result.Reason),
+		"terminalization_source": strings.TrimSpace(result.Source),
+		"turn_age_ms":            result.TerminalizedAt.Sub(result.StartedAt).Milliseconds(),
+		"reconcile_attempts":     result.AttemptCount,
+	}
+	s.persistItems([]map[string]any{
+		{
+			"type":                   "turnCompletion",
+			"turn_id":                turnID,
+			"turn_status":            string(result.Status),
+			"turn_error":             strings.TrimSpace(result.Error),
+			"turn_output":            strings.TrimSpace(result.Output),
+			"terminalization_reason": strings.TrimSpace(result.Reason),
+			"terminalization_source": strings.TrimSpace(result.Source),
+			"completed_at":           result.TerminalizedAt.Format(time.RFC3339Nano),
+		},
+	})
+	turn := turnEventParams{
+		TurnID: turnID,
+		Status: string(result.Status),
+		Error:  strings.TrimSpace(result.Error),
+		Output: strings.TrimSpace(result.Output),
+	}
+	s.publishTurnCompletedWithPayload(turn, payload)
+
+	if strings.TrimSpace(result.Source) != "live_event" {
+		s.hub.Broadcast(types.CodexEvent{
+			Method: "turn/completed",
+			Params: encodeTurnCompletedEventParams(result),
+			TS:     result.TerminalizedAt.Format(time.RFC3339Nano),
+		})
+	}
+}
+
 func openCodeEventItems(event types.CodexEvent) []map[string]any {
 	switch strings.TrimSpace(strings.ToLower(event.Method)) {
 	case "item/agentmessage/delta":
@@ -239,49 +320,15 @@ func openCodeEventItems(event types.CodexEvent) []map[string]any {
 }
 
 func (s *openCodeLiveSession) publishTurnCompleted(turn turnEventParams) {
-	if s.turnNotifier == nil {
+	s.publishTurnCompletedWithPayload(turn, nil)
+}
+
+func (s *openCodeLiveSession) publishTurnCompletedWithPayload(turn turnEventParams, additionalPayload map[string]any) {
+	finalizer := s.turnFinalizerOrDefault()
+	if finalizer == nil {
 		return
 	}
-	syncResult := TurnArtifactSyncResult{}
-	if s.artifactSync != nil {
-		syncResult = s.artifactSync.SyncTurnArtifacts(context.Background(), turn)
-	}
-	output := strings.TrimSpace(syncResult.Output)
-	payload := map[string]any{}
-	if s.payloads != nil {
-		output, payload = s.payloads.Build(turn, syncResult)
-	} else {
-		output, payload = defaultTurnCompletionPayloadBuilder{}.Build(turn, syncResult)
-	}
-	freshness := s.freshness
-	if freshness == nil {
-		s.mu.Lock()
-		if s.freshness == nil {
-			s.freshness = NewTurnEvidenceFreshnessTracker()
-		}
-		freshness = s.freshness
-		s.mu.Unlock()
-	}
-	fresh := freshness.MarkFresh(s.sessionID, syncResult.AssistantEvidenceKey, output)
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	payload["turn_output_fresh"] = fresh
-	if !fresh {
-		output = ""
-		delete(payload, "turn_output")
-		payload["stale_turn_output_dropped"] = true
-	}
-	s.turnNotifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{
-		SessionID: strings.TrimSpace(s.sessionID),
-		TurnID:    strings.TrimSpace(turn.TurnID),
-		Provider:  strings.TrimSpace(s.providerName),
-		Source:    "live_session_event",
-		Status:    strings.TrimSpace(turn.Status),
-		Error:     strings.TrimSpace(turn.Error),
-		Output:    strings.TrimSpace(output),
-		Payload:   payload,
-	})
+	finalizer.FinalizeTurn(turn, additionalPayload)
 }
 
 func (s *openCodeLiveSession) storeApproval(event types.CodexEvent) {
@@ -299,6 +346,25 @@ type openCodeLiveSessionFactory struct {
 	payloads      TurnCompletionPayloadBuilder
 	freshness     TurnEvidenceFreshnessTracker
 	logger        logging.Logger
+}
+
+func (f *openCodeLiveSessionFactory) ValidateLifecycleWiring() error {
+	if f == nil {
+		return errors.New("factory is required")
+	}
+	if f.turnNotifier == nil {
+		return errors.New("turn notifier is not wired")
+	}
+	if f.repository == nil {
+		return errors.New("turn artifact repository is not wired")
+	}
+	if f.payloads == nil {
+		return errors.New("turn payload builder is not wired")
+	}
+	if f.freshness == nil {
+		return errors.New("turn freshness tracker is not wired")
+	}
+	return nil
 }
 
 func newOpenCodeLiveSessionFactory(
@@ -392,6 +458,32 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 		payloads:  f.payloads,
 		freshness: f.freshness,
 	}
+	ls.finalizer = &defaultOpenCodeTurnFinalizer{
+		sessionID:    session.ID,
+		providerName: f.providerName,
+		notifier:     f.turnNotifier,
+		artifactSync: ls.artifactSync,
+		payloads:     f.payloads,
+		freshness:    f.freshness,
+	}
+	ls.lifecycle = newOpenCodeTurnLifecycleEngine(
+		session.ID,
+		f.providerName,
+		openCodeHistoryFetcher{
+			api:         client,
+			providerID:  providerID,
+			directory:   session.Cwd,
+			historySize: 40,
+		},
+		openCodeDefaultTurnStateResolver{abandonTimeout: defaultOpenCodeTurnAbandonTimeout},
+		openCodeLiveTurnPublisher{session: ls},
+		f.logger,
+		openCodeTurnLifecycleConfig{
+			reconcileInterval: defaultOpenCodeTurnReconcileInterval,
+			historyTimeout:    defaultOpenCodeTurnHistoryTimeout,
+			abandonTimeout:    defaultOpenCodeTurnAbandonTimeout,
+		},
+	)
 	ls.start()
 
 	return ls, nil
@@ -399,4 +491,20 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 
 func generateTurnID() string {
 	return "turn_" + logging.NewRequestID()
+}
+
+func (s *openCodeLiveSession) turnFinalizerOrDefault() openCodeTurnFinalizer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finalizer == nil {
+		s.finalizer = &defaultOpenCodeTurnFinalizer{
+			sessionID:    strings.TrimSpace(s.sessionID),
+			providerName: strings.TrimSpace(s.providerName),
+			notifier:     s.turnNotifier,
+			artifactSync: s.artifactSync,
+			payloads:     s.payloads,
+			freshness:    s.freshness,
+		}
+	}
+	return s.finalizer
 }

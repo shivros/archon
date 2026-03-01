@@ -364,10 +364,34 @@ func extractOpenCodePartsText(parts []map[string]any) string {
 			continue
 		}
 		typ := strings.ToLower(strings.TrimSpace(asString(part["type"])))
-		if typ != "" && typ != "text" {
-			continue
-		}
 		text := strings.TrimSpace(asString(part["text"]))
+		if text == "" {
+			switch typ {
+			case "reasoning":
+				text = strings.TrimSpace(asString(part["summary"]))
+				if text == "" {
+					text = "[assistant reasoning]"
+				}
+			case "tool-call", "tool_use", "tool-use", "tool":
+				name := strings.TrimSpace(asString(part["name"]))
+				if name == "" {
+					name = strings.TrimSpace(asString(part["toolName"]))
+				}
+				if name == "" {
+					name = "unknown"
+				}
+				text = "[tool call: " + name + "]"
+			case "tool-result", "tool_output", "tool-output":
+				output := strings.TrimSpace(asString(part["output"]))
+				if output == "" {
+					output = strings.TrimSpace(asString(part["result"]))
+				}
+				if output == "" {
+					output = "[tool result]"
+				}
+				text = output
+			}
+		}
 		if text == "" {
 			continue
 		}
@@ -462,18 +486,18 @@ func openCodeLatestAssistantSnapshot(messages []openCodeSessionMessage) openCode
 		bestIndex = -1
 	)
 	for i, message := range messages {
-		role := strings.ToLower(strings.TrimSpace(openCodeSessionMessageRole(message)))
+		canonical, ok := canonicalizeOpenCodeSessionMessage(message)
+		if !ok {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(canonical.Role))
 		if role != "assistant" && role != "model" {
 			continue
 		}
-		text := extractOpenCodeSessionMessageText(message)
-		if text == "" {
-			continue
-		}
 		candidate := openCodeAssistantSnapshot{
-			MessageID: openCodeSessionMessageID(message),
-			Text:      text,
-			CreatedAt: openCodeSessionMessageCreatedAt(message),
+			MessageID: canonical.MessageID,
+			Text:      canonical.Text,
+			CreatedAt: canonical.CreatedAt,
 		}
 		if !bestSet {
 			best = candidate
@@ -551,11 +575,12 @@ func openCodeSessionMessagesToItems(messages []openCodeSessionMessage) []map[str
 	}
 	items := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
-		text := strings.TrimSpace(extractOpenCodeSessionMessageText(message))
-		if text == "" {
+		canonical, ok := canonicalizeOpenCodeSessionMessage(message)
+		if !ok {
 			continue
 		}
-		role := strings.ToLower(strings.TrimSpace(openCodeSessionMessageRole(message)))
+		role := strings.ToLower(strings.TrimSpace(canonical.Role))
+		text := strings.TrimSpace(canonical.Text)
 		item := map[string]any{}
 		switch role {
 		case "user":
@@ -570,13 +595,16 @@ func openCodeSessionMessagesToItems(messages []openCodeSessionMessage) []map[str
 					{"type": "text", "text": text},
 				},
 			}
+			if variant := strings.TrimSpace(canonical.Variant); variant != "" && variant != "text" {
+				item["assistant_variant"] = variant
+			}
 		default:
 			continue
 		}
-		if messageID := strings.TrimSpace(openCodeSessionMessageID(message)); messageID != "" {
+		if messageID := strings.TrimSpace(canonical.MessageID); messageID != "" {
 			item["provider_message_id"] = messageID
 		}
-		if createdAt := openCodeSessionMessageCreatedAt(message); !createdAt.IsZero() {
+		if createdAt := canonical.CreatedAt; !createdAt.IsZero() {
 			item["provider_created_at"] = createdAt.UTC().Format(time.RFC3339Nano)
 		}
 		items = append(items, item)

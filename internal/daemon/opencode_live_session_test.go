@@ -71,6 +71,77 @@ func TestOpenCodeLiveSessionStartTurnAcceptsPromptPending(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLiveSessionLifecycleSynthesizesTurnCompletedEvent(t *testing.T) {
+	eventStream := make(chan types.CodexEvent)
+	notifier := &captureOpenCodeNotificationPublisher{}
+	fetcher := &stubTurnHistoryFetcher{
+		snapshots: []openCodeAssistantSnapshot{
+			{MessageID: "msg-complete-1", Text: "done"},
+		},
+	}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-synth",
+		providerName: "opencode",
+		events:       eventStream,
+		hub:          newCodexSubscriberHub(),
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+	}
+	ls.lifecycle = newOpenCodeTurnLifecycleEngine(
+		ls.sessionID,
+		ls.providerName,
+		fetcher,
+		openCodeDefaultTurnStateResolver{abandonTimeout: 2 * time.Second},
+		openCodeLiveTurnPublisher{session: ls},
+		logging.Nop(),
+		openCodeTurnLifecycleConfig{
+			reconcileInterval: 20 * time.Millisecond,
+			historyTimeout:    80 * time.Millisecond,
+			abandonTimeout:    2 * time.Second,
+		},
+	)
+	ls.start()
+	defer ls.Close()
+	ls.lifecycle.RegisterTurn("turn-synth", openCodeAssistantSnapshot{}, time.Now().UTC())
+
+	sub, cancel := ls.Events()
+	defer cancel()
+	defer close(eventStream)
+
+	deadline := time.Now().Add(600 * time.Millisecond)
+	var sawTurnCompleted bool
+	for time.Now().Before(deadline) {
+		select {
+		case evt, ok := <-sub:
+			if !ok {
+				t.Fatalf("subscription closed before synthetic completion")
+			}
+			if evt.Method == "turn/completed" {
+				sawTurnCompleted = true
+				deadline = time.Now()
+			}
+		default:
+			if notifier.Len() > 0 && sawTurnCompleted {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !sawTurnCompleted {
+		t.Fatalf("expected synthesized turn/completed event")
+	}
+	events := notifier.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one notification event, got %d", len(events))
+	}
+	payload := events[0].Payload
+	if got := strings.TrimSpace(asString(payload["terminalization_reason"])); got != "history_progression_detected" {
+		t.Fatalf("expected history progression terminalization reason, got %q", got)
+	}
+	if got := strings.TrimSpace(asString(payload["terminalization_source"])); got != "history_reconcile" {
+		t.Fatalf("expected history reconcile source, got %q", got)
+	}
+}
+
 func TestOpenCodeLiveSessionPublishesTurnFailurePayload(t *testing.T) {
 	eventStream := make(chan types.CodexEvent, 1)
 	notifier := &captureOpenCodeNotificationPublisher{}
@@ -172,6 +243,39 @@ func TestOpenCodeLiveSessionPublishTurnCompletedNoNotifierNoPanic(t *testing.T) 
 	})
 }
 
+func TestOpenCodeLiveSessionPublishTurnCompletedDelegatesToFinalizer(t *testing.T) {
+	finalizer := &captureTurnFinalizer{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-finalizer",
+		providerName: "opencode",
+		finalizer:    finalizer,
+	}
+	ls.publishTurnCompletedWithPayload(turnEventParams{
+		TurnID: "turn-1",
+		Status: "completed",
+	}, map[string]any{"terminalization_reason": "test"})
+	if finalizer.calls != 1 {
+		t.Fatalf("expected finalizer to be called once, got %d", finalizer.calls)
+	}
+	if finalizer.turn.TurnID != "turn-1" {
+		t.Fatalf("unexpected delegated turn: %#v", finalizer.turn)
+	}
+}
+
+func TestOpenCodeLiveSessionPublishTurnCompletedWithNilFinalizerFallsBack(t *testing.T) {
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-default-finalizer",
+		providerName: "opencode",
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+	}
+	ls.publishTurnCompletedWithPayload(turnEventParams{TurnID: "turn-fallback", Status: "completed", Output: "ok"}, nil)
+	events := notifier.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one notifier event via default finalizer, got %d", len(events))
+	}
+}
+
 func TestOpenCodeLiveSessionStoreApprovalPersists(t *testing.T) {
 	approvalID := 42
 	store := &captureApprovalStorage{}
@@ -190,6 +294,21 @@ func TestOpenCodeLiveSessionStoreApprovalPersists(t *testing.T) {
 	if store.sessionID != "sess-open-approval" || store.requestID != approvalID {
 		t.Fatalf("unexpected approval store call args: %#v", store)
 	}
+}
+
+func TestOpenCodeLiveSessionStoreApprovalGuards(t *testing.T) {
+	ls := &openCodeLiveSession{sessionID: "sess-guard"}
+	ls.storeApproval(types.CodexEvent{
+		Method: "item/commandExecution/requestApproval",
+		Params: json.RawMessage(`{"permission_id":"perm-1"}`),
+	})
+	requestID := 1
+	ls = &openCodeLiveSession{
+		sessionID:     "sess-guard",
+		approvalStore: &captureApprovalStorage{},
+	}
+	ls.storeApproval(types.CodexEvent{ID: nil, Method: "item/commandExecution/requestApproval"})
+	ls.storeApproval(types.CodexEvent{ID: &requestID, Method: "item/commandExecution/requestApproval"})
 }
 
 func TestOpenCodeLiveSessionBasicAccessorsAndInterrupt(t *testing.T) {
@@ -215,6 +334,30 @@ func TestOpenCodeLiveSessionBasicAccessorsAndInterrupt(t *testing.T) {
 	ls.Close()
 	if !ls.isClosed() {
 		t.Fatalf("expected session to be closed after Close()")
+	}
+}
+
+func TestOpenCodeLiveSessionOnTurnTerminalLiveEventDoesNotRebroadcast(t *testing.T) {
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-live",
+		providerName: "opencode",
+		hub:          newCodexSubscriberHub(),
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+	}
+	sub, cancel := ls.Events()
+	defer cancel()
+	ls.onTurnTerminal(openCodeTerminalResult{
+		TurnID:         "turn-live",
+		Status:         turnTerminalCompleted,
+		Source:         "live_event",
+		StartedAt:      time.Now().Add(-time.Second),
+		TerminalizedAt: time.Now(),
+	})
+	select {
+	case evt := <-sub:
+		t.Fatalf("did not expect rebroadcast event, got %#v", evt)
+	case <-time.After(40 * time.Millisecond):
 	}
 }
 
@@ -656,6 +799,41 @@ func TestOpenCodeLiveSessionFactoryCreateTurnCapableValidatesInputs(t *testing.T
 	}
 }
 
+func TestOpenCodeLiveSessionFactoryValidateLifecycleWiringMatrix(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory *openCodeLiveSessionFactory
+		wantErr bool
+	}{
+		{
+			name: "ok",
+			factory: &openCodeLiveSessionFactory{
+				turnNotifier: NopTurnCompletionNotifier{},
+				repository:   &stubTurnArtifactRepository{},
+				payloads:     defaultTurnCompletionPayloadBuilder{},
+				freshness:    NewTurnEvidenceFreshnessTracker(),
+			},
+			wantErr: false,
+		},
+		{name: "nil factory", factory: nil, wantErr: true},
+		{name: "missing notifier", factory: &openCodeLiveSessionFactory{repository: &stubTurnArtifactRepository{}, payloads: defaultTurnCompletionPayloadBuilder{}, freshness: NewTurnEvidenceFreshnessTracker()}, wantErr: true},
+		{name: "missing repository", factory: &openCodeLiveSessionFactory{turnNotifier: NopTurnCompletionNotifier{}, payloads: defaultTurnCompletionPayloadBuilder{}, freshness: NewTurnEvidenceFreshnessTracker()}, wantErr: true},
+		{name: "missing payloads", factory: &openCodeLiveSessionFactory{turnNotifier: NopTurnCompletionNotifier{}, repository: &stubTurnArtifactRepository{}, freshness: NewTurnEvidenceFreshnessTracker()}, wantErr: true},
+		{name: "missing freshness", factory: &openCodeLiveSessionFactory{turnNotifier: NopTurnCompletionNotifier{}, repository: &stubTurnArtifactRepository{}, payloads: defaultTurnCompletionPayloadBuilder{}}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.factory.ValidateLifecycleWiring()
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected validation error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestOpenCodeLiveSessionFactoryCreateTurnCapableFallsBackToEmptyDirectory(t *testing.T) {
 	const providerSessionID = "sess_remote_1"
 	var (
@@ -731,6 +909,18 @@ func TestOpenCodeLiveSessionFactoryCreateTurnCapableFallsBackToEmptyDirectory(t 
 type captureFreshnessTracker struct {
 	mu    sync.Mutex
 	calls []freshnessCall
+}
+
+type captureTurnFinalizer struct {
+	calls   int
+	turn    turnEventParams
+	payload map[string]any
+}
+
+func (c *captureTurnFinalizer) FinalizeTurn(turn turnEventParams, additionalPayload map[string]any) {
+	c.calls++
+	c.turn = turn
+	c.payload = additionalPayload
 }
 
 type freshnessCall struct {

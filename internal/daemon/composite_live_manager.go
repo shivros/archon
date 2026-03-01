@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -168,6 +169,30 @@ func (m *CompositeLiveManager) Drop(sessionID string) {
 	if ls != nil {
 		ls.Close()
 	}
+}
+
+func (m *CompositeLiveManager) ValidateLifecycleWiring(requiredProviders ...string) error {
+	if m == nil {
+		return errors.New("live manager is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, provider := range requiredProviders {
+		normalized := providers.Normalize(provider)
+		if normalized == "" {
+			continue
+		}
+		factory, ok := m.factories[normalized]
+		if !ok || factory == nil {
+			return fmt.Errorf("missing live session factory for provider %s", normalized)
+		}
+		if validator, ok := factory.(LifecycleWiringValidator); ok {
+			if err := validator.ValidateLifecycleWiring(); err != nil {
+				return fmt.Errorf("provider %s lifecycle wiring invalid: %w", normalized, err)
+			}
+		}
+	}
+	return nil
 }
 
 type codexLiveSessionFactory struct {

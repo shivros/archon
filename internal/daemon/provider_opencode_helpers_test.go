@@ -98,6 +98,41 @@ func TestOpenCodeMissingHistoryItemsKeepsDifferentText(t *testing.T) {
 	}
 }
 
+func TestExtractOpenCodePartsTextIncludesReasoningAndTools(t *testing.T) {
+	text := extractOpenCodePartsText([]map[string]any{
+		{"type": "reasoning", "summary": "planning"},
+		{"type": "tool-call", "name": "grep"},
+		{"type": "tool-result", "output": "found 3 matches"},
+	})
+	if text == "" {
+		t.Fatalf("expected canonical text for non-text parts")
+	}
+	if text != "planning\n[tool call: grep]\nfound 3 matches" {
+		t.Fatalf("unexpected canonical text: %q", text)
+	}
+}
+
+func TestOpenCodeLatestAssistantSnapshotUsesCanonicalNonTextContent(t *testing.T) {
+	messages := []openCodeSessionMessage{
+		{
+			Info: map[string]any{
+				"role": "assistant",
+				"id":   "msg-reasoning",
+			},
+			Parts: []map[string]any{
+				{"type": "reasoning", "summary": "thinking"},
+			},
+		},
+	}
+	snapshot := openCodeLatestAssistantSnapshot(messages)
+	if snapshot.MessageID != "msg-reasoning" {
+		t.Fatalf("expected assistant message id, got %q", snapshot.MessageID)
+	}
+	if snapshot.Text != "thinking" {
+		t.Fatalf("expected canonical reasoning snapshot text, got %q", snapshot.Text)
+	}
+}
+
 func TestOpenCodeCompactShadowItemsDropsNoIDShadowWhenProviderIDExists(t *testing.T) {
 	items := []map[string]any{
 		{
@@ -226,5 +261,71 @@ func TestMapOpenCodeEventToCodexSessionErrorEmitsTurnCompleted(t *testing.T) {
 				t.Fatalf("expected status %q, got %q", tc.wantStatus, got)
 			}
 		})
+	}
+}
+
+func TestNormalizeOpenCodeSessionMessagesFromMapDataKey(t *testing.T) {
+	payload := map[string]any{
+		"data": []any{
+			map[string]any{
+				"role":      "assistant",
+				"id":        "msg-1",
+				"createdAt": "2026-01-01T00:00:00Z",
+				"parts": []any{
+					map[string]any{"type": "text", "text": "hello"},
+				},
+			},
+		},
+	}
+	out := normalizeOpenCodeSessionMessages(payload)
+	if len(out) != 1 {
+		t.Fatalf("expected one normalized message, got %#v", out)
+	}
+	if role := openCodeSessionMessageRole(out[0]); role != "assistant" {
+		t.Fatalf("expected assistant role, got %q", role)
+	}
+}
+
+func TestNormalizeOpenCodeSessionMessagesFromSingleEntryMap(t *testing.T) {
+	payload := map[string]any{
+		"role": "user",
+		"id":   "msg-u1",
+		"parts": []any{
+			map[string]any{"type": "text", "text": "hi"},
+		},
+	}
+	out := normalizeOpenCodeSessionMessages(payload)
+	if len(out) != 1 {
+		t.Fatalf("expected one normalized message, got %#v", out)
+	}
+	if role := openCodeSessionMessageRole(out[0]); role != "user" {
+		t.Fatalf("expected user role, got %q", role)
+	}
+}
+
+func TestNormalizeOpenCodeSessionMessagesInvalidShape(t *testing.T) {
+	if out := normalizeOpenCodeSessionMessages("invalid"); len(out) != 0 {
+		t.Fatalf("expected empty output for invalid payload, got %#v", out)
+	}
+}
+
+func TestParseOpenCodeSessionMessageDerivesPartsFromMessageContent(t *testing.T) {
+	raw := map[string]any{
+		"info": map[string]any{
+			"role": "assistant",
+			"id":   "msg-a1",
+		},
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": "from content"},
+			},
+		},
+	}
+	parsed, ok := parseOpenCodeSessionMessage(raw)
+	if !ok {
+		t.Fatalf("expected parse success")
+	}
+	if text := extractOpenCodeSessionMessageText(parsed); text != "from content" {
+		t.Fatalf("expected extracted content text, got %q", text)
 	}
 }

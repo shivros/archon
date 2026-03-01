@@ -163,6 +163,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, NewTurnEvidenceFreshnessTracker(), d.logger),
 		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, NewTurnEvidenceFreshnessTracker(), d.logger),
 	)
+	if err := compositeLive.ValidateLifecycleWiring("opencode", "kilocode"); err != nil {
+		return err
+	}
 	workflowRuns := newGuidedWorkflowRunServiceFn(coreCfg, d.stores, d.manager, compositeLive, d.logger)
 	if closer, ok := any(workflowRuns).(guidedWorkflowRunCloser); ok {
 		defer closer.Close()
