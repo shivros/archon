@@ -38,6 +38,9 @@ type stubStepPromptDispatcher struct {
 	responses []StepPromptDispatchResult
 	err       error
 	errs      []error
+	started   chan struct{}
+	release   <-chan struct{}
+	startOnce sync.Once
 }
 
 type stubMissingRunContextResolver struct {
@@ -164,6 +167,14 @@ func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req Ste
 		return StepPromptDispatchResult{}, nil
 	}
 	s.calls = append(s.calls, req)
+	if s.started != nil {
+		s.startOnce.Do(func() {
+			close(s.started)
+		})
+	}
+	if s.release != nil {
+		<-s.release
+	}
 	if len(s.errs) > 0 {
 		err := s.errs[0]
 		if len(s.errs) == 1 {
@@ -3458,6 +3469,415 @@ func TestRunLifecycleRenameRunValidation(t *testing.T) {
 	if _, err := service.RenameRun(context.Background(), run.ID, "   "); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("expected ErrInvalidTransition for blank name, got %v", err)
 	}
+}
+
+func TestRunLifecycleRenameRunDoesNotBlockDuringStartDispatch(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "rename_during_dispatch_template",
+		Name: "Rename During Dispatch",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "dispatch this step"},
+				},
+			},
+		},
+	}
+	dispatchStarted := make(chan struct{})
+	dispatchRelease := make(chan struct{})
+	dispatcher := &stubStepPromptDispatcher{
+		started: dispatchStarted,
+		release: dispatchRelease,
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-rename", TurnID: "turn-rename"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "rename_during_dispatch_template",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	startDone := make(chan error, 1)
+	go func() {
+		_, startErr := service.StartRun(context.Background(), run.ID)
+		startDone <- startErr
+	}()
+
+	select {
+	case <-dispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dispatch to start")
+	}
+
+	renameDone := make(chan struct{})
+	var renamed *WorkflowRun
+	var renameErr error
+	go func() {
+		renamed, renameErr = service.RenameRun(context.Background(), run.ID, "Renamed During Dispatch")
+		close(renameDone)
+	}()
+	select {
+	case <-renameDone:
+		if renameErr != nil {
+			t.Fatalf("RenameRun: %v", renameErr)
+		}
+		if strings.TrimSpace(renamed.TemplateName) != "Renamed During Dispatch" {
+			t.Fatalf("expected renamed workflow name, got %q", renamed.TemplateName)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("RenameRun blocked while dispatch was in-flight")
+	}
+
+	close(dispatchRelease)
+	select {
+	case startErr := <-startDone:
+		if startErr != nil {
+			t.Fatalf("StartRun: %v", startErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for StartRun to finish")
+	}
+}
+
+func TestRunLifecycleAdvanceRunReturnsRunNotFoundWhenRunRemovedDuringDispatch(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "advance_removed_during_dispatch_template",
+		Name: "Advance Removed During Dispatch",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "dispatch this step"},
+				},
+			},
+		},
+	}
+	dispatchStarted := make(chan struct{})
+	dispatchRelease := make(chan struct{})
+	dispatcher := &stubStepPromptDispatcher{
+		started: dispatchStarted,
+		release: dispatchRelease,
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-advance-removed", TurnID: "turn-advance-removed"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "advance_removed_during_dispatch_template",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	service.mu.Lock()
+	current, ok := service.runs[run.ID]
+	if !ok || current == nil {
+		service.mu.Unlock()
+		t.Fatalf("expected run to exist")
+	}
+	current.Status = WorkflowRunStatusRunning
+	service.mu.Unlock()
+
+	advanceDone := make(chan error, 1)
+	go func() {
+		_, advanceErr := service.AdvanceRun(context.Background(), run.ID)
+		advanceDone <- advanceErr
+	}()
+
+	select {
+	case <-dispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dispatch to start")
+	}
+
+	releaseRunLock := service.runLocks.Lock(strings.TrimSpace(run.ID))
+	service.mu.Lock()
+	delete(service.runs, strings.TrimSpace(run.ID))
+	delete(service.timelines, strings.TrimSpace(run.ID))
+	service.mu.Unlock()
+	releaseRunLock()
+
+	close(dispatchRelease)
+
+	select {
+	case advanceErr := <-advanceDone:
+		if !errors.Is(advanceErr, ErrRunNotFound) {
+			t.Fatalf("expected ErrRunNotFound, got %v", advanceErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AdvanceRun to finish")
+	}
+}
+
+func TestRunLifecycleAdvanceRunSkipsStaleDispatchApplyWhenPausedDuringDispatch(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "advance_stale_dispatch_template",
+		Name: "Advance Stale Dispatch",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "dispatch this step"},
+				},
+			},
+		},
+	}
+	dispatchStarted := make(chan struct{})
+	dispatchRelease := make(chan struct{})
+	dispatcher := &stubStepPromptDispatcher{
+		started: dispatchStarted,
+		release: dispatchRelease,
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-advance-stale", TurnID: "turn-advance-stale"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "advance_stale_dispatch_template",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	service.mu.Lock()
+	current, ok := service.runs[run.ID]
+	if !ok || current == nil {
+		service.mu.Unlock()
+		t.Fatalf("expected run to exist")
+	}
+	current.Status = WorkflowRunStatusRunning
+	service.mu.Unlock()
+
+	advanceDone := make(chan struct{})
+	var advanced *WorkflowRun
+	var advanceErr error
+	go func() {
+		advanced, advanceErr = service.AdvanceRun(context.Background(), run.ID)
+		close(advanceDone)
+	}()
+
+	select {
+	case <-dispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dispatch to start")
+	}
+
+	releaseRunLock := service.runLocks.Lock(strings.TrimSpace(run.ID))
+	service.mu.Lock()
+	current, ok = service.runs[run.ID]
+	if !ok || current == nil {
+		service.mu.Unlock()
+		releaseRunLock()
+		t.Fatalf("expected run to exist while pausing")
+	}
+	service.setRunPausedLocked(current, "run_paused_for_test", "pause during dispatch to force stale result")
+	service.mu.Unlock()
+	releaseRunLock()
+
+	close(dispatchRelease)
+
+	select {
+	case <-advanceDone:
+		if advanceErr != nil {
+			t.Fatalf("AdvanceRun: %v", advanceErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AdvanceRun to finish")
+	}
+
+	if advanced.Status != WorkflowRunStatusPaused {
+		t.Fatalf("expected paused status after stale dispatch, got %q", advanced.Status)
+	}
+	step := advanced.Phases[0].Steps[0]
+	if step.AwaitingTurn {
+		t.Fatalf("expected stale dispatch result to be ignored and awaiting_turn to remain false")
+	}
+	if step.Execution != nil {
+		t.Fatalf("expected stale dispatch result to avoid writing execution metadata")
+	}
+}
+
+func TestRunLifecycleResumeFailedRunSkipsStaleDispatchApplyWhenPausedDuringDispatch(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	runID := "gwf-resume-stale-dispatch"
+	snapshotStore := &stubRunSnapshotStore{
+		loadSnapshots: []RunStatusSnapshot{
+			{
+				Run: &WorkflowRun{
+					ID:                runID,
+					TemplateID:        "resume_template",
+					TemplateName:      "Resume Template",
+					WorkspaceID:       "ws-1",
+					WorktreeID:        "wt-1",
+					Status:            WorkflowRunStatusFailed,
+					CreatedAt:         now.Add(-5 * time.Minute),
+					CurrentPhaseIndex: 0,
+					CurrentStepIndex:  0,
+					LastError:         "workflow run interrupted by daemon restart",
+					Phases: []PhaseRun{
+						{
+							ID:     "phase-1",
+							Name:   "Phase 1",
+							Status: PhaseRunStatusFailed,
+							Steps: []StepRun{
+								{
+									ID:     "step-1",
+									Name:   "Step 1",
+									Prompt: "original workflow step prompt",
+									Status: StepRunStatusFailed,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	dispatchStarted := make(chan struct{})
+	dispatchRelease := make(chan struct{})
+	dispatcher := &stubStepPromptDispatcher{
+		started: dispatchStarted,
+		release: dispatchRelease,
+		responses: []StepPromptDispatchResult{
+			{
+				Dispatched: true,
+				SessionID:  "sess-stale",
+				TurnID:     "turn-stale",
+			},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithRunSnapshotStore(snapshotStore),
+		WithStepPromptDispatcher(dispatcher),
+	)
+
+	resumeDone := make(chan struct{})
+	var resumed *WorkflowRun
+	var resumeErr error
+	go func() {
+		resumed, resumeErr = service.ResumeFailedRun(context.Background(), runID, ResumeFailedRunRequest{
+			Message: "resume while dispatch is blocked",
+		})
+		close(resumeDone)
+	}()
+
+	select {
+	case <-dispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dispatch to start")
+	}
+
+	releaseRunLock := service.runLocks.Lock(strings.TrimSpace(runID))
+	service.mu.Lock()
+	current, ok := service.runs[runID]
+	if !ok || current == nil {
+		service.mu.Unlock()
+		releaseRunLock()
+		t.Fatalf("expected run to exist while pausing")
+	}
+	service.setRunPausedLocked(current, "run_paused_for_test", "pause during resume dispatch to force stale result")
+	service.mu.Unlock()
+	releaseRunLock()
+
+	close(dispatchRelease)
+
+	select {
+	case <-resumeDone:
+		if resumeErr != nil {
+			t.Fatalf("ResumeFailedRun: %v", resumeErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ResumeFailedRun to finish")
+	}
+
+	if resumed.Status != WorkflowRunStatusPaused {
+		t.Fatalf("expected paused status after stale resume dispatch, got %q", resumed.Status)
+	}
+	step := resumed.Phases[0].Steps[0]
+	if step.AwaitingTurn {
+		t.Fatalf("expected stale resume dispatch result to be ignored")
+	}
+	if step.Execution != nil {
+		t.Fatalf("expected stale resume dispatch to avoid writing execution metadata")
+	}
+}
+
+func TestRunLifecycleAdvanceOnceLockedCoversSharedDispatchHandoff(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "advance_once_locked_template",
+		Name: "Advance Once Locked",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase-1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step-1", Name: "Step 1", Prompt: "dispatch this step"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-once", TurnID: "turn-once"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  "advance_once_locked_template",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	service.mu.Lock()
+	current, ok := service.runs[run.ID]
+	if !ok || current == nil {
+		service.mu.Unlock()
+		t.Fatalf("expected run to exist")
+	}
+	current.Status = WorkflowRunStatusRunning
+	if err := service.advanceOnceLocked(context.Background(), current); err != nil {
+		service.mu.Unlock()
+		t.Fatalf("advanceOnceLocked: %v", err)
+	}
+	step := current.Phases[0].Steps[0]
+	if !step.AwaitingTurn || step.Status != StepRunStatusRunning {
+		service.mu.Unlock()
+		t.Fatalf("expected dispatched step to be running+awaiting_turn, got %#v", step)
+	}
+	service.mu.Unlock()
 }
 
 func TestRunLifecycleDismissAndUndismissRun(t *testing.T) {

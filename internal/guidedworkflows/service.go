@@ -105,6 +105,10 @@ type InMemoryRunService struct {
 	dispatchRetryScheduler DispatchRetryScheduler
 	dispatchQueue          DispatchQueue
 
+	// Locking contract:
+	// 1. Acquire per-run lock first, then s.mu.
+	// 2. Release in reverse order.
+	// 3. Slow external I/O (for example prompt dispatch) must run with both locks released.
 	mu        sync.RWMutex
 	runs      map[string]*WorkflowRun
 	timelines map[string][]RunTimelineEvent
@@ -688,7 +692,15 @@ func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, 
 
 	normalizedRunID := strings.TrimSpace(runID)
 	releaseRunLock := s.runLocks.Lock(normalizedRunID)
-	defer releaseRunLock()
+	runLockHeld := true
+	unlockRunLock := func() {
+		if !runLockHeld {
+			return
+		}
+		releaseRunLock()
+		runLockHeld = false
+	}
+	defer unlockRunLock()
 
 	s.mu.Lock()
 	run, err := s.mustRunLocked(normalizedRunID)
@@ -752,50 +764,88 @@ func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, 
 		req:            s.buildStepDispatchRequest(run, phaseIndex, stepIndex, message),
 		beforeStatus:   run.Status,
 	}
-	s.mu.Unlock()
-
-	result, dispatchErr := s.dispatchStepPrompt(ctx, dispatchCtx.req)
-
-	s.mu.Lock()
-	run, _ = s.getRunByIDLocked(dispatchCtx.runID)
+	outcome, handoffErr := s.dispatchWithRunLockHandoffLocked(
+		ctx,
+		dispatchCtx,
+		unlockRunLock,
+		func() {
+			releaseRunLock = s.runLocks.Lock(normalizedRunID)
+			runLockHeld = true
+		},
+	)
+	run = outcome.run
+	if run == nil {
+		run, _ = s.getRunByIDLocked(dispatchCtx.runID)
+	}
 	if run == nil {
 		s.mu.Unlock()
+		if handoffErr != nil {
+			return nil, handoffErr
+		}
 		return nil, ErrRunNotFound
 	}
-	dispatched, applyErr := s.applyStepDispatchResult(ctx, dispatchCtx, result, dispatchErr)
 	clone := cloneWorkflowRun(run)
 	snapshot := s.captureRunSnapshot(run.ID)
 	s.mu.Unlock()
 
 	s.persistRunSnapshotAsync(ctx, snapshot)
-	if applyErr != nil {
-		return nil, applyErr
+	if handoffErr != nil {
+		return nil, handoffErr
 	}
-	if !dispatched {
+	if !outcome.applied {
+		return clone, nil
+	}
+	if !outcome.dispatched {
 		return nil, fmt.Errorf("%w: resume dispatch was not attempted", ErrStepDispatch)
 	}
 	return clone, nil
 }
 
 func (s *InMemoryRunService) AdvanceRun(ctx context.Context, runID string) (*WorkflowRun, error) {
-	releaseRunLock := s.runLocks.Lock(strings.TrimSpace(runID))
-	defer releaseRunLock()
+	defer s.persistMetrics(ctx)
+
+	normalizedRunID := strings.TrimSpace(runID)
+	releaseRunLock := s.runLocks.Lock(normalizedRunID)
+	runLockHeld := true
+	unlockRunLock := func() {
+		if !runLockHeld {
+			return
+		}
+		releaseRunLock()
+		runLockHeld = false
+	}
+	defer unlockRunLock()
 
 	s.mu.Lock()
-	defer s.persistMetrics(ctx)
-	defer s.mu.Unlock()
-	run, err := s.mustRunLocked(runID)
+	run, err := s.mustRunLocked(normalizedRunID)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
 	if run.Status != WorkflowRunStatusRunning {
+		s.mu.Unlock()
 		return nil, invalidTransitionError("advance", run.Status)
 	}
-	if err := s.advanceOnceLocked(ctx, run); err != nil {
+	s.mu.Unlock()
+	unlockRunLock()
+
+	if err := s.advanceOnceWithDispatch(ctx, normalizedRunID); err != nil {
 		return nil, err
 	}
-	s.persistRunSnapshotLocked(ctx, run.ID)
-	return cloneWorkflowRun(run), nil
+
+	releaseRunLock = s.runLocks.Lock(normalizedRunID)
+	runLockHeld = true
+	s.mu.Lock()
+	run, err = s.mustRunLocked(normalizedRunID)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	clone := cloneWorkflowRun(run)
+	snapshot := s.captureRunSnapshot(run.ID)
+	s.mu.Unlock()
+	s.persistRunSnapshotAsync(ctx, snapshot)
+	return clone, nil
 }
 
 func (s *InMemoryRunService) HandleDecision(ctx context.Context, runID string, req DecisionActionRequest) (*WorkflowRun, error) {
@@ -1464,21 +1514,20 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 	}
 	dispatchCtx, hasDispatch := s.prepareStepDispatchContext(run)
 	if hasDispatch {
-		s.mu.Unlock()
-		result, err := s.dispatchStepPrompt(ctx, dispatchCtx.req)
-		s.mu.Lock()
-		run, _ = s.getRunByIDLocked(dispatchCtx.runID)
-		if run == nil {
-			return ErrRunNotFound
+		outcome, handoffErr := s.dispatchWithRunLockHandoffLocked(ctx, dispatchCtx, func() {}, func() {})
+		if outcome.applied && outcome.run != nil {
+			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
 		}
-		dispatched, applyErr := s.applyStepDispatchResult(ctx, dispatchCtx, result, err)
-		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
-		if applyErr != nil {
-			return applyErr
+		if handoffErr != nil {
+			return handoffErr
 		}
-		if dispatched {
+		if !outcome.applied {
 			return nil
 		}
+		if outcome.dispatched {
+			return nil
+		}
+		run = outcome.run
 	}
 	return s.advanceWithEngineUnlocked(ctx, run, beforeStatus)
 }
@@ -1486,11 +1535,20 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 // advanceOnceWithDispatch performs an advance that may include dispatch I/O.
 // This method manages its own locking and should NOT be called while holding the lock.
 func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID string) error {
-	releaseRunLock := s.runLocks.Lock(runID)
-	defer releaseRunLock()
+	normalizedRunID := strings.TrimSpace(runID)
+	releaseRunLock := s.runLocks.Lock(normalizedRunID)
+	runLockHeld := true
+	unlockRunLock := func() {
+		if !runLockHeld {
+			return
+		}
+		releaseRunLock()
+		runLockHeld = false
+	}
+	defer unlockRunLock()
 
 	s.mu.Lock()
-	run, err := s.mustRunLocked(runID)
+	run, err := s.mustRunLocked(normalizedRunID)
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -1506,22 +1564,31 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 	}
 	dispatchCtx, hasDispatch := s.prepareStepDispatchContext(run)
 	if hasDispatch {
-		s.mu.Unlock()
-		result, err := s.dispatchStepPrompt(ctx, dispatchCtx.req)
-		s.mu.Lock()
-		run, _ = s.getRunByIDLocked(dispatchCtx.runID)
-		if run == nil {
-			s.mu.Unlock()
-			return ErrRunNotFound
+		outcome, handoffErr := s.dispatchWithRunLockHandoffLocked(
+			ctx,
+			dispatchCtx,
+			unlockRunLock,
+			func() {
+				releaseRunLock = s.runLocks.Lock(normalizedRunID)
+				runLockHeld = true
+			},
+		)
+		if outcome.applied && outcome.run != nil {
+			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
 		}
-		dispatched, applyErr := s.applyStepDispatchResult(ctx, dispatchCtx, result, err)
-		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 		s.mu.Unlock()
-		if applyErr != nil {
-			return applyErr
+		if handoffErr != nil {
+			return handoffErr
 		}
-		if dispatched {
+		if !outcome.applied {
 			return nil
+		}
+		if outcome.dispatched {
+			return nil
+		}
+		run = outcome.run
+		if run == nil {
+			return ErrRunNotFound
 		}
 		s.mu.Lock()
 	}
@@ -1531,142 +1598,6 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 	}
 	s.mu.Unlock()
 	return nil
-}
-
-func (s *InMemoryRunService) dispatchNextStepPromptLocked(ctx context.Context, run *WorkflowRun) (bool, error) {
-	if s == nil || run == nil || s.stepDispatcher == nil {
-		return false, nil
-	}
-	phaseIndex, stepIndex, ok := findNextPending(run)
-	if !ok || phaseIndex < 0 || phaseIndex >= len(run.Phases) {
-		return false, nil
-	}
-	phase := &run.Phases[phaseIndex]
-	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
-		return false, nil
-	}
-	step := &phase.Steps[stepIndex]
-	templatePrompt := strings.TrimSpace(step.Prompt)
-	if templatePrompt == "" {
-		return false, nil
-	}
-	dispatchPrompt := templatePrompt
-	if shouldPrefixUserPrompt(run) {
-		dispatchPrompt = composeInitialDispatchPrompt(run.UserPrompt, templatePrompt)
-	}
-	return s.dispatchPromptForStepLocked(ctx, run, phaseIndex, stepIndex, dispatchPrompt)
-}
-
-func (s *InMemoryRunService) dispatchPromptForStepLocked(
-	ctx context.Context,
-	run *WorkflowRun,
-	phaseIndex int,
-	stepIndex int,
-	dispatchPrompt string,
-) (bool, error) {
-	if s == nil || run == nil || s.stepDispatcher == nil {
-		return false, nil
-	}
-	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
-		return false, nil
-	}
-	phase := &run.Phases[phaseIndex]
-	if stepIndex < 0 || stepIndex >= len(phase.Steps) {
-		return false, nil
-	}
-	step := &phase.Steps[stepIndex]
-	dispatchPrompt = strings.TrimSpace(dispatchPrompt)
-	if dispatchPrompt == "" {
-		return false, nil
-	}
-	s.recordDispatchAttemptLocked()
-	result, err := s.stepDispatcher.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
-		RunID:                  strings.TrimSpace(run.ID),
-		TemplateID:             strings.TrimSpace(run.TemplateID),
-		DefaultAccessLevel:     run.DefaultAccessLevel,
-		SelectedProvider:       strings.TrimSpace(run.SelectedProvider),
-		SelectedRuntimeOptions: types.CloneRuntimeOptions(run.SelectedRuntimeOptions),
-		WorkspaceID:            strings.TrimSpace(run.WorkspaceID),
-		WorktreeID:             strings.TrimSpace(run.WorktreeID),
-		SessionID:              strings.TrimSpace(run.SessionID),
-		PhaseID:                strings.TrimSpace(phase.ID),
-		StepID:                 strings.TrimSpace(step.ID),
-		Prompt:                 dispatchPrompt,
-		RuntimeOptions:         types.CloneRuntimeOptions(step.RuntimeOptions),
-	})
-	if err != nil {
-		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(err) == DispatchErrorDispositionDeferred {
-			s.recordDispatchDeferredLocked()
-			s.deferRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
-			return true, nil
-		}
-		s.recordDispatchFailureLocked()
-		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, err)
-		return false, err
-	}
-	if !result.Dispatched {
-		cause := fmt.Errorf("%w: dispatcher did not dispatch step prompt", ErrStepDispatch)
-		s.recordDispatchFailureLocked()
-		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
-		return false, cause
-	}
-	if strings.TrimSpace(result.SessionID) == "" {
-		cause := fmt.Errorf("%w: dispatcher returned dispatched step without session id", ErrStepDispatch)
-		s.recordDispatchFailureLocked()
-		s.failRunForStepDispatchLocked(run, phaseIndex, stepIndex, cause)
-		return false, cause
-	}
-	now := s.engine.now()
-	run.CurrentPhaseIndex = phaseIndex
-	run.CurrentStepIndex = stepIndex
-	if phase.Status == PhaseRunStatusPending {
-		phase.Status = PhaseRunStatusRunning
-		phase.StartedAt = &now
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "phase",
-			Action:  "phase_started",
-			PhaseID: phase.ID,
-			Outcome: "running",
-			Detail:  phase.Name,
-		})
-		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
-			At:      now,
-			Type:    "phase_started",
-			RunID:   run.ID,
-			PhaseID: phase.ID,
-		})
-	}
-	step.Status = StepRunStatusRunning
-	step.AwaitingTurn = true
-	step.StartedAt = &now
-	step.CompletedAt = nil
-	step.Error = ""
-	step.Outcome = "awaiting_turn"
-	step.Output = strings.TrimSpace(result.TurnID)
-	step.TurnID = strings.TrimSpace(result.TurnID)
-	recordStepExecutionDispatch(run, phase, step, result, dispatchPrompt, now)
-	appendRunAudit(run, RunAuditEntry{
-		At:      now,
-		Scope:   "step",
-		Action:  "step_prompt_dispatched",
-		PhaseID: phase.ID,
-		StepID:  step.ID,
-		Outcome: "awaiting_turn",
-		Detail:  "session=" + strings.TrimSpace(result.SessionID),
-	})
-	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
-		At:      now,
-		Type:    "step_dispatched",
-		RunID:   run.ID,
-		PhaseID: phase.ID,
-		StepID:  step.ID,
-		Message: "awaiting turn completion",
-	})
-	if sessionID := strings.TrimSpace(result.SessionID); sessionID != "" && strings.TrimSpace(run.SessionID) != sessionID {
-		run.SessionID = sessionID
-	}
-	return true, nil
 }
 
 func (s *InMemoryRunService) failRunForStepDispatchLocked(run *WorkflowRun, phaseIndex, stepIndex int, cause error) {
@@ -3540,13 +3471,18 @@ func (s *InMemoryRunService) buildStepDispatchRequest(run *WorkflowRun, phaseInd
 
 // stepDispatchContext captures all state needed to perform and apply a step dispatch.
 type stepDispatchContext struct {
-	runID             string
-	phaseIndex        int
-	stepIndex         int
-	dispatchPrompt    string
-	req               StepPromptDispatchRequest
-	beforeStatus      WorkflowRunStatus
-	dispatchAttempted bool
+	runID          string
+	phaseIndex     int
+	stepIndex      int
+	dispatchPrompt string
+	req            StepPromptDispatchRequest
+	beforeStatus   WorkflowRunStatus
+}
+
+type stepDispatchHandoffOutcome struct {
+	applied    bool
+	dispatched bool
+	run        *WorkflowRun
 }
 
 // prepareStepDispatchContext captures dispatch context while holding the lock.
@@ -3580,6 +3516,78 @@ func (s *InMemoryRunService) prepareStepDispatchContext(run *WorkflowRun) (stepD
 		req:            req,
 		beforeStatus:   run.Status,
 	}, true
+}
+
+// canApplyStepDispatchResultLocked returns true when a dispatch result still matches
+// the run's current state and can be safely applied.
+// Must be called while holding s.mu.
+func (s *InMemoryRunService) canApplyStepDispatchResultLocked(dispatchCtx stepDispatchContext) bool {
+	if s == nil {
+		return false
+	}
+	run, ok := s.getRunByIDLocked(dispatchCtx.runID)
+	if !ok || run == nil || run.Status != WorkflowRunStatusRunning {
+		return false
+	}
+	if dispatchCtx.phaseIndex < 0 || dispatchCtx.phaseIndex >= len(run.Phases) {
+		return false
+	}
+	phase := &run.Phases[dispatchCtx.phaseIndex]
+	if dispatchCtx.stepIndex < 0 || dispatchCtx.stepIndex >= len(phase.Steps) {
+		return false
+	}
+	nextPhaseIndex, nextStepIndex, hasPending := findNextPending(run)
+	if !hasPending || nextPhaseIndex != dispatchCtx.phaseIndex || nextStepIndex != dispatchCtx.stepIndex {
+		return false
+	}
+	step := &phase.Steps[dispatchCtx.stepIndex]
+	if step.Status != StepRunStatusPending || step.AwaitingTurn {
+		return false
+	}
+	return true
+}
+
+// dispatchWithRunLockHandoffLocked performs dispatch I/O without holding locks, then
+// reacquires locks and applies the result if the target step is still valid.
+// The caller must hold s.mu on entry and will hold s.mu on return.
+func (s *InMemoryRunService) dispatchWithRunLockHandoffLocked(
+	ctx context.Context,
+	dispatchCtx stepDispatchContext,
+	unlockRunLock func(),
+	relockRunLock func(),
+) (stepDispatchHandoffOutcome, error) {
+	if unlockRunLock == nil {
+		unlockRunLock = func() {}
+	}
+	if relockRunLock == nil {
+		relockRunLock = func() {}
+	}
+	s.mu.Unlock()
+	unlockRunLock()
+
+	result, dispatchErr := s.dispatchStepPrompt(ctx, dispatchCtx.req)
+
+	relockRunLock()
+	s.mu.Lock()
+	run, _ := s.getRunByIDLocked(dispatchCtx.runID)
+	if run == nil {
+		return stepDispatchHandoffOutcome{}, ErrRunNotFound
+	}
+	outcome := stepDispatchHandoffOutcome{run: run}
+	if !s.canApplyStepDispatchResultLocked(dispatchCtx) {
+		return outcome, nil
+	}
+	dispatched, applyErr := s.applyStepDispatchResult(ctx, dispatchCtx, result, dispatchErr)
+	outcome.applied = true
+	outcome.dispatched = dispatched
+	outcome.run, _ = s.getRunByIDLocked(dispatchCtx.runID)
+	if outcome.run == nil {
+		return outcome, ErrRunNotFound
+	}
+	if applyErr != nil {
+		return outcome, applyErr
+	}
+	return outcome, nil
 }
 
 // applyStepDispatchResult applies the dispatch result to the run.

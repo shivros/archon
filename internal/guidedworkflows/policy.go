@@ -269,8 +269,8 @@ func EvaluateCheckpointPolicy(policy CheckpointPolicy, input PolicyEvaluationInp
 		action = CheckpointActionPause
 	}
 
-	severity := DecisionSeverityLow
-	tier := DecisionTier0
+	var severity DecisionSeverity
+	var tier DecisionTier
 	switch {
 	case hardGateTriggered || score >= 0.90:
 		severity = DecisionSeverityCritical

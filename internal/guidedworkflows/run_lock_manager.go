@@ -12,9 +12,8 @@ type RunLockManager interface {
 
 // PerRunLockManager manages individual RWMutex locks per workflow run.
 type PerRunLockManager struct {
-	mu      sync.Mutex
-	locks   map[string]*sync.RWMutex
-	cleanup []string
+	mu    sync.Mutex
+	locks map[string]*sync.RWMutex
 }
 
 // NewPerRunLockManager creates a new PerRunLockManager.
@@ -60,10 +59,3 @@ func (m *PerRunLockManager) Remove(runID string) {
 		delete(m.locks, runID)
 	}
 }
-
-// noopRunLockManager is a no-op implementation for when per-run locking is disabled.
-type noopRunLockManager struct{}
-
-func (noopRunLockManager) Lock(runID string) func()  { return func() {} }
-func (noopRunLockManager) RLock(runID string) func() { return func() {} }
-func (noopRunLockManager) Remove(runID string)       {}
