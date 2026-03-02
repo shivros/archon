@@ -317,12 +317,11 @@ func openCodeEventItems(event types.CodexEvent) []map[string]any {
 		if text == "" {
 			return nil
 		}
-		return []map[string]any{
-			{
-				"type": "agentMessageDelta",
-				"text": text,
-			},
+		item := newAgentMessageDeltaItem(text)
+		if item == nil {
+			return nil
 		}
+		return []map[string]any{item}
 	default:
 		return nil
 	}

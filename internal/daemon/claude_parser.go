@@ -99,10 +99,9 @@ func ParseClaudeLine(line string, state *ClaudeParseState) ([]map[string]any, st
 		if state != nil {
 			state.SawDelta = true
 		}
-		items = append(items, map[string]any{
-			"type":  "agentMessageDelta",
-			"delta": text,
-		})
+		if item := newAgentMessageDeltaItem(text); item != nil {
+			items = append(items, item)
+		}
 	case "result":
 		if state != nil && state.SawDelta {
 			items = append(items, map[string]any{
