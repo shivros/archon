@@ -715,10 +715,17 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 		m.registerPendingSendHeader(token, sessionID, provider, headerIndex)
 	}
 	send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
+	reconnectCmds := m.sessionBootstrapCoordinatorOrDefault().BuildReconnectCommands(SessionReconnectBootstrapInput{
+		Provider:             provider,
+		SessionID:            sessionID,
+		SessionAPI:           m.sessionAPI,
+		ItemStreamConnected:  m.itemStream != nil && m.itemStream.HasStream(),
+		EventStreamConnected: m.codexStream != nil && m.codexStream.HasStream(),
+	})
 	if shouldStreamItems(provider) {
 		cmds := []tea.Cmd{send}
-		if m.itemStream == nil || !m.itemStream.HasStream() {
-			cmds = append([]tea.Cmd{openItemsCmd(m.sessionAPI, sessionID)}, cmds...)
+		if len(reconnectCmds) > 0 {
+			cmds = append(reconnectCmds, cmds...)
 		}
 		key := m.pendingSessionKey
 		if key == "" {
@@ -734,8 +741,8 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 	}
 	if provider == "codex" {
 		cmds := make([]tea.Cmd, 0, 4)
-		if m.codexStream == nil || !m.codexStream.HasStream() {
-			cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
+		if len(reconnectCmds) > 0 {
+			cmds = append(cmds, reconnectCmds...)
 		}
 		cmds = append(cmds, send)
 		key := m.pendingSessionKey

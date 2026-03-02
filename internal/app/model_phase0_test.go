@@ -162,9 +162,9 @@ func TestPhase0LoadSelectedSessionOpensItemsStreamForInactiveItemProvider(t *tes
 	if !ok {
 		t.Fatalf("expected batch message, got %T", msg)
 	}
-	// history + approvals + items stream
-	if len(batch) != 3 {
-		t.Fatalf("expected 3 selection-load commands, got %d", len(batch))
+	// approvals + items stream (items snapshot is authoritative bootstrap)
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 selection-load commands, got %d", len(batch))
 	}
 }
 

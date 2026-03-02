@@ -231,9 +231,9 @@ func TestPhase1SessionsWithMetaReloadKeepsItemsStreamForInactiveItemProvider(t *
 		}
 	}
 	// For inactive item providers we still expect:
-	// history + approvals + items stream
-	if len(loadBatch) != 3 {
-		t.Fatalf("expected 3 selection-load commands, got %d", len(loadBatch))
+	// approvals + items stream (without parallel history bootstrap)
+	if len(loadBatch) != 2 {
+		t.Fatalf("expected 2 selection-load commands, got %d", len(loadBatch))
 	}
 }
 

@@ -39,6 +39,27 @@ func TestLoadSelectedSessionSkipsHistoryBackfillByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadSelectedSessionUsesItemsSnapshotBootstrapForItemProviders(t *testing.T) {
+	m := newPhase0ModelWithSession("kilocode")
+	item := m.selectedItem()
+	if item == nil || item.session == nil {
+		t.Fatalf("expected selected session item")
+	}
+
+	cmd := m.loadSelectedSession(item)
+	if cmd == nil {
+		t.Fatalf("expected load command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected load batch, got %T", msg)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 commands (approvals, items stream), got %d", len(batch))
+	}
+}
+
 func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) {
 	m := NewModel(nil)
 	m.setSnapshotBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "old reply should clear"}})
@@ -73,15 +94,22 @@ func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) 
 	if !ok {
 		t.Fatalf("expected batch command, got %T", msg)
 	}
-	expected := 2 // fetch sessions + initial history
-	if shouldStreamItems(session.Provider) {
-		expected += 2 // approvals + items stream
-	} else if isActiveStatus(session.Status) {
-		if session.Provider == "codex" {
-			expected++ // events stream
-		} else {
-			expected++ // log stream
-		}
+	plan := m.sessionBootstrapPolicyOrDefault().SessionStartPlan(session.Provider, session.Status)
+	expected := 1 // fetch sessions
+	if plan.FetchHistory {
+		expected++ // initial history
+	}
+	if plan.FetchApprovals {
+		expected++ // approvals
+	}
+	if plan.OpenItems {
+		expected++ // items stream
+	}
+	if plan.OpenEvents {
+		expected++ // events stream
+	}
+	if plan.OpenTail {
+		expected++ // log stream
 	}
 	if session.Provider == "codex" {
 		expected++ // history polling safety refresh
@@ -89,6 +117,33 @@ func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) 
 	expected++ // recents state save debounce
 	if len(batch) != expected {
 		t.Fatalf("expected %d start-session commands without backfill, got %d", expected, len(batch))
+	}
+}
+
+func TestStartSessionUsesItemsSnapshotBootstrapForItemProviders(t *testing.T) {
+	m := NewModel(nil)
+	session := &types.Session{
+		ID:       "s1",
+		Provider: "kilocode",
+		Status:   types.SessionStatusRunning,
+		Title:    "Session",
+	}
+
+	handled, cmd := m.reduceStateMessages(startSessionMsg{session: session})
+	if !handled {
+		t.Fatalf("expected start session message to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected follow-up commands for started session")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected batch command, got %T", msg)
+	}
+	// fetch sessions + recents save + approvals + items stream
+	if len(batch) != 4 {
+		t.Fatalf("expected 4 start-session commands for item provider bootstrap, got %d", len(batch))
 	}
 }
 

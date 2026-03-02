@@ -16,6 +16,7 @@ type ChatTranscript struct {
 	agentSegmentBreak       bool
 	forceNextAssistantSplit bool
 	mergePolicy             assistantMergePolicy
+	dedupePolicy            TranscriptDedupePolicy
 	metadataExtractor       assistantItemMetadataExtractor
 	presenter               TranscriptItemPresenter
 	nowFn                   func() time.Time
@@ -41,6 +42,15 @@ func WithAssistantMetadataExtractor(extractor assistantItemMetadataExtractor) Ch
 	}
 }
 
+func WithTranscriptDedupePolicy(policy TranscriptDedupePolicy) ChatTranscriptOption {
+	return func(t *ChatTranscript) {
+		if t == nil || policy == nil {
+			return
+		}
+		t.dedupePolicy = policy
+	}
+}
+
 func NewChatTranscript(maxLines int) *ChatTranscript {
 	return NewChatTranscriptWithDependencies(maxLines, nil, nil)
 }
@@ -56,6 +66,7 @@ func NewChatTranscriptWithDependencies(maxLines int, presenter TranscriptItemPre
 		maxBlocks:        maxLines,
 		activeAgentIndex: -1,
 		mergePolicy:      defaultAssistantMergePolicy{},
+		dedupePolicy:     defaultTranscriptDedupePolicy{},
 		metadataExtractor: defaultAssistantItemMetadataExtractor{
 			identityResolver: defaultProviderMessageIdentityResolver{},
 		},
@@ -109,10 +120,10 @@ func (t *ChatTranscript) AppendUserMessage(text string) int {
 }
 
 func (t *ChatTranscript) AppendUserMessageAt(text string, createdAt time.Time) int {
-	return t.appendUserMessageWithMetaAt(text, createdAt, "")
+	return t.appendUserMessageWithMetaAt(text, createdAt, "", "")
 }
 
-func (t *ChatTranscript) appendUserMessageWithMetaAt(text string, createdAt time.Time, turnID string) int {
+func (t *ChatTranscript) appendUserMessageWithMetaAt(text string, createdAt time.Time, turnID, providerMessageID string) int {
 	if t == nil {
 		return -1
 	}
@@ -120,16 +131,19 @@ func (t *ChatTranscript) appendUserMessageWithMetaAt(text string, createdAt time
 	if strings.TrimSpace(text) == "" {
 		return -1
 	}
-	if t.hasDuplicateMessageBlock(ChatRoleUser, text, turnID, createdAt) {
+	turnID = strings.TrimSpace(turnID)
+	providerMessageID = strings.TrimSpace(providerMessageID)
+	if t.hasDuplicateMessageBlock(ChatRoleUser, text, turnID, providerMessageID, createdAt) {
 		return -1
 	}
 	headerIndex := len(t.blocks)
 	t.blocks = append(t.blocks, ChatBlock{
-		Role:      ChatRoleUser,
-		Text:      text,
-		Status:    ChatStatusNone,
-		CreatedAt: createdAt,
-		TurnID:    strings.TrimSpace(turnID),
+		Role:              ChatRoleUser,
+		Text:              text,
+		Status:            ChatStatusNone,
+		CreatedAt:         createdAt,
+		TurnID:            turnID,
+		ProviderMessageID: providerMessageID,
 	})
 	t.trim()
 	return headerIndex
@@ -345,11 +359,11 @@ func (t *ChatTranscript) AppendItem(item map[string]any) {
 		t.FinishAgentBlock()
 	case "userMessage":
 		if text := extractContentText(item["content"]); text != "" {
-			t.appendUserMessageWithMetaAt(text, createdAt, metadata.turnID)
+			t.appendUserMessageWithMetaAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 			return
 		}
 		if text := asString(item["text"]); text != "" {
-			t.appendUserMessageWithMetaAt(text, createdAt, metadata.turnID)
+			t.appendUserMessageWithMetaAt(text, createdAt, metadata.turnID, metadata.providerMessageID)
 		}
 	case "agentMessage":
 		if text := asString(item["text"]); text != "" {
@@ -488,7 +502,7 @@ func (t *ChatTranscript) appendBlockWithMetaAt(role ChatRole, text string, creat
 	}
 	turnID = strings.TrimSpace(turnID)
 	providerMessageID = strings.TrimSpace(providerMessageID)
-	if role == ChatRoleAgent && t.hasDuplicateMessageBlock(role, text, turnID, createdAt) {
+	if role == ChatRoleAgent && t.hasDuplicateMessageBlock(role, text, turnID, providerMessageID, createdAt) {
 		t.forceNextAssistantSplit = false
 		return
 	}
@@ -547,32 +561,18 @@ func (t *ChatTranscript) assistantMetadataExtractor() assistantItemMetadataExtra
 	return t.metadataExtractor
 }
 
-func (t *ChatTranscript) hasDuplicateMessageBlock(role ChatRole, text, turnID string, createdAt time.Time) bool {
+func (t *ChatTranscript) hasDuplicateMessageBlock(role ChatRole, text, turnID, providerMessageID string, createdAt time.Time) bool {
 	if t == nil {
 		return false
 	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return false
+	return t.dedupePolicyOrDefault().IsDuplicate(t.blocks, role, text, turnID, providerMessageID, createdAt)
+}
+
+func (t *ChatTranscript) dedupePolicyOrDefault() TranscriptDedupePolicy {
+	if t == nil || t.dedupePolicy == nil {
+		return defaultTranscriptDedupePolicy{}
 	}
-	turnID = strings.TrimSpace(turnID)
-	for i := range t.blocks {
-		block := t.blocks[i]
-		if block.Role != role {
-			continue
-		}
-		if strings.TrimSpace(block.Text) != text {
-			continue
-		}
-		blockTurnID := strings.TrimSpace(block.TurnID)
-		if turnID != "" && blockTurnID == turnID {
-			return true
-		}
-		if !createdAt.IsZero() && !block.CreatedAt.IsZero() && block.CreatedAt.Equal(createdAt) {
-			return true
-		}
-	}
-	return false
+	return t.dedupePolicy
 }
 
 func itemTurnID(item map[string]any) string {

@@ -279,6 +279,8 @@ type Model struct {
 	uiLatency                           *uiLatencyTracker
 	selectionLoadPolicy                 SessionSelectionLoadPolicy
 	historyLoadPolicy                   SessionHistoryLoadPolicy
+	sessionBootstrapPolicy              SessionBootstrapPolicy
+	sessionBootstrapCoordinator         SessionBootstrapCoordinator
 	inputFramePolicy                    InputFramePolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
 	sidebarSortPolicy                   SidebarSortPolicy
@@ -509,6 +511,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		uiLatency:                           newUILatencyTracker(nil),
 		selectionLoadPolicy:                 defaultSessionSelectionLoadPolicy{},
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
+		sessionBootstrapPolicy:              defaultSessionBootstrapPolicy{},
 		inputFramePolicy:                    NewDefaultInputFramePolicy(),
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
 		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
@@ -1197,22 +1200,16 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	}
 	initialLines := m.historyFetchLinesInitial()
 	ctx := m.replaceRequestScope(requestScopeSessionLoad)
-	cmds := []tea.Cmd{
-		fetchHistoryCmdWithContext(m.sessionHistoryAPI, id, token, initialLines, ctx),
-		fetchApprovalsCmdWithContext(m.sessionAPI, id, ctx),
-	}
-	if shouldStreamItems(item.session.Provider) {
-		// Item-backed providers (for example OpenCode/Kilo) can keep producing
-		// remote updates while local session status remains inactive/no-process.
-		// Always open the items stream on selection load so we don't lose live
-		// delivery after a refresh-driven reload.
-		cmds = append(cmds, openItemsCmd(m.sessionAPI, id))
-	} else if isActiveStatus(item.session.Status) {
-		cmds = append(cmds, openStreamCmd(m.sessionAPI, id))
-	}
-	if item.session.Provider == "codex" {
-		cmds = append(cmds, openEventsCmd(m.sessionAPI, id))
-	}
+	cmds := m.sessionBootstrapCoordinatorOrDefault().BuildSelectionLoadCommands(SelectionLoadBootstrapInput{
+		Provider:     item.session.Provider,
+		Status:       item.session.Status,
+		SessionID:    id,
+		SessionKey:   token,
+		InitialLines: initialLines,
+		LoadContext:  ctx,
+		HistoryAPI:   m.sessionHistoryAPI,
+		SessionAPI:   m.sessionAPI,
+	})
 	if m.appState.DebugStreamsEnabled {
 		debugCtx := m.replaceRequestScope(requestScopeDebugStream)
 		cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, id, debugCtx))
@@ -4858,10 +4855,6 @@ func shouldStreamItems(provider string) bool {
 
 func providerSupportsApprovals(provider string) bool {
 	return providers.CapabilitiesFor(provider).SupportsApprovals
-}
-
-func providerSupportsEvents(provider string) bool {
-	return providers.CapabilitiesFor(provider).SupportsEvents
 }
 
 func (m *Model) composeSessionID() string {

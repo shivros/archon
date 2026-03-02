@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +134,122 @@ func TestChatTranscriptAppendItemDedupesReplayedAssistantByCreatedAt(t *testing.
 	blocks := tp.Blocks()
 	if len(blocks) != 1 {
 		t.Fatalf("expected one deduped assistant block, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptAppendItemDedupesUserMessageByProviderMessageID(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+	first := map[string]any{
+		"type":                "userMessage",
+		"provider_message_id": "u-1",
+		"text":                "repeat",
+	}
+	replay := map[string]any{
+		"type":                "userMessage",
+		"provider_message_id": "u-1",
+		"text":                "repeat",
+	}
+
+	tp.AppendItem(first)
+	tp.AppendItem(replay)
+
+	blocks := tp.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one deduped user block by provider message id, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptAppendItemDedupesRecentReplayWithoutIdentity(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+	// Simulate initial history row with timestamp and replayed stream row without it.
+	tp.AppendItem(map[string]any{
+		"type":       "assistant",
+		"created_at": "2026-03-01T12:00:00Z",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "On branch main."}},
+		},
+	})
+	tp.AppendItem(map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "On branch main."}},
+		},
+	})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected semantic replay dedupe to keep one block, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptDoesNotDedupeAssistantAcrossDifferentProviderMessageIDs(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+
+	tp.AppendItem(map[string]any{
+		"type":                "assistant",
+		"provider_message_id": "a-1",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Same text"}},
+		},
+	})
+	tp.AppendItem(map[string]any{
+		"type":                "assistant",
+		"provider_message_id": "a-2",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Same text"}},
+		},
+	})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected two assistant blocks with different identities, got %#v", blocks)
+	}
+}
+
+func TestChatTranscriptDoesNotDedupeFarReplayWithoutIdentity(t *testing.T) {
+	tp := NewChatTranscript(0)
+	if tp == nil {
+		t.Fatalf("expected transcript")
+	}
+
+	tp.AppendItem(map[string]any{
+		"type":       "assistant",
+		"created_at": "2026-03-01T12:00:00Z",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Replay target."}},
+		},
+	})
+	for i := 1; i <= 4; i++ {
+		suffix := strconv.Itoa(i)
+		tp.AppendItem(map[string]any{
+			"type":                "assistant",
+			"provider_message_id": "mid-" + suffix,
+			"message": map[string]any{
+				"content": []any{map[string]any{"type": "text", "text": "Filler " + suffix + "."}},
+			},
+		})
+	}
+	// Same text as the first block, but far enough back that semantic recent-window
+	// replay dedupe should not collapse it.
+	tp.AppendItem(map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": "Replay target."}},
+		},
+	})
+
+	blocks := tp.Blocks()
+	if len(blocks) != 6 {
+		t.Fatalf("expected far replay to remain distinct, got %#v", blocks)
 	}
 }
 

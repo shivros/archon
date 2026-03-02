@@ -988,16 +988,23 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if shouldStreamItems(provider) {
 			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.id, m.requestScopeContext(requestScopeSessionLoad)))
 		}
-		if shouldStreamItems(provider) && m.itemStream != nil && !m.itemStream.HasStream() {
-			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.id))
+		reconnectCmds := m.sessionBootstrapCoordinatorOrDefault().BuildReconnectCommands(SessionReconnectBootstrapInput{
+			Provider:             provider,
+			SessionID:            msg.id,
+			SessionAPI:           m.sessionAPI,
+			ItemStreamConnected:  m.itemStream != nil && m.itemStream.HasStream(),
+			EventStreamConnected: m.codexStream != nil && m.codexStream.HasStream(),
+		})
+		if len(reconnectCmds) > 0 && shouldStreamItems(provider) {
+			cmds = append(cmds, reconnectCmds...)
 			if m.appState.DebugStreamsEnabled {
 				debugCtx := m.replaceRequestScope(requestScopeDebugStream)
 				cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.id, debugCtx))
 			}
 			return true, tea.Batch(cmds...)
 		}
-		if provider == "codex" && m.codexStream != nil && !m.codexStream.HasStream() {
-			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.id))
+		if len(reconnectCmds) > 0 && provider == "codex" {
+			cmds = append(cmds, reconnectCmds...)
 			if m.appState.DebugStreamsEnabled {
 				debugCtx := m.replaceRequestScope(requestScopeDebugStream)
 				cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.id, debugCtx))
@@ -1130,23 +1137,22 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
 		loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
-		cmds := []tea.Cmd{
-			m.fetchSessionsCmd(false),
-			fetchHistoryCmdWithContext(m.sessionHistoryAPI, msg.session.ID, key, initialLines, loadCtx),
-		}
+		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
+		cmds = append(cmds, m.sessionBootstrapCoordinatorOrDefault().BuildSessionStartCommands(SessionStartBootstrapInput{
+			Provider:     msg.session.Provider,
+			Status:       msg.session.Status,
+			SessionID:    msg.session.ID,
+			SessionKey:   key,
+			InitialLines: initialLines,
+			LoadContext:  loadCtx,
+			HistoryAPI:   m.sessionHistoryAPI,
+			SessionAPI:   m.sessionAPI,
+		})...)
 		if recentsStateSaveCmd != nil {
 			cmds = append(cmds, recentsStateSaveCmd)
 		}
 		if watchCmd != nil {
 			cmds = append(cmds, watchCmd)
-		}
-		if shouldStreamItems(msg.session.Provider) {
-			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.session.ID, loadCtx))
-			cmds = append(cmds, openItemsCmd(m.sessionAPI, msg.session.ID))
-		} else if msg.session.Provider == "codex" {
-			cmds = append(cmds, openEventsCmd(m.sessionAPI, msg.session.ID))
-		} else if isActiveStatus(msg.session.Status) {
-			cmds = append(cmds, openStreamCmd(m.sessionAPI, msg.session.ID))
 		}
 		if m.appState.DebugStreamsEnabled {
 			debugCtx := m.replaceRequestScope(requestScopeDebugStream)
@@ -1410,7 +1416,6 @@ func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
 		return
 	}
 	if m.itemStream != nil {
-		m.itemStream.SetSnapshotBlocks(m.currentBlocks())
 		m.itemStream.SetStream(msg.ch, msg.cancel)
 	}
 	m.setBackgroundStatus("streaming items")
