@@ -136,8 +136,8 @@ func (c *AddWorktreeController) Update(msg tea.Msg, host addWorktreeHost) (bool,
 	case tea.PasteMsg:
 		if c.mode == worktreeModeExisting && c.step == 0 {
 			picker := addWorktreeQueryPicker{controller: c}
-			typeAhead := newPickerTypeAheadController(host.keyString, host.keyMatchesCommand, defaultPickerPasteNormalizer{})
-			typeAhead.handlePaste(msg, picker)
+			arbiter := newPickerKeyboardArbiter(host.keyString, host.keyMatchesCommand, defaultPickerPasteNormalizer{})
+			arbiter.Handle(msg, picker, pickerKeyboardHooks{})
 			return true, nil
 		}
 	}
@@ -184,34 +184,18 @@ func (c *AddWorktreeController) handleKey(keyMsg tea.KeyMsg, host addWorktreeHos
 
 	if c.mode != worktreeModeUnset {
 		if c.mode == worktreeModeExisting && c.step == 0 {
-			switch keyMsg.String() {
-			case "j", "down":
-				c.setListIndex(c.listIndex + 1)
-				return true, nil
-			case "k", "up":
-				c.setListIndex(c.listIndex - 1)
-				return true, nil
-			case "pgdown":
-				c.setListIndex(c.listIndex + c.listHeight)
-				return true, nil
-			case "pgup":
-				c.setListIndex(c.listIndex - c.listHeight)
-				return true, nil
-			case "home":
-				c.setListIndex(0)
-				return true, nil
-			case "end":
-				c.setListIndex(len(c.filtered) - 1)
-				return true, nil
-			}
 			picker := addWorktreeQueryPicker{controller: c}
-			typeAhead := newPickerTypeAheadController(host.keyString, host.keyMatchesCommand, defaultPickerPasteNormalizer{})
-			if typeAhead.handleKey(keyMsg, picker) {
-				return true, nil
-			}
-			if pickerTypeAheadText(keyMsg) != "" {
-				// Consume plain text key input while filtering existing worktrees.
-				return true, nil
+			arbiter := newPickerKeyboardArbiter(host.keyString, host.keyMatchesCommand, defaultPickerPasteNormalizer{})
+			handled, cmd := arbiter.Handle(keyMsg, picker, pickerKeyboardHooks{
+				MoveDown: func() { c.setListIndex(c.listIndex + 1) },
+				MoveUp:   func() { c.setListIndex(c.listIndex - 1) },
+				PageDown: func() { c.setListIndex(c.listIndex + c.listHeight) },
+				PageUp:   func() { c.setListIndex(c.listIndex - c.listHeight) },
+				Home:     func() { c.setListIndex(0) },
+				End:      func() { c.setListIndex(len(c.filtered) - 1) },
+			})
+			if handled {
+				return true, cmd
 			}
 			return true, nil
 		}

@@ -431,6 +431,46 @@ func TestWorkspaceEditReducerRequiresWorkspaceSelection(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEditReducerPickerTypingUpdatesQuery(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModePickWorkspaceRename
+	if m.workspacePicker == nil {
+		t.Fatalf("expected workspace picker")
+	}
+	m.workspacePicker.SetOptions([]selectOption{
+		{id: "ws1", label: "Alpha"},
+		{id: "ws2", label: "Beta"},
+	})
+
+	handled, _ := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if !handled {
+		t.Fatalf("expected picker typing to be handled")
+	}
+	if got := m.workspacePicker.Query(); got != "j" {
+		t.Fatalf("expected workspace picker query to update, got %q", got)
+	}
+}
+
+func TestWorkspaceEditReducerPickerArrowMovesSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModePickWorkspaceRename
+	if m.workspacePicker == nil {
+		t.Fatalf("expected workspace picker")
+	}
+	m.workspacePicker.SetOptions([]selectOption{
+		{id: "ws1", label: "Alpha"},
+		{id: "ws2", label: "Beta"},
+	})
+
+	handled, _ := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !handled {
+		t.Fatalf("expected picker down key to be handled")
+	}
+	if got := m.workspacePicker.SelectedID(); got != "ws2" {
+		t.Fatalf("expected down key to move selection to ws2, got %q", got)
+	}
+}
+
 func TestWorkspaceEditReducerRenameSessionEnterReturnsCommand(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeRenameSession
@@ -724,6 +764,48 @@ func TestPickProviderReducerPasteAppendsToQuery(t *testing.T) {
 	}
 }
 
+func TestPickProviderReducerTypingAppendsToQuery(t *testing.T) {
+	m := NewModel(nil)
+	m.newSession = &newSessionTarget{}
+	m.enterProviderPick()
+
+	handled, _ := m.reducePickProviderMode(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	if !handled {
+		t.Fatalf("expected pick provider reducer to handle key typing")
+	}
+	if m.providerPicker == nil {
+		t.Fatalf("expected provider picker to exist")
+	}
+	if got := m.providerPicker.Query(); got != "h" {
+		t.Fatalf("expected query to be 'h', got %q", got)
+	}
+}
+
+func TestAssignGroupWorkspacesReducerSpaceTogglesSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAssignGroupWorkspaces
+	m.assignGroupID = "g1"
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace One"},
+		{ID: "ws2", Name: "Workspace Two"},
+	}
+	if m.workspaceMulti == nil {
+		t.Fatalf("expected workspace multi picker")
+	}
+	m.workspaceMulti.SetOptions([]multiSelectOption{
+		{id: "ws1", label: "Workspace One"},
+		{id: "ws2", label: "Workspace Two"},
+	})
+
+	handled, _ := m.reduceWorkspaceEditModes(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if !handled {
+		t.Fatalf("expected space to be handled in assign group picker")
+	}
+	if selected := m.workspaceMulti.SelectedIDs(); len(selected) != 1 || selected[0] != "ws1" {
+		t.Fatalf("expected ws1 to be toggled selected, got %#v", selected)
+	}
+}
+
 func TestPickProviderReducerClearCommandClearsQuery(t *testing.T) {
 	m := NewModel(nil)
 	m.newSession = &newSessionTarget{}
@@ -802,6 +884,57 @@ func TestReduceComposeInputKeyPasteRoutesToComposeOptionPicker(t *testing.T) {
 	}
 	if got := m.chatInput.Value(); got != "existing" {
 		t.Fatalf("expected compose input to remain unchanged, got %q", got)
+	}
+}
+
+func TestReduceComposeInputKeyPickerTypingWinsOverAlphanumericHotkeys(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if m.input == nil || m.chatInput == nil {
+		t.Fatalf("expected compose input controllers")
+	}
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected compose option picker to open")
+	}
+	m.input.FocusChatInput()
+	m.chatInput.Focus()
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle picker text input")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for picker text input")
+	}
+	if got := m.composeOptionPickerQuery(); got != "n" {
+		t.Fatalf("expected picker query to capture typed key, got %q", got)
+	}
+	if m.mode != uiModeCompose {
+		t.Fatalf("expected compose mode to remain active, got %v", m.mode)
+	}
+}
+
+func TestReduceComposeInputKeyPickerAllowsTypingJAndK(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected compose option picker to open")
+	}
+	m.input.FocusChatInput()
+	m.chatInput.Focus()
+
+	handled, _ := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if !handled {
+		t.Fatalf("expected j key to be handled as picker input")
+	}
+	handled, _ = m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if !handled {
+		t.Fatalf("expected k key to be handled as picker input")
+	}
+	if got := m.composeOptionPickerQuery(); got != "jk" {
+		t.Fatalf("expected picker query to include typed j/k, got %q", got)
 	}
 }
 

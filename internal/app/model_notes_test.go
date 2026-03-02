@@ -410,3 +410,70 @@ func TestReduceNoteMovePickerModePasteSanitizesQuery(t *testing.T) {
 		t.Fatalf("expected sanitized picker query, got %q", got)
 	}
 }
+
+func TestReduceNoteMovePickerModeEscClearsThenCancels(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModePickNoteMoveSession
+	m.noteMoveReturnMode = uiModeNotes
+	if m.groupSelectPicker == nil {
+		t.Fatalf("expected session picker")
+	}
+	m.groupSelectPicker.SetOptions([]selectOption{
+		{id: "s1", label: "alpha"},
+	})
+	m.groupSelectPicker.AppendQuery("a")
+
+	handled, _ := m.reduceNoteMovePickerMode(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected esc to be handled")
+	}
+	if got := m.groupSelectPicker.Query(); got != "" {
+		t.Fatalf("expected first esc to clear query, got %q", got)
+	}
+	if m.mode != uiModePickNoteMoveSession {
+		t.Fatalf("expected mode to remain in picker after first esc, got %v", m.mode)
+	}
+
+	handled, _ = m.reduceNoteMovePickerMode(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected second esc to be handled")
+	}
+	if m.mode != uiModeNotes {
+		t.Fatalf("expected second esc to cancel picker and restore return mode, got %v", m.mode)
+	}
+	if m.status != "move canceled" {
+		t.Fatalf("expected move canceled status, got %q", m.status)
+	}
+}
+
+func TestReduceNoteMovePickerModeEnterRunsSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModePickNoteMoveTarget
+	m.noteMoveReturnMode = uiModeNotes
+	m.notes = []*types.Note{
+		{
+			ID:          "n1",
+			Scope:       types.NoteScopeWorktree,
+			WorkspaceID: "ws1",
+			WorktreeID:  "wt1",
+		},
+	}
+	m.noteMoveNoteID = "n1"
+	if m.groupSelectPicker == nil {
+		t.Fatalf("expected target picker")
+	}
+	m.groupSelectPicker.SetOptions([]selectOption{
+		{id: noteMoveTargetWorkspace, label: "Move to Workspace"},
+	})
+
+	handled, cmd := m.reduceNoteMovePickerMode(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected move command on enter")
+	}
+	if m.mode != uiModeNotes {
+		t.Fatalf("expected picker to exit to notes mode, got %v", m.mode)
+	}
+}

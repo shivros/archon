@@ -457,6 +457,59 @@ func TestGuidedWorkflowLauncherTemplatePickerSupportsTypeAhead(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowLauncherTemplatePickerSupportsPasteTypeAhead(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	updated, cmd := m.Update(tea.PasteMsg{Content: " tria\nge "})
+	m = asModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("expected no command while pasting launcher filter, got %T", cmd())
+	}
+	if !strings.Contains(m.contentRaw, "Bug Triage") {
+		t.Fatalf("expected pasted launcher filter to keep triage option visible, got %q", m.contentRaw)
+	}
+}
+
+func TestGuidedWorkflowSetupComposeOptionPickerEscClearsThenCloses(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected compose option picker to open in setup")
+	}
+	if !m.composeOptionPickerAppendQuery("gpt") {
+		t.Fatalf("expected compose option picker query to initialize")
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = asModel(t, updated)
+	if !m.composeOptionPickerOpen() {
+		t.Fatalf("expected first esc to clear query and keep picker open")
+	}
+	if got := m.composeOptionPickerQuery(); got != "" {
+		t.Fatalf("expected query to clear on first esc, got %q", got)
+	}
+
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = asModel(t, updated)
+	if m.composeOptionPickerOpen() {
+		t.Fatalf("expected second esc to close compose option picker")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "picker closed") {
+		t.Fatalf("expected picker-closed status, got %q", m.status)
+	}
+}
+
 func TestGuidedWorkflowLauncherPreservesANSIPickerRendering(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.resize(120, 40)

@@ -86,7 +86,8 @@ func (c pickerTypeAheadController) handleKey(msg tea.KeyMsg, picker queryPicker)
 		return false
 	}
 	if c.matchesCommand(msg, KeyCommandInputClear, "ctrl+c") {
-		return picker.ClearQuery()
+		picker.ClearQuery()
+		return true
 	}
 	key := msg.String()
 	if c.keyString != nil {
@@ -94,15 +95,20 @@ func (c pickerTypeAheadController) handleKey(msg tea.KeyMsg, picker queryPicker)
 	}
 	switch key {
 	case "backspace", "ctrl+h":
-		return picker.BackspaceQuery()
+		picker.BackspaceQuery()
+		return true
 	case "ctrl+u":
-		return picker.ClearQuery()
+		picker.ClearQuery()
+		return true
 	}
 	text := pickerTypeAheadText(msg)
 	if text == "" {
 		return false
 	}
-	return picker.AppendQuery(text)
+	// Always consume printable text while picker typeahead is active so
+	// text entry takes precedence over unrelated alphanumeric hotkeys.
+	picker.AppendQuery(text)
+	return true
 }
 
 func (c pickerTypeAheadController) matchesCommand(msg tea.KeyMsg, command, fallback string) bool {
@@ -148,10 +154,6 @@ func (m *Model) pickerTypeAheadController() pickerTypeAheadController {
 		normalizer = m.pickerPasteNormalizer
 	}
 	return newPickerTypeAheadController(keyFn, matchesFn, normalizer)
-}
-
-func (m *Model) applyPickerTypeAhead(msg tea.KeyMsg, picker queryPicker) bool {
-	return m.pickerTypeAheadController().handleKey(msg, picker)
 }
 
 func (m *Model) applyPickerPaste(msg tea.PasteMsg, picker queryPicker) bool {

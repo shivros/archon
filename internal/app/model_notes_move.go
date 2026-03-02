@@ -29,38 +29,30 @@ func (m *Model) reduceNoteMovePickerMode(msg tea.Msg) (bool, tea.Cmd) {
 	if !m.noteMovePickerModeActive() {
 		return false, nil
 	}
-	switch msg := msg.(type) {
-	case tea.PasteMsg:
-		if m.groupSelectPicker != nil && m.applyPickerPaste(msg, m.groupSelectPicker) {
-			return true, nil
-		}
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "esc":
+	arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+	handled, cmd := arbiter.Handle(msg, m.groupSelectPicker, pickerKeyboardHooks{
+		Cancel: func() tea.Cmd {
 			if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
 				m.setStatusMessage("filter cleared")
-				return true, nil
+				return nil
 			}
 			m.exitNoteMovePicker("move canceled")
-			return true, nil
-		case "enter":
-			return true, m.handleNoteMovePickerSelection()
-		case "j", "down":
+			return nil
+		},
+		Confirm: m.handleNoteMovePickerSelection,
+		MoveDown: func() {
 			if m.groupSelectPicker != nil {
 				m.groupSelectPicker.Move(1)
 			}
-			return true, nil
-		case "k", "up":
+		},
+		MoveUp: func() {
 			if m.groupSelectPicker != nil {
 				m.groupSelectPicker.Move(-1)
 			}
-			return true, nil
-		default:
-			if m.groupSelectPicker != nil {
-				m.applyPickerTypeAhead(msg, m.groupSelectPicker)
-			}
-			return true, nil
-		}
+		},
+	})
+	if handled {
+		return true, cmd
 	}
 	return true, nil
 }

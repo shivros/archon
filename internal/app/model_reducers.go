@@ -97,74 +97,66 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		)
 		return controller.Update(msg)
 	case uiModePickWorkspaceRename, uiModePickWorkspaceGroupEdit:
-		switch msg := msg.(type) {
-		case tea.PasteMsg:
-			if m.workspacePicker != nil && m.applyPickerPaste(msg, m.workspacePicker) {
-				return true, nil
-			}
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
+		arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+		handled, cmd := arbiter.Handle(msg, m.workspacePicker, pickerKeyboardHooks{
+			Cancel: func() tea.Cmd {
 				if m.workspacePicker != nil && m.workspacePicker.ClearQuery() {
 					m.setStatusMessage("filter cleared")
-					return true, nil
+					return nil
 				}
 				m.exitWorkspacePicker("selection canceled")
-				return true, nil
-			case "enter":
+				return nil
+			},
+			Confirm: func() tea.Cmd {
 				id := ""
 				if m.workspacePicker != nil {
 					id = m.workspacePicker.SelectedID()
 				}
 				if id == "" {
 					m.setValidationStatus("no workspace selected")
-					return true, nil
+					return nil
 				}
 				if m.mode == uiModePickWorkspaceRename {
 					m.enterEditWorkspace(id)
 				} else {
 					m.enterEditWorkspaceGroups(id)
 				}
-				return true, nil
-			case "j", "down":
+				return nil
+			},
+			MoveDown: func() {
 				if m.workspacePicker != nil {
 					m.workspacePicker.Move(1)
 				}
-				return true, nil
-			case "k", "up":
+			},
+			MoveUp: func() {
 				if m.workspacePicker != nil {
 					m.workspacePicker.Move(-1)
 				}
-				return true, nil
-			}
-			if m.workspacePicker != nil {
-				m.applyPickerTypeAhead(msg, m.workspacePicker)
-			}
+			},
+		})
+		if handled {
+			return true, cmd
 		}
 		return true, nil
 	case uiModePickWorkspaceGroupRename, uiModePickWorkspaceGroupDelete, uiModePickWorkspaceGroupAssign:
-		switch msg := msg.(type) {
-		case tea.PasteMsg:
-			if m.groupSelectPicker != nil && m.applyPickerPaste(msg, m.groupSelectPicker) {
-				return true, nil
-			}
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
+		arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+		handled, cmd := arbiter.Handle(msg, m.groupSelectPicker, pickerKeyboardHooks{
+			Cancel: func() tea.Cmd {
 				if m.groupSelectPicker != nil && m.groupSelectPicker.ClearQuery() {
 					m.setStatusMessage("filter cleared")
-					return true, nil
+					return nil
 				}
 				m.exitWorkspacePicker("selection canceled")
-				return true, nil
-			case "enter":
+				return nil
+			},
+			Confirm: func() tea.Cmd {
 				id := ""
 				if m.groupSelectPicker != nil {
 					id = m.groupSelectPicker.SelectedID()
 				}
 				if id == "" {
 					m.setValidationStatus("no group selected")
-					return true, nil
+					return nil
 				}
 				switch m.mode {
 				case uiModePickWorkspaceGroupRename:
@@ -174,21 +166,21 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 				case uiModePickWorkspaceGroupAssign:
 					m.enterAssignGroupWorkspaces(id)
 				}
-				return true, nil
-			case "j", "down":
+				return nil
+			},
+			MoveDown: func() {
 				if m.groupSelectPicker != nil {
 					m.groupSelectPicker.Move(1)
 				}
-				return true, nil
-			case "k", "up":
+			},
+			MoveUp: func() {
 				if m.groupSelectPicker != nil {
 					m.groupSelectPicker.Move(-1)
 				}
-				return true, nil
-			}
-			if m.groupSelectPicker != nil {
-				m.applyPickerTypeAhead(msg, m.groupSelectPicker)
-			}
+			},
+		})
+		if handled {
+			return true, cmd
 		}
 		return true, nil
 	case uiModeEditWorkspaceGroups:
@@ -227,48 +219,47 @@ func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 		)
 		return controller.Update(msg)
 	case uiModeAssignGroupWorkspaces:
-		switch msg := msg.(type) {
-		case tea.PasteMsg:
-			if m.workspaceMulti != nil && m.applyPickerPaste(msg, m.workspaceMulti) {
-				return true, nil
-			}
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
+		arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+		handled, cmd := arbiter.Handle(msg, m.workspaceMulti, pickerKeyboardHooks{
+			Cancel: func() tea.Cmd {
 				if m.workspaceMulti != nil && m.workspaceMulti.ClearQuery() {
 					m.setStatusMessage("filter cleared")
-					return true, nil
+					return nil
 				}
 				m.exitAssignGroupWorkspaces("assignment canceled")
-				return true, nil
-			case "enter":
+				return nil
+			},
+			Confirm: func() tea.Cmd {
 				if m.workspaceMulti == nil {
-					return true, nil
+					return nil
 				}
 				ids := m.workspaceMulti.SelectedIDs()
 				groupID := m.assignGroupID
 				if groupID == "" {
 					m.setValidationStatus("no group selected")
-					return true, nil
+					return nil
 				}
 				m.exitAssignGroupWorkspaces("saving assignments")
-				return true, assignGroupWorkspacesCmd(m.workspaceAPI, groupID, ids, m.workspaces)
-			case " ", "space":
-				if m.workspaceMulti != nil && m.workspaceMulti.Toggle() {
-					return true, nil
+				return assignGroupWorkspacesCmd(m.workspaceAPI, groupID, ids, m.workspaces)
+			},
+			Toggle: func() {
+				if m.workspaceMulti != nil {
+					m.workspaceMulti.Toggle()
 				}
-			case "j", "down":
-				if m.workspaceMulti != nil && m.workspaceMulti.Move(1) {
-					return true, nil
+			},
+			MoveDown: func() {
+				if m.workspaceMulti != nil {
+					m.workspaceMulti.Move(1)
 				}
-			case "k", "up":
-				if m.workspaceMulti != nil && m.workspaceMulti.Move(-1) {
-					return true, nil
+			},
+			MoveUp: func() {
+				if m.workspaceMulti != nil {
+					m.workspaceMulti.Move(-1)
 				}
-			}
-			if m.workspaceMulti != nil {
-				m.applyPickerTypeAhead(msg, m.workspaceMulti)
-			}
+			},
+		})
+		if handled {
+			return true, cmd
 		}
 		return true, nil
 	default:
@@ -314,35 +305,31 @@ func (m *Model) reducePickProviderMode(msg tea.Msg) (bool, tea.Cmd) {
 	case streamMsg:
 		m.applyStreamMsg(msg)
 		return true, nil
-	case tea.PasteMsg:
-		if m.providerPicker != nil && m.applyPickerPaste(msg, m.providerPicker) {
-			return true, nil
-		}
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "esc":
+	}
+	arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+	handled, cmd := arbiter.Handle(msg, m.providerPicker, pickerKeyboardHooks{
+		Cancel: func() tea.Cmd {
 			if m.providerPicker != nil && m.providerPicker.ClearQuery() {
 				m.setStatusMessage("filter cleared")
-				return true, nil
+				return nil
 			}
 			m.exitProviderPick("new session canceled")
-			return true, nil
-		case "enter":
-			return true, m.selectProvider()
-		case "j", "down":
+			return nil
+		},
+		Confirm: m.selectProvider,
+		MoveDown: func() {
 			if m.providerPicker != nil {
 				m.providerPicker.Move(1)
 			}
-			return true, nil
-		case "k", "up":
+		},
+		MoveUp: func() {
 			if m.providerPicker != nil {
 				m.providerPicker.Move(-1)
 			}
-			return true, nil
-		}
-		if m.providerPicker != nil && m.applyPickerTypeAhead(msg, m.providerPicker) {
-			return true, nil
-		}
+		},
+	})
+	if handled {
+		return true, cmd
 	}
 	return true, nil
 }
@@ -561,34 +548,29 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 		shouldPassthrough: m.shouldComposePassthrough,
 		preHandle: func(key string, msg tea.KeyMsg) (bool, tea.Cmd) {
 			if m.composeOptionPickerOpen() {
-				switch msg.String() {
-				case "esc":
-					if m.composeOptionPickerClearQuery() {
-						m.setStatusMessage("session option filter cleared")
-						return true, nil
-					}
-					m.closeComposeOptionPicker()
-					m.setStatusMessage("session options picker closed")
-					return true, nil
-				case "enter":
-					value := m.composeOptionPickerSelectedID()
-					cmd := m.applyComposeOptionSelection(value)
-					m.closeComposeOptionPicker()
-					return true, cmd
-				case "j", "down":
-					m.moveComposeOptionPicker(1)
-					return true, nil
-				case "k", "up":
-					m.moveComposeOptionPicker(-1)
-					return true, nil
-				}
 				composePicker := composeOptionQueryPicker{model: m}
-				if m.applyPickerTypeAhead(msg, composePicker) {
-					return true, nil
-				}
-				if pickerTypeAheadText(msg) != "" {
-					// Consume plain text input while picker is open, even if query does not change.
-					return true, nil
+				arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+				handled, cmd := arbiter.Handle(msg, composePicker, pickerKeyboardHooks{
+					Cancel: func() tea.Cmd {
+						if m.composeOptionPickerClearQuery() {
+							m.setStatusMessage("session option filter cleared")
+							return nil
+						}
+						m.closeComposeOptionPicker()
+						m.setStatusMessage("session options picker closed")
+						return nil
+					},
+					Confirm: func() tea.Cmd {
+						value := m.composeOptionPickerSelectedID()
+						cmd := m.applyComposeOptionSelection(value)
+						m.closeComposeOptionPicker()
+						return cmd
+					},
+					MoveDown: func() { m.moveComposeOptionPicker(1) },
+					MoveUp:   func() { m.moveComposeOptionPicker(-1) },
+				})
+				if handled {
+					return true, cmd
 				}
 			}
 			if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {

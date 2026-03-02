@@ -185,43 +185,32 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	if m.mode != uiModeGuidedWorkflow {
 		return false, nil
 	}
-	if pasteMsg, ok := msg.(tea.PasteMsg); ok && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.composeOptionPickerOpen() {
+	if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.composeOptionPickerOpen() {
 		composePicker := composeOptionQueryPicker{model: m}
-		if m.applyPickerPaste(pasteMsg, composePicker) {
-			return true, nil
-		}
-	}
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.composeOptionPickerOpen() {
-		key := m.keyString(keyMsg)
-		switch key {
-		case "esc":
-			if m.composeOptionPickerClearQuery() {
-				m.setStatusMessage("session option filter cleared")
-				return true, nil
-			}
-			m.closeComposeOptionPicker()
-			m.setStatusMessage("session options picker closed")
-			return true, nil
-		case "enter":
-			value := m.composeOptionPickerSelectedID()
-			cmd := m.applyComposeOptionSelection(value)
-			m.syncGuidedWorkflowRuntimeOptionsFromCompose()
-			m.closeComposeOptionPicker()
-			m.renderGuidedWorkflowContent()
+		arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+		handled, cmd := arbiter.Handle(msg, composePicker, pickerKeyboardHooks{
+			Cancel: func() tea.Cmd {
+				if m.composeOptionPickerClearQuery() {
+					m.setStatusMessage("session option filter cleared")
+					return nil
+				}
+				m.closeComposeOptionPicker()
+				m.setStatusMessage("session options picker closed")
+				return nil
+			},
+			Confirm: func() tea.Cmd {
+				value := m.composeOptionPickerSelectedID()
+				cmd := m.applyComposeOptionSelection(value)
+				m.syncGuidedWorkflowRuntimeOptionsFromCompose()
+				m.closeComposeOptionPicker()
+				m.renderGuidedWorkflowContent()
+				return cmd
+			},
+			MoveDown: func() { m.moveComposeOptionPicker(1) },
+			MoveUp:   func() { m.moveComposeOptionPicker(-1) },
+		})
+		if handled {
 			return true, cmd
-		case "j", "down":
-			m.moveComposeOptionPicker(1)
-			return true, nil
-		case "k", "up":
-			m.moveComposeOptionPicker(-1)
-			return true, nil
-		}
-		composePicker := composeOptionQueryPicker{model: m}
-		if m.applyPickerTypeAhead(keyMsg, composePicker) {
-			return true, nil
-		}
-		if pickerTypeAheadText(keyMsg) != "" {
-			return true, nil
 		}
 	}
 	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
@@ -230,12 +219,12 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 	if handled, cmd := m.handleGuidedWorkflowResumeInput(msg); handled {
 		return true, cmd
 	}
-	if pasteMsg, ok := msg.(tea.PasteMsg); ok {
-		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) {
-			if m.applyPickerPaste(pasteMsg, m.guidedWorkflow) {
-				m.renderGuidedWorkflowContent()
-				return true, nil
-			}
+	if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) {
+		arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+		if handled, cmd := arbiter.Handle(msg, m.guidedWorkflow, pickerKeyboardHooks{
+			OnTypeAhead: m.renderGuidedWorkflowContent,
+		}); handled {
+			return true, cmd
 		}
 	}
 	keyMsg, ok := msg.(tea.KeyMsg)
@@ -247,19 +236,6 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				m.setStatusMessage("loading workflow templates")
 				m.renderGuidedWorkflowContent()
 				return true, fetchWorkflowTemplatesCmd(m.guidedWorkflowTemplateAPI)
-			}
-		}
-		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) {
-			if m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
-				m.renderGuidedWorkflowContent()
-				return true, nil
-			}
-			switch key {
-			case "backspace", "ctrl+h", "ctrl+u":
-				return true, nil
-			}
-			if pickerTypeAheadText(keyMsg) != "" {
-				return true, nil
 			}
 		}
 		if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
@@ -419,10 +395,6 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 			if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLive || m.guidedWorkflow.Stage() == guidedWorkflowStageSummary) {
 				return true, m.openGuidedWorkflowSelectedSession()
 			}
-		}
-		if m.guidedWorkflow != nil && (m.guidedWorkflow.Stage() == guidedWorkflowStageLauncher || m.guidedWorkflow.Stage() == guidedWorkflowStageProvider || m.guidedWorkflow.Stage() == guidedWorkflowStagePolicy) && m.applyPickerTypeAhead(keyMsg, m.guidedWorkflow) {
-			m.renderGuidedWorkflowContent()
-			return true, nil
 		}
 	}
 	return false, nil

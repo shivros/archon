@@ -246,6 +246,37 @@ func TestAddWorkspaceControllerGroupPickerDownKeyMovesSelection(t *testing.T) {
 	}
 }
 
+func TestAddWorkspaceControllerGroupPickerAllowsTypingJAndK(t *testing.T) {
+	controller := NewAddWorkspaceController(80)
+	host := &stubAddWorkspaceHost{
+		groups: []*types.WorkspaceGroup{
+			{ID: "g1", Name: "Alpha"},
+			{ID: "g2", Name: "Beta"},
+		},
+	}
+	controller.Enter()
+	controller.input.SetValue("/tmp/repo")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host)
+	controller.input.SetValue("")
+	controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, host) // -> step 4
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}, host)
+	if !handled {
+		t.Fatalf("expected j to be handled in group picker")
+	}
+	handled, _ = controller.Update(tea.KeyPressMsg{Code: 'k', Text: "k"}, host)
+	if !handled {
+		t.Fatalf("expected k to be handled in group picker")
+	}
+	if got := controller.groupPicker.Query(); got != "jk" {
+		t.Fatalf("expected group picker query to include typed j/k, got %q", got)
+	}
+}
+
 func TestAddWorkspaceControllerClearCommandClearsInput(t *testing.T) {
 	controller := NewAddWorkspaceController(80)
 	host := &stubAddWorkspaceHost{}
@@ -355,6 +386,59 @@ func TestAddWorktreeControllerExistingTypeAheadSelectsFilteredEntry(t *testing.T
 	}
 	if controller.path != "/tmp/repo/fix-api" {
 		t.Fatalf("expected filtered worktree to be selected, got %q", controller.path)
+	}
+}
+
+func TestAddWorktreeControllerExistingTypeAheadAllowsTypingJAndK(t *testing.T) {
+	controller := NewAddWorktreeController(80)
+	host := &stubAddWorktreeHost{}
+	controller.Enter("ws1", "/tmp/repo")
+	controller.mode = worktreeModeExisting
+	controller.step = 0
+	controller.SetAvailable([]*types.GitWorktree{
+		{Path: "/tmp/repo/feature-ui", Branch: "feature-ui"},
+		{Path: "/tmp/repo/fix-api", Branch: "fix-api"},
+		{Path: "/tmp/repo/chore", Branch: "chore"},
+	}, nil, "/tmp/repo")
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}, host)
+	if !handled {
+		t.Fatalf("expected j to be handled while filtering existing worktrees")
+	}
+	handled, _ = controller.Update(tea.KeyPressMsg{Code: 'k', Text: "k"}, host)
+	if !handled {
+		t.Fatalf("expected k to be handled while filtering existing worktrees")
+	}
+	if got := controller.query; got != "jk" {
+		t.Fatalf("expected filter query to include typed j/k, got %q", got)
+	}
+}
+
+func TestAddWorktreeControllerExistingNavigationKeysAreHandled(t *testing.T) {
+	controller := NewAddWorktreeController(80)
+	host := &stubAddWorktreeHost{}
+	controller.Enter("ws1", "/tmp/repo")
+	controller.mode = worktreeModeExisting
+	controller.step = 0
+	controller.SetListHeight(3)
+	controller.SetAvailable([]*types.GitWorktree{
+		{Path: "/tmp/repo/a", Branch: "a"},
+		{Path: "/tmp/repo/b", Branch: "b"},
+		{Path: "/tmp/repo/c", Branch: "c"},
+		{Path: "/tmp/repo/d", Branch: "d"},
+		{Path: "/tmp/repo/e", Branch: "e"},
+	}, nil, "/tmp/repo")
+
+	for _, msg := range []tea.KeyMsg{
+		tea.KeyPressMsg{Code: tea.KeyPgDown},
+		tea.KeyPressMsg{Code: tea.KeyPgUp},
+		tea.KeyPressMsg{Code: tea.KeyHome},
+		tea.KeyPressMsg{Code: tea.KeyEnd},
+	} {
+		handled, _ := controller.Update(msg, host)
+		if !handled {
+			t.Fatalf("expected %q to be handled in existing-worktree mode", msg.String())
+		}
 	}
 }
 

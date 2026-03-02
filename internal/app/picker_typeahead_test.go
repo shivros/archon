@@ -89,6 +89,33 @@ func (n staticPickerPasteNormalizer) NormalizePickerPaste(string) string {
 	return n.value
 }
 
+type noopQueryPicker struct{}
+
+func (noopQueryPicker) Query() string           { return "" }
+func (noopQueryPicker) AppendQuery(string) bool { return false }
+func (noopQueryPicker) BackspaceQuery() bool    { return false }
+func (noopQueryPicker) ClearQuery() bool        { return false }
+
+func TestPickerTypeAheadControllerConsumesPrintableTextWhenAppendIsNoOp(t *testing.T) {
+	controller := newPickerTypeAheadController(nil, nil, defaultPickerPasteNormalizer{})
+	if !controller.Handle(tea.KeyPressMsg{Code: 'h', Text: "h"}, noopQueryPicker{}) {
+		t.Fatalf("expected printable text to be consumed in picker context")
+	}
+}
+
+func TestPickerTypeAheadControllerConsumesEditKeysWhenNoQueryChange(t *testing.T) {
+	controller := newPickerTypeAheadController(nil, nil, defaultPickerPasteNormalizer{})
+	for _, msg := range []tea.KeyMsg{
+		tea.KeyPressMsg{Code: tea.KeyBackspace},
+		tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl},
+		tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl},
+	} {
+		if !controller.Handle(msg, noopQueryPicker{}) {
+			t.Fatalf("expected %q to be consumed in picker context", msg.String())
+		}
+	}
+}
+
 func TestWithPickerPasteNormalizerOverridesDefault(t *testing.T) {
 	m := NewModel(nil, WithPickerPasteNormalizer(staticPickerPasteNormalizer{value: "cod"}))
 	picker := NewSelectPicker(40, 5)
