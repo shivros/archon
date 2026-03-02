@@ -314,6 +314,10 @@ type Model struct {
 	selectionOperationPlanner           SelectionOperationPlanner
 	selectionConfirmationPresenter      SelectionConfirmationPresenter
 	selectionOperationExecutor          SelectionOperationExecutor
+	settingsMenu                        *SettingsMenuController
+	settingsMenuPresenter               SettingsMenuPresenter
+	settingsMenuEscPolicy               SettingsMenuEscPolicy
+	settingsMenuHotkeyCatalog           SettingsMenuHotkeyCatalog
 	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
 	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
 }
@@ -550,6 +554,10 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		selectionOperationPlanner:           NewDefaultSelectionOperationPlanner(),
 		selectionConfirmationPresenter:      NewDefaultSelectionConfirmationPresenter(),
 		selectionOperationExecutor:          NewDefaultSelectionOperationExecutor(),
+		settingsMenu:                        NewSettingsMenuController(),
+		settingsMenuPresenter:               defaultSettingsMenuPresenter{},
+		settingsMenuEscPolicy:               defaultSettingsMenuEscPolicy{},
+		settingsMenuHotkeyCatalog:           defaultSettingsMenuHotkeyCatalog{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -630,6 +638,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if handled, cmd := m.reduceMutationMessages(msg); handled {
+		return m, cmd
+	}
+	if handled, cmd := m.reduceSettingsMenu(msg); handled {
 		return m, cmd
 	}
 

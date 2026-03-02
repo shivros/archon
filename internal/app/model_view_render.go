@@ -133,7 +133,7 @@ func (m *Model) overlayTransientViews(body string) string {
 		composer = NewTextLayerComposer()
 		m.layerComposer = composer
 	}
-	overlays := make([]LayerOverlay, 0, 6)
+	overlays := make([]LayerOverlay, 0, 7)
 
 	menuBar := ""
 	if m.menu != nil {
@@ -169,6 +169,17 @@ func (m *Model) overlayTransientViews(body string) string {
 	}
 	if popup, row := m.composeOptionPopupView(); popup != "" {
 		overlays = append(overlays, LayerOverlay{Row: row, Block: popup})
+	}
+	if m.settingsMenu != nil && m.settingsMenu.IsOpen() {
+		helpMappings := m.settingsMenuHotkeyCatalogOrDefault().Mappings(m.settingsMenuHotkeySource())
+		presenter := m.settingsMenuPresenter
+		if presenter == nil {
+			presenter = defaultSettingsMenuPresenter{}
+		}
+		settingsBlock, row := presenter.View(m.settingsMenu, m.width, bodyHeight, helpMappings)
+		if settingsBlock != "" {
+			overlays = append(overlays, LayerOverlay{Row: row, Block: settingsBlock})
+		}
 	}
 	if line, row, ok := m.toastOverlay(bodyHeight); ok {
 		overlays = append(overlays, LayerOverlay{Row: row, Block: line})

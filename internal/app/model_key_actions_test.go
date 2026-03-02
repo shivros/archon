@@ -623,6 +623,32 @@ func TestMenuKeyUsesCtrlMCanonicalBinding(t *testing.T) {
 	}
 }
 
+func TestEscOpensSettingsMenuInNormalMode(t *testing.T) {
+	m := NewModel(nil)
+	handled, cmd := m.reduceMenuAndAppKeys(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected esc to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command on esc")
+	}
+	if m.settingsMenu == nil || !m.settingsMenu.IsOpen() {
+		t.Fatalf("expected settings menu to open")
+	}
+}
+
+func TestEscDoesNotOpenSettingsMenuInComposeMode(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	handled, _ := m.reduceMenuAndAppKeys(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if !handled {
+		t.Fatalf("expected esc to be handled")
+	}
+	if m.settingsMenu != nil && m.settingsMenu.IsOpen() {
+		t.Fatalf("did not expect settings menu to open in compose mode")
+	}
+}
+
 func TestNotesNewOverrideWorksFromSidebarSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}

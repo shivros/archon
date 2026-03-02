@@ -6,6 +6,32 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func (m *Model) reduceSettingsMenu(msg tea.Msg) (bool, tea.Cmd) {
+	if m.settingsMenu == nil || !m.settingsMenu.IsOpen() {
+		return false, nil
+	}
+	switch typed := msg.(type) {
+	case tea.KeyMsg:
+		handled, action := m.settingsMenu.HandleKey(typed)
+		if !handled {
+			return true, nil
+		}
+		switch action {
+		case SettingsMenuActionQuit:
+			if m.debugStream != nil {
+				m.debugStream.Close()
+			}
+			return true, tea.Quit
+		default:
+			return true, nil
+		}
+	case tea.MouseMsg:
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
 func (m *Model) reduceWorkspaceEditModes(msg tea.Msg) (bool, tea.Cmd) {
 	switch m.mode {
 	case uiModeEditWorkspace:

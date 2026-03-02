@@ -121,6 +121,7 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	}
 	switch m.keyString(msg) {
 	case "esc":
+		m.openSettingsMenu()
 		return true, nil
 	case "q":
 		if m.debugStream != nil {
@@ -130,6 +131,22 @@ func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 	default:
 		return false, nil
 	}
+}
+
+func (m *Model) openSettingsMenu() {
+	if m == nil || !m.settingsMenuEscPolicyOrDefault().CanOpen(m.settingsMenuOpenContext()) {
+		return
+	}
+	if m.settingsMenu == nil {
+		m.settingsMenu = NewSettingsMenuController()
+	}
+	if m.menu != nil {
+		m.menu.CloseAll()
+	}
+	if m.contextMenu != nil {
+		m.contextMenu.Close()
+	}
+	m.settingsMenu.Open()
 }
 
 func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
