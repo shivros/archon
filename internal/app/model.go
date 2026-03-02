@@ -327,6 +327,7 @@ type Model struct {
 	settingsMenuHotkeyCatalog           SettingsMenuHotkeyCatalog
 	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
 	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
+	transcriptBoundary                  *transcriptBoundaryObserver
 }
 
 type newSessionTarget struct {
@@ -569,6 +570,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		settingsMenuPresenter:               defaultSettingsMenuPresenter{},
 		settingsMenuEscPolicy:               defaultSettingsMenuEscPolicy{},
 		settingsMenuHotkeyCatalog:           defaultSettingsMenuHotkeyCatalog{},
+		transcriptBoundary:                  newTranscriptBoundaryObserver(nil),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -903,6 +905,9 @@ func (m *Model) applyCoreConfig(coreCfg config.CoreConfig) {
 	if m == nil || m.guidedWorkflow == nil {
 		return
 	}
+	if m.transcriptBoundary != nil {
+		m.transcriptBoundary.setDebug(coreCfg.StreamDebugEnabled())
+	}
 	preset := coreCfg.GuidedWorkflowsDefaultResolutionBoundary()
 	m.guidedWorkflow.SetDefaultSensitivity(guidedPolicySensitivityFromPreset(preset))
 	m.guidedWorkflow.SetDefaultProvider(coreCfg.GuidedWorkflowsDefaultProvider())
@@ -1077,7 +1082,7 @@ func (m *Model) onSelectionChangedWithDelayAndSource(delay time.Duration, source
 func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChanged bool, draftChanged bool) {
 	if item == nil {
 		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
-		m.resetStream()
+		m.resetStreamWithReason(transcriptResetReasonSelectionCleared)
 		m.setContentText("No sessions.")
 		return true, false, false
 	}
@@ -1226,7 +1231,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 
 	id := item.session.ID
 	m.cancelRequestScope(requestScopeSessionStart)
-	m.resetStream()
+	m.resetStreamWithReason(transcriptResetReasonSelectionLoad)
 	m.pendingApproval = nil
 	m.pendingSessionKey = token
 	m.setStatusMessage("loading " + id)
@@ -1880,7 +1885,7 @@ func (m *Model) applySidebarItems() {
 
 func (m *Model) applySidebarItemsWithReason(reason sidebarApplyReason) {
 	if m.sidebar == nil {
-		m.resetStream()
+		m.resetStreamWithReason(transcriptResetReasonSidebarUnavailable)
 		if m.mode != uiModeGuidedWorkflow {
 			m.setContentText("No sessions.")
 		}
@@ -1913,14 +1918,14 @@ func (m *Model) applySidebarItemsWithReason(reason sidebarApplyReason) {
 	)
 	m.sidebarProjectionApplied = m.sidebarProjectionRevision
 	if item == nil {
-		m.resetStream()
+		m.resetStreamWithReason(transcriptResetReasonSidebarNoSelection)
 		if m.mode != uiModeGuidedWorkflow {
 			m.setContentText("No sessions.")
 		}
 		return
 	}
 	if !item.isSession() {
-		m.resetStream()
+		m.resetStreamWithReason(transcriptResetReasonSidebarNonSessionSelected)
 		if item.kind == sidebarRecentsAll || item.kind == sidebarRecentsReady || item.kind == sidebarRecentsRunning {
 			if m.mode != uiModeRecents {
 				m.enterRecentsView(item)
@@ -2431,6 +2436,14 @@ func (m *Model) maybeRefreshRelativeTimestampLabels(now time.Time) {
 }
 
 func (m *Model) resetStream() {
+	m.resetStreamWithReason(transcriptResetReasonUnspecified)
+}
+
+func (m *Model) resetStreamWithReason(reason string) {
+	sessionID := m.activeStreamTargetID()
+	provider := m.providerForSessionID(sessionID)
+	m.clearReconnectAttemptsForSession(sessionID)
+	m.recordTranscriptBoundaryMetric(newTranscriptResetMetric(reason, transcriptSourceModelResetStream, sessionID, provider))
 	m.cancelRequestScope(requestScopeSessionLoad)
 	m.cancelRequestScope(requestScopeSessionStart)
 	m.cancelRequestScope(requestScopeDebugStream)
@@ -2464,6 +2477,7 @@ func (m *Model) consumeStreamTick(now time.Time) {
 	lines, changed, closed := m.stream.ConsumeTick()
 	if closed {
 		m.setBackgroundStatus("stream closed")
+		m.recordTranscriptBoundaryMetric(newStreamCloseMetric(transcriptReasonStreamCloseTailChannel, transcriptSourceConsumeStreamTick, m.activeStreamTargetID(), "", "tail"))
 	}
 	if changed {
 		if m.transcriptViewportVisible() {
@@ -2484,6 +2498,7 @@ func (m *Model) consumeCodexTick(now time.Time) {
 	}
 	if closed {
 		m.setBackgroundStatus("events closed")
+		m.recordTranscriptBoundaryMetric(newStreamCloseMetric(transcriptReasonStreamCloseEventsChannel, transcriptSourceConsumeCodexTick, sessionID, "codex", "events"))
 		if sessionID != "" {
 			m.stopRequestActivityFor(sessionID)
 		}
@@ -2554,6 +2569,7 @@ func (m *Model) consumeItemTick(now time.Time) {
 	sessionID := m.activeStreamTargetID()
 	if closed {
 		m.setBackgroundStatus("items stream closed")
+		m.recordTranscriptBoundaryMetric(newStreamCloseMetric(transcriptReasonStreamCloseItemsChannel, transcriptSourceConsumeItemTick, sessionID, m.providerForSessionID(sessionID), "items"))
 		// Item streams can close transiently (for example during selection churn)
 		// before the assistant reply arrives. Keep request activity running so the
 		// stale-history fallback continues polling and can surface delayed items.
@@ -4560,7 +4576,7 @@ func (m *Model) applyProviderSelection(provider string) tea.Cmd {
 	}
 	m.newSession.provider = provider
 	m.newSession.runtimeOptions = m.composeDefaultsForProvider(provider)
-	m.resetStream()
+	m.resetStreamWithReason(transcriptResetReasonProviderSelectionChanged)
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
 	if m.compose != nil {

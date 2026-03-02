@@ -692,7 +692,7 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 			m.setValidationStatus("provider is required")
 			return nil
 		}
-		m.resetStream()
+		m.resetStreamWithReason(transcriptResetReasonNewSessionStartRequested)
 		m.setContentText("Starting new session...")
 		m.enableFollow(false)
 		m.setStatusMessage("starting session")
@@ -730,6 +730,12 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 		ItemStreamConnected:  m.itemStream != nil && m.itemStream.HasStream(),
 		EventStreamConnected: m.codexStream != nil && m.codexStream.HasStream(),
 	})
+	if shouldStreamItems(provider) && (m.itemStream == nil || !m.itemStream.HasStream()) {
+		m.recordReconnectAttempt(sessionID, provider, "items", transcriptSourceSubmitComposeInput)
+	}
+	if provider == "codex" && (m.codexStream == nil || !m.codexStream.HasStream()) {
+		m.recordReconnectAttempt(sessionID, provider, "events", transcriptSourceSubmitComposeInput)
+	}
 	if shouldStreamItems(provider) {
 		cmds := []tea.Cmd{send}
 		if len(reconnectCmds) > 0 {

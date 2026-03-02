@@ -111,6 +111,7 @@ func (c *Client) TailStream(ctx context.Context, id, stream string) (<-chan type
 
 		start := time.Now()
 		count := 0
+		reason := "eof"
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var dataLines []string
@@ -140,11 +141,14 @@ func (c *Client) TailStream(ctx context.Context, id, stream string) (<-chan type
 				dataLines = append(dataLines, strings.TrimSpace(line[len("data:"):]))
 			}
 		}
-		if err := scanner.Err(); err != nil && streamDebugEnabled() {
-			streamLogf("stream tail scan error id=%s stream=%s err=%v", id, stream, err)
+		if err := scanner.Err(); err != nil {
+			reason = "scan_error"
+			if streamDebugEnabled() {
+				streamLogf("stream tail scan error id=%s stream=%s err=%v", id, stream, err)
+			}
 		}
 		if streamDebugEnabled() {
-			streamLogf("stream tail close id=%s stream=%s count=%d dur=%s", id, stream, count, time.Since(start))
+			streamLogf("stream tail close id=%s stream=%s reason=%s count=%d dur=%s", id, stream, reason, count, time.Since(start))
 		}
 	}()
 
@@ -191,6 +195,7 @@ func (c *Client) EventStream(ctx context.Context, id string) (<-chan types.Codex
 
 		start := time.Now()
 		count := 0
+		reason := "eof"
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var dataLines []string
@@ -220,11 +225,14 @@ func (c *Client) EventStream(ctx context.Context, id string) (<-chan types.Codex
 				dataLines = append(dataLines, strings.TrimSpace(line[len("data:"):]))
 			}
 		}
-		if err := scanner.Err(); err != nil && streamDebugEnabled() {
-			streamLogf("stream events scan error id=%s err=%v", id, err)
+		if err := scanner.Err(); err != nil {
+			reason = "scan_error"
+			if streamDebugEnabled() {
+				streamLogf("stream events scan error id=%s err=%v", id, err)
+			}
 		}
 		if streamDebugEnabled() {
-			streamLogf("stream events close id=%s count=%d dur=%s", id, count, time.Since(start))
+			streamLogf("stream events close id=%s reason=%s count=%d dur=%s", id, reason, count, time.Since(start))
 		}
 	}()
 
@@ -272,6 +280,7 @@ func (c *Client) ItemsStream(ctx context.Context, id string) (<-chan map[string]
 		start := time.Now()
 		count := 0
 		firstType := ""
+		reason := "eof"
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var dataLines []string
@@ -306,11 +315,14 @@ func (c *Client) ItemsStream(ctx context.Context, id string) (<-chan map[string]
 				dataLines = append(dataLines, strings.TrimSpace(line[len("data:"):]))
 			}
 		}
-		if err := scanner.Err(); err != nil && streamDebugEnabled() {
-			streamLogf("stream items scan error id=%s err=%v", id, err)
+		if err := scanner.Err(); err != nil {
+			reason = "scan_error"
+			if streamDebugEnabled() {
+				streamLogf("stream items scan error id=%s err=%v", id, err)
+			}
 		}
 		if streamDebugEnabled() {
-			streamLogf("stream items close id=%s count=%d first_type=%s dur=%s", id, count, firstType, time.Since(start))
+			streamLogf("stream items close id=%s reason=%s count=%d first_type=%s dur=%s", id, reason, count, firstType, time.Since(start))
 		}
 	}()
 

@@ -25,11 +25,47 @@ type debugStreamService interface {
 	SubscribeDebug(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error)
 }
 
+type tailStreamService interface {
+	Subscribe(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
+}
+
+type eventsStreamService interface {
+	SubscribeEvents(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error)
+}
+
+type itemsStreamService interface {
+	readSessionItems(id string, lines int) ([]map[string]any, bool, error)
+	SubscribeItems(ctx context.Context, id string) (<-chan map[string]any, func(), error)
+}
+
 func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 	stream := r.URL.Query().Get("stream")
-	service := a.newSessionService()
+	a.streamTailWithService(w, r, id, stream, a.newSessionService())
+}
+
+func (a *API) streamTailWithService(w http.ResponseWriter, r *http.Request, id, stream string, service tailStreamService) {
+	if service == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
+	reqID := logging.NewRequestID()
+	if a.Logger != nil && a.Logger.Enabled(logging.Debug) {
+		a.Logger.Debug("tail_stream_open",
+			logging.F("req_id", reqID),
+			logging.F("session_id", id),
+			logging.F("stream", stream),
+		)
+	}
 	ch, cancel, err := service.Subscribe(r.Context(), id, stream)
 	if err != nil {
+		if a.Logger != nil {
+			a.Logger.Warn("tail_stream_subscribe_error",
+				logging.F("req_id", reqID),
+				logging.F("session_id", id),
+				logging.F("stream", stream),
+				logging.F("error", err),
+			)
+		}
 		writeServiceError(w, err)
 		return
 	}
@@ -49,16 +85,32 @@ func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
 	defer heartbeat.Stop()
+	reason := "unknown"
+	count := 0
+	defer func() {
+		if a.Logger != nil && a.Logger.Enabled(logging.Debug) {
+			a.Logger.Debug("tail_stream_close",
+				logging.F("req_id", reqID),
+				logging.F("session_id", id),
+				logging.F("stream", stream),
+				logging.F("count", count),
+				logging.F("reason", reason),
+			)
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
+			reason = "ctx_done"
 			return
 		case <-heartbeat.C:
 			if !writeSSEHeartbeat(w, flusher) {
+				reason = "heartbeat_write_error"
 				return
 			}
 		case event, ok := <-ch:
 			if !ok {
+				reason = "channel_closed"
 				return
 			}
 			data, err := json.Marshal(event)
@@ -69,12 +121,20 @@ func (a *API) streamTail(w http.ResponseWriter, r *http.Request, id string) {
 			_, _ = w.Write(data)
 			_, _ = w.Write([]byte("\n\n"))
 			flusher.Flush()
+			count++
 		}
 	}
 }
 
 func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
-	service := a.newSessionService()
+	a.streamEventsWithService(w, r, id, a.newSessionService())
+}
+
+func (a *API) streamEventsWithService(w http.ResponseWriter, r *http.Request, id string, service eventsStreamService) {
+	if service == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
 	reqID := logging.NewRequestID()
 	if a.Logger != nil && a.Logger.Enabled(logging.Debug) {
 		a.Logger.Debug("events_stream_open",
@@ -164,7 +224,14 @@ func (a *API) streamEvents(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
-	service := a.newSessionService()
+	a.streamItemsWithService(w, r, id, a.newSessionService())
+}
+
+func (a *API) streamItemsWithService(w http.ResponseWriter, r *http.Request, id string, service itemsStreamService) {
+	if service == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
+		return
+	}
 	reqID := logging.NewRequestID()
 	lines := parseLines(r.URL.Query().Get("lines"))
 	snapshot, _, snapErr := service.readSessionItems(id, lines)
@@ -214,14 +281,6 @@ func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		flusher.Flush()
 	}
-	if err != nil {
-		return
-	}
-	defer cancel()
-
-	ctx := r.Context()
-	heartbeat := time.NewTicker(sseHeartbeatInterval)
-	defer heartbeat.Stop()
 	var count int
 	firstType := ""
 	reason := "unknown"
@@ -236,6 +295,15 @@ func (a *API) streamItems(w http.ResponseWriter, r *http.Request, id string) {
 			)
 		}
 	}()
+	if err != nil {
+		reason = "subscribe_error_snapshot_only"
+		return
+	}
+	defer cancel()
+
+	ctx := r.Context()
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():

@@ -144,10 +144,12 @@ func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {
 	cmds := []tea.Cmd{}
 	if shouldStreamItems(provider) {
 		if m.itemStream != nil && !m.itemStream.HasStream() {
+			m.recordReconnectAttempt(sessionID, provider, "items", transcriptSourceAutoRefreshHistory)
 			cmds = append(cmds, openItemsCmd(m.sessionAPI, sessionID))
 		}
 	} else if provider == "codex" {
 		if m.codexStream != nil && !m.codexStream.HasStream() {
+			m.recordReconnectAttempt(sessionID, provider, "events", transcriptSourceAutoRefreshHistory)
 			cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
 		}
 	}
