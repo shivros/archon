@@ -140,6 +140,8 @@ func (defaultDebugPanelBlocksRenderer) Render(blocks []ChatBlock, width int, met
 		width,
 		maxViewportLines,
 		-1,
+		-1,
+		-1,
 		defaultChatBlockRenderer{},
 		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: now, MetaByBlockID: metaByID},
 	)

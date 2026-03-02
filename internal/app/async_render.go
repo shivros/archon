@@ -8,6 +8,8 @@ type viewportRenderSignature struct {
 	width          int
 	contentVersion int
 	selectionIndex int
+	highlightStart int
+	highlightEnd   int
 	timestampMode  ChatTimestampMode
 	relativeBucket int64
 }
@@ -16,6 +18,8 @@ func (s viewportRenderSignature) Equal(other viewportRenderSignature) bool {
 	return s.width == other.width &&
 		s.contentVersion == other.contentVersion &&
 		s.selectionIndex == other.selectionIndex &&
+		s.highlightStart == other.highlightStart &&
+		s.highlightEnd == other.highlightEnd &&
 		s.timestampMode == other.timestampMode &&
 		s.relativeBucket == other.relativeBucket
 }

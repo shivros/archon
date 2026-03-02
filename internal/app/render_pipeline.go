@@ -14,16 +14,22 @@ const defaultBlockRenderCacheSize = 4096
 const defaultRenderResultCacheSize = 128
 
 type RenderRequest struct {
-	Width              int
-	MaxLines           int
-	RawContent         string
-	EscapeMarkdown     bool
-	RenderRaw          bool
-	Blocks             []ChatBlock
-	BlockMetaByID      map[string]ChatBlockMetaPresentation
-	SelectedBlockIndex int
-	TimestampMode      ChatTimestampMode
-	TimestampNow       time.Time
+	Width          int
+	MaxLines       int
+	RawContent     string
+	EscapeMarkdown bool
+	RenderRaw      bool
+	Blocks         []ChatBlock
+	BlockMetaByID  map[string]ChatBlockMetaPresentation
+	Selection      RenderSelection
+	TimestampMode  ChatTimestampMode
+	TimestampNow   time.Time
+}
+
+type RenderSelection struct {
+	PrimaryIndex int
+	RangeStart   int
+	RangeEnd     int
 }
 
 type RenderResult struct {
@@ -79,11 +85,28 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 			Now:           now,
 			MetaByBlockID: req.BlockMetaByID,
 		}
-		key := hashRenderRequestBlocks(req.Blocks, req.BlockMetaByID, width, req.MaxLines, req.SelectedBlockIndex, mode, chatTimestampRenderBucket(mode, now))
+		key := hashRenderRequestBlocks(
+			req.Blocks,
+			req.BlockMetaByID,
+			width,
+			req.MaxLines,
+			req.Selection,
+			mode,
+			chatTimestampRenderBucket(mode, now),
+		)
 		if cached, ok := p.resultCache.Get(key); ok {
 			return cached
 		}
-		text, spans := renderChatBlocksWithRendererAndContext(req.Blocks, width, req.MaxLines, req.SelectedBlockIndex, p.blockRenderer, ctx)
+		text, spans := renderChatBlocksWithRendererAndContext(
+			req.Blocks,
+			width,
+			req.MaxLines,
+			req.Selection.PrimaryIndex,
+			req.Selection.RangeStart,
+			req.Selection.RangeEnd,
+			p.blockRenderer,
+			ctx,
+		)
 		result := newRenderResult(text, spans)
 		p.resultCache.Set(key, result)
 		return result
@@ -162,11 +185,13 @@ func (c *renderResultCache) Set(key uint64, value RenderResult) {
 	}
 }
 
-func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBlockMetaPresentation, width, maxLines, selected int, mode ChatTimestampMode, relativeBucket int64) uint64 {
+func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBlockMetaPresentation, width, maxLines int, selection RenderSelection, mode ChatTimestampMode, relativeBucket int64) uint64 {
 	hasher := fnv.New64a()
 	writeHashInt(hasher, width)
 	writeHashInt(hasher, maxLines)
-	writeHashInt(hasher, selected)
+	writeHashInt(hasher, selection.PrimaryIndex)
+	writeHashInt(hasher, selection.RangeStart)
+	writeHashInt(hasher, selection.RangeEnd)
 	writeHashString(hasher, string(mode))
 	writeHashInt64(hasher, relativeBucket)
 	writeHashInt(hasher, len(blocks))

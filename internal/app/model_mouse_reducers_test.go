@@ -1276,6 +1276,116 @@ func TestMouseReducerTranscriptClickSelectsMessage(t *testing.T) {
 	}
 }
 
+func TestMouseReducerTranscriptDragHighlightsMultipleBlocks(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleAgent, Text: "first"},
+		{Role: ChatRoleAgent, Text: "second"},
+		{Role: ChatRoleAgent, Text: "third"},
+	})
+	if len(m.contentBlockSpans) < 3 {
+		t.Fatalf("expected span metadata for messages")
+	}
+	layout := m.resolveMouseLayout()
+	first := m.contentBlockSpans[0]
+	third := m.contentBlockSpans[2]
+	startX, startY := layout.rightStart, first.CopyLine-m.viewport.YOffset()+2
+	endX, endY := layout.rightStart, third.CopyLine-m.viewport.YOffset()+2
+	if startY < 1 || startY > m.viewport.Height() || endY < 1 || endY > m.viewport.Height() {
+		t.Fatalf("drag coordinates out of viewport: startY=%d endY=%d height=%d", startY, endY, m.viewport.Height())
+	}
+	startIdx := m.blockIndexByViewportPoint(startX-layout.rightStart, startY-1)
+	endIdx := m.blockIndexByViewportPoint(endX-layout.rightStart, endY-1)
+	if startIdx != first.BlockIndex || endIdx != third.BlockIndex {
+		t.Fatalf("unexpected hit-test points start=%d end=%d first=%d third=%d", startIdx, endIdx, first.BlockIndex, third.BlockIndex)
+	}
+
+	_ = m.reduceHighlightMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: startX, Y: startY}, layout)
+	if state := m.highlight.State(); !state.Active {
+		t.Fatalf("expected highlight active after click")
+	}
+	if !m.reduceHighlightMouse(tea.MouseMotionMsg{Button: tea.MouseLeft, X: endX, Y: endY}, layout) {
+		state := m.highlight.State()
+		t.Fatalf("expected drag motion to be handled; dragging=%v range=%#v", state.Dragging, state.Range)
+	}
+	if !m.reduceHighlightMouse(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: endX, Y: endY}, layout) {
+		t.Fatalf("expected drag release to be handled")
+	}
+
+	state := m.highlight.State()
+	if !state.Range.HasSelection {
+		t.Fatalf("expected persisted highlight selection")
+	}
+	if state.Range.Context != highlightContextChatTranscript {
+		t.Fatalf("expected transcript highlight context, got %v", state.Range.Context)
+	}
+	if state.Range.BlockStart != first.BlockIndex || state.Range.BlockEnd != third.BlockIndex {
+		t.Fatalf("unexpected transcript range: %#v", state.Range)
+	}
+}
+
+func TestMouseReducerSidebarDragHighlightRemainsSidebarContext(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleAgent, Text: "first"},
+		{Role: ChatRoleAgent, Text: "second"},
+	})
+	layout := m.resolveMouseLayout()
+
+	rows := make([]int, 0, 2)
+	for y := 0; y < 30; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry == nil || entry.kind != sidebarSession {
+			continue
+		}
+		rows = append(rows, y)
+		if len(rows) == 2 {
+			break
+		}
+	}
+	if len(rows) < 2 {
+		t.Fatalf("expected two visible session rows")
+	}
+
+	_ = m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: 2, Y: rows[0]})
+	if !m.handleMouse(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 2, Y: rows[1]}) {
+		t.Fatalf("expected sidebar drag motion to be handled")
+	}
+	// Move into transcript while dragging; context must stay sidebar.
+	_ = m.handleMouse(tea.MouseMotionMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: 2})
+	if !m.handleMouse(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: 2}) {
+		t.Fatalf("expected drag release to be handled")
+	}
+
+	state := m.highlight.State()
+	if !state.Range.HasSelection {
+		t.Fatalf("expected sidebar highlight selection")
+	}
+	if state.Range.Context != highlightContextSidebar {
+		t.Fatalf("expected sidebar highlight context, got %v", state.Range.Context)
+	}
+	if state.Range.BlockStart >= 0 || state.Range.BlockEnd >= 0 {
+		t.Fatalf("expected no transcript block range for sidebar highlight: %#v", state.Range)
+	}
+	if len(state.Range.SidebarKeys) < 2 {
+		t.Fatalf("expected multi-row sidebar highlight, got %#v", state.Range.SidebarKeys)
+	}
+}
+
 func TestMouseReducerReasoningBodyClickSelectsWithoutToggle(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

@@ -231,6 +231,7 @@ type sidebarDelegate struct {
 	activeWorktreeID  string
 	selectedKey       string
 	selectedKeys      map[string]struct{}
+	highlightedKeys   map[string]struct{}
 	unreadSessions    map[string]struct{}
 	providerBadges    map[string]*types.ProviderBadgeConfig
 	now               func() time.Time
@@ -283,44 +284,45 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 	}
 	isSelected := d.selectedKey != "" && entry.key() == d.selectedKey
 	isMarked := d.isSelectedKey(entry.key())
+	isHighlighted := d.isHighlightedKey(entry.key())
 	maxWidth := m.Width()
 	switch entry.kind {
 	case sidebarRecentsAll:
-		_, _ = fmt.Fprint(w, d.renderRecentsAllRow(entry, maxWidth, isSelected, isMarked))
+		_, _ = fmt.Fprint(w, d.renderRecentsAllRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarRecentsReady:
-		_, _ = fmt.Fprint(w, d.renderRecentsReadyRow(entry, maxWidth, isSelected, isMarked))
+		_, _ = fmt.Fprint(w, d.renderRecentsReadyRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarRecentsRunning:
-		_, _ = fmt.Fprint(w, d.renderRecentsRunningRow(entry, maxWidth, isSelected, isMarked))
+		_, _ = fmt.Fprint(w, d.renderRecentsRunningRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarWorkspace:
-		fmt.Fprint(w, d.renderWorkspaceRow(entry, maxWidth, isSelected, isMarked))
+		fmt.Fprint(w, d.renderWorkspaceRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarWorktree:
-		fmt.Fprint(w, d.renderWorktreeRow(entry, maxWidth, isSelected, isMarked))
+		fmt.Fprint(w, d.renderWorktreeRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarWorkflow:
-		fmt.Fprint(w, d.renderWorkflowRow(entry, maxWidth, isSelected, isMarked))
+		fmt.Fprint(w, d.renderWorkflowRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarSession:
-		fmt.Fprint(w, d.renderSessionRow(entry, maxWidth, isSelected, isMarked))
+		fmt.Fprint(w, d.renderSessionRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	}
 }
 
-func (d *sidebarDelegate) renderRecentsAllRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+func (d *sidebarDelegate) renderRecentsAllRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
 	line := truncateToWidth("• "+label, maxWidth)
-	return sidebarSelectStyle(workspaceStyle, isSelected, isMarked).Render(line)
+	return sidebarSelectStyle(workspaceStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
-func (d *sidebarDelegate) renderRecentsReadyRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+func (d *sidebarDelegate) renderRecentsReadyRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
 	line := truncateToWidth("  - "+label, maxWidth)
-	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
-func (d *sidebarDelegate) renderRecentsRunningRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+func (d *sidebarDelegate) renderRecentsRunningRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
 	line := truncateToWidth("  - "+label, maxWidth)
-	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
-func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := entry.Title()
 	indent := strings.Repeat("  ", max(0, entry.depth))
 	prefix := "  "
@@ -336,10 +338,10 @@ func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, i
 	if entry.workspace != nil && entry.workspace.ID == d.activeWorkspaceID {
 		baseStyle = workspaceActiveStyle
 	}
-	return sidebarSelectStyle(baseStyle, isSelected, isMarked).Render(line)
+	return sidebarSelectStyle(baseStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
-func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := entry.Title()
 	indent := strings.Repeat("  ", max(0, entry.depth))
 	marker := " "
@@ -355,10 +357,10 @@ func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, is
 	if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
 		baseStyle = worktreeActiveStyle
 	}
-	return sidebarSelectStyle(baseStyle, isSelected, isMarked).Render(line)
+	return sidebarSelectStyle(baseStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
-func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
+func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := entry.Title()
 	statusText := workflowRunStatusText(entry.workflow)
 	if strings.TrimSpace(statusText) != "" {
@@ -374,7 +376,7 @@ func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, is
 	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
 	line := truncateToWidth(indent+marker+" "+indicatorForRowState(workflowRowState(entry.workflow))+" [WFL] "+label, maxWidth)
-	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked).Render(line)
+	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
 func indicatorForRowState(state sidebarRowState) string {
@@ -411,8 +413,8 @@ func sessionRowState(session *types.Session, meta *types.SessionMeta) sidebarRow
 	return sidebarRowStateInactive
 }
 
-func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isSelected, isMarked bool) string {
-	baseStyle := sidebarSelectStyle(sessionStyle, isSelected, isMarked)
+func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
+	baseStyle := sidebarSelectStyle(sessionStyle, isSelected, isMarked, isHighlighted)
 	viewModel := d.buildSessionRowViewModel(entry, maxWidth)
 
 	rendered := baseStyle.Render(viewModel.Prefix)
@@ -468,12 +470,15 @@ func (d *sidebarDelegate) layoutEngineOrDefault() sidebarSessionLayoutEngine {
 	return defaultSidebarSessionLayoutEngine{}
 }
 
-func sidebarSelectStyle(base lipgloss.Style, isSelected, isMarked bool) lipgloss.Style {
+func sidebarSelectStyle(base lipgloss.Style, isSelected, isMarked, isHighlighted bool) lipgloss.Style {
 	if isSelected {
 		return selectedStyle
 	}
 	if isMarked {
 		return multiSelectStyle
+	}
+	if isHighlighted {
+		return highlightRowStyle
 	}
 	return base
 }
@@ -491,6 +496,14 @@ func (d *sidebarDelegate) isSelectedKey(key string) bool {
 		return false
 	}
 	_, ok := d.selectedKeys[key]
+	return ok
+}
+
+func (d *sidebarDelegate) isHighlightedKey(key string) bool {
+	if d == nil || d.highlightedKeys == nil || strings.TrimSpace(key) == "" {
+		return false
+	}
+	_, ok := d.highlightedKeys[key]
 	return ok
 }
 

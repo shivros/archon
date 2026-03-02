@@ -154,6 +154,8 @@ func TestRenderChatBlocksAssistantTimestampAppearsOnRight(t *testing.T) {
 		80,
 		2000,
 		-1,
+		-1,
+		-1,
 		defaultChatBlockRenderer{},
 		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: now},
 	)
@@ -185,6 +187,8 @@ func TestRenderChatBlocksUserTimestampAppearsOnLeft(t *testing.T) {
 		80,
 		2000,
 		-1,
+		-1,
+		-1,
 		defaultChatBlockRenderer{},
 		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: now},
 	)
@@ -214,6 +218,8 @@ func TestRenderChatBlocksCustomMetaControlsOverrideDefaults(t *testing.T) {
 		blocks,
 		80,
 		2000,
+		-1,
+		-1,
 		-1,
 		defaultChatBlockRenderer{},
 		chatRenderContext{
@@ -293,6 +299,8 @@ func TestRenderChatBlocksCustomMetaPrimaryLabelRendersTwoLines(t *testing.T) {
 		blocks,
 		80,
 		2000,
+		-1,
+		-1,
 		-1,
 		defaultChatBlockRenderer{},
 		chatRenderContext{
@@ -412,6 +420,8 @@ func TestRenderChatBlocksRendererContractCoordinatesStayWithinBounds(t *testing.
 			80,
 			2000,
 			-1,
+			-1,
+			-1,
 			defaultChatBlockRenderer{},
 			ctx,
 		)
@@ -423,6 +433,8 @@ func TestRenderChatBlocksRendererContractCoordinatesStayWithinBounds(t *testing.
 			blocks,
 			80,
 			2000,
+			-1,
+			-1,
 			-1,
 			newCachedChatBlockRenderer(defaultChatBlockRenderer{}, newBlockRenderCache(64)),
 			ctx,
@@ -445,6 +457,8 @@ func TestRenderChatBlocksCachedDefaultRendererMatchesDefaultOutput(t *testing.T)
 		80,
 		2000,
 		-1,
+		-1,
+		-1,
 		defaultChatBlockRenderer{},
 		ctx,
 	)
@@ -452,6 +466,8 @@ func TestRenderChatBlocksCachedDefaultRendererMatchesDefaultOutput(t *testing.T)
 		blocks,
 		80,
 		2000,
+		-1,
+		-1,
 		-1,
 		newCachedChatBlockRenderer(defaultChatBlockRenderer{}, newBlockRenderCache(64)),
 		ctx,
@@ -574,6 +590,19 @@ func TestRenderChatBlocksWithSelectionShowsSelectedMarker(t *testing.T) {
 	}
 }
 
+func TestRenderChatBlocksWithSelectionRangeShowsSelectedMarkerAcrossBlocks(t *testing.T) {
+	blocks := []ChatBlock{
+		{Role: ChatRoleAgent, Text: "first"},
+		{Role: ChatRoleAgent, Text: "second"},
+		{Role: ChatRoleAgent, Text: "third"},
+	}
+	rendered, _ := renderChatBlocksWithSelectionRange(blocks, 80, 2000, -1, 0, 2)
+	plain := xansi.Strip(rendered)
+	if count := strings.Count(plain, "Selected"); count != 3 {
+		t.Fatalf("expected selected marker on each highlighted block, got %d in %q", count, plain)
+	}
+}
+
 func TestRenderChatBlocksNotesShowDeleteControlAndHitbox(t *testing.T) {
 	blocks := []ChatBlock{
 		{ID: "n1", Role: ChatRoleSessionNote, Text: "hello"},
@@ -669,7 +698,7 @@ func (r mapChatBlockRenderer) RenderChatBlock(block ChatBlock, _ int, _ bool, _ 
 }
 
 func TestRenderChatBlocksWithRendererAndContextHandlesEmptyBlocks(t *testing.T) {
-	rendered, spans := renderChatBlocksWithRendererAndContext(nil, 80, 2000, -1, defaultChatBlockRenderer{}, chatRenderContext{})
+	rendered, spans := renderChatBlocksWithRendererAndContext(nil, 80, 2000, -1, -1, -1, defaultChatBlockRenderer{}, chatRenderContext{})
 	if rendered != "" {
 		t.Fatalf("expected empty rendering, got %q", rendered)
 	}
@@ -680,7 +709,7 @@ func TestRenderChatBlocksWithRendererAndContextHandlesEmptyBlocks(t *testing.T) 
 
 func TestRenderChatBlocksWithRendererAndContextDefaultsWidthAndRenderer(t *testing.T) {
 	blocks := []ChatBlock{{ID: "m1", Role: ChatRoleAgent, Text: "hello"}}
-	rendered, spans := renderChatBlocksWithRendererAndContext(blocks, 0, 2000, -1, nil, chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()})
+	rendered, spans := renderChatBlocksWithRendererAndContext(blocks, 0, 2000, -1, -1, -1, nil, chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()})
 	if strings.TrimSpace(xansi.Strip(rendered)) == "" {
 		t.Fatalf("expected non-empty output with width/renderer defaults")
 	}
@@ -700,6 +729,8 @@ func TestRenderChatBlocksWithRendererAndContextSkipsEmptyRenderedBlocks(t *testi
 		[]ChatBlock{{ID: "empty"}, {ID: "full"}},
 		80,
 		2000,
+		-1,
+		-1,
 		-1,
 		renderer,
 		chatRenderContext{},
@@ -757,6 +788,8 @@ func TestRenderChatBlocksWithRendererAndContextDropsAndResetsOutOfWindowHitboxes
 		[]ChatBlock{{ID: "drop", Role: ChatRoleAgent}},
 		80,
 		2,
+		-1,
+		-1,
 		-1,
 		renderer,
 		chatRenderContext{},
@@ -826,6 +859,8 @@ func TestRenderChatBlocksWithRendererAndContextPrunesHitboxesBeyondMaxRenderedLi
 		[]ChatBlock{{ID: "prune", Role: ChatRoleAgent}},
 		80,
 		2000,
+		-1,
+		-1,
 		-1,
 		renderer,
 		chatRenderContext{},

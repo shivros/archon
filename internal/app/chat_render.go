@@ -166,15 +166,21 @@ const (
 )
 
 func renderChatBlocks(blocks []ChatBlock, width int, maxLines int) (string, []renderedBlockSpan) {
-	return renderChatBlocksWithSelection(blocks, width, maxLines, -1)
+	return renderChatBlocksWithSelectionRange(blocks, width, maxLines, -1, -1, -1)
 }
 
 func renderChatBlocksWithSelection(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int) (string, []renderedBlockSpan) {
+	return renderChatBlocksWithSelectionRange(blocks, width, maxLines, selectedBlockIndex, -1, -1)
+}
+
+func renderChatBlocksWithSelectionRange(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex, highlightStart, highlightEnd int) (string, []renderedBlockSpan) {
 	return renderChatBlocksWithRendererAndContext(
 		blocks,
 		width,
 		maxLines,
 		selectedBlockIndex,
+		highlightStart,
+		highlightEnd,
 		defaultChatBlockRenderer{},
 		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()},
 	)
@@ -186,12 +192,14 @@ func renderChatBlocksWithRenderer(blocks []ChatBlock, width int, maxLines int, s
 		width,
 		maxLines,
 		selectedBlockIndex,
+		-1,
+		-1,
 		renderer,
 		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()},
 	)
 }
 
-func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex int, renderer chatBlockRenderer, ctx chatRenderContext) (string, []renderedBlockSpan) {
+func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLines int, selectedBlockIndex, highlightStart, highlightEnd int, renderer chatBlockRenderer, ctx chatRenderContext) (string, []renderedBlockSpan) {
 	if len(blocks) == 0 {
 		return "", nil
 	}
@@ -204,7 +212,11 @@ func renderChatBlocksWithRendererAndContext(blocks []ChatBlock, width int, maxLi
 	lines := make([]string, 0, len(blocks)*4)
 	spans := make([]renderedBlockSpan, 0, len(blocks))
 	for i, block := range blocks {
-		rendered := renderer.RenderChatBlock(block, width, i == selectedBlockIndex, ctx)
+		selected := i == selectedBlockIndex
+		if highlightStart >= 0 && highlightEnd >= highlightStart && i >= highlightStart && i <= highlightEnd {
+			selected = true
+		}
+		rendered := renderer.RenderChatBlock(block, width, selected, ctx)
 		if len(rendered.Lines) == 0 {
 			continue
 		}

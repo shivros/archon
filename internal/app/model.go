@@ -183,6 +183,8 @@ type Model struct {
 	renderedForWidth                    int
 	renderedForContent                  int
 	renderedForSelection                int
+	renderedForHighlightStart           int
+	renderedForHighlightEnd             int
 	renderedForTimestampMode            ChatTimestampMode
 	renderedForRelativeBucket           int64
 	renderGeneration                    int
@@ -194,6 +196,8 @@ type Model struct {
 	searchVersion                       int
 	messageSelectActive                 bool
 	messageSelectIndex                  int
+	highlight                           highlightCoordinator
+	highlightAdapter                    *modelHighlightAdapter
 	sectionOffsets                      []int
 	sectionVersion                      int
 	transcriptCache                     map[string][]ChatBlock
@@ -479,6 +483,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		approvalResponseRequestID:           -1,
 		messageSelectIndex:                  -1,
 		renderedForSelection:                -2,
+		renderedForHighlightStart:           -1,
+		renderedForHighlightEnd:             -1,
 		renderedForRelativeBucket:           -1,
 		sectionVersion:                      -1,
 		transcriptCache:                     map[string][]ChatBlock{},
@@ -549,6 +555,18 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		if opt != nil {
 			opt(&model)
 		}
+	}
+	if model.highlight == nil {
+		adapter := newModelHighlightAdapter(nil)
+		model.highlightAdapter = adapter
+		model.highlight = NewDefaultHighlightCoordinator(
+			adapter,
+			NewDefaultHighlightContextPolicy(),
+			NewSidebarHighlightSurface(adapter),
+			NewTranscriptHighlightSurface(adapter),
+			NewMainNotesHighlightSurface(adapter),
+			NewNotesPanelHighlightSurface(adapter),
+		)
 	}
 	model.updateDelegate()
 	return model
@@ -2939,6 +2957,11 @@ func (m *Model) renderViewport() {
 		renderWidth -= 1
 	}
 	selectedRenderIndex := m.selectedMessageRenderIndex()
+	highlightStart, highlightEnd, hasHighlight := m.highlightedMainBlockRange()
+	if !hasHighlight {
+		highlightStart = -1
+		highlightEnd = -1
+	}
 	now := m.clockNow
 	if now.IsZero() {
 		now = time.Now()
@@ -2949,6 +2972,8 @@ func (m *Model) renderViewport() {
 		width:          renderWidth,
 		contentVersion: m.contentVersion,
 		selectionIndex: selectedRenderIndex,
+		highlightStart: highlightStart,
+		highlightEnd:   highlightEnd,
 		timestampMode:  mode,
 		relativeBucket: relativeBucket,
 	}
@@ -2959,16 +2984,20 @@ func (m *Model) renderViewport() {
 			m.lastRenderRequested = signature
 			m.hasLastRenderRequested = true
 			req := RenderRequest{
-				Width:              renderWidth,
-				MaxLines:           maxViewportLines,
-				RawContent:         m.contentRaw,
-				EscapeMarkdown:     m.contentEsc,
-				RenderRaw:          m.contentRenderRaw,
-				Blocks:             m.contentBlocks,
-				BlockMetaByID:      m.contentBlockMetaByID,
-				SelectedBlockIndex: selectedRenderIndex,
-				TimestampMode:      mode,
-				TimestampNow:       now,
+				Width:          renderWidth,
+				MaxLines:       maxViewportLines,
+				RawContent:     m.contentRaw,
+				EscapeMarkdown: m.contentEsc,
+				RenderRaw:      m.contentRenderRaw,
+				Blocks:         m.contentBlocks,
+				BlockMetaByID:  m.contentBlockMetaByID,
+				Selection: RenderSelection{
+					PrimaryIndex: selectedRenderIndex,
+					RangeStart:   highlightStart,
+					RangeEnd:     highlightEnd,
+				},
+				TimestampMode: mode,
+				TimestampNow:  now,
 			}
 			if m.asyncViewportRendering && req.Blocks != nil {
 				m.scheduleViewportRender(req, signature, m.renderGeneration)
@@ -2991,6 +3020,8 @@ func (m *Model) isViewportRenderCurrent(signature viewportRenderSignature) bool 
 	return m.renderedForWidth == signature.width &&
 		m.renderedForContent == signature.contentVersion &&
 		m.renderedForSelection == signature.selectionIndex &&
+		m.renderedForHighlightStart == signature.highlightStart &&
+		m.renderedForHighlightEnd == signature.highlightEnd &&
 		m.renderedForTimestampMode == signature.timestampMode &&
 		m.renderedForRelativeBucket == signature.relativeBucket
 }
@@ -3034,6 +3065,8 @@ func (m *Model) applyViewportRenderResult(signature viewportRenderSignature, gen
 	m.renderedForWidth = signature.width
 	m.renderedForContent = signature.contentVersion
 	m.renderedForSelection = signature.selectionIndex
+	m.renderedForHighlightStart = signature.highlightStart
+	m.renderedForHighlightEnd = signature.highlightEnd
 	m.renderedForTimestampMode = signature.timestampMode
 	m.renderedForRelativeBucket = signature.relativeBucket
 	m.renderVersion++
@@ -3429,6 +3462,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	}
 	layout := m.resolveMouseLayout()
 	if m.reduceSidebarDragMouse(msg, layout) {
+		return true
+	}
+	if m.reduceHighlightMouse(msg, layout) {
 		return true
 	}
 

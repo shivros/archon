@@ -18,6 +18,7 @@ type SidebarController struct {
 	selectionDecider      sidebarSelectionDecisionService
 	selectedKey           string
 	selectedKeys          map[string]struct{}
+	highlightedKeys       map[string]struct{}
 	scrollOffset          int
 	viewedSessionActivity map[string]string
 	unreadSessions        map[string]struct{}
@@ -89,6 +90,7 @@ func NewSidebarController() *SidebarController {
 		delegate:              delegate,
 		selectionDecider:      NewDefaultSidebarSelectionDecisionService(),
 		selectedKeys:          map[string]struct{}{},
+		highlightedKeys:       map[string]struct{}{},
 		viewedSessionActivity: map[string]string{},
 		unreadSessions:        map[string]struct{}{},
 		expandByDefault:       true,
@@ -764,6 +766,52 @@ func (c *SidebarController) IsKeySelected(key string) bool {
 	return ok
 }
 
+func (c *SidebarController) SetHighlightedKeys(keys map[string]struct{}) bool {
+	if c == nil {
+		return false
+	}
+	next := cloneStringSet(keys)
+	if len(next) == 0 {
+		next = map[string]struct{}{}
+	}
+	if stringSetEqual(c.highlightedKeys, next) {
+		return false
+	}
+	c.highlightedKeys = next
+	c.syncDelegate()
+	return true
+}
+
+func (c *SidebarController) HighlightedKeysBetweenRows(fromRow, toRow int) map[string]struct{} {
+	if c == nil {
+		return nil
+	}
+	start := fromRow
+	end := toRow
+	if start > end {
+		start, end = end, start
+	}
+	if end < 0 {
+		return nil
+	}
+	keys := map[string]struct{}{}
+	for row := max(0, start); row <= end; row++ {
+		entry := c.ItemAtRow(row)
+		if entry == nil {
+			continue
+		}
+		key := strings.TrimSpace(entry.key())
+		if key == "" {
+			continue
+		}
+		keys[key] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
 func (c *SidebarController) ToggleFocusedSelection() bool {
 	if c == nil {
 		return false
@@ -1190,6 +1238,7 @@ func (c *SidebarController) syncDelegate() {
 		c.delegate.unreadSessions = c.unreadSessions
 		c.delegate.selectedKey = c.selectedKey
 		c.delegate.selectedKeys = cloneStringSet(c.selectedKeys)
+		c.delegate.highlightedKeys = cloneStringSet(c.highlightedKeys)
 	}
 }
 
@@ -1494,6 +1543,18 @@ func cloneStringSet(input map[string]struct{}) map[string]struct{} {
 		return nil
 	}
 	return out
+}
+
+func stringSetEqual(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key := range left {
+		if _, ok := right[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func boolToInt(value bool) int {

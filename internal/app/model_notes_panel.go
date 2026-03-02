@@ -445,7 +445,12 @@ func (m *Model) renderNotesPanel() {
 	if len(m.notesPanelBlocks) == 0 {
 		m.notesPanelBlocks = notesPanelBlocksFromState(m.notes, m.notesScope, m.notesFilters, m.notesPanelLoadState())
 	}
-	rendered, spans := renderChatBlocks(m.notesPanelBlocks, width, maxViewportLines)
+	highlightStart, highlightEnd, ok := m.highlightedNotesPanelBlockRange()
+	if !ok {
+		highlightStart = -1
+		highlightEnd = -1
+	}
+	rendered, spans := renderChatBlocksWithSelectionRange(m.notesPanelBlocks, width, maxViewportLines, -1, highlightStart, highlightEnd)
 	m.notesPanelSpans = spans
 	m.notesPanelViewport.SetContent(rendered)
 }

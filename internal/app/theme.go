@@ -21,6 +21,7 @@ var (
 	activeSessionStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("70"))
 	selectedStyle                  = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("236"))
 	multiSelectStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238"))
+	highlightRowStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("240"))
 	dividerStyle                   = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	scrollbarTrackStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	scrollbarThumbStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
