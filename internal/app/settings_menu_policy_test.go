@@ -46,7 +46,7 @@ func TestSettingsMenuOpenContextAdapterReflectsModelState(t *testing.T) {
 	if ctx.Mode() != uiModeNormal {
 		t.Fatalf("expected normal mode from context adapter")
 	}
-	if ctx.IsConfirmOpen() || ctx.IsContextMenuOpen() || ctx.IsTopMenuActive() || ctx.IsSettingsMenuOpen() {
+	if ctx.IsConfirmOpen() || ctx.IsContextMenuOpen() || ctx.IsTopMenuActive() || ctx.IsSettingsMenuOpen() || ctx.IsStatusHistoryOpen() {
 		t.Fatalf("expected all overlays closed by default")
 	}
 	m.confirm.Open("T", "M", "ok", "cancel")
@@ -67,6 +67,11 @@ func TestSettingsMenuOpenContextAdapterReflectsModelState(t *testing.T) {
 	m.settingsMenu.Open()
 	if !ctx.IsSettingsMenuOpen() {
 		t.Fatalf("expected settings menu open from adapter")
+	}
+	m.settingsMenu.Close()
+	m.statusHistoryOverlay.Open()
+	if !ctx.IsStatusHistoryOpen() {
+		t.Fatalf("expected status history overlay open from adapter")
 	}
 }
 

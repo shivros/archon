@@ -109,6 +109,11 @@ func TestSettingsMenuEscPolicyUsesNarrowContext(t *testing.T) {
 	if policy.CanOpen(ctx) {
 		t.Fatalf("expected policy to block when confirm is open")
 	}
+	ctx.confirmOpen = false
+	ctx.statusOpen = true
+	if policy.CanOpen(ctx) {
+		t.Fatalf("expected policy to block when status history is open")
+	}
 }
 
 func TestSettingsHotkeyCatalogUsesSourceAndOverrides(t *testing.T) {
@@ -129,6 +134,7 @@ type fakeSettingsMenuOpenContext struct {
 	contextMenuOpen bool
 	topMenuActive   bool
 	settingsOpen    bool
+	statusOpen      bool
 }
 
 func (f fakeSettingsMenuOpenContext) Mode() uiMode             { return f.mode }
@@ -136,6 +142,9 @@ func (f fakeSettingsMenuOpenContext) IsConfirmOpen() bool      { return f.confir
 func (f fakeSettingsMenuOpenContext) IsContextMenuOpen() bool  { return f.contextMenuOpen }
 func (f fakeSettingsMenuOpenContext) IsTopMenuActive() bool    { return f.topMenuActive }
 func (f fakeSettingsMenuOpenContext) IsSettingsMenuOpen() bool { return f.settingsOpen }
+func (f fakeSettingsMenuOpenContext) IsStatusHistoryOpen() bool {
+	return f.statusOpen
+}
 
 type fakeSettingsHotkeySource struct {
 	hotkeys []Hotkey

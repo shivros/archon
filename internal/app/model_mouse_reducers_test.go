@@ -1494,24 +1494,7 @@ func TestMouseReducerUserStatusLineClickDoesNotSelectMessage(t *testing.T) {
 	}
 }
 
-func TestMouseReducerGlobalStatusBarClickCopiesStatus(t *testing.T) {
-	origWriteAll := clipboardWriteAll
-	origWriteOSC52 := clipboardWriteOSC52
-	defer func() {
-		clipboardWriteAll = origWriteAll
-		clipboardWriteOSC52 = origWriteOSC52
-	}()
-
-	copied := ""
-	clipboardWriteAll = func(text string) error {
-		copied = text
-		return nil
-	}
-	clipboardWriteOSC52 = func(string) error {
-		t.Fatalf("expected system clipboard copy to succeed without OSC52 fallback")
-		return nil
-	}
-
+func TestMouseReducerGlobalStatusBarClickOpensStatusHistory(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.hotkeys = nil
@@ -1532,12 +1515,8 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatus(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected global status click to be handled")
 	}
-	flushPendingMouseCmd(t, &m)
-	if copied != "follow: paused" {
-		t.Fatalf("expected status copy payload %q, got %q", "follow: paused", copied)
-	}
-	if m.status != "status copied" {
-		t.Fatalf("expected copy success status, got %q", m.status)
+	if !m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected status history overlay to open")
 	}
 	if m.messageSelectActive {
 		t.Fatalf("expected status line copy click to avoid message selection")
@@ -1607,24 +1586,7 @@ func TestMouseReducerGlobalStatusHitboxVisibleWithDefaultHotkeys(t *testing.T) {
 	}
 }
 
-func TestMouseReducerGlobalStatusBarClickCopiesStatusOnZeroBasedBottomRow(t *testing.T) {
-	origWriteAll := clipboardWriteAll
-	origWriteOSC52 := clipboardWriteOSC52
-	defer func() {
-		clipboardWriteAll = origWriteAll
-		clipboardWriteOSC52 = origWriteOSC52
-	}()
-
-	copied := ""
-	clipboardWriteAll = func(text string) error {
-		copied = text
-		return nil
-	}
-	clipboardWriteOSC52 = func(string) error {
-		t.Fatalf("expected system clipboard copy to succeed without OSC52 fallback")
-		return nil
-	}
-
+func TestMouseReducerGlobalStatusBarClickOpensStatusHistoryOnZeroBasedBottomRow(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.hotkeys = nil
@@ -1642,13 +1604,35 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatusOnZeroBasedBottomRow(t *tes
 	if !handled {
 		t.Fatalf("expected global status click on zero-based bottom row to be handled")
 	}
-	flushPendingMouseCmd(t, &m)
-	if copied != "ready" {
-		t.Fatalf("expected status copy payload %q, got %q", "ready", copied)
+	if !m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected status history overlay to open on zero-based bottom row click")
 	}
 }
 
-func TestMouseReducerGlobalStatusBarClickCopiesStatusWithOneBasedX(t *testing.T) {
+func TestMouseReducerGlobalStatusBarClickOpensStatusHistoryWithOneBasedX(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("ready")
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		X:      start + 1,
+		Y:      m.height - 1,
+	})
+	if !handled {
+		t.Fatalf("expected global status click with one-based X to be handled")
+	}
+	if !m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected status history overlay to open for one-based X click")
+	}
+}
+
+func TestMouseReducerStatusHistorySelectAndCopy(t *testing.T) {
 	origWriteAll := clipboardWriteAll
 	origWriteOSC52 := clipboardWriteOSC52
 	defer func() {
@@ -1669,23 +1653,110 @@ func TestMouseReducerGlobalStatusBarClickCopiesStatusWithOneBasedX(t *testing.T)
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.hotkeys = nil
+	m.setStatusMessage("one")
+	m.setStatusMessage("two")
+	m.setStatusMessage("three")
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: start, Y: m.height}) {
+		t.Fatalf("expected status click to open history")
+	}
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		t.Fatalf("expected rendered history overlay view")
+	}
+	rowY := view.hitbox.panelTopY + 1
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: view.hitbox.panelLeftX + 2, Y: rowY}) {
+		t.Fatalf("expected history row click to be handled")
+	}
+	view, ok = m.currentStatusHistoryOverlayView()
+	if !ok || !view.hitbox.copyAvailable {
+		t.Fatalf("expected copy control to be available after row selection")
+	}
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: view.hitbox.copyStartX, Y: view.hitbox.copyRowY}) {
+		t.Fatalf("expected copy button click to be handled")
+	}
+	flushPendingMouseCmd(t, &m)
+	if copied != "three" {
+		t.Fatalf("expected selected status copy payload %q, got %q", "three", copied)
+	}
+}
+
+func TestMouseReducerStatusHistoryOutsideClickClosesOverlay(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
 	m.setStatusMessage("ready")
 	start, _, ok := m.statusLineStatusHitbox()
 	if !ok {
 		t.Fatalf("expected global status hitbox")
 	}
-
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: start, Y: m.height}) {
+		t.Fatalf("expected status click to open history")
+	}
+	if !m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected status history overlay open")
+	}
 	handled := m.handleMouse(tea.MouseClickMsg{
 		Button: tea.MouseLeft,
-		X:      start + 1,
-		Y:      m.height - 1,
+		X:      1,
+		Y:      1,
 	})
 	if !handled {
-		t.Fatalf("expected global status click with one-based X to be handled")
+		t.Fatalf("expected outside click to close and be handled")
 	}
-	flushPendingMouseCmd(t, &m)
-	if copied != "ready" {
-		t.Fatalf("expected status copy payload %q, got %q", "ready", copied)
+	if m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected outside click to close status history overlay")
+	}
+}
+
+func TestMouseReducerStatusHistoryWheelScrollInsideOverlay(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	for i := 0; i < 12; i++ {
+		m.setStatusMessage("status " + strconv.Itoa(i))
+	}
+	m.statusHistoryOverlay.Open()
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		t.Fatalf("expected overlay view")
+	}
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseWheelDown,
+		X:      view.hitbox.panelLeftX + 1,
+		Y:      view.hitbox.panelTopY + 1,
+	})
+	if !handled {
+		t.Fatalf("expected wheel in overlay to be handled")
+	}
+	if got := m.statusHistoryOverlay.ScrollOffset(); got == 0 {
+		t.Fatalf("expected wheel down to change scroll offset")
+	}
+}
+
+func TestMouseReducerStatusHistoryWheelOutsideOverlayFallsThrough(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.setStatusMessage("one")
+	m.statusHistoryOverlay.Open()
+	handled := m.reduceStatusHistoryWheelMouse(tea.Mouse{X: 1, Y: 1}, 1)
+	if handled {
+		t.Fatalf("expected wheel outside overlay to fall through")
+	}
+}
+
+func TestMouseReducerStatusHistoryWheelClosesWhenViewUnavailable(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.statusHistoryOverlay.Open()
+	handled := m.reduceStatusHistoryWheelMouse(tea.Mouse{X: 1, Y: 1}, 1)
+	if !handled {
+		t.Fatalf("expected unavailable view branch to be handled")
+	}
+	if m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected overlay to close when view is unavailable")
 	}
 }
 

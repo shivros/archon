@@ -11,6 +11,7 @@ type SettingsMenuOpenContext interface {
 	IsContextMenuOpen() bool
 	IsTopMenuActive() bool
 	IsSettingsMenuOpen() bool
+	IsStatusHistoryOpen() bool
 }
 
 type SettingsMenuEscPolicy interface {
@@ -23,7 +24,7 @@ func (defaultSettingsMenuEscPolicy) CanOpen(ctx SettingsMenuOpenContext) bool {
 	if ctx == nil || ctx.Mode() != uiModeNormal {
 		return false
 	}
-	if ctx.IsConfirmOpen() || ctx.IsContextMenuOpen() || ctx.IsTopMenuActive() || ctx.IsSettingsMenuOpen() {
+	if ctx.IsConfirmOpen() || ctx.IsContextMenuOpen() || ctx.IsTopMenuActive() || ctx.IsSettingsMenuOpen() || ctx.IsStatusHistoryOpen() {
 		return false
 	}
 	return true
@@ -64,6 +65,10 @@ func (c modelSettingsMenuOpenContext) IsTopMenuActive() bool {
 
 func (c modelSettingsMenuOpenContext) IsSettingsMenuOpen() bool {
 	return c.model != nil && c.model.settingsMenu != nil && c.model.settingsMenu.IsOpen()
+}
+
+func (c modelSettingsMenuOpenContext) IsStatusHistoryOpen() bool {
+	return c.model != nil && c.model.statusHistoryOverlayOpen()
 }
 
 func (m *Model) settingsMenuOpenContext() SettingsMenuOpenContext {

@@ -252,6 +252,9 @@ func (m *Model) reduceSidebarDragMouse(msg tea.MouseMsg, layout mouseLayout) boo
 
 func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int) bool {
 	mouse := msg.Mouse()
+	if m.reduceStatusHistoryWheelMouse(mouse, delta) {
+		return true
+	}
 	if layout.listWidth > 0 && layout.barWidth > 0 && mouse.X < layout.listWidth {
 		now := time.Now()
 		if now.Sub(m.lastSidebarWheelAt) < sidebarWheelCooldown {
@@ -336,6 +339,24 @@ func (m *Model) reduceModeWheelMouse(msg tea.MouseMsg, layout mouseLayout, delta
 		}
 	}
 	return false
+}
+
+func (m *Model) reduceStatusHistoryWheelMouse(mouse tea.Mouse, delta int) bool {
+	if !m.statusHistoryOverlayOpen() {
+		return false
+	}
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		m.closeStatusHistoryOverlay()
+		return true
+	}
+	if !view.hitbox.contains(mouse.X, mouse.Y) {
+		return false
+	}
+	if m.statusHistoryOverlay.Scroll(delta, len(view.entries), view.visibleRows) {
+		m.statusHistoryLastViewValid = false
+	}
+	return true
 }
 
 func (m *Model) reduceMenuLeftPressMouse(msg tea.MouseMsg) bool {
@@ -490,25 +511,64 @@ func (m *Model) reduceGlobalStatusCopyLeftPressMouse(msg tea.MouseMsg) bool {
 	if mouse.Button != tea.MouseLeft {
 		return false
 	}
-	if !m.isStatusLineMouseRow(mouse.Y) {
+	if m.statusLineHit(mouse.X, mouse.Y) {
+		m.toggleStatusHistoryOverlay()
+		return true
+	}
+	if !m.statusHistoryOverlayOpen() {
+		return false
+	}
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		m.closeStatusHistoryOverlay()
+		return true
+	}
+	if !view.hitbox.contains(mouse.X, mouse.Y) {
+		m.closeStatusHistoryOverlay()
+		return true
+	}
+	if index, hit := view.hitbox.listIndexAt(mouse.Y); hit {
+		m.statusHistoryOverlay.Select(index, len(view.entries), view.visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true
+	}
+	if view.hitbox.copyContains(mouse.X, mouse.Y) {
+		cmd := m.copySelectedStatusHistoryEntryCmd(view.entries)
+		if cmd != nil {
+			m.pendingMouseCmd = cmd
+		}
+		return true
+	}
+	return true
+}
+
+func (m *Model) statusLineHit(x, y int) bool {
+	if !m.isStatusLineMouseRow(y) {
 		return false
 	}
 	start, end, ok := m.statusLineStatusHitbox()
 	if !ok {
 		return false
 	}
-	if !isStatusLineMouseCol(mouse.X, start, end) {
-		return false
+	return isStatusLineMouseCol(x, start, end)
+}
+
+func (m *Model) copySelectedStatusHistoryEntryCmd(entries []string) tea.Cmd {
+	if len(entries) == 0 {
+		m.setCopyStatusWarning("nothing to copy")
+		return nil
 	}
-	text := strings.TrimSpace(m.status)
+	index := m.statusHistoryOverlay.SelectedIndex()
+	if index < 0 || index >= len(entries) {
+		m.setCopyStatusWarning("select a status to copy")
+		return nil
+	}
+	text := strings.TrimSpace(entries[index])
 	if text == "" {
 		m.setCopyStatusWarning("nothing to copy")
-		return true
+		return nil
 	}
-	if cmd := m.copyWithStatusCmd(text, "status copied"); cmd != nil {
-		m.pendingMouseCmd = cmd
-	}
-	return true
+	return m.copyWithStatusCmd(text, "status copied")
 }
 
 func (m *Model) isStatusLineMouseRow(y int) bool {

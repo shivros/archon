@@ -6,6 +6,63 @@ import (
 	"control/internal/types"
 )
 
+func (m *Model) reduceStatusHistoryKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	if !m.statusHistoryOverlayOpen() {
+		return false, nil
+	}
+	policy := m.statusHistoryKeyPolicy
+	if policy == nil {
+		policy = defaultStatusHistoryKeyPolicy{}
+	}
+	action, ok := policy.ActionFor(m.keyString(msg))
+	if !ok {
+		return false, nil
+	}
+	entries := m.statusHistory.SnapshotNewestFirst()
+	total := len(entries)
+	visibleRows := min(total, statusHistoryListVisibleRows)
+	if visibleRows <= 0 {
+		visibleRows = 1
+	}
+	switch action {
+	case statusHistoryKeyActionClose:
+		m.closeStatusHistoryOverlay()
+		return true, nil
+	case statusHistoryKeyActionMoveUp:
+		m.statusHistoryOverlay.Move(-1, total, visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true, nil
+	case statusHistoryKeyActionMoveDown:
+		m.statusHistoryOverlay.Move(1, total, visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true, nil
+	case statusHistoryKeyActionPageUp:
+		m.statusHistoryOverlay.Scroll(-visibleRows, total, visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true, nil
+	case statusHistoryKeyActionPageDown:
+		m.statusHistoryOverlay.Scroll(visibleRows, total, visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true, nil
+	case statusHistoryKeyActionHome:
+		m.statusHistoryOverlay.Select(0, total, visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true, nil
+	case statusHistoryKeyActionEnd:
+		m.statusHistoryOverlay.Select(total-1, total, visibleRows)
+		m.statusHistoryLastViewValid = false
+		return true, nil
+	case statusHistoryKeyActionCopy:
+		cmd := m.copySelectedStatusHistoryEntryCmd(entries)
+		if cmd == nil {
+			return true, nil
+		}
+		return true, cmd
+	default:
+		return false, nil
+	}
+}
+
 func (m *Model) reducePendingApprovalKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if m.pendingApproval == nil {
 		return false, nil

@@ -128,6 +128,7 @@ func (m *Model) overlayTransientViews(body string) string {
 	if body == "" {
 		return body
 	}
+	m.statusHistoryLastViewValid = false
 	composer := m.layerComposer
 	if composer == nil {
 		composer = NewTextLayerComposer()
@@ -170,6 +171,9 @@ func (m *Model) overlayTransientViews(body string) string {
 	if popup, row := m.composeOptionPopupView(); popup != "" {
 		overlays = append(overlays, LayerOverlay{Row: row, Block: popup})
 	}
+	if historyDrop, row, ok := m.statusHistoryOverlayView(bodyHeight); ok {
+		overlays = append(overlays, LayerOverlay{Row: row, Block: historyDrop})
+	}
 	if m.settingsMenu != nil && m.settingsMenu.IsOpen() {
 		helpMappings := m.settingsMenuHotkeyCatalogOrDefault().Mappings(m.settingsMenuHotkeySource())
 		presenter := m.settingsMenuPresenter
@@ -189,6 +193,9 @@ func (m *Model) overlayTransientViews(body string) string {
 
 func (m *Model) toastOverlay(bodyHeight int) (string, int, bool) {
 	if bodyHeight < 1 {
+		return "", 0, false
+	}
+	if m.statusHistoryOverlayOpen() {
 		return "", 0, false
 	}
 	line := m.toastLine(m.width)

@@ -35,6 +35,7 @@ const (
 	historyPollMax             = 20
 	composeHistoryMaxEntries   = 200
 	composeHistoryMaxSessions  = 200
+	statusHistoryMaxEntries    = 200
 	toastDuration              = 2 * time.Second
 	viewportScrollbarWidth     = 1
 	minListWidth               = 24
@@ -124,6 +125,12 @@ type Model struct {
 	renameGroupID                       string
 	assignGroupID                       string
 	status                              string
+	statusHistory                       statusHistoryStore
+	statusHistoryOverlay                statusHistoryOverlayController
+	statusHistoryPresenter              StatusHistoryOverlayPresenter
+	statusHistoryKeyPolicy              StatusHistoryKeyPolicy
+	statusHistoryLastView               statusHistoryOverlayView
+	statusHistoryLastViewValid          bool
 	toastText                           string
 	toastLevel                          toastLevel
 	toastUntil                          time.Time
@@ -471,6 +478,10 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		approvalInput:                       NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		recentsReplyInput:                   NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		status:                              "",
+		statusHistory:                       newStatusHistoryStore(statusHistoryMaxEntries),
+		statusHistoryOverlay:                newStatusHistoryOverlayController(),
+		statusHistoryPresenter:              newDefaultStatusHistoryOverlayPresenter(defaultStatusHistoryOverlayConfig()),
+		statusHistoryKeyPolicy:              defaultStatusHistoryKeyPolicy{},
 		toastLevel:                          toastLevelInfo,
 		follow:                              true,
 		sidebarSort:                         defaultSidebarSortState(),
@@ -759,6 +770,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 	case tea.KeyMsg:
+		if handled, cmd := m.reduceStatusHistoryKey(msg); handled {
+			return m, cmd
+		}
 		if handled, cmd := m.reduceNotesModeKey(msg); handled {
 			return m, cmd
 		}
@@ -3530,6 +3544,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceMenuLeftPressMouse(msg) {
 		return true
 	}
+	if m.reduceGlobalStatusCopyLeftPressMouse(msg) {
+		return true
+	}
 	if m.reduceSidebarScrollbarLeftPressMouse(msg, layout) {
 		return true
 	}
@@ -3540,9 +3557,6 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 	if m.reduceInputFocusLeftPressMouse(msg, layout) {
-		return true
-	}
-	if m.reduceGlobalStatusCopyLeftPressMouse(msg) {
 		return true
 	}
 	if m.reduceDebugPanelLeftPressMouse(msg, layout) {

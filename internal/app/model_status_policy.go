@@ -56,6 +56,7 @@ func (m *Model) setStatusByEvent(event statusEvent, message string) {
 		return
 	}
 	m.status = message
+	m.statusHistory.Append(message)
 	policy := statusPolicyForEvent(event)
 	if !policy.showToast {
 		return

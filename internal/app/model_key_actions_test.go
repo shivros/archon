@@ -649,6 +649,102 @@ func TestEscDoesNotOpenSettingsMenuInComposeMode(t *testing.T) {
 	}
 }
 
+func TestEscClosesStatusHistoryBeforeSettingsMenu(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.setStatusMessage("ready")
+	m.statusHistoryOverlay.Open()
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("expected no command on esc")
+	}
+	next, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("expected model update result")
+	}
+	if next.statusHistoryOverlayOpen() {
+		t.Fatalf("expected esc to close status history overlay")
+	}
+	if next.settingsMenu != nil && next.settingsMenu.IsOpen() {
+		t.Fatalf("expected esc not to open settings menu while closing status history")
+	}
+}
+
+func TestStatusHistoryReducerFallsThroughForUnhandledKeys(t *testing.T) {
+	m := NewModel(nil)
+	m.statusHistoryOverlay.Open()
+
+	handled, cmd := m.reduceStatusHistoryKey(keyRune('q'))
+	if handled {
+		t.Fatalf("expected unhandled key to fall through while status history is open")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for unhandled status history key")
+	}
+}
+
+func TestStatusHistoryReducerHandlesNavigationKeys(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.setStatusMessage("one")
+	m.setStatusMessage("two")
+	m.setStatusMessage("three")
+	m.statusHistoryOverlay.Open()
+
+	handled, cmd := m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !handled || cmd != nil {
+		t.Fatalf("expected down key handled without command")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 0 {
+		t.Fatalf("expected selected index 0 after first down, got %d", got)
+	}
+	handled, _ = m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	if !handled {
+		t.Fatalf("expected up key handled")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 0 {
+		t.Fatalf("expected up key to clamp selection at 0, got %d", got)
+	}
+	handled, _ = m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if !handled {
+		t.Fatalf("expected end key handled")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 2 {
+		t.Fatalf("expected end key to move to last index, got %d", got)
+	}
+	handled, _ = m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyHome})
+	if !handled {
+		t.Fatalf("expected home key handled")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 0 {
+		t.Fatalf("expected home key to move to first index, got %d", got)
+	}
+	handled, _ = m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if !handled {
+		t.Fatalf("expected pgdown key handled")
+	}
+	handled, _ = m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if !handled {
+		t.Fatalf("expected pgup key handled")
+	}
+}
+
+func TestStatusHistoryReducerKeyboardCopyEmitsCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.setStatusMessage("copy me")
+	m.statusHistoryOverlay.Open()
+	m.statusHistoryOverlay.Select(0, 1, 1)
+
+	handled, cmd := m.reduceStatusHistoryKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter key handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected enter key to emit copy command")
+	}
+}
+
 func TestNotesNewOverrideWorksFromSidebarSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
