@@ -98,7 +98,7 @@ func (m *Model) openNotesScope(scope noteScopeTarget) tea.Cmd {
 	if m.input != nil {
 		m.input.FocusSidebar()
 	}
-	m.setContentText("Loading notes...")
+	m.setCenteredContentText("Loading notes...")
 	m.setStatusMessage("loading notes for " + scope.Label())
 	m.resize(m.width, m.height)
 	refreshCmd := m.refreshNotesForCurrentScope()
@@ -332,7 +332,7 @@ func (m *Model) onNotesSelectionChanged() tea.Cmd {
 		return nil
 	}
 	m.setNotesRootScope(scope)
-	m.setContentText("Loading notes...")
+	m.setCenteredContentText("Loading notes...")
 	return m.refreshNotesForCurrentScope()
 }
 

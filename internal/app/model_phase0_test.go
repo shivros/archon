@@ -168,6 +168,25 @@ func TestPhase0LoadSelectedSessionOpensItemsStreamForInactiveItemProvider(t *tes
 	}
 }
 
+func TestPhase0ItemStreamUpdateClearsLoadingForItemProvider(t *testing.T) {
+	m := newPhase0ModelWithSession("kilocode")
+	item := m.selectedItem()
+	if item == nil || item.session == nil {
+		t.Fatalf("expected selected session")
+	}
+	_ = m.loadSelectedSession(item)
+	if !m.loading {
+		t.Fatalf("expected loading to start for uncached selection")
+	}
+	ch := make(chan map[string]any, 1)
+	ch <- map[string]any{"type": "message"}
+	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: ch})
+	m.consumeItemTick(time.Now())
+	if m.loading {
+		t.Fatalf("expected item stream update to clear loading")
+	}
+}
+
 func TestPhase0SelectApprovalRequestChoosesLatest(t *testing.T) {
 	older := &types.Approval{
 		SessionID: "s1",

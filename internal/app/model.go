@@ -2545,6 +2545,15 @@ func (m *Model) consumeItemTick(now time.Time) {
 		// stale-history fallback continues polling and can surface delayed items.
 	}
 	if changed {
+		if m.loading {
+			loadingSessionID := sessionIDFromSidebarKey(m.loadingKey)
+			if loadingSessionID == "" || loadingSessionID == sessionID {
+				m.loading = false
+				if m.loadingKey != "" {
+					m.finishUILatencyAction(uiLatencyActionSwitchSession, m.loadingKey, uiLatencyOutcomeOK)
+				}
+			}
+		}
 		blocks := m.itemStream.Blocks()
 		if m.transcriptViewportVisible() {
 			m.applyBlocksNoRender(blocks)
@@ -3129,7 +3138,16 @@ func (m *Model) requestStreamRender(now time.Time) {
 }
 
 func (m *Model) setLoadingContent() {
-	m.setContentText(m.loader.View() + " Loading...")
+	m.setCenteredContentText(m.loader.View() + " Loading...")
+}
+
+func (m *Model) setCenteredContentText(text string) {
+	w := m.viewport.Width()
+	h := m.viewport.Height()
+	if w > 0 && h > 0 {
+		text = lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, text)
+	}
+	m.setContentANSIText(text)
 }
 
 func (m *Model) appendUserMessageLocal(provider, text string) int {
