@@ -1,0 +1,31 @@
+{
+  "session_id": "session-1",
+  "provider": "codex",
+  "revision": "12",
+  "blocks": [
+    {
+      "id": "b1",
+      "kind": "assistant_message",
+      "role": "assistant",
+      "text": "hello"
+    },
+    {
+      "id": "b2",
+      "kind": "user_message",
+      "role": "user",
+      "text": "ship it"
+    }
+  ],
+  "turn_state": {
+    "state": "running",
+    "turn_id": "turn-12"
+  },
+  "capabilities": {
+    "supports_guided_workflow_dispatch": true,
+    "uses_items": false,
+    "supports_events": true,
+    "supports_approvals": true,
+    "supports_interrupt": true,
+    "no_process": false
+  }
+}

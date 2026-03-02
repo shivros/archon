@@ -1,0 +1,12 @@
+{
+  "kind": "turn.completed",
+  "session_id": "session-1",
+  "provider": "codex",
+  "revision": "13",
+  "occurred_at": "2026-03-02T10:30:00Z",
+  "turn": {
+    "state": "completed",
+    "turn_id": "turn-12",
+    "updated_at": "2026-03-02T10:30:00Z"
+  }
+}

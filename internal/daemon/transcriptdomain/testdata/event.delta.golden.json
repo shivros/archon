@@ -1,0 +1,14 @@
+{
+  "kind": "transcript.delta",
+  "session_id": "session-1",
+  "provider": "claude",
+  "revision": "4",
+  "delta": [
+    {
+      "id": "b3",
+      "kind": "assistant_delta",
+      "role": "assistant",
+      "text": "partial response"
+    }
+  ]
+}

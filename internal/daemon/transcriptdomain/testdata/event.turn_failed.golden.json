@@ -1,0 +1,12 @@
+{
+  "kind": "turn.failed",
+  "session_id": "session-1",
+  "provider": "codex",
+  "revision": "14",
+  "occurred_at": "2026-03-02T10:31:00Z",
+  "turn": {
+    "state": "failed",
+    "turn_id": "turn-13",
+    "error": "provider error"
+  }
+}
