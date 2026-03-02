@@ -125,8 +125,8 @@ func notificationTitleBody(event types.NotificationEvent) (string, string) {
 		}
 		return summary, strings.Join(parts, " | ")
 	}
-	summary := "Archon"
-	body := ""
+	var summary string
+	var body string
 	switch event.Trigger {
 	case types.NotificationTriggerTurnCompleted:
 		summary = "Archon turn completed"

@@ -372,7 +372,7 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 		if err != nil {
 			return configOutput{}, err
 		}
-		templates := []guidedworkflows.WorkflowTemplate{}
+		var templates []guidedworkflows.WorkflowTemplate
 		if defaults {
 			templates = guidedworkflows.DefaultWorkflowTemplates()
 		} else {

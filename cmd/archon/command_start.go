@@ -64,6 +64,6 @@ func (c *StartCommand) Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(c.stdout, session.ID)
+	_, _ = fmt.Fprintln(c.stdout, session.ID)
 	return nil
 }

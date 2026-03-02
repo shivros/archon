@@ -139,7 +139,7 @@ func SeedRepositoryFromFiles(ctx context.Context, dst Repository, paths Reposito
 		return nil
 	}
 	src := NewFileRepository(paths)
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	if err := seedAppState(ctx, dst.AppState(), src.AppState()); err != nil {
 		return err

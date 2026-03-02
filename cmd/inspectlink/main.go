@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer repo.Close()
+	defer func() { _ = repo.Close() }()
 	ctx := context.Background()
 
 	records, err := repo.SessionIndex().ListRecords(ctx)

@@ -16,13 +16,13 @@ const version = "dev"
 
 func printSessions(output io.Writer, sessions []*types.Session) {
 	writer := tabwriter.NewWriter(output, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(writer, "ID\tSTATUS\tPROVIDER\tPID\tTITLE")
+	_, _ = fmt.Fprintln(writer, "ID\tSTATUS\tPROVIDER\tPID\tTITLE")
 	for _, session := range sessions {
 		pid := "-"
 		if session.PID > 0 {
 			pid = fmt.Sprintf("%d", session.PID)
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", session.ID, session.Status, session.Provider, pid, session.Title)
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", session.ID, session.Status, session.Provider, pid, session.Title)
 	}
 	_ = writer.Flush()
 }
@@ -42,7 +42,7 @@ func exitOnErr(label string, err error, stderr io.Writer) {
 	if err == nil {
 		return
 	}
-	fmt.Fprintf(stderr, "%s error: %v\n", label, err)
+	_, _ = fmt.Fprintf(stderr, "%s error: %v\n", label, err)
 	os.Exit(1)
 }
 
@@ -70,7 +70,7 @@ func buildVersion() string {
 	if err == nil {
 		file, err := os.Open(exe)
 		if err == nil {
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			hasher := sha256.New()
 			if _, err := io.Copy(hasher, file); err == nil {
 				sum := hasher.Sum(nil)

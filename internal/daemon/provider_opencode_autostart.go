@@ -345,7 +345,7 @@ func pickOpenCodeFallbackPortImpl(host string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("allocate fallback port: %w", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	_, port, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
 		return "", fmt.Errorf("resolve fallback port: %w", err)

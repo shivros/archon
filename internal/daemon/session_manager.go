@@ -767,7 +767,7 @@ func tailLines(path string, maxLines int) ([]string, bool, error) {
 		}
 		return nil, false, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

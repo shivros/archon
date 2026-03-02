@@ -18,7 +18,7 @@ repos:
         language: system
         pass_filenames: false
       - id: go-test
-        name: go test (unit)
-        entry: bash -lc 'ARCHON_CODEX_INTEGRATION=disabled ARCHON_CLAUDE_INTEGRATION=disabled ARCHON_OPENCODE_INTEGRATION=disabled ARCHON_KILOCODE_INTEGRATION=disabled go test ./...'
+        name: go test (default)
+        entry: bash -lc 'go test ./...'
         language: system
         pass_filenames: false

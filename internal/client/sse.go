@@ -96,7 +96,7 @@ func (c *Client) TailStream(ctx context.Context, id, stream string) (<-chan type
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		cancel()
 		if streamDebugEnabled() {
 			streamLogf("stream tail error id=%s status=%d", id, resp.StatusCode)
@@ -107,7 +107,7 @@ func (c *Client) TailStream(ctx context.Context, id, stream string) (<-chan type
 	ch := make(chan types.LogEvent, 256)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		start := time.Now()
 		count := 0
@@ -176,7 +176,7 @@ func (c *Client) EventStream(ctx context.Context, id string) (<-chan types.Codex
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		cancel()
 		if streamDebugEnabled() {
 			streamLogf("stream events error id=%s status=%d", id, resp.StatusCode)
@@ -187,7 +187,7 @@ func (c *Client) EventStream(ctx context.Context, id string) (<-chan types.Codex
 	ch := make(chan types.CodexEvent, 256)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		start := time.Now()
 		count := 0
@@ -256,7 +256,7 @@ func (c *Client) ItemsStream(ctx context.Context, id string) (<-chan map[string]
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		cancel()
 		if streamDebugEnabled() {
 			streamLogf("stream items error id=%s status=%d", id, resp.StatusCode)
@@ -267,7 +267,7 @@ func (c *Client) ItemsStream(ctx context.Context, id string) (<-chan map[string]
 	ch := make(chan map[string]any, 256)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		start := time.Now()
 		count := 0
@@ -339,7 +339,7 @@ func (c *Client) DebugStream(ctx context.Context, id string) (<-chan types.Debug
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		cancel()
 		return nil, nil, decodeAPIError(resp)
 	}
@@ -347,7 +347,7 @@ func (c *Client) DebugStream(ctx context.Context, id string) (<-chan types.Debug
 	ch := make(chan types.DebugEvent, 256)
 	go func() {
 		defer close(ch)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

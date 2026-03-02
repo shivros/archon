@@ -144,7 +144,7 @@ func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
 	if c == nil || !c.active {
 		return "", 0
 	}
-	x, y, width, height := c.layout(maxWidth, maxHeight)
+	x, y, width, _ := c.layout(maxWidth, maxHeight)
 	innerWidth := max(1, width-2)
 	contentWidth := max(1, innerWidth-2)
 	title := c.title
@@ -187,9 +187,6 @@ func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
 	block := confirmDialogBorderStyle.Render(strings.Join(lines, "\n"))
 	if x > 0 {
 		block = indentBlock(block, x)
-	}
-	if height < len(lines)+2 {
-		height = len(lines) + 2
 	}
 	return block, y
 }

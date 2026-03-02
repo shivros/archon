@@ -133,7 +133,7 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logg
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	go io.Copy(io.Discard, stderr)
+	go func() { _, _ = io.Copy(io.Discard, stderr) }()
 
 	logger.Info("codex_start", logging.F("cmd", cmdName), logging.F("cwd", cwd), logging.F("codex_home", codexHome))
 

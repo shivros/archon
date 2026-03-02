@@ -92,7 +92,7 @@ func (r *fileSessionItemsRepository) AppendItems(sessionID string, items []map[s
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	appended := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		prepared := prepareItemForPersistence(item, time.Now().UTC())

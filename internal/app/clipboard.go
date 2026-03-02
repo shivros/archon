@@ -202,7 +202,7 @@ func writeOSC52Clipboard(text string) error {
 	if err != nil {
 		return fmt.Errorf("open /dev/tty: %w", err)
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	return writeOSC52Sequence(tty, text)
 }
 

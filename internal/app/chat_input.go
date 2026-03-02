@@ -319,7 +319,6 @@ func (c *TextInput) preprocessKeyMsg(msg tea.KeyMsg) (tea.KeyMsg, bool) {
 		switch {
 		case isDeletionKey(msg):
 			c.recordMutationSnapshot()
-			recordedMutation = true
 			c.input.SetValue("")
 			c.allSelected = false
 			c.sanitize()
@@ -470,7 +469,7 @@ func (c *TextInput) applyHeightPolicy() bool {
 	if c == nil {
 		return false
 	}
-	nextHeight := c.height
+	var nextHeight int
 	if c.autoGrow {
 		lines := wrappedLineCount(c.input.Value(), c.width)
 		nextHeight = clamp(lines, c.minHeight, c.maxHeight)

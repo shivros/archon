@@ -44,6 +44,6 @@ func (c *KillCommand) Run(args []string) error {
 	if err := client.KillSession(ctx, id); err != nil {
 		return err
 	}
-	fmt.Fprintln(c.stdout, "ok")
+	_, _ = fmt.Fprintln(c.stdout, "ok")
 	return nil
 }

@@ -167,7 +167,7 @@ func (s *SessionService) appendSessionItems(id string, items []map[string]any) e
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	appended := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		prepared := prepareItemForPersistence(item, time.Now().UTC())

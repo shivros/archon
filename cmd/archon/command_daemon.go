@@ -136,7 +136,7 @@ func runDaemonProcess(background bool) error {
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if err := store.SeedRepositoryFromFiles(context.Background(), repository, repositoryPaths); err != nil {
 		return err
 	}

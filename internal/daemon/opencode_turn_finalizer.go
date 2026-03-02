@@ -28,8 +28,8 @@ func (f *defaultOpenCodeTurnFinalizer) FinalizeTurn(turn turnEventParams, additi
 	if f.artifactSync != nil {
 		syncResult = f.artifactSync.SyncTurnArtifacts(context.Background(), turn)
 	}
-	output := strings.TrimSpace(syncResult.Output)
-	payload := map[string]any{}
+	var output string
+	var payload map[string]any
 	if f.payloads != nil {
 		output, payload = f.payloads.Build(turn, syncResult)
 	} else {

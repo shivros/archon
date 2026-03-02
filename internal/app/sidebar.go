@@ -286,11 +286,11 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 	maxWidth := m.Width()
 	switch entry.kind {
 	case sidebarRecentsAll:
-		fmt.Fprint(w, d.renderRecentsAllRow(entry, maxWidth, isSelected, isMarked))
+		_, _ = fmt.Fprint(w, d.renderRecentsAllRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarRecentsReady:
-		fmt.Fprint(w, d.renderRecentsReadyRow(entry, maxWidth, isSelected, isMarked))
+		_, _ = fmt.Fprint(w, d.renderRecentsReadyRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarRecentsRunning:
-		fmt.Fprint(w, d.renderRecentsRunningRow(entry, maxWidth, isSelected, isMarked))
+		_, _ = fmt.Fprint(w, d.renderRecentsRunningRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarWorkspace:
 		fmt.Fprint(w, d.renderWorkspaceRow(entry, maxWidth, isSelected, isMarked))
 	case sidebarWorktree:
