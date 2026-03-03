@@ -9,33 +9,35 @@ import (
 )
 
 type SelectionLoadBootstrapInput struct {
-	Provider     string
-	Status       types.SessionStatus
-	SessionID    string
-	SessionKey   string
-	InitialLines int
-	LoadContext  context.Context
-	HistoryAPI   SessionHistoryAPI
-	SessionAPI   SessionAPI
+	Provider      string
+	Status        types.SessionStatus
+	SessionID     string
+	SessionKey    string
+	InitialLines  int
+	AfterRevision string
+	LoadContext   context.Context
+	TranscriptAPI SessionTranscriptAPI
+	SessionAPI    SessionAPI
 }
 
 type SessionStartBootstrapInput struct {
-	Provider     string
-	Status       types.SessionStatus
-	SessionID    string
-	SessionKey   string
-	InitialLines int
-	LoadContext  context.Context
-	HistoryAPI   SessionHistoryAPI
-	SessionAPI   SessionAPI
+	Provider      string
+	Status        types.SessionStatus
+	SessionID     string
+	SessionKey    string
+	InitialLines  int
+	AfterRevision string
+	LoadContext   context.Context
+	TranscriptAPI SessionTranscriptAPI
+	SessionAPI    SessionAPI
 }
 
 type SessionReconnectBootstrapInput struct {
-	Provider             string
-	SessionID            string
-	SessionAPI           SessionAPI
-	ItemStreamConnected  bool
-	EventStreamConnected bool
+	Provider                  string
+	SessionID                 string
+	AfterRevision             string
+	TranscriptAPI             SessionTranscriptAPI
+	TranscriptStreamConnected bool
 }
 
 type SessionBootstrapCoordinator interface {
@@ -63,22 +65,19 @@ func WithSessionBootstrapCoordinator(coordinator SessionBootstrapCoordinator) Mo
 
 func (c defaultSessionBootstrapCoordinator) BuildSelectionLoadCommands(input SelectionLoadBootstrapInput) []tea.Cmd {
 	plan := c.policyOrDefault().SelectionLoadPlan(input.Provider, input.Status)
-	return buildBootstrapCommands(plan, input.SessionID, input.SessionKey, input.InitialLines, input.LoadContext, input.HistoryAPI, input.SessionAPI)
+	return buildBootstrapCommands(plan, input.SessionID, input.SessionKey, input.AfterRevision, input.InitialLines, input.LoadContext, input.TranscriptAPI, input.SessionAPI)
 }
 
 func (c defaultSessionBootstrapCoordinator) BuildSessionStartCommands(input SessionStartBootstrapInput) []tea.Cmd {
 	plan := c.policyOrDefault().SessionStartPlan(input.Provider, input.Status)
-	return buildBootstrapCommands(plan, input.SessionID, input.SessionKey, input.InitialLines, input.LoadContext, input.HistoryAPI, input.SessionAPI)
+	return buildBootstrapCommands(plan, input.SessionID, input.SessionKey, input.AfterRevision, input.InitialLines, input.LoadContext, input.TranscriptAPI, input.SessionAPI)
 }
 
 func (c defaultSessionBootstrapCoordinator) BuildReconnectCommands(input SessionReconnectBootstrapInput) []tea.Cmd {
 	plan := c.policyOrDefault().SendReconnectPlan(input.Provider)
-	cmds := make([]tea.Cmd, 0, 2)
-	if plan.OpenItems && !input.ItemStreamConnected {
-		cmds = append(cmds, openItemsCmd(input.SessionAPI, input.SessionID))
-	}
-	if plan.OpenEvents && !input.EventStreamConnected {
-		cmds = append(cmds, openEventsCmd(input.SessionAPI, input.SessionID))
+	cmds := make([]tea.Cmd, 0, 1)
+	if plan.OpenTranscript && !input.TranscriptStreamConnected && input.TranscriptAPI != nil {
+		cmds = append(cmds, openTranscriptStreamCmd(input.TranscriptAPI, input.SessionID, input.AfterRevision))
 	}
 	return cmds
 }
@@ -93,26 +92,21 @@ func (c defaultSessionBootstrapCoordinator) policyOrDefault() SessionBootstrapPo
 func buildBootstrapCommands(
 	plan sessionBootstrapPlan,
 	sessionID, key string,
+	afterRevision string,
 	lines int,
 	loadCtx context.Context,
-	historyAPI SessionHistoryAPI,
+	transcriptAPI SessionTranscriptAPI,
 	sessionAPI SessionAPI,
 ) []tea.Cmd {
 	cmds := make([]tea.Cmd, 0, 4)
-	if plan.FetchHistory {
-		cmds = append(cmds, fetchHistoryCmdWithContext(historyAPI, sessionID, key, lines, loadCtx))
+	if plan.FetchTranscript && transcriptAPI != nil {
+		cmds = append(cmds, fetchTranscriptSnapshotCmdWithContext(transcriptAPI, sessionID, key, lines, loadCtx))
 	}
 	if plan.FetchApprovals {
 		cmds = append(cmds, fetchApprovalsCmdWithContext(sessionAPI, sessionID, loadCtx))
 	}
-	if plan.OpenItems {
-		cmds = append(cmds, openItemsCmd(sessionAPI, sessionID))
-	}
-	if plan.OpenTail {
-		cmds = append(cmds, openStreamCmd(sessionAPI, sessionID))
-	}
-	if plan.OpenEvents {
-		cmds = append(cmds, openEventsCmd(sessionAPI, sessionID))
+	if plan.OpenTranscript && transcriptAPI != nil {
+		cmds = append(cmds, openTranscriptStreamCmd(transcriptAPI, sessionID, afterRevision))
 	}
 	return cmds
 }

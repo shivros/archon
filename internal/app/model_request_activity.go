@@ -142,19 +142,15 @@ func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {
 	ctx := m.requestScopeContext(requestScopeSessionLoad)
 	historyCmd := fetchHistoryCmdWithContext(m.sessionHistoryAPI, sessionID, key, m.historyFetchLinesInitial(), ctx)
 	cmds := []tea.Cmd{}
-	if shouldStreamItems(provider) {
-		if m.itemStream != nil && !m.itemStream.HasStream() {
-			m.recordReconnectAttempt(sessionID, provider, "items", transcriptSourceAutoRefreshHistory)
-			cmds = append(cmds, openItemsCmd(m.sessionAPI, sessionID))
-		}
-	} else if provider == "codex" {
-		if m.codexStream != nil && !m.codexStream.HasStream() {
-			m.recordReconnectAttempt(sessionID, provider, "events", transcriptSourceAutoRefreshHistory)
-			cmds = append(cmds, openEventsCmd(m.sessionAPI, sessionID))
-		}
+	if m.sessionTranscriptAPI != nil && (m.transcriptStream == nil || !m.transcriptStream.HasStream()) {
+		m.recordReconnectAttempt(sessionID, provider, "transcript", transcriptSourceAutoRefreshHistory)
+		cmds = append(cmds, openTranscriptStreamCmd(m.sessionTranscriptAPI, sessionID, m.activeTranscriptRevision()))
+	}
+	if m.sessionTranscriptAPI != nil {
+		historyCmd = fetchTranscriptSnapshotCmdWithContext(m.sessionTranscriptAPI, sessionID, key, m.historyFetchLinesInitial(), ctx)
 	}
 	cmds = append(cmds, historyCmd)
-	if shouldStreamItems(provider) && providerSupportsApprovals(provider) {
+	if decision := m.approvalRefreshDecision(sessionID, provider, transcriptSourceAutoRefreshHistory); decision.ShouldFetch {
 		cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, sessionID, ctx))
 	}
 	return tea.Batch(cmds...)

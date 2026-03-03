@@ -3,6 +3,7 @@ package app
 import (
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
@@ -303,6 +304,21 @@ type itemsStreamMsg struct {
 	ch     <-chan map[string]any
 	cancel func()
 	err    error
+}
+
+type transcriptSnapshotMsg struct {
+	id       string
+	key      string
+	snapshot *transcriptdomain.TranscriptSnapshot
+	err      error
+}
+
+type transcriptStreamMsg struct {
+	id       string
+	ch       <-chan transcriptdomain.TranscriptEvent
+	cancel   func()
+	err      error
+	revision string
 }
 
 type debugStreamMsg struct {

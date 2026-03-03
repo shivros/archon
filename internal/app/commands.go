@@ -583,6 +583,22 @@ func fetchHistoryCmdWithContext(api SessionHistoryAPI, id, key string, lines int
 	}
 }
 
+func fetchTranscriptSnapshotCmd(api SessionTranscriptSnapshotAPI, id, key string, lines int) tea.Cmd {
+	return fetchTranscriptSnapshotCmdWithContext(api, id, key, lines, nil)
+}
+
+func fetchTranscriptSnapshotCmdWithContext(api SessionTranscriptSnapshotAPI, id, key string, lines int, parent context.Context) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := commandWithTimeout(parent, 8*time.Second)
+		defer cancel()
+		resp, err := api.GetTranscriptSnapshot(ctx, id, lines)
+		if err != nil {
+			return transcriptSnapshotMsg{id: id, key: key, err: err}
+		}
+		return transcriptSnapshotMsg{id: id, key: key, snapshot: resp}
+	}
+}
+
 func fetchRecentsPreviewCmd(api SessionHistoryAPI, id, revision string, lines int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -610,6 +626,13 @@ func openEventsCmd(api SessionEventStreamAPI, id string) tea.Cmd {
 	return func() tea.Msg {
 		ch, cancel, err := api.EventStream(context.Background(), id)
 		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
+	}
+}
+
+func openTranscriptStreamCmd(api SessionTranscriptStreamAPI, id, afterRevision string) tea.Cmd {
+	return func() tea.Msg {
+		ch, cancel, err := api.TranscriptStream(context.Background(), id, afterRevision)
+		return transcriptStreamMsg{id: id, ch: ch, cancel: cancel, err: err, revision: afterRevision}
 	}
 }
 

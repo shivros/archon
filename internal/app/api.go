@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"control/internal/client"
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
@@ -149,6 +150,19 @@ type SessionItemsStreamAPI interface {
 
 type SessionDebugStreamAPI interface {
 	DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error)
+}
+
+type SessionTranscriptSnapshotAPI interface {
+	GetTranscriptSnapshot(ctx context.Context, id string, lines int) (*client.TranscriptSnapshotResponse, error)
+}
+
+type SessionTranscriptStreamAPI interface {
+	TranscriptStream(ctx context.Context, id string, afterRevision string) (<-chan transcriptdomain.TranscriptEvent, func(), error)
+}
+
+type SessionTranscriptAPI interface {
+	SessionTranscriptSnapshotAPI
+	SessionTranscriptStreamAPI
 }
 
 type SessionKillAPI interface {
@@ -396,6 +410,14 @@ func (a *ClientAPI) TailStream(ctx context.Context, id, stream string) (<-chan t
 
 func (a *ClientAPI) DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error) {
 	return a.client.DebugStream(ctx, id)
+}
+
+func (a *ClientAPI) GetTranscriptSnapshot(ctx context.Context, id string, lines int) (*client.TranscriptSnapshotResponse, error) {
+	return a.client.GetTranscriptSnapshot(ctx, id, lines)
+}
+
+func (a *ClientAPI) TranscriptStream(ctx context.Context, id string, afterRevision string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	return a.client.TranscriptStream(ctx, id, afterRevision)
 }
 
 func (a *ClientAPI) EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {

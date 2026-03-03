@@ -724,55 +724,29 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 	}
 	send := sendSessionCmd(m.sessionAPI, sessionID, text, token)
 	reconnectCmds := m.sessionBootstrapCoordinatorOrDefault().BuildReconnectCommands(SessionReconnectBootstrapInput{
-		Provider:             provider,
-		SessionID:            sessionID,
-		SessionAPI:           m.sessionAPI,
-		ItemStreamConnected:  m.itemStream != nil && m.itemStream.HasStream(),
-		EventStreamConnected: m.codexStream != nil && m.codexStream.HasStream(),
+		Provider:                  provider,
+		SessionID:                 sessionID,
+		AfterRevision:             m.activeTranscriptRevision(),
+		TranscriptAPI:             m.sessionTranscriptAPI,
+		TranscriptStreamConnected: m.transcriptStream != nil && m.transcriptStream.HasStream(),
 	})
-	if shouldStreamItems(provider) && (m.itemStream == nil || !m.itemStream.HasStream()) {
-		m.recordReconnectAttempt(sessionID, provider, "items", transcriptSourceSubmitComposeInput)
+	if m.transcriptStream == nil || !m.transcriptStream.HasStream() {
+		m.recordReconnectAttempt(sessionID, provider, "transcript", transcriptSourceSubmitComposeInput)
 	}
-	if provider == "codex" && (m.codexStream == nil || !m.codexStream.HasStream()) {
-		m.recordReconnectAttempt(sessionID, provider, "events", transcriptSourceSubmitComposeInput)
+	cmds := make([]tea.Cmd, 0, 4)
+	if len(reconnectCmds) > 0 {
+		cmds = append(cmds, reconnectCmds...)
 	}
-	if shouldStreamItems(provider) {
-		cmds := []tea.Cmd{send}
-		if len(reconnectCmds) > 0 {
-			cmds = append(reconnectCmds, cmds...)
-		}
-		key := m.pendingSessionKey
-		if key == "" {
-			key = m.selectedKey()
-		}
-		if key != "" {
-			cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
-		}
-		if saveHistoryCmd != nil {
-			cmds = append(cmds, saveHistoryCmd)
-		}
-		return tea.Batch(cmds...)
+	cmds = append(cmds, send)
+	key := m.pendingSessionKey
+	if key == "" {
+		key = m.selectedKey()
 	}
-	if provider == "codex" {
-		cmds := make([]tea.Cmd, 0, 4)
-		if len(reconnectCmds) > 0 {
-			cmds = append(cmds, reconnectCmds...)
-		}
-		cmds = append(cmds, send)
-		key := m.pendingSessionKey
-		if key == "" {
-			key = m.selectedKey()
-		}
-		if key != "" {
-			cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
-		}
-		if saveHistoryCmd != nil {
-			cmds = append(cmds, saveHistoryCmd)
-		}
-		return tea.Batch(cmds...)
+	if key != "" {
+		cmds = append(cmds, historyPollCmd(sessionID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
 	}
 	if saveHistoryCmd != nil {
-		return tea.Batch(send, saveHistoryCmd)
+		cmds = append(cmds, saveHistoryCmd)
 	}
-	return send
+	return tea.Batch(cmds...)
 }

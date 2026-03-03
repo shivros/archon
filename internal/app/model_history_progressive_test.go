@@ -20,6 +20,7 @@ func TestDefaultHistoryLoadPolicyUsesSinglePassLines(t *testing.T) {
 
 func TestLoadSelectedSessionSkipsHistoryBackfillByDefault(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
 	item := m.selectedItem()
 	if item == nil || item.session == nil {
 		t.Fatalf("expected selected session item")
@@ -34,13 +35,14 @@ func TestLoadSelectedSessionSkipsHistoryBackfillByDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected load batch, got %T", msg)
 	}
-	if len(batch) != 4 {
-		t.Fatalf("expected 4 commands (history, approvals, stream/items, events), got %d", len(batch))
+	if len(batch) != 3 {
+		t.Fatalf("expected 3 commands (transcript snapshot, approvals, transcript stream), got %d", len(batch))
 	}
 }
 
 func TestLoadSelectedSessionUsesItemsSnapshotBootstrapForItemProviders(t *testing.T) {
 	m := newPhase0ModelWithSession("kilocode")
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
 	item := m.selectedItem()
 	if item == nil || item.session == nil {
 		t.Fatalf("expected selected session item")
@@ -55,13 +57,14 @@ func TestLoadSelectedSessionUsesItemsSnapshotBootstrapForItemProviders(t *testin
 	if !ok {
 		t.Fatalf("expected load batch, got %T", msg)
 	}
-	if len(batch) != 2 {
-		t.Fatalf("expected 2 commands (approvals, items stream), got %d", len(batch))
+	if len(batch) != 3 {
+		t.Fatalf("expected 3 commands (transcript snapshot, approvals, transcript stream), got %d", len(batch))
 	}
 }
 
 func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) {
 	m := NewModel(nil)
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
 	m.setSnapshotBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "old reply should clear"}})
 
 	session := &types.Session{
@@ -96,23 +99,14 @@ func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) 
 	}
 	plan := m.sessionBootstrapPolicyOrDefault().SessionStartPlan(session.Provider, session.Status)
 	expected := 1 // fetch sessions
-	if plan.FetchHistory {
-		expected++ // initial history
+	if plan.FetchTranscript {
+		expected++ // initial transcript snapshot
 	}
 	if plan.FetchApprovals {
 		expected++ // approvals
 	}
-	if plan.OpenItems {
-		expected++ // items stream
-	}
-	if plan.OpenEvents {
-		expected++ // events stream
-	}
-	if plan.OpenTail {
-		expected++ // log stream
-	}
-	if session.Provider == "codex" {
-		expected++ // history polling safety refresh
+	if plan.OpenTranscript {
+		expected++ // transcript stream
 	}
 	expected++ // recents state save debounce
 	if len(batch) != expected {
@@ -122,6 +116,7 @@ func TestStartSessionClearsPreviousContentAndSkipsBackfillCommand(t *testing.T) 
 
 func TestStartSessionUsesItemsSnapshotBootstrapForItemProviders(t *testing.T) {
 	m := NewModel(nil)
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
 	session := &types.Session{
 		ID:       "s1",
 		Provider: "kilocode",
@@ -141,9 +136,9 @@ func TestStartSessionUsesItemsSnapshotBootstrapForItemProviders(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected batch command, got %T", msg)
 	}
-	// fetch sessions + recents save + approvals + items stream
-	if len(batch) != 4 {
-		t.Fatalf("expected 4 start-session commands for item provider bootstrap, got %d", len(batch))
+	// fetch sessions + recents save + transcript snapshot + approvals + transcript stream
+	if len(batch) != 5 {
+		t.Fatalf("expected 5 start-session commands for unified bootstrap, got %d", len(batch))
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -123,17 +124,17 @@ func TestReconnectAttemptAndOutcomeMetrics(t *testing.T) {
 		t.Fatalf("expected reconnect attempt metric")
 	}
 	last := metrics[len(metrics)-1]
-	if last.Name != transcriptMetricReconnect || last.Outcome != transcriptOutcomeAttempt || last.Stream != "items" {
+	if last.Name != transcriptMetricReconnect || last.Outcome != transcriptOutcomeAttempt || last.Stream != "transcript" {
 		t.Fatalf("unexpected reconnect attempt metric: %#v", last)
 	}
 
-	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: make(chan map[string]any)})
+	m.applyTranscriptStreamMsg(transcriptStreamMsg{id: "s1", ch: make(chan transcriptdomain.TranscriptEvent)})
 	metrics = sink.Snapshot()
 	if len(metrics) < 2 {
 		t.Fatalf("expected reconnect outcome metric")
 	}
 	last = metrics[len(metrics)-1]
-	if last.Name != transcriptMetricReconnect || last.Outcome != transcriptOutcomeSuccess || last.Reason != transcriptReasonReconnectStreamAttached {
+	if last.Name != transcriptMetricReconnect || last.Outcome != transcriptOutcomeSuccess || last.Reason != transcriptReasonReconnectMatchedSession {
 		t.Fatalf("unexpected reconnect outcome metric: %#v", last)
 	}
 }

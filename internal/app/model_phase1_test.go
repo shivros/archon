@@ -131,9 +131,9 @@ func TestPhase1SelectionChangeDoesNotFetchProviderOptions(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected nested load batch, got %T", loadMsg)
 	}
-	// history + approvals + stream/items + events; provider options fetch is intentionally excluded.
-	if len(loadBatch) != 4 {
-		t.Fatalf("expected 4 selection-load commands, got %d", len(loadBatch))
+	// transcript snapshot + approvals + transcript stream; provider options fetch is intentionally excluded.
+	if len(loadBatch) != 3 {
+		t.Fatalf("expected 3 selection-load commands, got %d", len(loadBatch))
 	}
 }
 
@@ -230,10 +230,9 @@ func TestPhase1SessionsWithMetaReloadKeepsItemsStreamForInactiveItemProvider(t *
 			loadBatch = nested
 		}
 	}
-	// For inactive item providers we still expect:
-	// approvals + items stream (without parallel history bootstrap)
-	if len(loadBatch) != 2 {
-		t.Fatalf("expected 2 selection-load commands, got %d", len(loadBatch))
+	// Unified bootstrap uses snapshot + approvals + transcript stream.
+	if len(loadBatch) != 3 {
+		t.Fatalf("expected 3 selection-load commands, got %d", len(loadBatch))
 	}
 }
 

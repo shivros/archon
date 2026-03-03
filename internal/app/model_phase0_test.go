@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -130,11 +131,11 @@ func TestPhase0LoadSelectedSessionResetsApprovalAndUsesCache(t *testing.T) {
 	if m.status != "loading s1" {
 		t.Fatalf("expected loading status, got %q", m.status)
 	}
-	if m.loading {
-		t.Fatalf("expected loading=false when cache exists")
+	if !m.loading {
+		t.Fatalf("expected loading=true until transcript snapshot/stream signal")
 	}
-	if m.loadingKey != "" {
-		t.Fatalf("expected loading key to clear, got %q", m.loadingKey)
+	if m.loadingKey != item.key() {
+		t.Fatalf("expected loading key %q, got %q", item.key(), m.loadingKey)
 	}
 	blocks := m.currentBlocks()
 	if len(blocks) != 1 || blocks[0].Text != "cached reply" {
@@ -162,13 +163,13 @@ func TestPhase0LoadSelectedSessionOpensItemsStreamForInactiveItemProvider(t *tes
 	if !ok {
 		t.Fatalf("expected batch message, got %T", msg)
 	}
-	// approvals + items stream (items snapshot is authoritative bootstrap)
-	if len(batch) != 2 {
-		t.Fatalf("expected 2 selection-load commands, got %d", len(batch))
+	// transcript snapshot + approvals + transcript stream
+	if len(batch) != 3 {
+		t.Fatalf("expected 3 selection-load commands, got %d", len(batch))
 	}
 }
 
-func TestPhase0ItemStreamUpdateClearsLoadingForItemProvider(t *testing.T) {
+func TestPhase0TranscriptSnapshotClearsLoadingForSelection(t *testing.T) {
 	m := newPhase0ModelWithSession("kilocode")
 	item := m.selectedItem()
 	if item == nil || item.session == nil {
@@ -178,12 +179,26 @@ func TestPhase0ItemStreamUpdateClearsLoadingForItemProvider(t *testing.T) {
 	if !m.loading {
 		t.Fatalf("expected loading to start for uncached selection")
 	}
-	ch := make(chan map[string]any, 1)
-	ch <- map[string]any{"type": "message"}
-	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: ch})
-	m.consumeItemTick(time.Now())
+	handled, cmd := m.reduceStateMessages(transcriptSnapshotMsg{
+		id:  "s1",
+		key: "sess:s1",
+		snapshot: &transcriptdomain.TranscriptSnapshot{
+			SessionID: "s1",
+			Provider:  "kilocode",
+			Revision:  transcriptdomain.MustParseRevisionToken("1"),
+			Blocks: []transcriptdomain.Block{
+				{Kind: "assistant_message", Role: "assistant", Text: "ready"},
+			},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected transcript snapshot to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for snapshot")
+	}
 	if m.loading {
-		t.Fatalf("expected item stream update to clear loading")
+		t.Fatalf("expected transcript snapshot to clear loading")
 	}
 }
 
@@ -516,6 +531,7 @@ func TestPhase0ApprovalMsgReplacesPendingWithResolvedMarker(t *testing.T) {
 
 func newPhase0ModelWithSession(provider string) Model {
 	m := NewModel(nil)
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
 	now := time.Now().UTC()
 	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
 	m.workspaces = []*types.Workspace{

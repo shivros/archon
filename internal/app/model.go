@@ -17,6 +17,7 @@ import (
 
 	"control/internal/client"
 	"control/internal/config"
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/guidedworkflows"
 	"control/internal/providers"
 	"control/internal/types"
@@ -86,6 +87,7 @@ const (
 type Model struct {
 	workspaceAPI                        WorkspaceAPI
 	sessionAPI                          SessionAPI
+	sessionTranscriptAPI                SessionTranscriptAPI
 	guidedWorkflowAPI                   GuidedWorkflowRunAPI
 	guidedWorkflowTemplateAPI           GuidedWorkflowTemplateAPI
 	sessionSelectionAPI                 SessionSelectionAPI
@@ -161,6 +163,7 @@ type Model struct {
 	appStateSaveScheduledSeq            int
 	appStateSaveInFlight                bool
 	stream                              *StreamController
+	transcriptStream                    *TranscriptStreamController
 	codexStream                         *CodexStreamController
 	itemStream                          *ItemStreamController
 	debugStream                         debugStreamConsumer
@@ -294,6 +297,7 @@ type Model struct {
 	sessionBootstrapCoordinator         SessionBootstrapCoordinator
 	inputFramePolicy                    InputFramePolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
+	sessionApprovalRefreshPolicy        SessionApprovalRefreshPolicy
 	sidebarSortPolicy                   SidebarSortPolicy
 	sortStripHintPolicy                 SortStripHintPolicy
 	sortStripVisibilityPolicy           SortStripVisibilityPolicy
@@ -328,6 +332,7 @@ type Model struct {
 	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
 	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
 	transcriptBoundary                  *transcriptBoundaryObserver
+	sessionTranscriptCapabilities       map[string]transcriptdomain.CapabilityEnvelope
 }
 
 type newSessionTarget struct {
@@ -420,7 +425,12 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	notesPanelVP.SetContent("No notes.")
 
 	api := NewClientAPI(client)
+	var transcriptAPI SessionTranscriptAPI
+	if client != nil {
+		transcriptAPI = api
+	}
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
+	transcriptStream := NewTranscriptStreamController(maxEventsPerTick)
 	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
 	itemStream := NewItemStreamController(maxViewportLines, maxEventsPerTick)
 	debugStream := NewDebugStreamController(defaultDebugStreamRetentionPolicy(), maxEventsPerTick)
@@ -436,6 +446,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	model := Model{
 		workspaceAPI:                        api,
 		sessionAPI:                          api,
+		sessionTranscriptAPI:                transcriptAPI,
 		guidedWorkflowAPI:                   api,
 		guidedWorkflowTemplateAPI:           api,
 		sessionSelectionAPI:                 api,
@@ -448,6 +459,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		viewport:                            vp,
 		notesPanelViewport:                  notesPanelVP,
 		stream:                              stream,
+		transcriptStream:                    transcriptStream,
 		codexStream:                         codexStream,
 		itemStream:                          itemStream,
 		debugStream:                         debugStream,
@@ -536,6 +548,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sessionBootstrapPolicy:              defaultSessionBootstrapPolicy{},
 		inputFramePolicy:                    NewDefaultInputFramePolicy(),
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
+		sessionApprovalRefreshPolicy:        defaultSessionApprovalRefreshPolicy{},
 		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
 		sortStripHintPolicy:                 defaultSortStripHintPolicy{},
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
@@ -571,6 +584,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		settingsMenuEscPolicy:               defaultSettingsMenuEscPolicy{},
 		settingsMenuHotkeyCatalog:           defaultSettingsMenuHotkeyCatalog{},
 		transcriptBoundary:                  newTranscriptBoundaryObserver(nil),
+		sessionTranscriptCapabilities:       map[string]transcriptdomain.CapabilityEnvelope{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -1236,27 +1250,30 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.pendingSessionKey = token
 	m.setStatusMessage("loading " + id)
 	m.scrollOnLoad = true
+	m.loading = true
+	m.loadingKey = token
 	if cached, ok := m.transcriptCache[token]; ok {
 		m.setSnapshotBlocks(cached)
-		m.loading = false
-		m.loadingKey = ""
-		m.finishUILatencyAction(uiLatencyActionSwitchSession, token, uiLatencyOutcomeCacheHit)
+		if m.sessionTranscriptAPI == nil {
+			m.loading = false
+			m.loadingKey = ""
+			m.finishUILatencyAction(uiLatencyActionSwitchSession, token, uiLatencyOutcomeCacheHit)
+		}
 	} else {
-		m.loading = true
-		m.loadingKey = token
 		m.setLoadingContent()
 	}
 	initialLines := m.historyFetchLinesInitial()
 	ctx := m.replaceRequestScope(requestScopeSessionLoad)
 	cmds := m.sessionBootstrapCoordinatorOrDefault().BuildSelectionLoadCommands(SelectionLoadBootstrapInput{
-		Provider:     item.session.Provider,
-		Status:       item.session.Status,
-		SessionID:    id,
-		SessionKey:   token,
-		InitialLines: initialLines,
-		LoadContext:  ctx,
-		HistoryAPI:   m.sessionHistoryAPI,
-		SessionAPI:   m.sessionAPI,
+		Provider:      item.session.Provider,
+		Status:        item.session.Status,
+		SessionID:     id,
+		SessionKey:    token,
+		AfterRevision: m.activeTranscriptRevision(),
+		InitialLines:  initialLines,
+		LoadContext:   ctx,
+		TranscriptAPI: m.sessionTranscriptAPI,
+		SessionAPI:    m.sessionAPI,
 	})
 	if m.appState.DebugStreamsEnabled {
 		debugCtx := m.replaceRequestScope(requestScopeDebugStream)
@@ -1298,6 +1315,28 @@ func (m *Model) selectedKey() string {
 		return ""
 	}
 	return m.sidebar.SelectedKey()
+}
+
+func (m *Model) activeTranscriptRevision() string {
+	if m == nil || m.transcriptStream == nil {
+		return ""
+	}
+	return m.transcriptStream.Revision()
+}
+
+func (m *Model) markTranscriptLoadingSignal(sessionID string) {
+	if m == nil || !m.loading {
+		return
+	}
+	loadingSessionID := sessionIDFromSidebarKey(m.loadingKey)
+	if loadingSessionID != "" && strings.TrimSpace(sessionID) != "" && loadingSessionID != strings.TrimSpace(sessionID) {
+		return
+	}
+	if m.loadingKey != "" {
+		m.finishUILatencyAction(uiLatencyActionSwitchSession, m.loadingKey, uiLatencyOutcomeOK)
+	}
+	m.loading = false
+	m.loadingKey = ""
 }
 
 func (m *Model) syncSidebarExpansionChange() tea.Cmd {
@@ -2390,6 +2429,7 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	m.consumeStreamTick(now)
+	m.consumeTranscriptTick(now)
 	m.consumeCodexTick(now)
 	m.consumeItemTick(now)
 	if cmd := m.consumeDebugTick(now); cmd != nil {
@@ -2450,6 +2490,9 @@ func (m *Model) resetStreamWithReason(reason string) {
 	if m.stream != nil {
 		m.stream.Reset()
 	}
+	if m.transcriptStream != nil {
+		m.transcriptStream.Reset()
+	}
 	if m.chat != nil {
 		m.chat.CloseEventStream()
 	} else if m.codexStream != nil {
@@ -2483,6 +2526,44 @@ func (m *Model) consumeStreamTick(now time.Time) {
 		if m.transcriptViewportVisible() {
 			m.applyLinesNoRender(lines, true)
 			m.requestStreamRender(now)
+		}
+	}
+}
+
+func (m *Model) consumeTranscriptTick(now time.Time) {
+	if m.transcriptStream == nil {
+		return
+	}
+	changed, closed, signal, events := m.transcriptStream.ConsumeTick()
+	sessionID := m.activeStreamTargetID()
+	provider := m.providerForSessionID(sessionID)
+	if sessionID != "" && events > 0 {
+		m.noteRequestEvent(sessionID, events)
+	}
+	if closed {
+		m.setBackgroundStatus("transcript stream closed")
+		m.recordTranscriptBoundaryMetric(newStreamCloseMetric(transcriptReasonStreamCloseEventsChannel, transcriptSourceConsumeCodexTick, sessionID, provider, "transcript"))
+		if sessionID != "" {
+			m.stopRequestActivityFor(sessionID)
+		}
+	}
+	if signal {
+		m.markTranscriptLoadingSignal(sessionID)
+	}
+	if changed {
+		blocks := m.transcriptStream.Blocks()
+		if sessionID != "" {
+			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
+		}
+		if m.transcriptViewportVisible() {
+			m.applyBlocksNoRender(blocks)
+			m.requestStreamRender(now)
+			if sessionID != "" {
+				m.noteRequestVisibleUpdate(sessionID)
+			}
+		}
+		if key := m.selectedKey(); key != "" {
+			m.cacheTranscriptBlocks(key, blocks)
 		}
 	}
 }

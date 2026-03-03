@@ -13,6 +13,7 @@ const (
 	transcriptMetricReconnect       = "reconnect"
 	transcriptMetricStaleRevision   = "stale_revision_drop"
 	transcriptMetricTranscriptReset = "transcript_reset"
+	transcriptMetricApprovalRefresh = "approval_refresh"
 )
 
 const (
@@ -25,30 +26,35 @@ const (
 )
 
 const (
-	transcriptReasonNotSessionSelection         = "not_session_selection"
-	transcriptReasonSelectedSessionFromNon      = "selected_session_from_non_session"
-	transcriptReasonSelectedSessionChanged      = "selected_session_changed"
-	transcriptReasonSelectedKeyChanged          = "selected_key_changed"
-	transcriptReasonSelectedRevisionChanged     = "selected_revision_changed"
-	transcriptReasonSelectedRevisionUnchanged   = "selected_revision_unchanged"
-	transcriptReasonReloadSkipNotesMode         = "notes_mode"
-	transcriptReasonReloadSkipFollowPaused      = "follow_paused_same_selection"
-	transcriptReasonReloadSkipPolicy            = "policy_skip"
-	transcriptReasonProjectionNonVersioned      = "non_versioned_projection"
-	transcriptReasonProjectionMissingToken      = "missing_projection_token"
-	transcriptReasonProjectionTrackerMissing    = "projection_tracker_missing"
-	transcriptReasonProjectionTokenUntracked    = "projection_token_untracked"
-	transcriptReasonProjectionSuperseded        = "projection_superseded"
-	transcriptReasonProjectionFutureSequence    = "projection_future_sequence"
-	transcriptReasonProjectionMismatch          = "projection_mismatch"
-	transcriptReasonReconnectStreamDisconnected = "stream_disconnected"
-	transcriptReasonReconnectStreamError        = "stream_error"
-	transcriptReasonReconnectStreamAttached     = "stream_attached"
-	transcriptReasonReconnectMismatchedSession  = "mismatched_session"
-	transcriptReasonReconnectMatchedSession     = "matched_active_session"
-	transcriptReasonStreamCloseTailChannel      = "tail_channel_closed"
-	transcriptReasonStreamCloseEventsChannel    = "events_channel_closed"
-	transcriptReasonStreamCloseItemsChannel     = "items_channel_closed"
+	transcriptReasonNotSessionSelection                        = "not_session_selection"
+	transcriptReasonSelectedSessionFromNon                     = "selected_session_from_non_session"
+	transcriptReasonSelectedSessionChanged                     = "selected_session_changed"
+	transcriptReasonSelectedKeyChanged                         = "selected_key_changed"
+	transcriptReasonSelectedRevisionChanged                    = "selected_revision_changed"
+	transcriptReasonSelectedRevisionUnchanged                  = "selected_revision_unchanged"
+	transcriptReasonReloadSkipNotesMode                        = "notes_mode"
+	transcriptReasonReloadSkipFollowPaused                     = "follow_paused_same_selection"
+	transcriptReasonReloadSkipPolicy                           = "policy_skip"
+	transcriptReasonProjectionNonVersioned                     = "non_versioned_projection"
+	transcriptReasonProjectionMissingToken                     = "missing_projection_token"
+	transcriptReasonProjectionTrackerMissing                   = "projection_tracker_missing"
+	transcriptReasonProjectionTokenUntracked                   = "projection_token_untracked"
+	transcriptReasonProjectionSuperseded                       = "projection_superseded"
+	transcriptReasonProjectionFutureSequence                   = "projection_future_sequence"
+	transcriptReasonProjectionMismatch                         = "projection_mismatch"
+	transcriptReasonReconnectStreamDisconnected                = "stream_disconnected"
+	transcriptReasonReconnectStreamError                       = "stream_error"
+	transcriptReasonReconnectStreamAttached                    = "stream_attached"
+	transcriptReasonReconnectMismatchedSession                 = "mismatched_session"
+	transcriptReasonReconnectMatchedSession                    = "matched_active_session"
+	transcriptReasonStreamCloseTailChannel                     = "tail_channel_closed"
+	transcriptReasonStreamCloseEventsChannel                   = "events_channel_closed"
+	transcriptReasonStreamCloseItemsChannel                    = "items_channel_closed"
+	transcriptReasonSnapshotSuperseded                         = "snapshot_superseded"
+	transcriptReasonApprovalRefreshCapabilitySupported         = "approval_capability_supported"
+	transcriptReasonApprovalRefreshCapabilityUnsupported       = "approval_capability_unsupported"
+	transcriptReasonApprovalRefreshProviderFallbackSupported   = "approval_provider_fallback_supported"
+	transcriptReasonApprovalRefreshProviderFallbackUnsupported = "approval_provider_fallback_unsupported"
 )
 
 const (
@@ -549,6 +555,18 @@ func newReconnectMetric(reason, outcome, source, sessionID, provider, stream str
 		Provider:  provider,
 		Stream:    stream,
 		Attempt:   attempt,
+	}
+}
+
+func newApprovalRefreshMetric(reason, outcome, source, sessionID, provider string) TranscriptBoundaryMetric {
+	return TranscriptBoundaryMetric{
+		Name:      transcriptMetricApprovalRefresh,
+		Reason:    reason,
+		Outcome:   outcome,
+		Source:    source,
+		SessionID: sessionID,
+		Provider:  provider,
+		Stream:    "transcript",
 	}
 }
 

@@ -919,6 +919,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, m.handleSessionItemsMessage(sessionProjectionSourceTail, msg.id, msg.key, msg.items, msg.err)
 	case historyMsg:
 		return true, m.handleSessionItemsMessage(sessionProjectionSourceHistory, msg.id, msg.key, msg.items, msg.err)
+	case transcriptSnapshotMsg:
+		return true, m.applyTranscriptSnapshotMsg(msg)
 	case sessionBlocksProjectedMsg:
 		if !m.isCurrentSessionProjection(msg.key, msg.id, msg.projectionSeq) {
 			m.recordTranscriptBoundaryMetric(newStaleRevisionDropMetric(
@@ -965,7 +967,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		provider := m.providerForSessionID(msg.id)
 		ctx := m.requestScopeContext(requestScopeSessionLoad)
 		cmds := []tea.Cmd{fetchHistoryCmdWithContext(m.sessionHistoryAPI, msg.id, msg.key, m.historyFetchLinesInitial(), ctx)}
-		if shouldStreamItems(provider) {
+		if decision := m.approvalRefreshDecision(msg.id, provider, transcriptSourceAutoRefreshHistory); decision.ShouldFetch {
 			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.id, ctx))
 		}
 		cmds = append(cmds, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents))
@@ -1013,31 +1015,20 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.mode == uiModeRecents {
 			m.refreshRecentsContent()
 		}
-		if shouldStreamItems(provider) {
+		if decision := m.approvalRefreshDecision(msg.id, provider, transcriptSourceSendMsg); decision.ShouldFetch {
 			cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, msg.id, m.requestScopeContext(requestScopeSessionLoad)))
 		}
 		reconnectCmds := m.sessionBootstrapCoordinatorOrDefault().BuildReconnectCommands(SessionReconnectBootstrapInput{
-			Provider:             provider,
-			SessionID:            msg.id,
-			SessionAPI:           m.sessionAPI,
-			ItemStreamConnected:  m.itemStream != nil && m.itemStream.HasStream(),
-			EventStreamConnected: m.codexStream != nil && m.codexStream.HasStream(),
+			Provider:                  provider,
+			SessionID:                 msg.id,
+			AfterRevision:             m.activeTranscriptRevision(),
+			TranscriptAPI:             m.sessionTranscriptAPI,
+			TranscriptStreamConnected: m.transcriptStream != nil && m.transcriptStream.HasStream(),
 		})
-		if shouldStreamItems(provider) && (m.itemStream == nil || !m.itemStream.HasStream()) {
-			m.recordReconnectAttempt(msg.id, provider, "items", transcriptSourceSendMsg)
+		if m.transcriptStream == nil || !m.transcriptStream.HasStream() {
+			m.recordReconnectAttempt(msg.id, provider, "transcript", transcriptSourceSendMsg)
 		}
-		if provider == "codex" && (m.codexStream == nil || !m.codexStream.HasStream()) {
-			m.recordReconnectAttempt(msg.id, provider, "events", transcriptSourceSendMsg)
-		}
-		if len(reconnectCmds) > 0 && shouldStreamItems(provider) {
-			cmds = append(cmds, reconnectCmds...)
-			if m.appState.DebugStreamsEnabled {
-				debugCtx := m.replaceRequestScope(requestScopeDebugStream)
-				cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.id, debugCtx))
-			}
-			return true, tea.Batch(cmds...)
-		}
-		if len(reconnectCmds) > 0 && provider == "codex" {
+		if len(reconnectCmds) > 0 {
 			cmds = append(cmds, reconnectCmds...)
 			if m.appState.DebugStreamsEnabled {
 				debugCtx := m.replaceRequestScope(requestScopeDebugStream)
@@ -1173,14 +1164,15 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		cmds = append(cmds, m.sessionBootstrapCoordinatorOrDefault().BuildSessionStartCommands(SessionStartBootstrapInput{
-			Provider:     msg.session.Provider,
-			Status:       msg.session.Status,
-			SessionID:    msg.session.ID,
-			SessionKey:   key,
-			InitialLines: initialLines,
-			LoadContext:  loadCtx,
-			HistoryAPI:   m.sessionHistoryAPI,
-			SessionAPI:   m.sessionAPI,
+			Provider:      msg.session.Provider,
+			Status:        msg.session.Status,
+			SessionID:     msg.session.ID,
+			SessionKey:    key,
+			AfterRevision: m.activeTranscriptRevision(),
+			InitialLines:  initialLines,
+			LoadContext:   loadCtx,
+			TranscriptAPI: m.sessionTranscriptAPI,
+			SessionAPI:    m.sessionAPI,
 		})...)
 		if recentsStateSaveCmd != nil {
 			cmds = append(cmds, recentsStateSaveCmd)
@@ -1191,9 +1183,6 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.appState.DebugStreamsEnabled {
 			debugCtx := m.replaceRequestScope(requestScopeDebugStream)
 			cmds = append(cmds, openDebugStreamCmdWithContext(m.sessionAPI, msg.session.ID, debugCtx))
-		}
-		if msg.session.Provider == "codex" {
-			cmds = append(cmds, historyPollCmd(msg.session.ID, key, 0, historyPollDelay, countAgentRepliesBlocks(m.currentBlocks())))
 		}
 		return true, tea.Batch(cmds...)
 	case killMsg:
@@ -1253,6 +1242,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	case itemsStreamMsg:
 		m.applyItemsStreamMsg(msg)
+		return true, nil
+	case transcriptStreamMsg:
+		m.applyTranscriptStreamMsg(msg)
 		return true, nil
 	case debugStreamMsg:
 		m.applyDebugStreamMsg(msg)
@@ -1325,6 +1317,9 @@ func (m *Model) shouldKeepLiveCodexSnapshot(provider, sessionID string) bool {
 }
 
 func (m *Model) activeTranscriptBlocks(provider string) []ChatBlock {
+	if m.transcriptStream != nil {
+		return m.transcriptStream.Blocks()
+	}
 	if provider == "codex" && m.codexStream != nil {
 		return m.codexStream.Blocks()
 	}
@@ -1448,6 +1443,71 @@ func (m *Model) applyEventsMsg(msg eventsMsg) {
 	}
 	m.setBackgroundStatus("streaming events")
 	m.recordReconnectOutcome(msg.id, provider, "events", transcriptSourceApplyEventsStream, transcriptOutcomeSuccess, transcriptReasonReconnectStreamAttached)
+}
+
+func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
+	if msg.err != nil {
+		if isCanceledRequestError(msg.err) {
+			return nil
+		}
+		m.setBackgroundError("transcript snapshot error: " + msg.err.Error())
+		if msg.key != "" && msg.key == m.loadingKey {
+			m.setContentText("Error loading transcript.")
+			m.loading = false
+			m.loadingKey = ""
+		}
+		return nil
+	}
+	if msg.key != "" && msg.key != m.pendingSessionKey {
+		return nil
+	}
+	if msg.snapshot == nil {
+		return nil
+	}
+	applied := true
+	if m.transcriptStream != nil {
+		_, applied = m.transcriptStream.SetSnapshot(*msg.snapshot)
+	}
+	if !applied {
+		m.recordTranscriptBoundaryMetric(newStaleRevisionDropMetric(
+			transcriptReasonSnapshotSuperseded,
+			transcriptSourceSessionBlocksProject,
+			msg.id,
+			m.providerForSessionID(msg.id),
+		))
+		return nil
+	}
+	blocks := transcriptBlocksToChatBlocks(msg.snapshot.Blocks)
+	if m.transcriptStream != nil {
+		blocks = m.transcriptStream.Blocks()
+	}
+	m.setSessionTranscriptCapabilities(msg.id, msg.snapshot.Capabilities)
+	blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
+	m.applySessionProjection(sessionProjectionSourceHistory, msg.id, msg.key, blocks)
+	m.markTranscriptLoadingSignal(msg.id)
+	return nil
+}
+
+func (m *Model) applyTranscriptStreamMsg(msg transcriptStreamMsg) {
+	provider := m.providerForSessionID(msg.id)
+	if msg.err != nil {
+		m.setBackgroundError("transcript stream error: " + msg.err.Error())
+		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeError, transcriptReasonReconnectStreamError)
+		return
+	}
+	if ok, reason := m.streamMessageTargetDisposition(msg.id, msg.cancel); !ok {
+		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeSkipped, reason)
+		return
+	}
+	if m.transcriptStream != nil {
+		m.transcriptStream.SetStream(msg.ch, msg.cancel)
+	}
+	m.setBackgroundStatus("streaming transcript")
+	if strings.TrimSpace(msg.revision) != "" {
+		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeSuccess, transcriptReasonReconnectStreamAttached)
+	} else {
+		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeSuccess, transcriptReasonReconnectMatchedSession)
+	}
 }
 
 func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
