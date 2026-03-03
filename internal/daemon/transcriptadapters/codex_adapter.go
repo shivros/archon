@@ -10,6 +10,102 @@ import (
 	"control/internal/types"
 )
 
+type codexTranscriptAdapter struct {
+	providerName string
+}
+
+func NewCodexTranscriptAdapter(providerName string) *codexTranscriptAdapter {
+	providerName = providers.Normalize(providerName)
+	if providerName == "" {
+		providerName = "codex"
+	}
+	return &codexTranscriptAdapter{providerName: providerName}
+}
+
+func (a codexTranscriptAdapter) Provider() string {
+	return a.providerName
+}
+
+func (a codexTranscriptAdapter) MapEvent(ctx MappingContext, event types.CodexEvent) []transcriptdomain.TranscriptEvent {
+	mapped := mapCodexEvent(a.providerName, ctx, event)
+	if err := transcriptdomain.ValidateEvent(mapped); err != nil {
+		return nil
+	}
+	return []transcriptdomain.TranscriptEvent{mapped}
+}
+
+func (a codexTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any) []transcriptdomain.TranscriptEvent {
+	event, ok := DeltaEventFromItem(ctx.SessionID, a.providerName, ctx.Revision, item)
+	if !ok {
+		return nil
+	}
+	if err := transcriptdomain.ValidateEvent(event); err != nil {
+		return nil
+	}
+	return []transcriptdomain.TranscriptEvent{event}
+}
+
+func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEvent) transcriptdomain.TranscriptEvent {
+	method := strings.ToLower(strings.TrimSpace(event.Method))
+	canonical := transcriptdomain.TranscriptEvent{
+		Kind:      transcriptdomain.TranscriptEventDelta,
+		SessionID: strings.TrimSpace(ctx.SessionID),
+		Provider:  strings.TrimSpace(providerName),
+		Revision:  ctx.Revision,
+	}
+	if ts := parseEventTime(event.TS); !ts.IsZero() {
+		canonical.OccurredAt = &ts
+	}
+
+	switch {
+	case method == "turn/started":
+		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateRunning)
+		if strings.TrimSpace(turn.TurnID) == "" {
+			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
+		}
+		canonical.Kind = transcriptdomain.TranscriptEventTurnStarted
+		canonical.Turn = &turn
+	case method == "turn/completed":
+		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateCompleted)
+		if strings.TrimSpace(turn.TurnID) == "" {
+			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
+		}
+		canonical.Kind = transcriptdomain.TranscriptEventTurnCompleted
+		canonical.Turn = &turn
+	case method == "session.idle":
+		canonical.Kind = transcriptdomain.TranscriptEventStreamStatus
+		canonical.StreamStatus = transcriptdomain.StreamStatusReady
+	case method == "error":
+		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateFailed)
+		if strings.TrimSpace(turn.TurnID) == "" {
+			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
+		}
+		canonical.Kind = transcriptdomain.TranscriptEventTurnFailed
+		canonical.Turn = &turn
+	case strings.Contains(method, "requestapproval"):
+		canonical.Kind = transcriptdomain.TranscriptEventApprovalPending
+		canonical.Approval = &transcriptdomain.ApprovalState{
+			RequestID: approvalRequestID(event),
+			State:     "pending",
+			Method:    strings.TrimSpace(event.Method),
+		}
+	case strings.Contains(method, "approvalresolved") || strings.Contains(method, "replypermission"):
+		canonical.Kind = transcriptdomain.TranscriptEventApprovalResolved
+		canonical.Approval = &transcriptdomain.ApprovalState{
+			RequestID: approvalRequestID(event),
+			State:     "resolved",
+			Method:    strings.TrimSpace(event.Method),
+		}
+	default:
+		canonical.Delta = []transcriptdomain.Block{{
+			Kind: "provider_event",
+			Role: "system",
+			Text: strings.TrimSpace(event.Method),
+		}}
+	}
+	return canonical
+}
+
 func CapabilityEnvelopeFromProvider(provider string) transcriptdomain.CapabilityEnvelope {
 	caps := providers.CapabilitiesFor(provider)
 	return transcriptdomain.CapabilityEnvelope{
@@ -27,49 +123,12 @@ func TranscriptEventFromCodexEvent(
 	revision transcriptdomain.RevisionToken,
 	event types.CodexEvent,
 ) transcriptdomain.TranscriptEvent {
-	method := strings.ToLower(strings.TrimSpace(event.Method))
-	canonical := transcriptdomain.TranscriptEvent{
-		Kind:      transcriptdomain.TranscriptEventDelta,
-		SessionID: strings.TrimSpace(sessionID),
-		Provider:  strings.TrimSpace(provider),
-		Revision:  revision,
+	adapter := NewCodexTranscriptAdapter(provider)
+	events := adapter.MapEvent(MappingContext{SessionID: sessionID, Revision: revision}, event)
+	if len(events) == 0 {
+		return transcriptdomain.TranscriptEvent{}
 	}
-	if ts := parseEventTime(event.TS); !ts.IsZero() {
-		canonical.OccurredAt = &ts
-	}
-
-	switch {
-	case method == "turn/started":
-		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateRunning)
-		canonical.Kind = transcriptdomain.TranscriptEventTurnStarted
-		canonical.Turn = &turn
-	case method == "turn/completed":
-		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateCompleted)
-		canonical.Kind = transcriptdomain.TranscriptEventTurnCompleted
-		canonical.Turn = &turn
-	case method == "session.idle":
-		canonical.Kind = transcriptdomain.TranscriptEventStreamStatus
-		canonical.StreamStatus = transcriptdomain.StreamStatusReady
-	case method == "error":
-		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateFailed)
-		canonical.Kind = transcriptdomain.TranscriptEventTurnFailed
-		canonical.Turn = &turn
-	case strings.Contains(method, "requestapproval"):
-		canonical.Kind = transcriptdomain.TranscriptEventApprovalPending
-		canonical.Approval = &transcriptdomain.ApprovalState{
-			RequestID: approvalRequestID(event),
-			State:     "pending",
-			Method:    strings.TrimSpace(event.Method),
-		}
-	case strings.Contains(method, "approvalresolved") || strings.Contains(method, "replypermission"):
-		canonical.Kind = transcriptdomain.TranscriptEventApprovalResolved
-		canonical.Approval = &transcriptdomain.ApprovalState{
-			RequestID: approvalRequestID(event),
-			State:     "resolved",
-			Method:    strings.TrimSpace(event.Method),
-		}
-	}
-	return canonical
+	return events[0]
 }
 
 func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {
@@ -92,7 +151,7 @@ func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {
 	if role == "" {
 		lower := strings.ToLower(kind)
 		switch {
-		case strings.Contains(lower, "assistant"):
+		case strings.Contains(lower, "assistant"), strings.Contains(lower, "agent"):
 			role = "assistant"
 		case strings.Contains(lower, "user"):
 			role = "user"
@@ -146,7 +205,7 @@ func turnStateFromEventParams(raw json.RawMessage, fallback transcriptdomain.Tur
 			state = transcriptdomain.TurnStateRunning
 		case "completed", "done", "success":
 			state = transcriptdomain.TurnStateCompleted
-		case "failed", "error":
+		case "failed", "error", "abandoned":
 			state = transcriptdomain.TurnStateFailed
 		}
 	}

@@ -95,6 +95,9 @@ func TestTranscriptEventFromCodexEventUnknownDefaultsToDelta(t *testing.T) {
 	if got.Kind != transcriptdomain.TranscriptEventDelta {
 		t.Fatalf("expected default delta kind, got %q", got.Kind)
 	}
+	if len(got.Delta) != 1 || got.Delta[0].Kind != "provider_event" {
+		t.Fatalf("expected normalized provider_event delta, got %#v", got.Delta)
+	}
 }
 
 func TestTranscriptEventFromCodexEventParsesTimestamp(t *testing.T) {
@@ -249,5 +252,41 @@ func TestAsIntCoversAllSupportedTypes(t *testing.T) {
 				t.Fatalf("asInt(%#v) = (%d, %v), want (%d, %v)", tc.in, got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+func TestCodexAdapterMapEventUsesActiveTurnFallback(t *testing.T) {
+	adapter := NewCodexTranscriptAdapter("codex")
+	events := adapter.MapEvent(MappingContext{
+		SessionID:    "s1",
+		Revision:     transcriptdomain.MustParseRevisionToken("12"),
+		ActiveTurnID: "turn-fallback",
+	}, types.CodexEvent{Method: "turn/completed", Params: json.RawMessage(`{"status":"completed"}`)})
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %d", len(events))
+	}
+	if events[0].Turn == nil || events[0].Turn.TurnID != "turn-fallback" {
+		t.Fatalf("expected active turn fallback, got %#v", events[0].Turn)
+	}
+}
+
+func TestCodexAdapterProviderDefaultsToCodex(t *testing.T) {
+	adapter := NewCodexTranscriptAdapter(" ")
+	if adapter.Provider() != "codex" {
+		t.Fatalf("expected default provider codex, got %q", adapter.Provider())
+	}
+}
+
+func TestCodexAdapterMapItem(t *testing.T) {
+	adapter := NewCodexTranscriptAdapter("codex")
+	events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("13"),
+	}, map[string]any{"type": "assistant", "text": "hello"})
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %d", len(events))
+	}
+	if events[0].Kind != transcriptdomain.TranscriptEventDelta {
+		t.Fatalf("expected delta event, got %q", events[0].Kind)
 	}
 }
