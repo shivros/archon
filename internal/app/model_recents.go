@@ -766,7 +766,7 @@ func (m *Model) handleRecentsPreview(msg recentsPreviewMsg) tea.Cmd {
 }
 
 func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.Cmd {
-	if m == nil || m.sessionAPI == nil {
+	if m == nil || m.sessionTranscriptAPI == nil {
 		return nil
 	}
 	sessionID = strings.TrimSpace(sessionID)
@@ -787,7 +787,13 @@ func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.
 	m.cancelRequestScope(recentsRequestScopeName(sessionID))
 	m.recentsCompletionWatching[sessionID] = expectedTurn
 	ctx := m.replaceRequestScope(recentsRequestScopeName(sessionID))
-	return watchRecentsTurnCompletionCmdWithContext(m.sessionAPI, sessionID, expectedTurn, ctx)
+	return watchRecentsTurnCompletionCmdWithContext(
+		m.sessionTranscriptAPI,
+		m.recentsCompletionSignalPolicyOrDefault(),
+		sessionID,
+		expectedTurn,
+		ctx,
+	)
 }
 
 func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd {

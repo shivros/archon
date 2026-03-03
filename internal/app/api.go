@@ -160,9 +160,21 @@ type SessionTranscriptStreamAPI interface {
 	TranscriptStream(ctx context.Context, id string, afterRevision string) (<-chan transcriptdomain.TranscriptEvent, func(), error)
 }
 
-type SessionTranscriptAPI interface {
+type SessionUnifiedTranscriptAPI interface {
 	SessionTranscriptSnapshotAPI
 	SessionTranscriptStreamAPI
+}
+
+// SessionTranscriptAPI is kept as an alias for unified transcript consumers.
+type SessionTranscriptAPI interface {
+	SessionUnifiedTranscriptAPI
+}
+
+// SessionLegacyStreamAPI groups provider-specific legacy stream endpoints.
+// Keep this boundary separate from transcript-first codepaths.
+type SessionLegacyStreamAPI interface {
+	SessionEventStreamAPI
+	SessionItemsStreamAPI
 }
 
 type SessionKillAPI interface {
@@ -239,8 +251,6 @@ type SessionAPI interface {
 	SessionTailAPI
 	SessionHistoryAPI
 	SessionTailStreamAPI
-	SessionEventStreamAPI
-	SessionItemsStreamAPI
 	SessionDebugStreamAPI
 	SessionKillAPI
 	SessionMarkExitedAPI
@@ -253,11 +263,6 @@ type SessionAPI interface {
 	SessionInterruptAPI
 	WorkspaceSessionStartAPI
 	SessionPinAPI
-}
-
-type SessionChatAPI interface {
-	SessionSendAPI
-	SessionEventStreamAPI
 }
 
 type AppStateGetAPI interface {

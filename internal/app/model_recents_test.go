@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 
+	"control/internal/client"
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -320,6 +323,37 @@ func TestRecentsTurnCompletedMessageMovesRunToReady(t *testing.T) {
 	}
 }
 
+func TestBeginRecentsCompletionWatchUsesSignalPolicyFromModel(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	stream := make(chan transcriptdomain.TranscriptEvent, 1)
+	stream <- transcriptdomain.TranscriptEvent{Kind: transcriptdomain.TranscriptEventDelta}
+	close(stream)
+	m.sessionTranscriptAPI = recentsModelTranscriptAPIStub{stream: stream}
+	m.recentsCompletionSignalPolicy = recentsModelSignalPolicyStub{
+		matchKind: transcriptdomain.TranscriptEventDelta,
+		turnID:    "turn-from-model-policy",
+	}
+
+	cmd := m.beginRecentsCompletionWatch("s1", "turn-expected")
+	if cmd == nil {
+		t.Fatalf("expected completion watch command")
+	}
+	msg, ok := cmd().(recentsTurnCompletedMsg)
+	if !ok {
+		t.Fatalf("expected recentsTurnCompletedMsg")
+	}
+	if msg.err != nil {
+		t.Fatalf("expected no error, got %v", msg.err)
+	}
+	if msg.turnID != "turn-from-model-policy" {
+		t.Fatalf("expected signal policy turn id, got %q", msg.turnID)
+	}
+}
+
 func TestFormatRecentsPreviewTextRemovesANSIEscapeFragments(t *testing.T) {
 	preview, full := formatRecentsPreviewText("\x1b[38;5;117mhello\x1b[0m\nworld")
 	if strings.TrimSpace(full) == "" {
@@ -375,6 +409,30 @@ func TestRecentsEmptySectionTextIsContextual(t *testing.T) {
 	if !strings.Contains(plain, "No ready") || !strings.Contains(plain, "waiting for") || !strings.Contains(plain, "reply.") {
 		t.Fatalf("expected contextual empty-state text for ready section, got %q", plain)
 	}
+}
+
+type recentsModelTranscriptAPIStub struct {
+	stream <-chan transcriptdomain.TranscriptEvent
+}
+
+func (s recentsModelTranscriptAPIStub) GetTranscriptSnapshot(context.Context, string, int) (*client.TranscriptSnapshotResponse, error) {
+	return &client.TranscriptSnapshotResponse{}, nil
+}
+
+func (s recentsModelTranscriptAPIStub) TranscriptStream(context.Context, string, string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	return s.stream, func() {}, nil
+}
+
+type recentsModelSignalPolicyStub struct {
+	matchKind transcriptdomain.TranscriptEventKind
+	turnID    string
+}
+
+func (s recentsModelSignalPolicyStub) CompletionFromTranscriptEvent(event transcriptdomain.TranscriptEvent) (string, bool) {
+	if event.Kind == s.matchKind {
+		return s.turnID, true
+	}
+	return "", false
 }
 
 func normalizeWhitespace(value string) string {

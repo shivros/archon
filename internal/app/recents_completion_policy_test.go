@@ -6,6 +6,17 @@ import (
 	"control/internal/types"
 )
 
+type fixedRecentsCompletionPolicy struct{}
+
+func (fixedRecentsCompletionPolicy) ShouldWatchCompletion(string) bool { return false }
+func (fixedRecentsCompletionPolicy) ShouldUseMetaFallback(string) bool { return false }
+func (fixedRecentsCompletionPolicy) RunBaselineTurnID(string, *types.SessionMeta) string {
+	return "baseline-fixed"
+}
+func (fixedRecentsCompletionPolicy) CompletionTurnID(string, *types.SessionMeta) string {
+	return "completion-fixed"
+}
+
 func TestProviderCapabilitiesRecentsCompletionPolicySignals(t *testing.T) {
 	policy := providerCapabilitiesRecentsCompletionPolicy{}
 	cases := []struct {
@@ -48,6 +59,57 @@ func TestProviderCapabilitiesRecentsCompletionPolicyTurnResolution(t *testing.T)
 	}
 	if got := policy.CompletionTurnID("", meta); got != "turn-meta" {
 		t.Fatalf("expected meta completion turn fallback, got %q", got)
+	}
+	if got := policy.RunBaselineTurnID("  ", nil); got != "" {
+		t.Fatalf("expected empty baseline with nil meta, got %q", got)
+	}
+	if got := policy.CompletionTurnID("  ", nil); got != "" {
+		t.Fatalf("expected empty completion turn with nil meta, got %q", got)
+	}
+	meta = &types.SessionMeta{LastTurnID: "  turn-space  "}
+	if got := policy.RunBaselineTurnID("", meta); got != "turn-space" {
+		t.Fatalf("expected trimmed baseline turn from meta, got %q", got)
+	}
+	if got := policy.CompletionTurnID("", meta); got != "turn-space" {
+		t.Fatalf("expected trimmed completion turn from meta, got %q", got)
+	}
+}
+
+func TestWithRecentsCompletionPolicyAssignsCustom(t *testing.T) {
+	m := NewModel(nil)
+	opt := WithRecentsCompletionPolicy(fixedRecentsCompletionPolicy{})
+	opt(&m)
+	if got := m.recentsCompletionPolicyOrDefault().CompletionTurnID("", nil); got != "completion-fixed" {
+		t.Fatalf("expected custom completion policy, got %q", got)
+	}
+}
+
+func TestWithRecentsCompletionPolicyNilUsesDefault(t *testing.T) {
+	m := NewModel(nil)
+	WithRecentsCompletionPolicy(nil)(&m)
+	if !m.recentsCompletionPolicyOrDefault().ShouldWatchCompletion("codex") {
+		t.Fatalf("expected default policy after nil option")
+	}
+}
+
+func TestWithRecentsCompletionPolicyNilModelNoop(t *testing.T) {
+	var m *Model
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("expected nil-model option to be safe, panic=%v", r)
+		}
+	}()
+	WithRecentsCompletionPolicy(fixedRecentsCompletionPolicy{})(m)
+}
+
+func TestRecentsCompletionPolicyOrDefaultNilModelUsesDefault(t *testing.T) {
+	var m *Model
+	policy := m.recentsCompletionPolicyOrDefault()
+	if policy == nil {
+		t.Fatalf("expected default policy for nil model")
+	}
+	if !policy.ShouldWatchCompletion("codex") {
+		t.Fatalf("expected default policy behavior for codex")
 	}
 }
 

@@ -169,7 +169,6 @@ type Model struct {
 	debugStream                         debugStreamConsumer
 	debugStreamSnapshot                 debugStreamSnapshot
 	input                               *InputController
-	chat                                *SessionChatController
 	pendingApproval                     *ApprovalRequest
 	approvalResponseRequest             *ApprovalRequest
 	approvalResponseSessionID           string
@@ -297,6 +296,7 @@ type Model struct {
 	sessionBootstrapCoordinator         SessionBootstrapCoordinator
 	inputFramePolicy                    InputFramePolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
+	recentsCompletionSignalPolicy       RecentsCompletionSignalPolicy
 	sessionApprovalRefreshPolicy        SessionApprovalRefreshPolicy
 	sessionReloadPolicy                 SessionReloadDecisionPolicy
 	sessionReloadCoalescer              SessionReloadCoalescer
@@ -472,7 +472,6 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		debugPanelBlocksRenderer:            NewDefaultDebugPanelBlocksRenderer(),
 		debugPanelInteractionService:        NewDefaultDebugPanelInteractionService(),
 		input:                               NewInputController(),
-		chat:                                NewSessionChatController(api, codexStream),
 		mode:                                uiModeNormal,
 		addWorkspace:                        NewAddWorkspaceController(minViewportWidth),
 		editWorkspace:                       NewEditWorkspaceController(minViewportWidth),
@@ -551,6 +550,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sessionBootstrapPolicy:              defaultSessionBootstrapPolicy{},
 		inputFramePolicy:                    NewDefaultInputFramePolicy(),
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
+		recentsCompletionSignalPolicy:       transcriptEventRecentsCompletionSignalPolicy{},
 		sessionApprovalRefreshPolicy:        defaultSessionApprovalRefreshPolicy{},
 		sessionReloadPolicy:                 defaultSessionReloadDecisionPolicy{},
 		sessionReloadCoalescer:              NewDefaultSessionReloadCoalescer(defaultSessionReloadNoopCoalesceWindow),
@@ -2499,9 +2499,7 @@ func (m *Model) resetStreamWithReason(reason string) {
 	if m.transcriptStream != nil {
 		m.transcriptStream.Reset()
 	}
-	if m.chat != nil {
-		m.chat.CloseEventStream()
-	} else if m.codexStream != nil {
+	if m.codexStream != nil {
 		m.codexStream.Reset()
 	}
 	if m.itemStream != nil {

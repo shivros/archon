@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"strings"
@@ -20,6 +19,8 @@ type fetchSessionsOptions struct {
 	includeDismissed     bool
 	includeWorkflowOwned bool
 }
+
+const recentsCompletionWatchTimeout = 15 * time.Second
 
 func commandParentContext(parent context.Context) context.Context {
 	if parent == nil {
@@ -622,13 +623,6 @@ func openStreamCmd(api SessionTailStreamAPI, id string) tea.Cmd {
 	}
 }
 
-func openEventsCmd(api SessionEventStreamAPI, id string) tea.Cmd {
-	return func() tea.Msg {
-		ch, cancel, err := api.EventStream(context.Background(), id)
-		return eventsMsg{id: id, ch: ch, cancel: cancel, err: err}
-	}
-}
-
 func openTranscriptStreamCmd(api SessionTranscriptStreamAPI, id, afterRevision string) tea.Cmd {
 	return func() tea.Msg {
 		ch, cancel, err := api.TranscriptStream(context.Background(), id, afterRevision)
@@ -636,20 +630,23 @@ func openTranscriptStreamCmd(api SessionTranscriptStreamAPI, id, afterRevision s
 	}
 }
 
-func watchRecentsTurnCompletionCmd(api SessionEventStreamAPI, id, expectedTurn string) tea.Cmd {
-	return watchRecentsTurnCompletionCmdWithContext(api, id, expectedTurn, nil)
+func watchRecentsTurnCompletionCmd(api SessionTranscriptStreamAPI, signalPolicy RecentsCompletionSignalPolicy, id, expectedTurn string) tea.Cmd {
+	return watchRecentsTurnCompletionCmdWithContext(api, signalPolicy, id, expectedTurn, nil)
 }
 
-func watchRecentsTurnCompletionCmdWithContext(api SessionEventStreamAPI, id, expectedTurn string, parent context.Context) tea.Cmd {
+func watchRecentsTurnCompletionCmdWithContext(api SessionTranscriptStreamAPI, signalPolicy RecentsCompletionSignalPolicy, id, expectedTurn string, parent context.Context) tea.Cmd {
+	if signalPolicy == nil {
+		signalPolicy = transcriptEventRecentsCompletionSignalPolicy{}
+	}
 	return func() tea.Msg {
 		id = strings.TrimSpace(id)
 		expectedTurn = strings.TrimSpace(expectedTurn)
 		if id == "" {
 			return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: errors.New("session id is required")}
 		}
-		ctx, cancel := commandWithTimeout(parent, 20*time.Minute)
+		ctx, cancel := commandWithTimeout(parent, recentsCompletionWatchTimeout)
 		defer cancel()
-		ch, streamCancel, err := api.EventStream(ctx, id)
+		ch, streamCancel, err := api.TranscriptStream(ctx, id, "")
 		if err != nil {
 			return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: err}
 		}
@@ -657,61 +654,27 @@ func watchRecentsTurnCompletionCmdWithContext(api SessionEventStreamAPI, id, exp
 		for {
 			select {
 			case <-ctx.Done():
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn}
+				}
 				return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: ctx.Err()}
 			case event, ok := <-ch:
 				if !ok {
-					// The daemon stream endpoint closes after turn completion.
+					// Treat stream closure as a completion signal fallback to
+					// preserve legacy watcher semantics under transport churn.
 					return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn}
 				}
-				if !isTurnCompletedEventMethod(event.Method) {
+				turnID, matched := signalPolicy.CompletionFromTranscriptEvent(event)
+				if !matched {
 					continue
 				}
 				return recentsTurnCompletedMsg{
 					id:           id,
 					expectedTurn: expectedTurn,
-					turnID:       parseRecentsCompletionTurnID(event.Params),
+					turnID:       turnID,
 				}
 			}
 		}
-	}
-}
-
-func isTurnCompletedEventMethod(method string) bool {
-	switch strings.ToLower(strings.TrimSpace(method)) {
-	case "turn/completed", "turn.completed", "turn_completed":
-		return true
-	default:
-		return false
-	}
-}
-
-func parseRecentsCompletionTurnID(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	payload := map[string]any{}
-	if json.Unmarshal(raw, &payload) != nil {
-		return ""
-	}
-	if turnRaw, ok := payload["turn"]; ok {
-		if turnMap, ok := turnRaw.(map[string]any); ok {
-			if turnID := strings.TrimSpace(asString(turnMap["id"])); turnID != "" {
-				return turnID
-			}
-		}
-	}
-	for _, key := range []string{"turn_id", "turnID", "id"} {
-		if turnID := strings.TrimSpace(asString(payload[key])); turnID != "" {
-			return turnID
-		}
-	}
-	return ""
-}
-
-func openItemsCmd(api SessionItemsStreamAPI, id string) tea.Cmd {
-	return func() tea.Msg {
-		ch, cancel, err := api.ItemsStream(context.Background(), id)
-		return itemsStreamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
