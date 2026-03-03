@@ -298,6 +298,9 @@ type Model struct {
 	inputFramePolicy                    InputFramePolicy
 	recentsCompletionPolicy             RecentsCompletionPolicy
 	sessionApprovalRefreshPolicy        SessionApprovalRefreshPolicy
+	sessionReloadPolicy                 SessionReloadDecisionPolicy
+	sessionReloadCoalescer              SessionReloadCoalescer
+	sessionCapabilityModeResolver       SessionCapabilityModeResolver
 	sidebarSortPolicy                   SidebarSortPolicy
 	sortStripHintPolicy                 SortStripHintPolicy
 	sortStripVisibilityPolicy           SortStripVisibilityPolicy
@@ -549,6 +552,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		inputFramePolicy:                    NewDefaultInputFramePolicy(),
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
 		sessionApprovalRefreshPolicy:        defaultSessionApprovalRefreshPolicy{},
+		sessionReloadPolicy:                 defaultSessionReloadDecisionPolicy{},
+		sessionReloadCoalescer:              NewDefaultSessionReloadCoalescer(defaultSessionReloadNoopCoalesceWindow),
+		sessionCapabilityModeResolver:       defaultSessionCapabilityModeResolver{},
 		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
 		sortStripHintPolicy:                 defaultSortStripHintPolicy{},
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},

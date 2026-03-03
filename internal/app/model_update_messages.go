@@ -732,8 +732,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			return true, saveStateCmd
 		}
-		shouldReload := m.selectionLoadPolicyOrDefault().ShouldReloadOnSessionsUpdate(previousSelection, nextSelection)
-		if shouldReload {
+		reloadDecision := m.sessionReloadPolicyOrDefault().DecideReload(previousSelection, nextSelection)
+		if reloadDecision.Reload {
+			m.sessionReloadCoalescerOrDefault().Reset()
 			if m.shouldSkipSelectionReloadOnSessionsUpdate(previousSelection, nextSelection) {
 				m.recordTranscriptBoundaryMetric(newSessionReloadMetric(
 					classifySessionReloadSkipReason(previousSelection, nextSelection, m.mode, m.follow),
@@ -751,7 +752,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				return true, saveStateCmd
 			}
 			m.recordTranscriptBoundaryMetric(newSessionReloadMetric(
-				classifySessionReloadReason(previousSelection, nextSelection),
+				reloadDecision.Reason,
 				transcriptOutcomeSuccess,
 				transcriptSourceSessionsWithMeta,
 				nextSelection.sessionID,
@@ -771,8 +772,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			return true, saveStateCmd
 		}
+		reason := m.sessionReloadCoalescerOrDefault().NoopReason(reloadDecision, nextSelection, now)
 		m.recordTranscriptBoundaryMetric(newSessionReloadMetric(
-			classifySessionReloadReason(previousSelection, nextSelection),
+			reason,
 			transcriptOutcomeNoop,
 			transcriptSourceSessionsWithMeta,
 			nextSelection.sessionID,

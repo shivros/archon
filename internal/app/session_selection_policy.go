@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -12,12 +13,12 @@ type sessionSelectionSnapshot struct {
 	key       string
 	sessionID string
 	revision  string
+	mode      sessionSemanticMode
 	isSession bool
 }
 
 type SessionSelectionLoadPolicy interface {
 	SelectionLoadDelay(base time.Duration) time.Duration
-	ShouldReloadOnSessionsUpdate(previous, next sessionSelectionSnapshot) bool
 }
 
 type defaultSessionSelectionLoadPolicy struct{}
@@ -42,19 +43,6 @@ func (defaultSessionSelectionLoadPolicy) SelectionLoadDelay(base time.Duration) 
 	return base
 }
 
-func (defaultSessionSelectionLoadPolicy) ShouldReloadOnSessionsUpdate(previous, next sessionSelectionSnapshot) bool {
-	if !next.isSession {
-		return false
-	}
-	if !previous.isSession {
-		return true
-	}
-	if previous.sessionID != next.sessionID || previous.key != next.key {
-		return true
-	}
-	return previous.revision != next.revision
-}
-
 func (m *Model) selectionLoadPolicyOrDefault() SessionSelectionLoadPolicy {
 	if m == nil || m.selectionLoadPolicy == nil {
 		return defaultSessionSelectionLoadPolicy{}
@@ -74,10 +62,15 @@ func (m *Model) selectedSessionSnapshot() sessionSelectionSnapshot {
 	if id == "" {
 		return sessionSelectionSnapshot{}
 	}
+	var capabilities *transcriptdomain.CapabilityEnvelope
+	if value, ok := m.sessionTranscriptCapabilitiesForSession(id); ok {
+		capabilities = value
+	}
 	return sessionSelectionSnapshot{
 		key:       item.key(),
 		sessionID: id,
 		revision:  sessionRevision(item.session, m.sessionMeta[id]),
+		mode:      m.sessionCapabilityModeResolverOrDefault().ResolveMode(id, item.session.Provider, capabilities),
 		isSession: true,
 	}
 }
@@ -98,10 +91,6 @@ func sessionRevision(session *types.Session, meta *types.SessionMeta) string {
 	if session.StartedAt != nil {
 		startedAt = session.StartedAt.UTC().Format(time.RFC3339Nano)
 	}
-	metaLastActive := ""
-	if meta != nil && meta.LastActiveAt != nil {
-		metaLastActive = meta.LastActiveAt.UTC().Format(time.RFC3339Nano)
-	}
 	metaDismissed := ""
 	if meta != nil && meta.DismissedAt != nil {
 		metaDismissed = meta.DismissedAt.UTC().Format(time.RFC3339Nano)
@@ -111,35 +100,20 @@ func sessionRevision(session *types.Session, meta *types.SessionMeta) string {
 		metaRuntime = runtimeOptionsRevision(meta.RuntimeOptions)
 	}
 	metaThreadID := ""
-	metaTurnID := ""
-	metaWorkspaceID := ""
-	metaWorktreeID := ""
-	metaTitle := ""
 	metaProviderSessionID := ""
 	if meta != nil {
 		metaThreadID = strings.TrimSpace(meta.ThreadID)
-		metaTurnID = strings.TrimSpace(meta.LastTurnID)
-		metaWorkspaceID = strings.TrimSpace(meta.WorkspaceID)
-		metaWorktreeID = strings.TrimSpace(meta.WorktreeID)
-		metaTitle = strings.TrimSpace(meta.Title)
 		metaProviderSessionID = strings.TrimSpace(meta.ProviderSessionID)
 	}
 	return strings.Join([]string{
 		strings.TrimSpace(session.ID),
 		strings.TrimSpace(session.Provider),
-		string(session.Status),
-		strings.TrimSpace(session.Title),
 		session.CreatedAt.UTC().Format(time.RFC3339Nano),
 		startedAt,
 		exitedAt,
 		exitCode,
-		metaWorkspaceID,
-		metaWorktreeID,
-		metaTitle,
 		metaThreadID,
 		metaProviderSessionID,
-		metaTurnID,
-		metaLastActive,
 		metaDismissed,
 		metaRuntime,
 	}, "|")

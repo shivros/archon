@@ -21,16 +21,6 @@ func (p phase1SelectionPolicy) SelectionLoadDelay(base time.Duration) time.Durat
 	return base
 }
 
-func (phase1SelectionPolicy) ShouldReloadOnSessionsUpdate(previous, next sessionSelectionSnapshot) bool {
-	if !next.isSession {
-		return false
-	}
-	if !previous.isSession {
-		return true
-	}
-	return previous.revision != next.revision || previous.sessionID != next.sessionID
-}
-
 type phase1AppStateSyncStub struct {
 	calls int
 }
@@ -137,7 +127,7 @@ func TestPhase1SelectionChangeDoesNotFetchProviderOptions(t *testing.T) {
 	}
 }
 
-func TestPhase1SessionsWithMetaReloadsOnlyWhenSelectedRevisionChanges(t *testing.T) {
+func TestPhase1SessionsWithMetaIgnoresVolatileMetadataChurn(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
 		t.Fatalf("expected selected session")
@@ -178,12 +168,12 @@ func TestPhase1SessionsWithMetaReloadsOnlyWhenSelectedRevisionChanges(t *testing
 	if !handled {
 		t.Fatalf("expected changed message to be handled")
 	}
-	if cmd == nil {
-		t.Fatalf("expected reload command when revision changes")
+	if cmd != nil {
+		t.Fatalf("expected no reload command for volatile metadata change")
 	}
 }
 
-func TestPhase1SessionsWithMetaReloadKeepsItemsStreamForInactiveItemProvider(t *testing.T) {
+func TestPhase1SessionsWithMetaReloadsOnSemanticCapabilityModeChange(t *testing.T) {
 	m := newPhase0ModelWithSession("kilocode")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
 		t.Fatalf("expected selected session")
@@ -193,31 +183,23 @@ func TestPhase1SessionsWithMetaReloadKeepsItemsStreamForInactiveItemProvider(t *
 	}
 	m.sessions[0].Status = types.SessionStatusInactive
 	currentSession := m.sessions[0]
-	currentMeta := m.sessionMeta["s1"]
-
 	sameSessions := []*types.Session{
 		{
 			ID:        currentSession.ID,
-			Provider:  currentSession.Provider,
+			Provider:  "codex",
 			Status:    currentSession.Status,
 			CreatedAt: currentSession.CreatedAt,
 			Title:     currentSession.Title,
 		},
 	}
-	changedMeta := []*types.SessionMeta{
-		{
-			SessionID:   currentMeta.SessionID,
-			WorkspaceID: currentMeta.WorkspaceID,
-			LastTurnID:  "turn-refresh",
-		},
-	}
+	changedMeta := []*types.SessionMeta{{SessionID: "s1", WorkspaceID: "ws1"}}
 
 	handled, cmd := m.reduceStateMessages(sessionsWithMetaMsg{sessions: sameSessions, meta: changedMeta})
 	if !handled {
 		t.Fatalf("expected message to be handled")
 	}
 	if cmd == nil {
-		t.Fatalf("expected reload command when revision changes")
+		t.Fatalf("expected reload command when capability mode changes")
 	}
 	msg := cmd()
 	outerBatch, ok := msg.(tea.BatchMsg)

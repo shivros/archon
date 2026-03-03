@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -309,7 +308,22 @@ func openCodeIntegrationSetup(t *testing.T, provider string) (string, *types.Ses
 
 func createOpenCodeWorkspace(t *testing.T, provider string) string {
 	t.Helper()
-	repoDir := filepath.Join(t.TempDir(), provider+"-repo")
+	repoDir, err := os.MkdirTemp("", provider+"-repo-*")
+	if err != nil {
+		t.Fatalf("mkdir temp repo: %v", err)
+	}
+	t.Cleanup(func() {
+		const attempts = 5
+		for i := 0; i < attempts; i++ {
+			if err := os.RemoveAll(repoDir); err == nil {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		// OpenCode/Kilo integration can leave transient open handles during teardown.
+		// Avoid failing tests purely due best-effort temp cleanup races.
+		t.Logf("warning: best-effort cleanup could not remove %s", repoDir)
+	})
 	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}

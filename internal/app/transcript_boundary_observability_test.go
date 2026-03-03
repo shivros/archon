@@ -91,8 +91,8 @@ func TestSessionsWithMetaRecordsReloadDecisionMetric(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected sessionsWithMetaMsg to be handled")
 	}
-	if cmd == nil {
-		t.Fatalf("expected reload command")
+	if cmd != nil {
+		t.Fatalf("expected no reload command for volatile metadata")
 	}
 	metrics := sink.Snapshot()
 	if len(metrics) == 0 {
@@ -100,7 +100,7 @@ func TestSessionsWithMetaRecordsReloadDecisionMetric(t *testing.T) {
 	}
 	found := false
 	for _, metric := range metrics {
-		if metric.Name == transcriptMetricSessionReload && metric.Outcome == transcriptOutcomeSuccess && metric.Reason == transcriptReasonSelectedRevisionChanged {
+		if metric.Name == transcriptMetricSessionReload && metric.Outcome == transcriptOutcomeNoop && metric.Reason == transcriptReasonReloadVolatileMetadataIgnored {
 			found = true
 			break
 		}
