@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -222,5 +223,178 @@ func TestItemsStreamReturnsAPIErrorOnNon2xx(t *testing.T) {
 	defer cancel()
 	if _, _, err := c.ItemsStream(ctx, "s1"); err == nil {
 		t.Fatalf("expected non-2xx error")
+	}
+}
+
+func TestTranscriptStreamParsesEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("after_revision") != "2" {
+			t.Fatalf("expected after_revision query parameter")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		event := transcriptdomain.TranscriptEvent{
+			Kind:      transcriptdomain.TranscriptEventDelta,
+			SessionID: "s1",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("3"),
+			Delta:     []transcriptdomain.Block{{Kind: "assistant", Text: "ok"}},
+		}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write(append([]byte("data: "), data...))
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ch, stop, err := c.TranscriptStream(ctx, "s1", "2")
+	if err != nil {
+		t.Fatalf("TranscriptStream: %v", err)
+	}
+	defer stop()
+	select {
+	case event := <-ch:
+		if event.Kind != transcriptdomain.TranscriptEventDelta || event.Revision.String() != "3" {
+			t.Fatalf("unexpected transcript event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for transcript stream payload")
+	}
+}
+
+func TestTranscriptStreamReturnsAPIErrorOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := c.TranscriptStream(ctx, "s1", ""); err == nil {
+		t.Fatalf("expected non-2xx error")
+	}
+}
+
+func TestTranscriptStreamOmitsAfterRevisionWhenEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("after_revision"); got != "" {
+			t.Fatalf("expected empty after_revision query, got %q", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		event := transcriptdomain.TranscriptEvent{
+			Kind:      transcriptdomain.TranscriptEventStreamStatus,
+			SessionID: "s1",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("1"),
+		}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write(append([]byte("data: "), data...))
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ch, stop, err := c.TranscriptStream(ctx, "s1", "")
+	if err != nil {
+		t.Fatalf("TranscriptStream: %v", err)
+	}
+	defer stop()
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for transcript stream payload")
+	}
+}
+
+func TestTranscriptStreamEscapesAfterRevisionQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("after_revision"); got != "rev A/B" {
+			t.Fatalf("expected decoded after_revision query, got %q", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		event := transcriptdomain.TranscriptEvent{
+			Kind:      transcriptdomain.TranscriptEventStreamStatus,
+			SessionID: "s1",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("1"),
+		}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write(append([]byte("data: "), data...))
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ch, stop, err := c.TranscriptStream(ctx, "s1", "rev A/B")
+	if err != nil {
+		t.Fatalf("TranscriptStream: %v", err)
+	}
+	defer stop()
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for transcript stream payload")
+	}
+}
+
+func TestTranscriptStreamSkipsMalformedPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {not-json}\n\n"))
+		event := transcriptdomain.TranscriptEvent{
+			Kind:      transcriptdomain.TranscriptEventDelta,
+			SessionID: "s1",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("3"),
+			Delta:     []transcriptdomain.Block{{Kind: "assistant", Text: "ok"}},
+		}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write(append([]byte("data: "), data...))
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ch, stop, err := c.TranscriptStream(ctx, "s1", "")
+	if err != nil {
+		t.Fatalf("TranscriptStream: %v", err)
+	}
+	defer stop()
+	select {
+	case event := <-ch:
+		if event.Revision.String() != "3" {
+			t.Fatalf("expected valid event after malformed payload, got %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for transcript stream payload")
 	}
 }

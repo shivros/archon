@@ -15,16 +15,18 @@ import (
 )
 
 type SessionService struct {
-	manager      *SessionManager
-	stores       *Stores
-	liveManager  LiveManager
-	logger       logging.Logger
-	paths        WorkspacePathResolver
-	notifier     NotificationPublisher
-	adapters     *conversationAdapterRegistry
-	codexPool    CodexHistoryPool
-	approvalSync *ApprovalResyncService
-	guided       guidedworkflows.Orchestrator
+	manager                   *SessionManager
+	stores                    *Stores
+	liveManager               LiveManager
+	logger                    logging.Logger
+	paths                     WorkspacePathResolver
+	notifier                  NotificationPublisher
+	adapters                  *conversationAdapterRegistry
+	codexPool                 CodexHistoryPool
+	approvalSync              *ApprovalResyncService
+	guided                    guidedworkflows.Orchestrator
+	transcriptMapper          TranscriptMapper
+	transcriptTransportSelect TranscriptTransportSelector
 }
 
 type SendMessageOptions struct {
@@ -90,6 +92,24 @@ func WithLiveManager(liveManager LiveManager) SessionServiceOption {
 	}
 }
 
+func WithTranscriptMapper(mapper TranscriptMapper) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || mapper == nil {
+			return
+		}
+		s.transcriptMapper = mapper
+	}
+}
+
+func WithTranscriptTransportSelector(selector TranscriptTransportSelector) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || selector == nil {
+			return
+		}
+		s.transcriptTransportSelect = selector
+	}
+}
+
 func NewSessionService(manager *SessionManager, stores *Stores, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
@@ -113,6 +133,12 @@ func NewSessionService(manager *SessionManager, stores *Stores, logger logging.L
 	}
 	if svc.codexPool == nil {
 		svc.codexPool = NewCodexHistoryPool(logger)
+	}
+	if svc.transcriptMapper == nil {
+		svc.transcriptMapper = NewDefaultTranscriptMapper(nil)
+	}
+	if svc.transcriptTransportSelect == nil {
+		svc.transcriptTransportSelect = NewDefaultTranscriptTransportSelector(svc.SubscribeEvents, svc.SubscribeItems)
 	}
 	return svc
 }

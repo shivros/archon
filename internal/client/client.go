@@ -641,6 +641,15 @@ func (c *Client) History(ctx context.Context, id string, lines int) (*TailItemsR
 	return &resp, nil
 }
 
+func (c *Client) GetTranscriptSnapshot(ctx context.Context, id string, lines int) (*TranscriptSnapshotResponse, error) {
+	path := fmt.Sprintf("/v1/sessions/%s/transcript?lines=%d", id, lines)
+	var resp TranscriptSnapshotResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) SendMessage(ctx context.Context, id string, req SendSessionRequest) (*SendSessionResponse, error) {
 	path := fmt.Sprintf("/v1/sessions/%s/send", strings.TrimSpace(id))
 	var resp SendSessionResponse

@@ -120,6 +120,29 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch parts[1] {
+	case "transcript":
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		if len(parts) == 2 {
+			a.transcriptSnapshot(w, r, id)
+			return
+		}
+		if len(parts) == 3 && parts[2] == "stream" {
+			if !isFollowRequest(r) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": "follow=1 is required",
+				})
+				return
+			}
+			a.streamTranscript(w, r, id)
+			return
+		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
 	case "dismiss":
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{

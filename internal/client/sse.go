@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"control/internal/config"
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 
 	"log"
@@ -233,6 +235,94 @@ func (c *Client) EventStream(ctx context.Context, id string) (<-chan types.Codex
 		}
 		if streamDebugEnabled() {
 			streamLogf("stream events close id=%s reason=%s count=%d dur=%s", id, reason, count, time.Since(start))
+		}
+	}()
+
+	return ch, cancel, nil
+}
+
+func (c *Client) TranscriptStream(ctx context.Context, id string, afterRevision string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	if err := c.ensureToken(); err != nil {
+		return nil, nil, err
+	}
+	query := "follow=1"
+	if strings.TrimSpace(afterRevision) != "" {
+		query += "&after_revision=" + url.QueryEscape(strings.TrimSpace(afterRevision))
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	url := fmt.Sprintf("%s/v1/sessions/%s/transcript/stream?%s", c.baseURL, id, query)
+	if streamDebugEnabled() {
+		streamLogf("stream transcript open id=%s url=%s", id, url)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "text/event-stream")
+
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer func() { _ = resp.Body.Close() }()
+		cancel()
+		if streamDebugEnabled() {
+			streamLogf("stream transcript error id=%s status=%d", id, resp.StatusCode)
+		}
+		return nil, nil, decodeAPIError(resp)
+	}
+
+	ch := make(chan transcriptdomain.TranscriptEvent, 256)
+	go func() {
+		defer close(ch)
+		defer func() { _ = resp.Body.Close() }()
+
+		start := time.Now()
+		count := 0
+		reason := "eof"
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		var dataLines []string
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				if len(dataLines) == 0 {
+					continue
+				}
+				payload := strings.Join(dataLines, "\n")
+				dataLines = dataLines[:0]
+				var event transcriptdomain.TranscriptEvent
+				if err := json.Unmarshal([]byte(payload), &event); err == nil {
+					select {
+					case ch <- event:
+					default:
+					}
+					count++
+					if count == 1 && streamDebugEnabled() {
+						streamLogf("stream transcript first id=%s kind=%s revision=%s", id, event.Kind, event.Revision.String())
+					}
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "data:") {
+				dataLines = append(dataLines, strings.TrimSpace(line[len("data:"):]))
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			reason = "scan_error"
+			if streamDebugEnabled() {
+				streamLogf("stream transcript scan error id=%s err=%v", id, err)
+			}
+		}
+		if streamDebugEnabled() {
+			streamLogf("stream transcript close id=%s reason=%s count=%d dur=%s", id, reason, count, time.Since(start))
 		}
 	}()
 

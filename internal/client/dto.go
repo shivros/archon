@@ -1,6 +1,7 @@
 package client
 
 import (
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
@@ -88,6 +89,10 @@ type PinSessionNoteRequest struct {
 type TailItemsResponse struct {
 	Items []map[string]any `json:"items"`
 }
+
+type TranscriptSnapshotResponse = transcriptdomain.TranscriptSnapshot
+
+type TranscriptEventResponse = transcriptdomain.TranscriptEvent
 
 type SendSessionRequest struct {
 	Text  string           `json:"text,omitempty"`
