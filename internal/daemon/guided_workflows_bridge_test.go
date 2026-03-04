@@ -1775,6 +1775,49 @@ func TestGuidedWorkflowPromptDispatcherLogsDeferredDispatchResult(t *testing.T) 
 	if !strings.Contains(logs, "attempt_count=3") {
 		t.Fatalf("expected attempt count telemetry in log, got %q", logs)
 	}
+	if !strings.Contains(logs, "level=info") {
+		t.Fatalf("expected deferred dispatch telemetry at info level, got %q", logs)
+	}
+	if strings.Contains(logs, "level=warn") {
+		t.Fatalf("expected deferred dispatch telemetry to avoid warn level, got %q", logs)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherLogsFatalDispatchResultAtWarn(t *testing.T) {
+	var logOut bytes.Buffer
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-owned", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		sendErr: errors.New("send failed"),
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions: gateway,
+		logger:   logging.New(&logOut, logging.Info),
+	}
+	result, err := dispatcher.DispatchStepPrompt(context.Background(), guidedworkflows.StepPromptDispatchRequest{
+		RunID:       "gwf-1",
+		SessionID:   "sess-owned",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Prompt:      "hello",
+	})
+	if err == nil {
+		t.Fatalf("expected fatal dispatch error")
+	}
+	if result.Dispatched {
+		t.Fatalf("expected no dispatch result for fatal path, got %#v", result)
+	}
+	logs := logOut.String()
+	if !strings.Contains(logs, "msg=guided_workflow_dispatch_result") {
+		t.Fatalf("expected dispatch result telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "disposition=fatal") {
+		t.Fatalf("expected fatal disposition in telemetry log, got %q", logs)
+	}
+	if !strings.Contains(logs, "level=warn") {
+		t.Fatalf("expected fatal dispatch telemetry at warn level, got %q", logs)
+	}
 }
 
 type captureDispatchTelemetryReporter struct {

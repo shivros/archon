@@ -407,6 +407,7 @@ func (r loggerDispatchTelemetryReporter) ReportDispatchResult(ctx dispatchTeleme
 	if r.logger == nil {
 		return
 	}
+	disposition := strings.TrimSpace(ctx.Disposition)
 	fields := []logging.Field{
 		logging.F("run_id", strings.TrimSpace(ctx.RunID)),
 		logging.F("phase_id", strings.TrimSpace(ctx.PhaseID)),
@@ -415,7 +416,7 @@ func (r loggerDispatchTelemetryReporter) ReportDispatchResult(ctx dispatchTeleme
 		logging.F("turn_id", strings.TrimSpace(ctx.TurnID)),
 		logging.F("provider", strings.TrimSpace(ctx.Provider)),
 		logging.F("model", strings.TrimSpace(ctx.Model)),
-		logging.F("disposition", strings.TrimSpace(ctx.Disposition)),
+		logging.F("disposition", disposition),
 		logging.F("attempt_count", ctx.AttemptCount),
 	}
 	if ctx.Blocked {
@@ -423,6 +424,12 @@ func (r loggerDispatchTelemetryReporter) ReportDispatchResult(ctx dispatchTeleme
 	}
 	if ctx.Error != nil {
 		fields = append(fields, logging.F("error", ctx.Error))
+		// Deferred dispatches are expected fallback behavior (e.g. turn already in progress),
+		// so keep them informational while preserving warning logs for fatal outcomes.
+		if disposition == "deferred" {
+			r.logger.Info("guided_workflow_dispatch_result", fields...)
+			return
+		}
 		r.logger.Warn("guided_workflow_dispatch_result", fields...)
 		return
 	}
