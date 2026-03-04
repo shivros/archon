@@ -714,6 +714,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 				m.pendingGuidedWorkflowSessionLookup = nil
 				m.pendingSelectID = ""
 				m.setPendingWorkflowTurnFocus(resolved, lookupReq.turnID)
+				m.exitGuidedWorkflow("opened linked session " + resolved)
 				if m.syncAppStateSidebarExpansion() {
 					saveSidebarExpansionCmd = m.requestAppStateSaveCmd()
 				}

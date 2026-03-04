@@ -81,7 +81,7 @@ func pickerFilterIndicesContains(query string, count int, build func(index int) 
 		if search == "" {
 			search = normalizePickerMatchText(label + " " + id)
 		}
-		if strings.Contains(search, query) {
+		if containsAllTokens(search, query) {
 			out = append(out, i)
 		}
 	}
@@ -130,6 +130,19 @@ func fuzzyPickerScore(query, candidate string) (int, bool) {
 
 func normalizePickerMatchText(text string) string {
 	return strings.ToLower(strings.TrimSpace(text))
+}
+
+func containsAllTokens(haystack, query string) bool {
+	tokens := strings.Fields(query)
+	if len(tokens) == 0 {
+		return true
+	}
+	for _, token := range tokens {
+		if !strings.Contains(haystack, token) {
+			return false
+		}
+	}
+	return true
 }
 
 func pickerBoundaryRune(ch rune) bool {

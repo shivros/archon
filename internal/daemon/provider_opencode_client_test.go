@@ -537,7 +537,9 @@ func TestOpenCodeClientPromptAllowsEOFResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	reply, err := client.Prompt(context.Background(), "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	reply, err := client.Prompt(ctx, "sess_1", "hello", requiredOpenCodeRuntimeOptions(), directory)
 	if err != nil {
 		t.Fatalf("Prompt EOF response: %v", err)
 	}

@@ -19,6 +19,6 @@ repos:
         pass_filenames: false
       - id: go-test
         name: go test (default)
-        entry: bash -lc 'go test ./...'
+        entry: bash -lc 'ARCHON_CLAUDE_INTEGRATION=disabled ARCHON_CODEX_INTEGRATION=disabled go test -timeout 6m ./...'
         language: system
         pass_filenames: false

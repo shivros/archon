@@ -528,7 +528,9 @@ func TestOpenCodeLiveSessionStartTurnPersistsUserItem(t *testing.T) {
 		repository:   repo,
 	}
 
-	if _, err := ls.StartTurn(context.Background(), []map[string]any{{"type": "text", "text": "hello from user"}}, requiredOpenCodeLiveRuntimeOptions()); err != nil {
+	turnCtx, turnCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer turnCancel()
+	if _, err := ls.StartTurn(turnCtx, []map[string]any{{"type": "text", "text": "hello from user"}}, requiredOpenCodeLiveRuntimeOptions()); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
 	if repo.appendCalls == 0 {

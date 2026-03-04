@@ -565,7 +565,9 @@ func sendMessageWithRetry(t *testing.T, server *httptest.Server, sessionID, text
 func sendMessageOnce(server *httptest.Server, sessionID, text string) (int, string, string) {
 	reqBody, _ := json.Marshal(map[string]string{"text": text})
 	body := bytes.NewBuffer(reqBody)
-	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/sessions/"+sessionID+"/send", body)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/sessions/"+sessionID+"/send", body)
 	req.Header.Set("Authorization", "Bearer token")
 	req.Header.Set("Content-Type", "application/json")
 
