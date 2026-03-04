@@ -1015,6 +1015,53 @@ func (c *SidebarController) SetWorkflowExpanded(id string, expanded bool) bool {
 	return true
 }
 
+func (c *SidebarController) SetAllWorkspacesExpanded(expanded bool) bool {
+	if c == nil {
+		return false
+	}
+	ids := c.workspaceIDsInScope()
+	changed := false
+	for _, id := range ids {
+		changed = c.setWorkspaceExpanded(id, expanded) || changed
+	}
+	if !changed {
+		return false
+	}
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
+func (c *SidebarController) SetWorktreesExpandedForWorkspace(workspaceID string, expanded bool) bool {
+	if c == nil {
+		return false
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return false
+	}
+	ids := c.worktreeIDsForWorkspace(workspaceID)
+	changed := false
+	for _, id := range ids {
+		changed = c.setWorktreeExpanded(id, expanded) || changed
+	}
+	if !changed {
+		return false
+	}
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
+func (c *SidebarController) SetWorktreesExpandedForWorktree(worktreeID string, expanded bool) bool {
+	if c == nil {
+		return false
+	}
+	workspaceID, ok := c.findWorkspaceIDForWorktree(strings.TrimSpace(worktreeID))
+	if !ok {
+		return false
+	}
+	return c.SetWorktreesExpandedForWorkspace(workspaceID, expanded)
+}
+
 func (c *SidebarController) IsWorkspaceExpanded(id string) bool {
 	if c == nil || strings.TrimSpace(id) == "" {
 		return c != nil && c.expandByDefault
@@ -1363,6 +1410,75 @@ func (c *SidebarController) setWorkflowExpanded(id string, expanded bool) bool {
 	}
 	c.workflowExpanded[id] = expanded
 	return true
+}
+
+func (c *SidebarController) workspaceIDsInScope() []string {
+	seen := map[string]struct{}{}
+	ids := make([]string, 0, len(c.workspacesSnapshot)+len(c.sessionParents))
+	for _, workspace := range c.workspacesSnapshot {
+		if workspace == nil {
+			continue
+		}
+		id := strings.TrimSpace(workspace.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, parent := range c.sessionParents {
+		id := strings.TrimSpace(parent.workspaceID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (c *SidebarController) worktreeIDsForWorkspace(workspaceID string) []string {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	ids := []string{}
+	for _, worktree := range c.worktreesSnapshot[workspaceID] {
+		if worktree == nil {
+			continue
+		}
+		id := strings.TrimSpace(worktree.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, parent := range c.sessionParents {
+		if strings.TrimSpace(parent.workspaceID) != workspaceID {
+			continue
+		}
+		id := strings.TrimSpace(parent.worktreeID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (c *SidebarController) rebuild(selectedKey string) {

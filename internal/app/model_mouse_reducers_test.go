@@ -265,6 +265,70 @@ func TestMouseReducerSidebarWorkspaceCaretClickTogglesExpansion(t *testing.T) {
 	}
 }
 
+func TestMouseReducerSidebarWorkspaceCtrlCaretClickTogglesAllWorkspaces(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace A", RepoPath: "/tmp/ws1"},
+		{ID: "ws2", Name: "Workspace B", RepoPath: "/tmp/ws2"},
+	}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws2"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkspace && entry.workspace != nil && entry.workspace.ID == "ws1" {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible ws1 row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+		X:      1,
+		Y:      row,
+	}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar ctrl+click to be handled")
+	}
+	if m.sidebar.IsWorkspaceExpanded("ws1") || m.sidebar.IsWorkspaceExpanded("ws2") {
+		t.Fatalf("expected ctrl+click to collapse all workspaces")
+	}
+	if got := len(m.sidebar.Items()); got != 2 {
+		t.Fatalf("expected only workspace rows after collapse-all, got %d", got)
+	}
+
+	handled = m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+		X:      1,
+		Y:      row,
+	}, layout)
+	if !handled {
+		t.Fatalf("expected second sidebar ctrl+click to be handled")
+	}
+	if !m.sidebar.IsWorkspaceExpanded("ws1") || !m.sidebar.IsWorkspaceExpanded("ws2") {
+		t.Fatalf("expected ctrl+click to expand all workspaces")
+	}
+	if got := len(m.sidebar.Items()); got != 4 {
+		t.Fatalf("expected workspace and session rows after expand-all, got %d", got)
+	}
+}
+
 func TestMouseReducerSidebarWorktreeRowClickSelectsWithoutToggle(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
@@ -335,6 +399,105 @@ func TestMouseReducerSidebarWorktreeCaretClickTogglesExpansion(t *testing.T) {
 	}
 	if len(m.sidebar.Items()) != 2 {
 		t.Fatalf("expected worktree caret click to collapse nested session, got %d rows", len(m.sidebar.Items()))
+	}
+}
+
+func TestMouseReducerSidebarWorktreeCtrlCaretClickTogglesWorkspaceScopedWorktrees(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace A", RepoPath: "/tmp/ws1"},
+		{ID: "ws2", Name: "Workspace B", RepoPath: "/tmp/ws2"},
+	}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "feature-1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "feature-2"},
+		},
+		"ws2": {
+			{ID: "wt3", WorkspaceID: "ws2", Name: "feature-3"},
+		},
+	}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+		{ID: "s3", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws2", WorktreeID: "wt3"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorktree && entry.worktree != nil && entry.worktree.ID == "wt1" {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible wt1 row")
+	}
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+		X:      3,
+		Y:      row,
+	}, layout)
+	if !handled {
+		t.Fatalf("expected sidebar ctrl+click to be handled")
+	}
+	if m.sidebar.IsWorktreeExpanded("wt1") || m.sidebar.IsWorktreeExpanded("wt2") {
+		t.Fatalf("expected ctrl+click to collapse ws1 worktrees")
+	}
+	if !m.sidebar.IsWorktreeExpanded("wt3") {
+		t.Fatalf("expected ws2 worktree to remain expanded")
+	}
+	if m.appState.SidebarWorktreeExpanded["wt1"] || m.appState.SidebarWorktreeExpanded["wt2"] {
+		t.Fatalf("expected app state to persist collapsed ws1 worktrees")
+	}
+	if expanded, ok := m.appState.SidebarWorktreeExpanded["wt3"]; ok && !expanded {
+		t.Fatalf("expected app state not to collapse ws2 worktree")
+	}
+
+	handled = m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+		X:      3,
+		Y:      row,
+	}, layout)
+	if !handled {
+		t.Fatalf("expected second sidebar ctrl+click to be handled")
+	}
+	if !m.sidebar.IsWorktreeExpanded("wt1") || !m.sidebar.IsWorktreeExpanded("wt2") {
+		t.Fatalf("expected ctrl+click to expand ws1 worktrees")
+	}
+	if !m.sidebar.IsWorktreeExpanded("wt3") {
+		t.Fatalf("expected ws2 worktree to remain expanded")
+	}
+	if !m.appState.SidebarWorktreeExpanded["wt1"] || !m.appState.SidebarWorktreeExpanded["wt2"] {
+		t.Fatalf("expected app state to persist expanded ws1 worktrees")
+	}
+}
+
+func TestToggleSidebarContainerFromMouseGuards(t *testing.T) {
+	m := NewModel(nil)
+	if m.toggleSidebarContainerFromMouse(nil, tea.Mouse{}) {
+		t.Fatalf("expected nil entry to return false")
+	}
+	m.sidebar = nil
+	if m.toggleSidebarContainerFromMouse(&sidebarItem{kind: sidebarWorkspace}, tea.Mouse{}) {
+		t.Fatalf("expected nil sidebar to return false")
+	}
+
+	var nilModel *Model
+	if nilModel.toggleSidebarContainerFromMouse(&sidebarItem{kind: sidebarWorkspace}, tea.Mouse{}) {
+		t.Fatalf("expected nil model to return false")
 	}
 }
 

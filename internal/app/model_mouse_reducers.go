@@ -963,7 +963,7 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 			}
 			m.sidebar.SelectByRow(mouse.Y)
 			if sidebarToggleHitboxClicked(entry, mouse.X) {
-				if m.sidebar.ToggleSelectedContainer() {
+				if m.toggleSidebarContainerFromMouse(entry, mouse) {
 					m.pendingMouseCmd = m.syncSidebarExpansionChange()
 					return true
 				}
@@ -973,6 +973,14 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 		}
 	}
 	return false
+}
+
+func (m *Model) toggleSidebarContainerFromMouse(entry *sidebarItem, mouse tea.Mouse) bool {
+	if m == nil || m.sidebar == nil || entry == nil {
+		return false
+	}
+	intent := m.sidebarExpansionIntentPolicyOrDefault().ResolveIntent(entry, mouse)
+	return m.sidebarExpansionServiceOrDefault().ApplyIntent(m.sidebar, intent)
 }
 
 func sidebarToggleHitboxClicked(entry *sidebarItem, x int) bool {

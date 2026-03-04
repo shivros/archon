@@ -258,6 +258,122 @@ func TestSidebarControllerToggleSelectedContainer(t *testing.T) {
 	}
 }
 
+func TestSidebarControllerSetAllWorkspacesExpanded(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace A"},
+		{ID: "ws2", Name: "Workspace B"},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws2"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "", "", false)
+	if !controller.SetAllWorkspacesExpanded(false) {
+		t.Fatalf("expected bulk workspace collapse to change state")
+	}
+	if controller.IsWorkspaceExpanded("ws1") || controller.IsWorkspaceExpanded("ws2") {
+		t.Fatalf("expected all workspaces collapsed")
+	}
+	if got := len(controller.Items()); got != 2 {
+		t.Fatalf("expected only workspace rows when collapsed, got %d", got)
+	}
+	if !controller.SetAllWorkspacesExpanded(true) {
+		t.Fatalf("expected bulk workspace expand to change state")
+	}
+	if !controller.IsWorkspaceExpanded("ws1") || !controller.IsWorkspaceExpanded("ws2") {
+		t.Fatalf("expected all workspaces expanded")
+	}
+	if got := len(controller.Items()); got != 4 {
+		t.Fatalf("expected workspace and session rows when expanded, got %d", got)
+	}
+	if controller.SetAllWorkspacesExpanded(true) {
+		t.Fatalf("expected no-op all-workspace expand to return false")
+	}
+}
+
+func TestSidebarControllerSetAllWorkspacesExpandedNilController(t *testing.T) {
+	var controller *SidebarController
+	if controller.SetAllWorkspacesExpanded(true) {
+		t.Fatalf("expected nil controller to return false")
+	}
+}
+
+func TestSidebarControllerSetWorktreesExpandedForWorktree(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace A"},
+		{ID: "ws2", Name: "Workspace B"},
+	}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Feature 1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "Feature 2"},
+		},
+		"ws2": {
+			{ID: "wt3", WorkspaceID: "ws2", Name: "Feature 3"},
+		},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+		{ID: "s3", Status: types.SessionStatusRunning, CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws2", WorktreeID: "wt3"},
+	}
+
+	controller.Apply(workspaces, worktrees, sessions, nil, meta, "", "", false)
+	if !controller.SetAllWorkspacesExpanded(true) {
+		t.Fatalf("expected workspaces to expand for scoped worktree test")
+	}
+	if !controller.SetWorktreeExpanded("wt1", true) || !controller.SetWorktreeExpanded("wt2", true) || !controller.SetWorktreeExpanded("wt3", true) {
+		t.Fatalf("expected baseline worktree expansion setup")
+	}
+	if !controller.SetWorktreesExpandedForWorktree("wt1", false) {
+		t.Fatalf("expected bulk worktree collapse to change state")
+	}
+	if controller.IsWorktreeExpanded("wt1") || controller.IsWorktreeExpanded("wt2") {
+		t.Fatalf("expected ws1 worktrees collapsed")
+	}
+	if !controller.IsWorktreeExpanded("wt3") {
+		t.Fatalf("expected ws2 worktree to remain expanded")
+	}
+	if !controller.SetWorktreesExpandedForWorktree("wt1", true) {
+		t.Fatalf("expected bulk worktree expand to change state")
+	}
+	if !controller.IsWorktreeExpanded("wt1") || !controller.IsWorktreeExpanded("wt2") {
+		t.Fatalf("expected ws1 worktrees expanded")
+	}
+	if !controller.IsWorktreeExpanded("wt3") {
+		t.Fatalf("expected ws2 worktree to remain expanded")
+	}
+}
+
+func TestSidebarControllerSetWorktreesExpandedForWorktreeRejectsUnknown(t *testing.T) {
+	controller := NewSidebarController()
+	if controller.SetWorktreesExpandedForWorktree("", true) {
+		t.Fatalf("expected blank worktree id to be rejected")
+	}
+	controller.Apply([]*types.Workspace{{ID: "ws1", Name: "Workspace"}}, map[string][]*types.Worktree{
+		"ws1": {{ID: "wt1", WorkspaceID: "ws1", Name: "Feature"}},
+	}, nil, nil, nil, "", "", false)
+	if controller.SetWorktreesExpandedForWorktree("wt-missing", true) {
+		t.Fatalf("expected unknown worktree id to be rejected")
+	}
+}
+
 func TestSidebarControllerSelectBySessionIDAutoExpandsParents(t *testing.T) {
 	controller := NewSidebarController()
 	controller.SetExpandByDefault(false)

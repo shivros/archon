@@ -313,6 +313,8 @@ type Model struct {
 	sidebarSortPolicy                   SidebarSortPolicy
 	sortStripHintPolicy                 SortStripHintPolicy
 	sortStripVisibilityPolicy           SortStripVisibilityPolicy
+	sidebarExpansionIntentPolicy        SidebarExpansionIntentPolicy
+	sidebarExpansionService             SidebarExpansionService
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
 	sessionProjectionPolicy             SessionProjectionPolicy
 	sessionProjectionPostProcessor      SessionProjectionPostProcessor
@@ -577,6 +579,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
 		sortStripHintPolicy:                 defaultSortStripHintPolicy{},
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
+		sidebarExpansionIntentPolicy:        defaultSidebarExpansionIntentPolicy{},
+		sidebarExpansionService:             defaultSidebarExpansionService{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
 		transcriptSignalClassifier:          defaultTranscriptSignalClassifier{},
