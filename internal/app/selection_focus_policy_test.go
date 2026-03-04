@@ -24,8 +24,11 @@ func TestDefaultSelectionFocusPolicyExitGuidedWorkflowContract(t *testing.T) {
 	if !policy.ShouldExitGuidedWorkflowForSessionSelection(uiModeGuidedWorkflow, sessionItem, selectionChangeSourceUser) {
 		t.Fatalf("expected guided workflow mode with session selection to exit")
 	}
-	if !policy.ShouldExitGuidedWorkflowForSessionSelection(uiModeGuidedWorkflow, sessionItem, selectionChangeSourceSystem) {
-		t.Fatalf("expected default source-agnostic behavior for guided workflow session selection")
+	if policy.ShouldExitGuidedWorkflowForSessionSelection(uiModeGuidedWorkflow, sessionItem, selectionChangeSourceSystem) {
+		t.Fatalf("expected system-origin session selection to keep guided workflow mode")
+	}
+	if !policy.ShouldExitGuidedWorkflowForSessionSelection(uiModeGuidedWorkflow, sessionItem, selectionChangeSourceHistory) {
+		t.Fatalf("expected history-origin session selection to exit guided workflow mode")
 	}
 	workflowItem := &sidebarItem{
 		kind:       sidebarWorkflow,

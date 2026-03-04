@@ -149,6 +149,50 @@ func TestSessionSelectionExitsGuidedWorkflowMode(t *testing.T) {
 	}
 }
 
+func TestSystemSessionSelectionKeepsGuidedWorkflowMode(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	now := time.Now().UTC()
+	run := &guidedworkflows.WorkflowRun{
+		ID:          "gwf-1",
+		WorkspaceID: "ws1",
+		Status:      guidedworkflows.WorkflowRunStatusRunning,
+		CreatedAt:   now,
+	}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if m.sidebar == nil || !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row to be selectable")
+	}
+	_ = m.onSelectionChangedImmediate()
+	item := m.selectedItem()
+	if item == nil || item.kind != sidebarWorkflow {
+		t.Fatalf("expected selected workflow item")
+	}
+	openCmd := m.openGuidedWorkflowFromSidebar(item)
+	if openCmd == nil {
+		t.Fatalf("expected explicit workflow open command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode after explicit open")
+	}
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected workflow child session row to be selectable")
+	}
+	cmd := m.onSystemSelectionChangedImmediate()
+	if cmd == nil {
+		t.Fatalf("expected session load command after system session selection")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode to remain active for system selection, got %v", m.mode)
+	}
+}
+
 func TestSelectionTransitionResolveSelectionCommandKeepsWorkflowSelectionPassive(t *testing.T) {
 	service := defaultSelectionTransitionService{}
 	m := newPhase0ModelWithSession("codex")

@@ -16,13 +16,16 @@ func DefaultSelectionFocusPolicy() SelectionFocusPolicy {
 	return defaultSelectionFocusPolicy{}
 }
 
-func (defaultSelectionFocusPolicy) ShouldExitGuidedWorkflowForSessionSelection(mode uiMode, item *sidebarItem, _ selectionChangeSource) bool {
+func (defaultSelectionFocusPolicy) ShouldExitGuidedWorkflowForSessionSelection(mode uiMode, item *sidebarItem, source selectionChangeSource) bool {
 	if mode != uiModeGuidedWorkflow {
 		return false
 	}
-	// Default behavior is source-agnostic: explicit session selection always
-	// moves ownership from workflow timeline to session transcript.
-	return item != nil && item.isSession()
+	if item == nil || !item.isSession() {
+		return false
+	}
+	// Keep guided workflow mode stable for background/system-origin selection
+	// churn; only explicit user/history navigation exits guided mode.
+	return source == selectionChangeSourceUser || source == selectionChangeSourceHistory
 }
 
 func WithSelectionFocusPolicy(policy SelectionFocusPolicy) ModelOption {
