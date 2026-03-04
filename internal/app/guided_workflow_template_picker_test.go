@@ -125,6 +125,33 @@ func TestGuidedWorkflowTemplatePickerQueryFiltering(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowTemplatePickerQueryMatchesNameAndIDOnly(t *testing.T) {
+	picker := newGuidedWorkflowTemplatePicker()
+	picker.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{
+			ID:          "alpha",
+			Name:        "Alpha Template",
+			Description: "Includes the word test in description only",
+		},
+		{
+			ID:          "beta_test",
+			Name:        "Beta Template",
+			Description: "No keyword here",
+		},
+	}, "")
+
+	if !picker.AppendQuery("test") {
+		t.Fatalf("expected query append to update picker state")
+	}
+	selected, ok := picker.Selected()
+	if !ok || selected.id != "beta_test" {
+		t.Fatalf("expected only name/id match beta_test, got %#v", selected)
+	}
+	if got := len(picker.picker.visible); got != 1 {
+		t.Fatalf("expected one visible option for query, got %d", got)
+	}
+}
+
 func TestGuidedWorkflowTemplatePickerSetSizeAndClickSelection(t *testing.T) {
 	picker := newGuidedWorkflowTemplatePicker()
 	picker.SetSize(0, 0)

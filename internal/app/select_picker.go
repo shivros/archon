@@ -2,14 +2,22 @@ package app
 
 import "strings"
 
+type pickerQueryMatchMode int
+
+const (
+	pickerQueryMatchFuzzy pickerQueryMatchMode = iota
+	pickerQueryMatchContains
+)
+
 type SelectPicker struct {
-	width   int
-	height  int
-	cursor  int
-	offset  int
-	query   string
-	options []selectOption
-	visible []int
+	width     int
+	height    int
+	cursor    int
+	offset    int
+	query     string
+	options   []selectOption
+	visible   []int
+	matchMode pickerQueryMatchMode
 }
 
 type selectOption struct {
@@ -19,7 +27,19 @@ type selectOption struct {
 }
 
 func NewSelectPicker(width, height int) *SelectPicker {
-	return &SelectPicker{width: width, height: height}
+	return &SelectPicker{
+		width:     width,
+		height:    height,
+		matchMode: pickerQueryMatchFuzzy,
+	}
+}
+
+func (p *SelectPicker) SetQueryMatchMode(mode pickerQueryMatchMode) {
+	if p == nil || p.matchMode == mode {
+		return
+	}
+	p.matchMode = mode
+	p.rebuildVisible()
 }
 
 func (p *SelectPicker) SetSize(width, height int) {
@@ -261,10 +281,18 @@ func (p *SelectPicker) visiblePosition(optionIndex int) int {
 }
 
 func (p *SelectPicker) rebuildVisible() {
-	p.visible = pickerFilterIndices(p.query, len(p.options), func(index int) (label, id, search string) {
-		opt := p.options[index]
-		return opt.label, opt.id, opt.search
-	})
+	switch p.matchMode {
+	case pickerQueryMatchContains:
+		p.visible = pickerFilterIndicesContains(p.query, len(p.options), func(index int) (label, id, search string) {
+			opt := p.options[index]
+			return opt.label, opt.id, opt.search
+		})
+	default:
+		p.visible = pickerFilterIndices(p.query, len(p.options), func(index int) (label, id, search string) {
+			opt := p.options[index]
+			return opt.label, opt.id, opt.search
+		})
+	}
 	if len(p.visible) == 0 {
 		p.cursor = 0
 		p.offset = 0

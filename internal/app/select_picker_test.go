@@ -26,6 +26,24 @@ func TestSelectPickerTypeAheadFiltersSelection(t *testing.T) {
 	}
 }
 
+func TestSelectPickerContainsMatchModeUsesSubstringFiltering(t *testing.T) {
+	picker := NewSelectPicker(40, 5)
+	picker.SetQueryMatchMode(pickerQueryMatchContains)
+	picker.SetOptions([]selectOption{
+		{id: "alpha", label: "Alpha Template"},
+		{id: "beta_test", label: "Beta Template"},
+	})
+	if !picker.AppendQuery("test") {
+		t.Fatalf("expected query append to change picker state")
+	}
+	if picker.SelectedID() != "beta_test" {
+		t.Fatalf("expected contains query to select beta_test, got %q", picker.SelectedID())
+	}
+	if got := len(picker.visible); got != 1 {
+		t.Fatalf("expected exactly one visible result, got %d", got)
+	}
+}
+
 func TestMultiSelectPickerTypeAheadToggle(t *testing.T) {
 	picker := NewMultiSelectPicker(40, 5)
 	picker.SetOptions([]multiSelectOption{

@@ -15,8 +15,10 @@ type guidedWorkflowTemplatePicker struct {
 }
 
 func newGuidedWorkflowTemplatePicker() guidedWorkflowTemplatePicker {
+	picker := NewSelectPicker(minViewportWidth, 8)
+	picker.SetQueryMatchMode(pickerQueryMatchContains)
 	return guidedWorkflowTemplatePicker{
-		picker:  NewSelectPicker(minViewportWidth, 8),
+		picker:  picker,
 		loading: true,
 	}
 }
@@ -86,7 +88,7 @@ func (p *guidedWorkflowTemplatePicker) SetTemplates(raw []guidedworkflows.Workfl
 		items = append(items, selectOption{
 			id:     option.id,
 			label:  label,
-			search: strings.Join([]string{label, option.id, option.name, option.description}, " "),
+			search: strings.Join([]string{label, option.id, option.name}, " "),
 		})
 	}
 	picker.SetOptions(items)
@@ -216,6 +218,7 @@ func (p *guidedWorkflowTemplatePicker) ensurePicker() *SelectPicker {
 	}
 	if p.picker == nil {
 		p.picker = NewSelectPicker(minViewportWidth, 8)
+		p.picker.SetQueryMatchMode(pickerQueryMatchContains)
 	}
 	return p.picker
 }

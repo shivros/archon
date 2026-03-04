@@ -62,6 +62,32 @@ func pickerFilterIndices(query string, count int, build func(index int) (label, 
 	return out
 }
 
+func pickerFilterIndicesContains(query string, count int, build func(index int) (label, id, search string)) []int {
+	if count <= 0 {
+		return nil
+	}
+	query = normalizePickerMatchText(query)
+	if query == "" {
+		out := make([]int, count)
+		for i := 0; i < count; i++ {
+			out[i] = i
+		}
+		return out
+	}
+	out := make([]int, 0, count)
+	for i := 0; i < count; i++ {
+		label, id, search := build(i)
+		search = normalizePickerMatchText(search)
+		if search == "" {
+			search = normalizePickerMatchText(label + " " + id)
+		}
+		if strings.Contains(search, query) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 func fuzzyPickerScore(query, candidate string) (int, bool) {
 	qr := []rune(normalizePickerMatchText(query))
 	cr := []rune(normalizePickerMatchText(candidate))
