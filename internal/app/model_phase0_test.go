@@ -187,6 +187,7 @@ func TestPhase0TranscriptSnapshotClearsLoadingForSelection(t *testing.T) {
 			Provider:  "kilocode",
 			Revision:  transcriptdomain.MustParseRevisionToken("1"),
 			Blocks: []transcriptdomain.Block{
+				{Kind: "user_message", Role: "user", Text: "prompt"},
 				{Kind: "assistant_message", Role: "assistant", Text: "ready"},
 			},
 		},

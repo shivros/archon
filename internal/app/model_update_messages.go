@@ -1187,6 +1187,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.historyTraverseInFlight != nil {
 			delete(m.historyTraverseInFlight, key)
 		}
+		if m.snapshotHistoryBackfillRequested != nil {
+			delete(m.snapshotHistoryBackfillRequested, key)
+		}
 		loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		cmds = append(cmds, m.sessionBootstrapCoordinatorOrDefault().BuildSessionStartCommands(SessionStartBootstrapInput{
@@ -1520,7 +1523,49 @@ func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
 	blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
 	m.applySessionProjection(sessionProjectionSourceHistory, msg.id, msg.key, blocks)
 	m.markTranscriptLoadingSignal(msg.id)
+	if cmd := m.maybeBackfillSnapshotMissingUserTurns(msg.id, responseKey, blocks); cmd != nil {
+		return cmd
+	}
 	return nil
+}
+
+func (m *Model) maybeBackfillSnapshotMissingUserTurns(sessionID, key string, blocks []ChatBlock) tea.Cmd {
+	if m == nil || m.sessionHistoryAPI == nil {
+		return nil
+	}
+	key = strings.TrimSpace(key)
+	sessionID = strings.TrimSpace(sessionID)
+	if key == "" || sessionID == "" {
+		return nil
+	}
+	if hasChatRole(blocks, ChatRoleUser) || !hasChatRole(blocks, ChatRoleAgent) {
+		return nil
+	}
+	if m.snapshotHistoryBackfillRequested == nil {
+		m.snapshotHistoryBackfillRequested = map[string]bool{}
+	}
+	if m.snapshotHistoryBackfillRequested[key] {
+		return nil
+	}
+	m.snapshotHistoryBackfillRequested[key] = true
+	ctx := m.requestScopeContext(requestScopeSessionLoad)
+	m.setBackgroundStatus("backfilling missing user turns")
+	lines := m.historyFetchLinesInitial()
+	if m.historyWindowBySessionKey != nil {
+		if window := m.historyWindowBySessionKey[key]; window > lines {
+			lines = window
+		}
+	}
+	return fetchHistoryCmdWithContext(m.sessionHistoryAPI, sessionID, key, lines, ctx)
+}
+
+func hasChatRole(blocks []ChatBlock, role ChatRole) bool {
+	for _, block := range blocks {
+		if block.Role == role {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) applyTranscriptStreamMsg(msg transcriptStreamMsg) {

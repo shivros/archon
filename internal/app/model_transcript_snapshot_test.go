@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"testing"
 
+	"control/internal/client"
 	"control/internal/daemon/transcriptdomain"
 )
 
@@ -88,5 +90,47 @@ func TestTranscriptSnapshotEqualRevisionDoesNotOverwriteVisibleBlocks(t *testing
 	}
 	if got := latestAssistantBlockText(m.currentBlocks()); got != "same-rev" {
 		t.Fatalf("expected equal revision snapshot to be ignored, got %q", got)
+	}
+}
+
+type transcriptSnapshotHistoryBackfillStub struct {
+	calls int
+}
+
+func (s *transcriptSnapshotHistoryBackfillStub) History(context.Context, string, int) (*client.TailItemsResponse, error) {
+	s.calls++
+	return &client.TailItemsResponse{
+		Items: []map[string]any{
+			{"type": "userMessage", "content": []any{map[string]any{"type": "text", "text": "user turn"}}},
+			{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "assistant turn"}}}},
+		},
+	}, nil
+}
+
+func TestTranscriptSnapshotMissingUserTurnTriggersHistoryBackfill(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.pendingSessionKey = "sess:s1"
+	history := &transcriptSnapshotHistoryBackfillStub{}
+	m.sessionHistoryAPI = history
+
+	handled, cmd := m.reduceStateMessages(transcriptSnapshotMsg{
+		id:  "s1",
+		key: "sess:s1",
+		snapshot: &transcriptdomain.TranscriptSnapshot{
+			SessionID: "s1",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("2"),
+			Blocks:    []transcriptdomain.Block{{Kind: "assistant_message", Role: "assistant", Text: "assistant-only"}},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected transcript snapshot to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected missing-user snapshot to trigger history backfill")
+	}
+	_ = cmd()
+	if history.calls != 1 {
+		t.Fatalf("expected one history backfill call, got %d", history.calls)
 	}
 }

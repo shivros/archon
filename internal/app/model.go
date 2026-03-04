@@ -218,6 +218,7 @@ type Model struct {
 	historyWindowBySessionKey           map[string]int
 	historyTraverseInFlight             map[string]int
 	historyTraverseExhausted            map[string]bool
+	snapshotHistoryBackfillRequested    map[string]bool
 	loading                             bool
 	loadingKey                          string
 	loader                              spinner.Model
@@ -531,6 +532,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		historyWindowBySessionKey:           map[string]int{},
 		historyTraverseInFlight:             map[string]int{},
 		historyTraverseExhausted:            map[string]bool{},
+		snapshotHistoryBackfillRequested:    map[string]bool{},
 		reasoningExpanded:                   map[string]bool{},
 		sessionApprovals:                    map[string][]*ApprovalRequest{},
 		sessionApprovalResolutions:          map[string][]*ApprovalResolution{},
@@ -1298,6 +1300,9 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.historyTraverseExhausted[token] = false
 	if m.historyTraverseInFlight != nil {
 		delete(m.historyTraverseInFlight, token)
+	}
+	if m.snapshotHistoryBackfillRequested != nil {
+		delete(m.snapshotHistoryBackfillRequested, token)
 	}
 	ctx := m.replaceRequestScope(requestScopeSessionLoad)
 	cmds := m.sessionBootstrapCoordinatorOrDefault().BuildSelectionLoadCommands(SelectionLoadBootstrapInput{
