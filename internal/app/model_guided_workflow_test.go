@@ -1236,6 +1236,13 @@ func TestGuidedWorkflowTimelineSnapshotUpdatesArtifacts(t *testing.T) {
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(&guidedworkflows.WorkflowRun{
+		ID:     "gwf-2",
+		Status: guidedworkflows.WorkflowRunStatusRunning,
+	})
 
 	updated, cmd := m.Update(workflowRunSnapshotMsg{
 		run: newWorkflowRunFixture("gwf-2", guidedworkflows.WorkflowRunStatusRunning, now),
@@ -1296,6 +1303,10 @@ func TestGuidedWorkflowTimelineShowsStepSessionTraceability(t *testing.T) {
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(run)
 	updated, _ := m.Update(workflowRunSnapshotMsg{
 		run: run,
 		timeline: []guidedworkflows.RunTimelineEvent{
@@ -1335,6 +1346,10 @@ func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(run)
 	updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
 	m = asModel(t, updated)
 	if m.mode != uiModeGuidedWorkflow {
@@ -1423,6 +1438,10 @@ func TestGuidedWorkflowOpenSelectedStepSessionResolvesProviderAndThreadSessionID
 				workspaceID: "ws1",
 				worktreeID:  "wt1",
 			})
+			if m.guidedWorkflow == nil {
+				t.Fatalf("expected guided workflow controller")
+			}
+			m.guidedWorkflow.SetRun(run)
 			updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
 			m = asModel(t, updated)
 			updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
@@ -1788,6 +1807,10 @@ func TestGuidedWorkflowDecisionApproveFromInbox(t *testing.T) {
 	m := NewModel(nil)
 	m.guidedWorkflowAPI = api
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1"})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(paused)
 	updated, _ := m.Update(workflowRunSnapshotMsg{
 		run: paused,
 		timeline: []guidedworkflows.RunTimelineEvent{
@@ -1844,6 +1867,10 @@ func TestGuidedWorkflowFailedSummaryPrimesDefaultResumeMessage(t *testing.T) {
 
 	m := newPhase0ModelWithSession("codex")
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(failed)
 	updated, _ := m.Update(workflowRunSnapshotMsg{run: failed})
 	m = asModel(t, updated)
 	if m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSummary {
@@ -1885,6 +1912,10 @@ func TestGuidedWorkflowFailedSummaryResumeUsesEditedMessage(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.guidedWorkflowAPI = api
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(failed)
 	updated, _ := m.Update(workflowRunSnapshotMsg{run: failed})
 	m = asModel(t, updated)
 	if m.guidedWorkflow == nil || !m.guidedWorkflow.CanResumeFailedRun() {
@@ -2438,6 +2469,145 @@ func TestWorkflowSnapshotDoesNotReclaimFocusAfterSelectingChildSession(t *testin
 	}
 	if got := m.selectedSessionID(); got != "s1" {
 		t.Fatalf("expected selected session s1 after snapshot, got %q", got)
+	}
+}
+
+func TestWorkflowSnapshotDoesNotInterruptNewGuidedWorkflowComposition(t *testing.T) {
+	now := time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode before snapshot")
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	initialStage := m.guidedWorkflow.Stage()
+	if got := strings.TrimSpace(m.guidedWorkflow.RunID()); got != "" {
+		t.Fatalf("expected no active run while composing, got %q", got)
+	}
+
+	updated, _ := m.Update(workflowRunSnapshotMsg{
+		run: newWorkflowRunFixture("gwf-background", guidedworkflows.WorkflowRunStatusRunning, now),
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now, Type: "step_completed", RunID: "gwf-background", Message: "background update"},
+		},
+	})
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected to remain in guided workflow compose flow, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller after snapshot")
+	}
+	if got := strings.TrimSpace(m.guidedWorkflow.RunID()); got != "" {
+		t.Fatalf("expected background snapshot to not attach a run while composing, got %q", got)
+	}
+	if m.guidedWorkflow.Stage() != initialStage {
+		t.Fatalf("expected compose stage %v to remain active, got %v", initialStage, m.guidedWorkflow.Stage())
+	}
+}
+
+func TestWorkflowSnapshotForDifferentRunDoesNotReplaceOpenGuidedRun(t *testing.T) {
+	now := time.Date(2026, 2, 28, 9, 5, 0, 0, time.UTC)
+	runA := newWorkflowRunFixture("gwf-a", guidedworkflows.WorkflowRunStatusRunning, now)
+	runB := newWorkflowRunFixture("gwf-b", guidedworkflows.WorkflowRunStatusRunning, now.Add(2*time.Second))
+	m := NewModel(nil)
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(runA)
+
+	updated, _ := m.Update(workflowRunSnapshotMsg{
+		run: runB,
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now.Add(2 * time.Second), Type: "step_completed", RunID: runB.ID, Message: "run b update"},
+		},
+	})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller after foreign snapshot")
+	}
+	if got := strings.TrimSpace(m.guidedWorkflow.RunID()); got != runA.ID {
+		t.Fatalf("expected active guided run %q to remain selected, got %q", runA.ID, got)
+	}
+}
+
+func TestWorkflowSnapshotDoesNotReattachPriorRunDuringNewWorkflowComposition(t *testing.T) {
+	now := time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-prior", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if m.sidebar == nil || !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row to be selectable")
+	}
+	_ = m.onSelectionChangedImmediate()
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(run)
+	if strings.TrimSpace(m.guidedWorkflow.RunID()) != run.ID {
+		t.Fatalf("expected opened run %q, got %#v", run.ID, m.guidedWorkflow)
+	}
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = asModel(t, updated)
+	if m.mode != uiModeNormal {
+		t.Fatalf("expected normal mode after escape, got %v", m.mode)
+	}
+
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode while composing new run, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	compositionStage := m.guidedWorkflow.Stage()
+	if got := strings.TrimSpace(m.guidedWorkflow.RunID()); got != "" {
+		t.Fatalf("expected no active run during new composition, got %q", got)
+	}
+
+	updated, _ = m.Update(workflowRunSnapshotMsg{
+		run: cloneWorkflowRun(run),
+		timeline: []guidedworkflows.RunTimelineEvent{
+			{At: now.Add(30 * time.Second), Type: "step_completed", RunID: run.ID, Message: "background update"},
+		},
+	})
+	m = asModel(t, updated)
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected to remain in new guided workflow composition, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller after background snapshot")
+	}
+	if got := strings.TrimSpace(m.guidedWorkflow.RunID()); got != "" {
+		t.Fatalf("expected prior run snapshot to be ignored during new composition, got %q", got)
+	}
+	if got := m.guidedWorkflow.Stage(); got != compositionStage {
+		t.Fatalf("expected composition stage %v to remain active, got %v", compositionStage, got)
 	}
 }
 

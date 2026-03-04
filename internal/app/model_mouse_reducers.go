@@ -278,6 +278,9 @@ func (m *Model) reduceMouseWheel(msg tea.MouseMsg, layout mouseLayout, delta int
 	if delta < 0 {
 		m.pauseFollow(true)
 		m.viewport.ScrollUp(3)
+		if cmd := m.maybeRequestOlderHistoryOnTop(); cmd != nil {
+			m.pendingMouseCmd = cmd
+		}
 	} else {
 		m.viewport.ScrollDown(3)
 	}

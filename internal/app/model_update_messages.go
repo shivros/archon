@@ -127,14 +127,17 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		if msg.err != nil {
-			m.guidedWorkflow.SetSnapshotError(msg.err)
 			m.setBackgroundError("guided workflow refresh error: " + msg.err.Error())
-			m.renderGuidedWorkflowContent()
+			if shouldApplyWorkflowSnapshotErrorToGuidedController(m) {
+				m.guidedWorkflow.SetSnapshotError(msg.err)
+				m.renderGuidedWorkflowContent()
+			}
 			return true, nil
 		}
+		shouldApplySnapshot := shouldApplyWorkflowSnapshotToGuidedController(m, msg.run)
 		previousStatus := guidedworkflows.WorkflowRunStatus("")
 		previousStatusKnown := false
-		if msg.run != nil {
+		if shouldApplySnapshot && msg.run != nil {
 			previousStatus, previousStatusKnown = m.workflowRunStatus(strings.TrimSpace(msg.run.ID))
 		}
 		appStateSaveCmd := tea.Cmd(nil)
@@ -154,24 +157,26 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
-		m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
-		if msg.run != nil && (msg.run.DismissedAt == nil || m.showDismissed) {
-			switch msg.run.Status {
-			case guidedworkflows.WorkflowRunStatusPaused:
-				if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusPaused {
-					m.setStatusInfo("guided workflow paused: decision needed")
-				}
-			case guidedworkflows.WorkflowRunStatusCompleted:
-				if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusCompleted {
-					m.setStatusInfo("guided workflow completed")
-				}
-			case guidedworkflows.WorkflowRunStatusFailed:
-				if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusFailed {
-					m.setStatusError("guided workflow failed")
+		if shouldApplySnapshot {
+			m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
+			if msg.run != nil && (msg.run.DismissedAt == nil || m.showDismissed) {
+				switch msg.run.Status {
+				case guidedworkflows.WorkflowRunStatusPaused:
+					if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusPaused {
+						m.setStatusInfo("guided workflow paused: decision needed")
+					}
+				case guidedworkflows.WorkflowRunStatusCompleted:
+					if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusCompleted {
+						m.setStatusInfo("guided workflow completed")
+					}
+				case guidedworkflows.WorkflowRunStatusFailed:
+					if !previousStatusKnown || previousStatus != guidedworkflows.WorkflowRunStatusFailed {
+						m.setStatusError("guided workflow failed")
+					}
 				}
 			}
+			m.renderGuidedWorkflowContent()
 		}
-		m.renderGuidedWorkflowContent()
 		return true, appStateSaveCmd
 	case workflowRunDecisionMsg:
 		if m.guidedWorkflow == nil {
@@ -389,7 +394,14 @@ type sessionItemsMessageContext struct {
 	provider string
 }
 
-func (m *Model) handleSessionItemsMessage(source sessionProjectionSource, id, key string, items []map[string]any, err error) tea.Cmd {
+func (m *Model) handleSessionItemsMessage(source sessionProjectionSource, id, key string, items []map[string]any, err error, requestedLines int) tea.Cmd {
+	if source == sessionProjectionSourceHistory {
+		responseKey := strings.TrimSpace(key)
+		if responseKey == "" && strings.TrimSpace(id) != "" {
+			responseKey = "sess:" + strings.TrimSpace(id)
+		}
+		m.recordHistoryWindowFromResponse(responseKey, requestedLines, len(items), err)
+	}
 	ctx, ok := m.prepareSessionItemsMessageContext(source, id, key, err)
 	if !ok {
 		return nil
@@ -918,9 +930,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case providerOptionsMsg:
 		return true, m.handleProviderOptionsMsg(msg)
 	case tailMsg:
-		return true, m.handleSessionItemsMessage(sessionProjectionSourceTail, msg.id, msg.key, msg.items, msg.err)
+		return true, m.handleSessionItemsMessage(sessionProjectionSourceTail, msg.id, msg.key, msg.items, msg.err, msg.requestedLines)
 	case historyMsg:
-		return true, m.handleSessionItemsMessage(sessionProjectionSourceHistory, msg.id, msg.key, msg.items, msg.err)
+		return true, m.handleSessionItemsMessage(sessionProjectionSourceHistory, msg.id, msg.key, msg.items, msg.err, msg.requestedLines)
 	case transcriptSnapshotMsg:
 		return true, m.applyTranscriptSnapshotMsg(msg)
 	case sessionBlocksProjectedMsg:
@@ -1163,6 +1175,17 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.setStatusInfo("session started")
 		initialLines := m.historyFetchLinesInitial()
+		if m.historyWindowBySessionKey == nil {
+			m.historyWindowBySessionKey = map[string]int{}
+		}
+		m.historyWindowBySessionKey[key] = initialLines
+		if m.historyTraverseExhausted == nil {
+			m.historyTraverseExhausted = map[string]bool{}
+		}
+		m.historyTraverseExhausted[key] = false
+		if m.historyTraverseInFlight != nil {
+			delete(m.historyTraverseInFlight, key)
+		}
 		loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
 		cmds := []tea.Cmd{m.fetchSessionsCmd(false)}
 		cmds = append(cmds, m.sessionBootstrapCoordinatorOrDefault().BuildSessionStartCommands(SessionStartBootstrapInput{
@@ -1448,7 +1471,12 @@ func (m *Model) applyEventsMsg(msg eventsMsg) {
 }
 
 func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
+	responseKey := strings.TrimSpace(msg.key)
+	if responseKey == "" && strings.TrimSpace(msg.id) != "" {
+		responseKey = "sess:" + strings.TrimSpace(msg.id)
+	}
 	if msg.err != nil {
+		m.recordHistoryWindowFromResponse(responseKey, msg.requestedLines, 0, msg.err)
 		if isCanceledRequestError(msg.err) {
 			return nil
 		}
@@ -1460,10 +1488,14 @@ func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if msg.snapshot != nil {
+		m.recordHistoryWindowFromResponse(responseKey, msg.requestedLines, -1, nil)
+	}
 	if msg.key != "" && msg.key != m.pendingSessionKey {
 		return nil
 	}
 	if msg.snapshot == nil {
+		m.recordHistoryWindowFromResponse(responseKey, msg.requestedLines, -1, nil)
 		return nil
 	}
 	applied := true

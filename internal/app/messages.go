@@ -135,17 +135,19 @@ type availableWorktreesMsg struct {
 }
 
 type tailMsg struct {
-	id    string
-	items []map[string]any
-	err   error
-	key   string
+	id             string
+	items          []map[string]any
+	err            error
+	key            string
+	requestedLines int
 }
 
 type historyMsg struct {
-	id    string
-	items []map[string]any
-	err   error
-	key   string
+	id             string
+	items          []map[string]any
+	err            error
+	key            string
+	requestedLines int
 }
 
 type sessionProjectionSource string
@@ -307,10 +309,11 @@ type itemsStreamMsg struct {
 }
 
 type transcriptSnapshotMsg struct {
-	id       string
-	key      string
-	snapshot *transcriptdomain.TranscriptSnapshot
-	err      error
+	id             string
+	key            string
+	snapshot       *transcriptdomain.TranscriptSnapshot
+	err            error
+	requestedLines int
 }
 
 type transcriptStreamMsg struct {

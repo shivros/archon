@@ -885,6 +885,10 @@ func TestMouseReducerGuidedWorkflowTurnLinkClickOpensLinkedSession(t *testing.T)
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(run)
 	updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
 	m = asModel(t, updated)
 	if m.mode != uiModeGuidedWorkflow {
@@ -928,6 +932,10 @@ func TestMouseReducerGuidedWorkflowTurnLinkClickResolvesProviderSessionID(t *tes
 		workspaceID: "ws1",
 		worktreeID:  "wt1",
 	})
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(run)
 	updated, _ := m.Update(workflowRunSnapshotMsg{run: run})
 	m = asModel(t, updated)
 	if m.mode != uiModeGuidedWorkflow {

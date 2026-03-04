@@ -3,7 +3,6 @@ package transcriptadapters
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
@@ -92,22 +91,66 @@ func TestTranscriptEventFromCodexEventApprovalResolved(t *testing.T) {
 func TestTranscriptEventFromCodexEventUnknownDefaultsToDelta(t *testing.T) {
 	event := types.CodexEvent{Method: "item/unknown"}
 	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("10"), event)
-	if got.Kind != transcriptdomain.TranscriptEventDelta {
-		t.Fatalf("expected default delta kind, got %q", got.Kind)
-	}
-	if len(got.Delta) != 1 || got.Delta[0].Kind != "provider_event" {
-		t.Fatalf("expected normalized provider_event delta, got %#v", got.Delta)
+	if got.Kind != "" {
+		t.Fatalf("expected unknown empty event for non-content item, got %#v", got)
 	}
 }
 
 func TestTranscriptEventFromCodexEventParsesTimestamp(t *testing.T) {
 	event := types.CodexEvent{Method: "item/unknown", TS: "2026-03-02T12:00:00Z"}
 	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
-	if got.OccurredAt == nil {
-		t.Fatal("expected occurred_at to be set")
+	if got.Kind != "" {
+		t.Fatalf("expected ignored non-content item event, got %#v", got)
 	}
-	if got.OccurredAt.UTC().Format(time.RFC3339) != "2026-03-02T12:00:00Z" {
-		t.Fatalf("unexpected occurred_at: %s", got.OccurredAt.UTC().Format(time.RFC3339))
+}
+
+func TestTranscriptEventFromCodexEventAgentMessageDelta(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"itemId":"msg_1","delta":"hello"}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != transcriptdomain.TranscriptEventDelta {
+		t.Fatalf("expected delta event, got %q", got.Kind)
+	}
+	if len(got.Delta) != 1 {
+		t.Fatalf("expected single delta block, got %#v", got.Delta)
+	}
+	if got.Delta[0].Role != "assistant" || got.Delta[0].Text != "hello" || got.Delta[0].ID != "msg_1" {
+		t.Fatalf("unexpected delta payload: %#v", got.Delta[0])
+	}
+}
+
+func TestTranscriptEventFromCodexEventThreadStatusChangedIdleMapsToReady(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "thread/status/changed",
+		Params: json.RawMessage(`{"status":{"type":"idle"}}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != transcriptdomain.TranscriptEventStreamStatus || got.StreamStatus != transcriptdomain.StreamStatusReady {
+		t.Fatalf("unexpected thread status mapping: %#v", got)
+	}
+}
+
+func TestTranscriptEventFromCodexEventThreadStatusChangedActiveIgnored(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "thread/status/changed",
+		Params: json.RawMessage(`{"status":{"type":"active"}}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != "" {
+		t.Fatalf("expected active thread status event ignored, got %#v", got)
+	}
+}
+
+func TestTranscriptEventFromCodexEventMCPStartupIgnored(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "codex/event/mcp_startup_complete",
+		Params: json.RawMessage(`{"msg":{"type":"mcp_startup_complete"}}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != "" {
+		t.Fatalf("expected mcp startup event ignored, got %#v", got)
 	}
 }
 
@@ -205,6 +248,15 @@ func TestParseEventTime(t *testing.T) {
 	}
 	if got := parseEventTime("2026-03-02T12:00:00Z"); got.IsZero() {
 		t.Fatal("expected parsed RFC3339 time")
+	}
+}
+
+func TestThreadStatusFromEventParams(t *testing.T) {
+	if got := threadStatusFromEventParams(json.RawMessage(`{"status":{"type":"idle"}}`)); got != "idle" {
+		t.Fatalf("expected idle status, got %q", got)
+	}
+	if got := threadStatusFromEventParams(json.RawMessage(`{"status":"active"}`)); got != "active" {
+		t.Fatalf("expected active status, got %q", got)
 	}
 }
 

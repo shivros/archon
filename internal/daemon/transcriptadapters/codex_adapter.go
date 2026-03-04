@@ -27,7 +27,10 @@ func (a codexTranscriptAdapter) Provider() string {
 }
 
 func (a codexTranscriptAdapter) MapEvent(ctx MappingContext, event types.CodexEvent) []transcriptdomain.TranscriptEvent {
-	mapped := mapCodexEvent(a.providerName, ctx, event)
+	mapped, ok := mapCodexEvent(a.providerName, ctx, event)
+	if !ok {
+		return nil
+	}
 	if err := transcriptdomain.ValidateEvent(mapped); err != nil {
 		return nil
 	}
@@ -45,7 +48,7 @@ func (a codexTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any)
 	return []transcriptdomain.TranscriptEvent{event}
 }
 
-func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEvent) transcriptdomain.TranscriptEvent {
+func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEvent) (transcriptdomain.TranscriptEvent, bool) {
 	method := strings.ToLower(strings.TrimSpace(event.Method))
 	canonical := transcriptdomain.TranscriptEvent{
 		Kind:      transcriptdomain.TranscriptEventDelta,
@@ -58,6 +61,44 @@ func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEve
 	}
 
 	switch {
+	case strings.Contains(method, "requestapproval"):
+		canonical.Kind = transcriptdomain.TranscriptEventApprovalPending
+		canonical.Approval = &transcriptdomain.ApprovalState{
+			RequestID: approvalRequestID(event),
+			State:     "pending",
+			Method:    strings.TrimSpace(event.Method),
+		}
+	case strings.Contains(method, "approvalresolved") || strings.Contains(method, "replypermission"):
+		canonical.Kind = transcriptdomain.TranscriptEventApprovalResolved
+		canonical.Approval = &transcriptdomain.ApprovalState{
+			RequestID: approvalRequestID(event),
+			State:     "resolved",
+			Method:    strings.TrimSpace(event.Method),
+		}
+	case method == "item/agentmessage/delta":
+		block, ok := deltaBlockFromCodexEventMethod(method, event.Params)
+		if !ok {
+			return transcriptdomain.TranscriptEvent{}, false
+		}
+		canonical.Delta = []transcriptdomain.Block{block}
+	case strings.HasPrefix(method, "item/"):
+		block, ok := blockFromCodexEventItem(method, event.Params)
+		if !ok {
+			return transcriptdomain.TranscriptEvent{}, false
+		}
+		canonical.Delta = []transcriptdomain.Block{block}
+	case method == "thread/status/changed":
+		status := threadStatusFromEventParams(event.Params)
+		if status == "idle" {
+			canonical.Kind = transcriptdomain.TranscriptEventStreamStatus
+			canonical.StreamStatus = transcriptdomain.StreamStatusReady
+			return canonical, true
+		}
+		return transcriptdomain.TranscriptEvent{}, false
+	case method == "thread/started", method == "thread/updated", method == "thread/completed":
+		return transcriptdomain.TranscriptEvent{}, false
+	case strings.HasPrefix(method, "codex/event/mcp_startup"):
+		return transcriptdomain.TranscriptEvent{}, false
 	case method == "turn/started":
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateRunning)
 		if strings.TrimSpace(turn.TurnID) == "" {
@@ -82,20 +123,6 @@ func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEve
 		}
 		canonical.Kind = transcriptdomain.TranscriptEventTurnFailed
 		canonical.Turn = &turn
-	case strings.Contains(method, "requestapproval"):
-		canonical.Kind = transcriptdomain.TranscriptEventApprovalPending
-		canonical.Approval = &transcriptdomain.ApprovalState{
-			RequestID: approvalRequestID(event),
-			State:     "pending",
-			Method:    strings.TrimSpace(event.Method),
-		}
-	case strings.Contains(method, "approvalresolved") || strings.Contains(method, "replypermission"):
-		canonical.Kind = transcriptdomain.TranscriptEventApprovalResolved
-		canonical.Approval = &transcriptdomain.ApprovalState{
-			RequestID: approvalRequestID(event),
-			State:     "resolved",
-			Method:    strings.TrimSpace(event.Method),
-		}
 	default:
 		canonical.Delta = []transcriptdomain.Block{{
 			Kind: "provider_event",
@@ -103,7 +130,7 @@ func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEve
 			Text: strings.TrimSpace(event.Method),
 		}}
 	}
-	return canonical
+	return canonical, true
 }
 
 func CapabilityEnvelopeFromProvider(provider string) transcriptdomain.CapabilityEnvelope {
@@ -129,6 +156,84 @@ func TranscriptEventFromCodexEvent(
 		return transcriptdomain.TranscriptEvent{}
 	}
 	return events[0]
+}
+
+func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage) (transcriptdomain.Block, bool) {
+	params := decodeMap(raw)
+	text := strings.TrimSpace(firstNonEmpty(
+		asString(params["delta"]),
+		asString(params["text"]),
+		asString(params["content"]),
+	))
+	if text == "" {
+		return transcriptdomain.Block{}, false
+	}
+	lowerMethod := strings.ToLower(strings.TrimSpace(method))
+	role := "assistant"
+	variant := ""
+	if strings.Contains(lowerMethod, "reasoning") {
+		role = "reasoning"
+		variant = "reasoning"
+	}
+	return transcriptdomain.Block{
+		ID: strings.TrimSpace(firstNonEmpty(
+			asString(params["item_id"]),
+			asString(params["itemId"]),
+			asString(params["itemid"]),
+			asString(params["id"]),
+		)),
+		Kind:    itemKindFromMethod(lowerMethod),
+		Role:    role,
+		Text:    text,
+		Variant: variant,
+	}, true
+}
+
+func blockFromCodexEventItem(method string, raw json.RawMessage) (transcriptdomain.Block, bool) {
+	params := decodeMap(raw)
+	item, _ := params["item"].(map[string]any)
+	if item == nil {
+		return transcriptdomain.Block{}, false
+	}
+	block, ok := BlockFromItem(item)
+	if !ok {
+		return transcriptdomain.Block{}, false
+	}
+	if block.ID == "" {
+		block.ID = strings.TrimSpace(firstNonEmpty(
+			asString(params["item_id"]),
+			asString(params["itemId"]),
+			asString(params["itemid"]),
+			asString(params["id"]),
+		))
+	}
+	if block.Variant == "" {
+		if strings.Contains(strings.ToLower(method), "reasoning") {
+			block.Variant = "reasoning"
+		}
+	}
+	return block, true
+}
+
+func itemKindFromMethod(method string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(method))
+	if !strings.HasPrefix(trimmed, "item/") {
+		return "message"
+	}
+	parts := strings.Split(strings.TrimPrefix(trimmed, "item/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "message"
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+func threadStatusFromEventParams(raw json.RawMessage) string {
+	params := decodeMap(raw)
+	status, _ := params["status"].(map[string]any)
+	if status != nil {
+		return strings.ToLower(strings.TrimSpace(asString(status["type"])))
+	}
+	return strings.ToLower(strings.TrimSpace(asString(params["status"])))
 }
 
 func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {

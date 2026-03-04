@@ -34,7 +34,7 @@ func TestTranscriptStreamControllerAppliesEventsInRevisionOrder(t *testing.T) {
 		},
 	}
 
-	changed, closed, signal, events := controller.ConsumeTick()
+	changed, closed, signal, signals := controller.ConsumeTick()
 	if closed {
 		t.Fatalf("expected open stream")
 	}
@@ -44,8 +44,11 @@ func TestTranscriptStreamControllerAppliesEventsInRevisionOrder(t *testing.T) {
 	if !signal {
 		t.Fatalf("expected signal=true for ready/replace/delta events")
 	}
-	if events != 3 {
-		t.Fatalf("expected 3 events, got %d", events)
+	if signals.Events != 3 {
+		t.Fatalf("expected 3 events, got %d", signals.Events)
+	}
+	if signals.ContentEvents != 2 {
+		t.Fatalf("expected 2 content events, got %d", signals.ContentEvents)
 	}
 	if got := controller.StreamStatus(); got != transcriptdomain.StreamStatusReady {
 		t.Fatalf("expected ready stream status, got %q", got)
@@ -91,12 +94,15 @@ func TestTranscriptStreamControllerDropsStaleAndEqualRevisions(t *testing.T) {
 		},
 	}
 
-	changed, _, signal, events := controller.ConsumeTick()
+	changed, _, signal, signals := controller.ConsumeTick()
 	if changed || signal {
 		t.Fatalf("expected stale/equal events to be ignored")
 	}
-	if events != 2 {
-		t.Fatalf("expected two consumed events, got %d", events)
+	if signals.Events != 2 {
+		t.Fatalf("expected two consumed events, got %d", signals.Events)
+	}
+	if signals.ContentEvents != 0 {
+		t.Fatalf("expected stale/equal events to produce no content signals, got %d", signals.ContentEvents)
 	}
 	blocks := controller.Blocks()
 	if len(blocks) != 1 || blocks[0].Text != "latest" {

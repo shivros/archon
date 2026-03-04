@@ -562,9 +562,9 @@ func fetchTailCmd(api SessionTailAPI, id, key string) tea.Cmd {
 		defer cancel()
 		resp, err := api.TailItems(ctx, id, defaultTailLines)
 		if err != nil {
-			return tailMsg{id: id, err: err, key: key}
+			return tailMsg{id: id, err: err, key: key, requestedLines: defaultTailLines}
 		}
-		return tailMsg{id: id, items: resp.Items, key: key}
+		return tailMsg{id: id, items: resp.Items, key: key, requestedLines: defaultTailLines}
 	}
 }
 
@@ -578,9 +578,9 @@ func fetchHistoryCmdWithContext(api SessionHistoryAPI, id, key string, lines int
 		defer cancel()
 		resp, err := api.History(ctx, id, lines)
 		if err != nil {
-			return historyMsg{id: id, err: err, key: key}
+			return historyMsg{id: id, err: err, key: key, requestedLines: lines}
 		}
-		return historyMsg{id: id, items: resp.Items, key: key}
+		return historyMsg{id: id, items: resp.Items, key: key, requestedLines: lines}
 	}
 }
 
@@ -594,9 +594,9 @@ func fetchTranscriptSnapshotCmdWithContext(api SessionTranscriptSnapshotAPI, id,
 		defer cancel()
 		resp, err := api.GetTranscriptSnapshot(ctx, id, lines)
 		if err != nil {
-			return transcriptSnapshotMsg{id: id, key: key, err: err}
+			return transcriptSnapshotMsg{id: id, key: key, err: err, requestedLines: lines}
 		}
-		return transcriptSnapshotMsg{id: id, key: key, snapshot: resp}
+		return transcriptSnapshotMsg{id: id, key: key, snapshot: resp, requestedLines: lines}
 	}
 }
 

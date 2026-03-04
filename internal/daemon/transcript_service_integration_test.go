@@ -250,3 +250,82 @@ func TestSessionServiceGetTranscriptSnapshotMappingProducesValidJSON(t *testing.
 		t.Fatalf("expected snapshot JSON marshal to succeed: %v", err)
 	}
 }
+
+func TestSessionServiceSubscribeTranscriptFiltersCodexControlNoiseAndEmitsAssistantDelta(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-codex-live",
+			Provider:  "codex",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	events := make(chan types.CodexEvent, 8)
+	events <- types.CodexEvent{Method: "codex/event/mcp_startup_complete", Params: json.RawMessage(`{"msg":{"type":"mcp_startup_complete"}}`)}
+	events <- types.CodexEvent{Method: "codex/event/mcp_startup_update", Params: json.RawMessage(`{"msg":{"type":"mcp_startup_update"}}`)}
+	events <- types.CodexEvent{Method: "thread/started", Params: json.RawMessage(`{"threadId":"thread-1"}`)}
+	events <- types.CodexEvent{Method: "thread/status/changed", Params: json.RawMessage(`{"threadId":"thread-1","status":{"type":"active"}}`)}
+	events <- types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"threadId":"thread-1","itemId":"msg_1","delta":"hello from assistant"}`),
+	}
+	events <- types.CodexEvent{Method: "thread/status/changed", Params: json.RawMessage(`{"threadId":"thread-1","status":{"type":"idle"}}`)}
+	close(events)
+
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil,
+		WithTranscriptMapper(NewDefaultTranscriptMapper(nil)),
+		WithTranscriptTransportSelector(fixedTranscriptTransportSelector{
+			transport: transcriptTransport{eventsCh: events},
+		}),
+	)
+
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-codex-live", "")
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	if len(streamEvents) == 0 {
+		t.Fatalf("expected transcript stream events")
+	}
+
+	var hasAssistantDelta bool
+	var hasReadyStatus bool
+	for _, event := range streamEvents {
+		if event.Kind == transcriptdomain.TranscriptEventDelta {
+			if len(event.Delta) == 1 && event.Delta[0].Role == "assistant" && event.Delta[0].Text == "hello from assistant" {
+				hasAssistantDelta = true
+			}
+			if len(event.Delta) == 1 && event.Delta[0].Kind == "provider_event" {
+				t.Fatalf("unexpected provider_event control noise in transcript delta: %#v", event.Delta[0])
+			}
+		}
+		if event.Kind == transcriptdomain.TranscriptEventStreamStatus && event.StreamStatus == transcriptdomain.StreamStatusReady {
+			hasReadyStatus = true
+		}
+	}
+
+	if !hasAssistantDelta {
+		t.Fatalf("expected assistant delta event from live codex stream, got %#v", streamEvents)
+	}
+	if !hasReadyStatus {
+		t.Fatalf("expected at least one stream ready status event")
+	}
+}
+
+func collectTranscriptEvents(ch <-chan transcriptdomain.TranscriptEvent) []transcriptdomain.TranscriptEvent {
+	events := make([]transcriptdomain.TranscriptEvent, 0, 8)
+	for event := range ch {
+		events = append(events, event)
+	}
+	return events
+}

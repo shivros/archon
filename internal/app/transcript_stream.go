@@ -15,6 +15,12 @@ type TranscriptStreamController struct {
 	streamStatus     transcriptdomain.StreamStatus
 }
 
+type TranscriptTickSignals struct {
+	Events        int
+	ContentEvents int
+	ControlEvents int
+}
+
 func NewTranscriptStreamController(maxEventsPerTick int) *TranscriptStreamController {
 	return &TranscriptStreamController{maxEventsPerTick: maxEventsPerTick}
 }
@@ -82,9 +88,9 @@ func (c *TranscriptStreamController) SetSnapshot(snapshot transcriptdomain.Trans
 	return true, true
 }
 
-func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, signal bool, events int) {
+func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, signal bool, signals TranscriptTickSignals) {
 	if c == nil || c.events == nil {
-		return false, false, false, 0
+		return false, false, false, TranscriptTickSignals{}
 	}
 	for i := 0; i < c.maxEventsPerTick; i++ {
 		select {
@@ -93,71 +99,97 @@ func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, s
 				c.events = nil
 				c.cancel = nil
 				c.streamStatus = transcriptdomain.StreamStatusClosed
-				return changed, true, signal, events
+				return changed, true, signal, signals
 			}
-			events++
-			eventChanged, eventSignal := c.applyEvent(event)
+			signals.Events++
+			eventChanged, eventSignal, eventContent := c.applyEvent(event)
 			if eventChanged {
 				changed = true
 			}
 			if eventSignal {
 				signal = true
 			}
+			if eventContent {
+				signals.ContentEvents++
+			} else {
+				signals.ControlEvents++
+			}
 		default:
-			return changed, closed, signal, events
+			return changed, closed, signal, signals
 		}
 	}
-	return changed, closed, signal, events
+	return changed, closed, signal, signals
 }
 
-func (c *TranscriptStreamController) applyEvent(event transcriptdomain.TranscriptEvent) (changed bool, signal bool) {
+func (c *TranscriptStreamController) applyEvent(event transcriptdomain.TranscriptEvent) (changed bool, signal bool, content bool) {
 	switch event.Kind {
 	case transcriptdomain.TranscriptEventHeartbeat:
-		return false, false
+		return false, false, false
 	case transcriptdomain.TranscriptEventStreamStatus:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false
+			return false, false, false
 		}
 		c.revision = event.Revision
 		c.streamStatus = event.StreamStatus
 		if event.StreamStatus == transcriptdomain.StreamStatusReady {
-			return false, true
+			return false, true, false
 		}
-		return false, false
+		return false, false, false
 	case transcriptdomain.TranscriptEventReplace:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false
+			return false, false, false
 		}
 		c.revision = event.Revision
 		if event.Replace != nil {
 			c.blocks = transcriptBlocksToChatBlocks(event.Replace.Blocks)
-			return true, true
+			return true, true, transcriptBlocksContainUserRelevantContent(event.Replace.Blocks)
 		}
-		return false, true
+		return false, true, false
 	case transcriptdomain.TranscriptEventDelta:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false
+			return false, false, false
 		}
 		c.revision = event.Revision
 		delta := transcriptBlocksToChatBlocks(event.Delta)
 		if len(delta) == 0 {
-			return false, true
+			return false, true, false
 		}
 		c.blocks = append(c.blocks, delta...)
-		return true, true
+		return true, true, transcriptBlocksContainUserRelevantContent(event.Delta)
 	case transcriptdomain.TranscriptEventTurnStarted,
 		transcriptdomain.TranscriptEventTurnCompleted,
 		transcriptdomain.TranscriptEventTurnFailed,
 		transcriptdomain.TranscriptEventApprovalPending,
 		transcriptdomain.TranscriptEventApprovalResolved:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false
+			return false, false, false
 		}
 		c.revision = event.Revision
-		return false, true
+		return false, true, false
 	default:
-		return false, false
+		return false, false, false
 	}
+}
+
+func transcriptBlocksContainUserRelevantContent(blocks []transcriptdomain.Block) bool {
+	for _, block := range blocks {
+		role := strings.ToLower(strings.TrimSpace(block.Role))
+		kind := strings.ToLower(strings.TrimSpace(block.Kind))
+		text := strings.TrimSpace(block.Text)
+		if kind == "provider_event" {
+			continue
+		}
+		if role == "assistant" || role == "user" || role == "reasoning" || role == "agent" || role == "model" {
+			return true
+		}
+		if strings.Contains(kind, "assistant") || strings.Contains(kind, "agent") || strings.Contains(kind, "reasoning") {
+			return true
+		}
+		if text != "" && role != "system" {
+			return true
+		}
+	}
+	return false
 }
 
 func isTranscriptRevisionNewer(next, current transcriptdomain.RevisionToken) bool {

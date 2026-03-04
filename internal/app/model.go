@@ -25,7 +25,9 @@ import (
 
 const (
 	defaultTailLines           = 200
-	maxViewportLines           = 2000
+	maxViewportLines           = 12000
+	historyTraverseStepLines   = 750
+	historyTraverseMaxLines    = 12000
 	maxDebugViewportLines      = 600
 	maxDebugViewportBytes      = 256 * 1024
 	maxEventsPerTick           = 64
@@ -213,6 +215,9 @@ type Model struct {
 	pendingSessionKey                   string
 	sessionProjectionSeq                int
 	sessionProjectionLatest             map[string]int
+	historyWindowBySessionKey           map[string]int
+	historyTraverseInFlight             map[string]int
+	historyTraverseExhausted            map[string]bool
 	loading                             bool
 	loadingKey                          string
 	loader                              spinner.Model
@@ -248,6 +253,7 @@ type Model struct {
 	composeDrafts                       map[string]string
 	noteDrafts                          map[string]string
 	requestActivity                     requestActivity
+	transcriptHealthBySession           map[string]transcriptStreamHealthState
 	requestScopes                       map[string]requestScope
 	tickFn                              func() tea.Cmd
 	pendingConfirm                      confirmAction
@@ -307,6 +313,9 @@ type Model struct {
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
 	sessionProjectionPolicy             SessionProjectionPolicy
 	sessionProjectionPostProcessor      SessionProjectionPostProcessor
+	transcriptSignalClassifier          TranscriptSignalClassifier
+	streamHealthPolicy                  StreamHealthPolicy
+	transcriptRecoveryScheduler         TranscriptRecoveryScheduler
 	sidebarProjectionBuilder            SidebarProjectionBuilder
 	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
 	sidebarProjectionRevision           uint64
@@ -519,6 +528,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sectionVersion:                      -1,
 		transcriptCache:                     map[string][]ChatBlock{},
 		sessionProjectionLatest:             map[string]int{},
+		historyWindowBySessionKey:           map[string]int{},
+		historyTraverseInFlight:             map[string]int{},
+		historyTraverseExhausted:            map[string]bool{},
 		reasoningExpanded:                   map[string]bool{},
 		sessionApprovals:                    map[string][]*ApprovalRequest{},
 		sessionApprovalResolutions:          map[string][]*ApprovalResolution{},
@@ -539,6 +551,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		recentsExpandedSessions:             map[string]bool{},
 		recentsPreviews:                     map[string]recentsPreview{},
 		recentsCompletionWatching:           map[string]string{},
+		transcriptHealthBySession:           map[string]transcriptStreamHealthState{},
 		requestScopes:                       map[string]requestScope{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
@@ -560,6 +573,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
+		transcriptSignalClassifier:          defaultTranscriptSignalClassifier{},
+		streamHealthPolicy:                  defaultStreamHealthPolicy{},
+		transcriptRecoveryScheduler:         defaultTranscriptRecoveryScheduler{},
 		debugPanelProjectionPolicy:          defaultDebugPanelProjectionPolicy{},
 		debugPanelProjectionCoordinator:     NewDefaultDebugPanelProjectionCoordinator(defaultDebugPanelProjectionPolicy{}, nil),
 		debugPanelRefreshPolicy:             defaultDebugPanelRefreshPolicy{},
@@ -820,6 +836,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.handleViewportScroll(msg) {
+			if cmd := m.maybeRequestOlderHistoryOnTop(); cmd != nil {
+				return m, cmd
+			}
 			return m, nil
 		}
 		if m.mode == uiModeNotes || m.mode == uiModeAddNote || m.mode == uiModeGuidedWorkflow {
@@ -1269,6 +1288,17 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		m.setLoadingContent()
 	}
 	initialLines := m.historyFetchLinesInitial()
+	if m.historyWindowBySessionKey == nil {
+		m.historyWindowBySessionKey = map[string]int{}
+	}
+	m.historyWindowBySessionKey[token] = initialLines
+	if m.historyTraverseExhausted == nil {
+		m.historyTraverseExhausted = map[string]bool{}
+	}
+	m.historyTraverseExhausted[token] = false
+	if m.historyTraverseInFlight != nil {
+		delete(m.historyTraverseInFlight, token)
+	}
 	ctx := m.replaceRequestScope(requestScopeSessionLoad)
 	cmds := m.sessionBootstrapCoordinatorOrDefault().BuildSelectionLoadCommands(SelectionLoadBootstrapInput{
 		Provider:      item.session.Provider,
@@ -2435,7 +2465,9 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	m.consumeStreamTick(now)
-	m.consumeTranscriptTick(now)
+	if cmd := m.consumeTranscriptTick(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	m.consumeCodexTick(now)
 	m.consumeItemTick(now)
 	if cmd := m.consumeDebugTick(now); cmd != nil {
@@ -2514,6 +2546,9 @@ func (m *Model) resetStreamWithReason(reason string) {
 	m.pendingSessionKey = ""
 	m.loading = false
 	m.loadingKey = ""
+	if m.transcriptHealthBySession != nil {
+		clear(m.transcriptHealthBySession)
+	}
 	m.stopRequestActivity()
 }
 
@@ -2534,15 +2569,15 @@ func (m *Model) consumeStreamTick(now time.Time) {
 	}
 }
 
-func (m *Model) consumeTranscriptTick(now time.Time) {
+func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 	if m.transcriptStream == nil {
-		return
+		return nil
 	}
-	changed, closed, signal, events := m.transcriptStream.ConsumeTick()
+	changed, closed, signal, tickSignals := m.transcriptStream.ConsumeTick()
 	sessionID := m.activeStreamTargetID()
 	provider := m.providerForSessionID(sessionID)
-	if sessionID != "" && events > 0 {
-		m.noteRequestEvent(sessionID, events)
+	if sessionID != "" && tickSignals.Events > 0 {
+		m.noteRequestEvent(sessionID, tickSignals.Events)
 	}
 	if closed {
 		m.setBackgroundStatus("transcript stream closed")
@@ -2550,6 +2585,7 @@ func (m *Model) consumeTranscriptTick(now time.Time) {
 		if sessionID != "" {
 			m.stopRequestActivityFor(sessionID)
 		}
+		m.clearTranscriptHealthState(sessionID)
 	}
 	if signal {
 		m.markTranscriptLoadingSignal(sessionID)
@@ -2570,6 +2606,10 @@ func (m *Model) consumeTranscriptTick(now time.Time) {
 			m.cacheTranscriptBlocks(key, blocks)
 		}
 	}
+	if cmd := m.maybeRecoverTranscriptFromControlOnlySignals(now, sessionID, provider, tickSignals); cmd != nil {
+		return cmd
+	}
+	return nil
 }
 
 func (m *Model) consumeCodexTick(now time.Time) {
@@ -3446,6 +3486,96 @@ func (m *Model) handleViewportScroll(msg tea.KeyMsg) bool {
 	}
 	m.maybeResumeFollowAfterManualScroll(wasFollowing, scrolledDown)
 	return true
+}
+
+func (m *Model) maybeRequestOlderHistoryOnTop() tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	if m.viewport.YOffset() > 0 {
+		return nil
+	}
+	sessionID := strings.TrimSpace(m.activeStreamTargetID())
+	if sessionID == "" {
+		return nil
+	}
+	key := strings.TrimSpace(m.selectedKey())
+	if key == "" {
+		key = strings.TrimSpace(m.pendingSessionKey)
+	}
+	if key == "" {
+		key = "sess:" + sessionID
+	}
+	if m.historyTraverseInFlight != nil {
+		if _, exists := m.historyTraverseInFlight[key]; exists {
+			return nil
+		}
+	}
+	if m.historyTraverseExhausted != nil && m.historyTraverseExhausted[key] {
+		return nil
+	}
+	currentLines := m.historyFetchLinesInitial()
+	if m.historyWindowBySessionKey != nil {
+		if existing := m.historyWindowBySessionKey[key]; existing > 0 {
+			currentLines = existing
+		}
+	}
+	nextLines := currentLines + historyTraverseStepLines
+	if nextLines > historyTraverseMaxLines {
+		nextLines = historyTraverseMaxLines
+	}
+	if nextLines <= currentLines {
+		return nil
+	}
+	if m.historyTraverseInFlight == nil {
+		m.historyTraverseInFlight = map[string]int{}
+	}
+	m.historyTraverseInFlight[key] = nextLines
+	ctx := m.requestScopeContext(requestScopeSessionLoad)
+	m.setBackgroundStatus("loading older history")
+	if m.sessionHistoryAPI != nil {
+		return fetchHistoryCmdWithContext(m.sessionHistoryAPI, sessionID, key, nextLines, ctx)
+	}
+	if m.sessionTranscriptAPI != nil {
+		return fetchTranscriptSnapshotCmdWithContext(m.sessionTranscriptAPI, sessionID, key, nextLines, ctx)
+	}
+	delete(m.historyTraverseInFlight, key)
+	return nil
+}
+
+func (m *Model) recordHistoryWindowFromResponse(key string, requestedLines int, returnedItems int, err error) {
+	if m == nil {
+		return
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	if m.historyWindowBySessionKey == nil {
+		m.historyWindowBySessionKey = map[string]int{}
+	}
+	if requestedLines > m.historyWindowBySessionKey[key] {
+		m.historyWindowBySessionKey[key] = requestedLines
+	}
+	if m.historyTraverseInFlight != nil {
+		delete(m.historyTraverseInFlight, key)
+	}
+	if err != nil {
+		return
+	}
+	if requestedLines <= 0 {
+		return
+	}
+	// For transcript snapshots we request by "lines" but receive "blocks".
+	// returnedItems < 0 means item count is not line-comparable; do not
+	// infer exhaustion from it.
+	if returnedItems < 0 {
+		return
+	}
+	if m.historyTraverseExhausted == nil {
+		m.historyTraverseExhausted = map[string]bool{}
+	}
+	m.historyTraverseExhausted[key] = returnedItems < requestedLines
 }
 
 func (m *Model) handleViewportTopCommand() bool {
