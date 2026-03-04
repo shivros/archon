@@ -508,6 +508,12 @@ func (m *Model) reduceNotesPanelLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 		}
 		return true
 	}
+	if handled, cmd := m.openNotesPanelFileLinkByViewportPosition(col, line); handled {
+		if cmd != nil {
+			m.pendingMouseCmd = cmd
+		}
+		return true
+	}
 	if handled, cmd := m.moveNotesPanelByViewportPosition(col, line); handled {
 		if cmd != nil {
 			m.pendingMouseCmd = cmd

@@ -140,6 +140,22 @@ func TestRenderChatBlocksShowsCopyControlPerMessage(t *testing.T) {
 	}
 }
 
+func TestRenderChatBlocksMarkdownLinkProducesHitbox(t *testing.T) {
+	blocks := []ChatBlock{
+		{Role: ChatRoleAgent, Text: "open [main](/tmp/main.go)"},
+	}
+	_, spans := renderChatBlocks(blocks, 80, 2000)
+	if len(spans) != 1 {
+		t.Fatalf("expected one rendered span, got %d", len(spans))
+	}
+	if len(spans[0].LinkHits) != 1 {
+		t.Fatalf("expected one link hitbox, got %#v", spans[0].LinkHits)
+	}
+	if spans[0].LinkHits[0].Target != "/tmp/main.go" {
+		t.Fatalf("unexpected link target hitbox: %#v", spans[0].LinkHits[0])
+	}
+}
+
 func TestRenderChatBlocksAssistantTimestampAppearsOnRight(t *testing.T) {
 	now := time.Date(2026, 2, 16, 12, 0, 0, 0, time.UTC)
 	blocks := []ChatBlock{
@@ -509,6 +525,14 @@ func assertRenderedSpansWithinBounds(t *testing.T, rendered string, spans []rend
 			}
 			if control.Start < 0 || control.End < control.Start {
 				t.Fatalf("span %d meta control %q invalid range [%d,%d]: %#v", i, control.Label, control.Start, control.End, span)
+			}
+		}
+		for _, hit := range span.LinkHits {
+			if hit.Line < span.StartLine || hit.Line > span.EndLine {
+				t.Fatalf("span %d link hit %q line %d out of range [%d,%d]: %#v", i, hit.Label, hit.Line, span.StartLine, span.EndLine, span)
+			}
+			if hit.Start < 0 || hit.End < hit.Start {
+				t.Fatalf("span %d link hit %q invalid range [%d,%d]: %#v", i, hit.Label, hit.Start, hit.End, span)
 			}
 		}
 	}

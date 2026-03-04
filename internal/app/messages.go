@@ -341,6 +341,11 @@ type clipboardResultMsg struct {
 	err     error
 }
 
+type fileLinkOpenResultMsg struct {
+	path string
+	err  error
+}
+
 type workflowRunCreatedMsg struct {
 	run *guidedworkflows.WorkflowRun
 	err error

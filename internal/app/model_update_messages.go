@@ -928,6 +928,17 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.setCopyStatusInfo(msg.success)
 		return true, nil
+	case fileLinkOpenResultMsg:
+		if msg.err != nil {
+			m.setStatusError("open link failed: " + msg.err.Error())
+			return true, nil
+		}
+		if strings.TrimSpace(msg.path) == "" {
+			m.setStatusInfo("link opened")
+			return true, nil
+		}
+		m.setStatusInfo("opened " + msg.path)
+		return true, nil
 	case providerOptionsMsg:
 		return true, m.handleProviderOptionsMsg(msg)
 	case tailMsg:

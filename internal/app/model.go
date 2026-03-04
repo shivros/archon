@@ -97,6 +97,8 @@ type Model struct {
 	notesAPI                            NotesAPI
 	stateAPI                            StateAPI
 	clipboard                           ClipboardService
+	fileLinkResolver                    FileLinkResolver
+	fileLinkOpener                      FileLinkOpener
 	pickerPasteNormalizer               PickerPasteNormalizer
 	sidebar                             *SidebarController
 	viewport                            viewport.Model
@@ -467,6 +469,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		notesAPI:                            api,
 		stateAPI:                            api,
 		clipboard:                           defaultClipboardService{},
+		fileLinkResolver:                    defaultFileLinkResolver{},
+		fileLinkOpener:                      newDefaultFileLinkOpener(),
 		pickerPasteNormalizer:               defaultPickerPasteNormalizer{},
 		sidebar:                             NewSidebarController(),
 		viewport:                            vp,
@@ -3808,6 +3812,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return true
 	}
 	if m.reduceGuidedWorkflowTurnLinkLeftPressMouse(msg, layout) {
+		return true
+	}
+	if m.reduceTranscriptLinkLeftPressMouse(msg, layout) {
 		return true
 	}
 	if m.reduceTranscriptApprovalButtonLeftPressMouse(msg, layout) {
