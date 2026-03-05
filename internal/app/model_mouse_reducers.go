@@ -958,11 +958,14 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 			if entry == nil {
 				return false
 			}
-			if m.sidebar.HasSelectedKeys() && !m.sidebar.IsKeySelected(entry.key()) {
-				_ = m.sidebar.ClearSelectedKeys()
+			caretClick := sidebarToggleHitboxClicked(entry, mouse.X)
+			if !caretClick {
+				intent := m.sidebarSelectionIntentPolicyOrDefault().ResolveIntent(m.sidebar, entry.key(), mouse)
+				_ = m.sidebarSelectionServiceOrDefault().ApplyIntent(m.sidebar, intent)
+			} else {
+				m.sidebar.SelectByRow(mouse.Y)
 			}
-			m.sidebar.SelectByRow(mouse.Y)
-			if sidebarToggleHitboxClicked(entry, mouse.X) {
+			if caretClick {
 				if m.toggleSidebarContainerFromMouse(entry, mouse) {
 					m.pendingMouseCmd = m.syncSidebarExpansionChange()
 					return true

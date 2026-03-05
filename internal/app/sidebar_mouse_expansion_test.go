@@ -33,8 +33,12 @@ func TestDefaultSidebarExpansionIntentPolicyResolveIntent(t *testing.T) {
 	}
 
 	workflow := &sidebarItem{kind: sidebarWorkflow, expanded: false}
-	if got := policy.ResolveIntent(workflow, tea.Mouse{Mod: tea.ModCtrl}); got.kind != sidebarExpansionIntentSingleToggle || !got.expanded {
-		t.Fatalf("expected workflow ctrl-click to remain single-toggle, got %#v", got)
+	if got := policy.ResolveIntent(workflow, tea.Mouse{Mod: tea.ModCtrl}); got.kind != sidebarExpansionIntentNone {
+		t.Fatalf("expected workflow ctrl-click without run id to return none intent, got %#v", got)
+	}
+	workflowWithID := &sidebarItem{kind: sidebarWorkflow, expanded: false, workflowID: "gwf-1"}
+	if got := policy.ResolveIntent(workflowWithID, tea.Mouse{Mod: tea.ModCtrl}); got.kind != sidebarExpansionIntentSelectedWorkflows || !got.expanded || got.workflowID != "gwf-1" {
+		t.Fatalf("expected workflow ctrl-click to use selected-workflows intent, got %#v", got)
 	}
 }
 
@@ -42,9 +46,15 @@ type testSidebarExpansionController struct {
 	toggleCalled              int
 	setAllWorkspacesCalled    int
 	setWorktreesForWTCalled   int
+	setWorkflowsCalled        int
 	lastAllWorkspacesExpanded bool
 	lastWorktreeID            string
 	lastWorktreeExpanded      bool
+	lastWorkflowExpanded      bool
+	lastWorkflowIDs           []string
+	selectedKeys              []string
+	setWorkflowsResult        bool
+	setWorkflowsResultSet     bool
 }
 
 func (c *testSidebarExpansionController) ToggleSelectedContainer() bool {
@@ -63,6 +73,20 @@ func (c *testSidebarExpansionController) SetWorktreesExpandedForWorktree(worktre
 	c.lastWorktreeID = worktreeID
 	c.lastWorktreeExpanded = expanded
 	return true
+}
+
+func (c *testSidebarExpansionController) SetWorkflowsExpanded(workflowIDs []string, expanded bool) bool {
+	c.setWorkflowsCalled++
+	c.lastWorkflowIDs = append([]string(nil), workflowIDs...)
+	c.lastWorkflowExpanded = expanded
+	if c.setWorkflowsResultSet {
+		return c.setWorkflowsResult
+	}
+	return true
+}
+
+func (c *testSidebarExpansionController) SelectedKeys() []string {
+	return append([]string(nil), c.selectedKeys...)
 }
 
 func TestDefaultSidebarExpansionServiceApplyIntent(t *testing.T) {
@@ -105,6 +129,51 @@ func TestDefaultSidebarExpansionServiceApplyIntent(t *testing.T) {
 	}) {
 		t.Fatalf("expected empty-worktree scope intent to be rejected")
 	}
+	controller.selectedKeys = []string{"gwf:gwf-1", "sess:s1", "gwf:gwf-2"}
+	if !service.ApplyIntent(controller, sidebarExpansionIntent{
+		kind:       sidebarExpansionIntentSelectedWorkflows,
+		workflowID: "gwf-fallback",
+		expanded:   true,
+	}) {
+		t.Fatalf("expected selected-workflows intent to be applied")
+	}
+	if controller.setWorkflowsCalled != 1 || !controller.lastWorkflowExpanded {
+		t.Fatalf("expected selected workflows call, got calls=%d expanded=%v", controller.setWorkflowsCalled, controller.lastWorkflowExpanded)
+	}
+	if len(controller.lastWorkflowIDs) != 2 || controller.lastWorkflowIDs[0] != "gwf-1" || controller.lastWorkflowIDs[1] != "gwf-2" {
+		t.Fatalf("expected selected workflow ids, got %#v", controller.lastWorkflowIDs)
+	}
+	controller.selectedKeys = nil
+	if !service.ApplyIntent(controller, sidebarExpansionIntent{
+		kind:       sidebarExpansionIntentSelectedWorkflows,
+		workflowID: "gwf-fallback",
+		expanded:   false,
+	}) {
+		t.Fatalf("expected selected-workflows intent fallback to clicked workflow")
+	}
+	if controller.setWorkflowsCalled != 2 || controller.lastWorkflowExpanded {
+		t.Fatalf("expected fallback selected workflows call, got calls=%d expanded=%v", controller.setWorkflowsCalled, controller.lastWorkflowExpanded)
+	}
+	if len(controller.lastWorkflowIDs) != 1 || controller.lastWorkflowIDs[0] != "gwf-fallback" {
+		t.Fatalf("expected fallback workflow id, got %#v", controller.lastWorkflowIDs)
+	}
+	if service.ApplyIntent(controller, sidebarExpansionIntent{
+		kind:       sidebarExpansionIntentSelectedWorkflows,
+		workflowID: "",
+		expanded:   true,
+	}) {
+		t.Fatalf("expected selected-workflows intent with empty fallback to be rejected")
+	}
+	controller.selectedKeys = []string{"gwf:gwf-1"}
+	controller.setWorkflowsResultSet = true
+	controller.setWorkflowsResult = false
+	if service.ApplyIntent(controller, sidebarExpansionIntent{
+		kind:       sidebarExpansionIntentSelectedWorkflows,
+		workflowID: "gwf-1",
+		expanded:   true,
+	}) {
+		t.Fatalf("expected selected-workflows intent to surface mutator failure")
+	}
 	if service.ApplyIntent(controller, sidebarExpansionIntent{kind: sidebarExpansionIntentNone}) {
 		t.Fatalf("expected none intent to be rejected")
 	}
@@ -123,11 +192,11 @@ func (p *testSidebarExpansionIntentPolicy) ResolveIntent(entry *sidebarItem, mou
 type testSidebarExpansionService struct {
 	calls      int
 	lastIntent sidebarExpansionIntent
-	lastTarget SidebarExpansionController
+	lastTarget SidebarExpansionTarget
 	result     bool
 }
 
-func (s *testSidebarExpansionService) ApplyIntent(sidebar SidebarExpansionController, intent sidebarExpansionIntent) bool {
+func (s *testSidebarExpansionService) ApplyIntent(sidebar SidebarExpansionTarget, intent sidebarExpansionIntent) bool {
 	s.calls++
 	s.lastTarget = sidebar
 	s.lastIntent = intent

@@ -194,6 +194,45 @@ func TestSidebarControllerSelectedKeysAndIsKeySelected(t *testing.T) {
 	}
 }
 
+func TestSidebarControllerSingleSelectedKeyAndRangeAdd(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+		{ID: "s3", Status: types.SessionStatusRunning, CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws1"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
+	if !controller.SelectBySessionID("s1") || !controller.ToggleFocusedSelection() {
+		t.Fatalf("expected s1 selected")
+	}
+	if got := controller.SelectedKeyCount(); got != 1 {
+		t.Fatalf("expected selected key count 1, got %d", got)
+	}
+	if got := controller.SingleSelectedKey(); got != "sess:s1" {
+		t.Fatalf("expected single selected key sess:s1, got %q", got)
+	}
+	if !controller.AddSelectionRangeByKeys("sess:s1", "sess:s3") {
+		t.Fatalf("expected range add change")
+	}
+	if got := controller.SelectedKeyCount(); got != 3 {
+		t.Fatalf("expected selected key count 3 after range, got %d", got)
+	}
+	if got := controller.SingleSelectedKey(); got != "" {
+		t.Fatalf("expected empty single key for multi selection, got %q", got)
+	}
+	if controller.AddSelectionRangeByKeys("sess:missing", "sess:s3") {
+		t.Fatalf("expected missing anchor to fail range add")
+	}
+}
+
 func TestSidebarControllerPrunesSelectedKeysOnApply(t *testing.T) {
 	controller := NewSidebarController()
 	now := time.Now().UTC()
@@ -255,6 +294,77 @@ func TestSidebarControllerToggleSelectedContainer(t *testing.T) {
 	}
 	if got := controller.SelectedItem(); got == nil || got.kind != sidebarWorkspace {
 		t.Fatalf("expected workspace row to remain selected")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedNoopBranches(t *testing.T) {
+	var nilController *SidebarController
+	if nilController.SetWorkflowsExpanded([]string{"gwf-1"}, false) {
+		t.Fatalf("expected nil controller to reject workflow expansion updates")
+	}
+
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{
+			ID:          "gwf-1",
+			WorkspaceID: "ws1",
+			Status:      guidedworkflows.WorkflowRunStatusRunning,
+			CreatedAt:   now,
+		},
+	}
+	sessions := []*types.Session{{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now}}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+	}
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, workflows, meta, "ws1", "", false)
+
+	if controller.SetWorkflowsExpanded(nil, false) {
+		t.Fatalf("expected nil workflow list to be a no-op")
+	}
+	if controller.SetWorkflowsExpanded([]string{"", "   "}, false) {
+		t.Fatalf("expected blank workflow ids to be a no-op")
+	}
+	if !controller.SelectByWorkflowID("gwf-1") {
+		t.Fatalf("expected workflow row selection before expansion mutation")
+	}
+	if !controller.SetWorkflowsExpanded([]string{"gwf-1"}, false) {
+		t.Fatalf("expected collapse to change workflow expansion state")
+	}
+	if controller.IsWorkflowExpanded("gwf-1") {
+		t.Fatalf("expected workflow to remain collapsed after workflow expansion update")
+	}
+}
+
+func TestSidebarControllerAdvanceToNextSessionAndIndex(t *testing.T) {
+	controller := NewSidebarController()
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "ws1", "", false)
+
+	if got := controller.Index(); got < 0 {
+		t.Fatalf("expected non-negative list index, got %d", got)
+	}
+	if !controller.SelectBySessionID("s1") {
+		t.Fatalf("expected to select s1")
+	}
+	if !controller.AdvanceToNextSession() {
+		t.Fatalf("expected to advance to next session")
+	}
+	if got := controller.SelectedSessionID(); got != "s2" {
+		t.Fatalf("expected selected session s2 after advance, got %q", got)
+	}
+	if controller.AdvanceToNextSession() {
+		t.Fatalf("expected no further session to advance to")
 	}
 }
 

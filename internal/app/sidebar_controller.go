@@ -758,12 +758,65 @@ func (c *SidebarController) HasSelectedKeys() bool {
 	return c != nil && len(c.selectedKeys) > 0
 }
 
+func (c *SidebarController) SelectedKeyCount() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.selectedKeys)
+}
+
+func (c *SidebarController) SingleSelectedKey() string {
+	if c == nil || len(c.selectedKeys) != 1 {
+		return ""
+	}
+	for key := range c.selectedKeys {
+		return key
+	}
+	return ""
+}
+
 func (c *SidebarController) IsKeySelected(key string) bool {
 	if c == nil || strings.TrimSpace(key) == "" || len(c.selectedKeys) == 0 {
 		return false
 	}
 	_, ok := c.selectedKeys[key]
 	return ok
+}
+
+func (c *SidebarController) AddSelectionRangeByKeys(anchorKey, targetKey string) bool {
+	if c == nil {
+		return false
+	}
+	anchorIdx := c.indexForKey(anchorKey)
+	targetIdx := c.indexForKey(targetKey)
+	if anchorIdx < 0 || targetIdx < 0 {
+		return false
+	}
+	if c.selectedKeys == nil {
+		c.selectedKeys = map[string]struct{}{}
+	}
+	start := min(anchorIdx, targetIdx)
+	end := max(anchorIdx, targetIdx)
+	changed := false
+	for i := start; i <= end; i++ {
+		entry, ok := c.list.Items()[i].(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		key := strings.TrimSpace(entry.key())
+		if key == "" {
+			continue
+		}
+		if _, exists := c.selectedKeys[key]; exists {
+			continue
+		}
+		c.selectedKeys[key] = struct{}{}
+		changed = true
+	}
+	if changed {
+		c.syncDelegate()
+	}
+	return changed
 }
 
 func (c *SidebarController) SetHighlightedKeys(keys map[string]struct{}) bool {
@@ -1412,6 +1465,30 @@ func (c *SidebarController) setWorkflowExpanded(id string, expanded bool) bool {
 	return true
 }
 
+func (c *SidebarController) SetWorkflowsExpanded(ids []string, expanded bool) bool {
+	if c == nil || len(ids) == 0 {
+		return false
+	}
+	seen := map[string]struct{}{}
+	changed := false
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		changed = c.setWorkflowExpanded(id, expanded) || changed
+	}
+	if !changed {
+		return false
+	}
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
 func (c *SidebarController) workspaceIDsInScope() []string {
 	seen := map[string]struct{}{}
 	ids := make([]string, 0, len(c.workspacesSnapshot)+len(c.sessionParents))
@@ -1926,6 +2003,23 @@ func sidebarItemsContainKey(items []list.Item, key string) bool {
 		}
 	}
 	return false
+}
+
+func (c *SidebarController) indexForKey(key string) int {
+	key = strings.TrimSpace(key)
+	if c == nil || key == "" {
+		return -1
+	}
+	for i, item := range c.list.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil {
+			continue
+		}
+		if entry.key() == key {
+			return i
+		}
+	}
+	return -1
 }
 
 func selectSidebarIndex(items []list.Item, selectedKey, activeWorkspaceID, activeWorktreeID string) int {
