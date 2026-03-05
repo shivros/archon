@@ -211,6 +211,11 @@ func TestDefaultSidebarSelectionServiceApplyIntent(t *testing.T) {
 	if service.ApplyIntent(controller, sidebarSelectionIntent{kind: sidebarSelectionIntentRangeAdd, anchorKey: "sess:s1", targetKey: "sess:s5"}) {
 		t.Fatalf("expected range intent to reject when select-by-key fails")
 	}
+	controller.selectByKeyOK = true
+	controller.rangeOK = false
+	if service.ApplyIntent(controller, sidebarSelectionIntent{kind: sidebarSelectionIntentRangeAdd, anchorKey: "sess:s1", targetKey: "sess:s5"}) {
+		t.Fatalf("expected range intent to report no state change when range add returns false")
+	}
 }
 
 type testSidebarSelectionIntentPolicy struct {
@@ -237,6 +242,16 @@ func (s *testSidebarSelectionService) ApplyIntent(sidebar SidebarSelectionContro
 	return s.result
 }
 
+type testSidebarSelectionRangeAnchorPolicy struct {
+	anchor string
+	calls  int
+}
+
+func (p *testSidebarSelectionRangeAnchorPolicy) ResolveAnchor(sidebar SidebarSelectionReader, clickedKey string, mouse tea.Mouse) string {
+	p.calls++
+	return stringTrimSpace(p.anchor)
+}
+
 func TestModelSidebarSelectionOptionsAndDefaults(t *testing.T) {
 	var nilModel *Model
 	if policy := nilModel.sidebarSelectionIntentPolicyOrDefault(); policy == nil {
@@ -250,27 +265,103 @@ func TestModelSidebarSelectionOptionsAndDefaults(t *testing.T) {
 	if m.sidebarSelectionIntentPolicy == nil || m.sidebarSelectionService == nil {
 		t.Fatalf("expected non-nil default selection dependencies")
 	}
+	if m.sidebarSelectionRangeAnchorPolicy == nil {
+		t.Fatalf("expected non-nil default range anchor policy")
+	}
 
 	customPolicy := &testSidebarSelectionIntentPolicy{
 		intent: sidebarSelectionIntent{kind: sidebarSelectionIntentReplace, targetKey: "sess:s1"},
 	}
 	customService := &testSidebarSelectionService{result: true}
+	customAnchorPolicy := &testSidebarSelectionRangeAnchorPolicy{anchor: "sess:s1"}
 	WithSidebarSelectionIntentPolicy(customPolicy)(&m)
 	WithSidebarSelectionService(customService)(&m)
+	WithSidebarSelectionRangeAnchorPolicy(customAnchorPolicy)(&m)
 	if m.sidebarSelectionIntentPolicy != customPolicy {
 		t.Fatalf("expected custom selection policy assignment")
 	}
 	if m.sidebarSelectionService != customService {
 		t.Fatalf("expected custom selection service assignment")
 	}
+	if m.sidebarSelectionRangeAnchorPolicy != customAnchorPolicy {
+		t.Fatalf("expected custom selection range anchor policy assignment")
+	}
 
 	WithSidebarSelectionIntentPolicy(nil)(&m)
 	WithSidebarSelectionService(nil)(&m)
+	WithSidebarSelectionRangeAnchorPolicy(nil)(&m)
 	if _, ok := m.sidebarSelectionIntentPolicy.(defaultSidebarSelectionIntentPolicy); !ok {
 		t.Fatalf("expected nil selection policy option to restore default policy, got %T", m.sidebarSelectionIntentPolicy)
 	}
 	if _, ok := m.sidebarSelectionService.(defaultSidebarSelectionService); !ok {
 		t.Fatalf("expected nil selection service option to restore default service, got %T", m.sidebarSelectionService)
+	}
+	if _, ok := m.sidebarSelectionRangeAnchorPolicy.(singleSelectedSidebarRangeAnchorPolicy); !ok {
+		t.Fatalf("expected nil range anchor option to restore default range anchor policy, got %T", m.sidebarSelectionRangeAnchorPolicy)
+	}
+}
+
+func TestWithSidebarSelectionOptionsNilModelNoop(t *testing.T) {
+	var m *Model
+	WithSidebarSelectionIntentPolicy(&testSidebarSelectionIntentPolicy{})(m)
+	WithSidebarSelectionService(&testSidebarSelectionService{})(m)
+	WithSidebarSelectionRangeAnchorPolicy(&testSidebarSelectionRangeAnchorPolicy{})(m)
+}
+
+func TestNilModelSidebarSelectionRangeAnchorPolicyOrDefault(t *testing.T) {
+	var nilModel *Model
+	if policy := nilModel.sidebarSelectionRangeAnchorPolicyOrDefault(); policy == nil {
+		t.Fatalf("expected default range anchor policy for nil model")
+	}
+}
+
+func TestDefaultSidebarSelectionIntentPolicyUsesRangeAnchorPolicy(t *testing.T) {
+	policy := defaultSidebarSelectionIntentPolicy{
+		rangeAnchorPolicy: &testSidebarSelectionRangeAnchorPolicy{anchor: "ws:ws1"},
+	}
+	reader := testSidebarSelectionReader{
+		selected: map[string]struct{}{"sess:s1": {}, "sess:s2": {}},
+	}
+
+	intent := policy.ResolveIntent(reader, "sess:s3", tea.Mouse{Mod: tea.ModShift})
+	if intent.kind != sidebarSelectionIntentRangeAdd {
+		t.Fatalf("expected shift+click with custom anchor policy to produce range intent, got %#v", intent)
+	}
+	if intent.anchorKey != "ws:ws1" || intent.targetKey != "sess:s3" {
+		t.Fatalf("unexpected range intent payload: %#v", intent)
+	}
+}
+
+func TestModelSidebarSelectionIntentPolicyOrDefaultComposesRangeAnchorWhenAware(t *testing.T) {
+	customAnchor := &testSidebarSelectionRangeAnchorPolicy{anchor: "ws:ws1"}
+	m := NewModel(nil, WithSidebarSelectionRangeAnchorPolicy(customAnchor))
+
+	policy := m.sidebarSelectionIntentPolicyOrDefault()
+	reader := testSidebarSelectionReader{
+		selected: map[string]struct{}{"sess:s1": {}, "sess:s2": {}},
+	}
+	intent := policy.ResolveIntent(reader, "sess:s3", tea.Mouse{Mod: tea.ModShift})
+	if intent.kind != sidebarSelectionIntentRangeAdd {
+		t.Fatalf("expected composed aware policy to use model anchor policy, got %#v", intent)
+	}
+	if intent.anchorKey != "ws:ws1" {
+		t.Fatalf("expected anchor key from model anchor policy, got %q", intent.anchorKey)
+	}
+}
+
+func TestModelSidebarSelectionIntentPolicyOrDefaultLeavesNonAwarePolicyUnchanged(t *testing.T) {
+	customPolicy := &testSidebarSelectionIntentPolicy{
+		intent: sidebarSelectionIntent{kind: sidebarSelectionIntentToggle, targetKey: "sess:s1"},
+	}
+	m := NewModel(
+		nil,
+		WithSidebarSelectionIntentPolicy(customPolicy),
+		WithSidebarSelectionRangeAnchorPolicy(&testSidebarSelectionRangeAnchorPolicy{anchor: "ws:ws1"}),
+	)
+
+	policy := m.sidebarSelectionIntentPolicyOrDefault()
+	if policy != customPolicy {
+		t.Fatalf("expected non-aware custom policy to remain unchanged, got %T", policy)
 	}
 }
 

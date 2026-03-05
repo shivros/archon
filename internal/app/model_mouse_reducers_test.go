@@ -729,6 +729,110 @@ func TestMouseReducerSidebarCtrlClickTogglesSelectionMembership(t *testing.T) {
 	}
 }
 
+func TestMouseReducerSidebarWorkspaceCtrlClickTogglesSelectionMembership(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace 1", RepoPath: "/tmp/ws1"},
+		{ID: "ws2", Name: "Workspace 2", RepoPath: "/tmp/ws2"},
+	}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{}
+	m.sessionMeta = map[string]*types.SessionMeta{}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	workspaceRow := func(id string) int {
+		for y := 0; y < 30; y++ {
+			entry := m.sidebar.ItemAtRow(y)
+			if entry != nil && entry.kind == sidebarWorkspace && entry.workspace != nil && entry.workspace.ID == id {
+				return y
+			}
+		}
+		return -1
+	}
+	row1 := workspaceRow("ws1")
+	row2 := workspaceRow("ws2")
+	if row1 < 0 || row2 < 0 {
+		t.Fatalf("expected visible workspace rows, got ws1=%d ws2=%d", row1, row2)
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row1}, layout) {
+		t.Fatalf("expected ctrl+click for ws1 to be handled")
+	}
+	if !m.sidebar.IsKeySelected("ws:ws1") {
+		t.Fatalf("expected ws1 selected after ctrl+click")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row2}, layout) {
+		t.Fatalf("expected ctrl+click for ws2 to be handled")
+	}
+	if !m.sidebar.IsKeySelected("ws:ws1") || !m.sidebar.IsKeySelected("ws:ws2") {
+		t.Fatalf("expected ws1 and ws2 selected after second ctrl+click")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row1}, layout) {
+		t.Fatalf("expected third ctrl+click for ws1 to be handled")
+	}
+	if m.sidebar.IsKeySelected("ws:ws1") || !m.sidebar.IsKeySelected("ws:ws2") {
+		t.Fatalf("expected third ctrl+click to toggle ws1 off and keep ws2 selected")
+	}
+}
+
+func TestMouseReducerSidebarWorktreeCtrlClickTogglesSelectionMembership(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree 1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "Worktree 2"},
+		},
+	}
+	m.sessions = []*types.Session{}
+	m.sessionMeta = map[string]*types.SessionMeta{}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	worktreeRow := func(id string) int {
+		for y := 0; y < 30; y++ {
+			entry := m.sidebar.ItemAtRow(y)
+			if entry != nil && entry.kind == sidebarWorktree && entry.worktree != nil && entry.worktree.ID == id {
+				return y
+			}
+		}
+		return -1
+	}
+	row1 := worktreeRow("wt1")
+	row2 := worktreeRow("wt2")
+	if row1 < 0 || row2 < 0 {
+		t.Fatalf("expected visible worktree rows, got wt1=%d wt2=%d", row1, row2)
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row1}, layout) {
+		t.Fatalf("expected ctrl+click for wt1 to be handled")
+	}
+	if !m.sidebar.IsKeySelected("wt:wt1") {
+		t.Fatalf("expected wt1 selected after ctrl+click")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row2}, layout) {
+		t.Fatalf("expected ctrl+click for wt2 to be handled")
+	}
+	if !m.sidebar.IsKeySelected("wt:wt1") || !m.sidebar.IsKeySelected("wt:wt2") {
+		t.Fatalf("expected wt1 and wt2 selected after second ctrl+click")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row1}, layout) {
+		t.Fatalf("expected third ctrl+click for wt1 to be handled")
+	}
+	if m.sidebar.IsKeySelected("wt:wt1") || !m.sidebar.IsKeySelected("wt:wt2") {
+		t.Fatalf("expected third ctrl+click to toggle wt1 off and keep wt2 selected")
+	}
+}
+
 func TestMouseReducerSidebarShiftClickAddsInclusiveRangeFromSingleSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
@@ -774,6 +878,288 @@ func TestMouseReducerSidebarShiftClickAddsInclusiveRangeFromSingleSelection(t *t
 	}
 	if !m.sidebar.IsKeySelected("sess:s1") || !m.sidebar.IsKeySelected("sess:s2") || !m.sidebar.IsKeySelected("sess:s3") {
 		t.Fatalf("expected inclusive shift+click range from s1 to s3")
+	}
+}
+
+func TestMouseReducerSidebarWorkspaceShiftClickAddsInclusiveRangeFromSingleSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace 1", RepoPath: "/tmp/ws1"},
+		{ID: "ws2", Name: "Workspace 2", RepoPath: "/tmp/ws2"},
+		{ID: "ws3", Name: "Workspace 3", RepoPath: "/tmp/ws3"},
+	}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{}
+	m.sessionMeta = map[string]*types.SessionMeta{}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectByKey("ws:ws1") {
+		t.Fatalf("expected to focus ws1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if m.sidebar.SelectedKeyCount() != 1 {
+		t.Fatalf("expected one selected item before shift+click")
+	}
+
+	row3 := -1
+	for y := 0; y < 30; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkspace && entry.workspace != nil && entry.workspace.ID == "ws3" {
+			row3 = y
+			break
+		}
+	}
+	if row3 < 0 {
+		t.Fatalf("expected visible ws3 row")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 6, Y: row3}, layout) {
+		t.Fatalf("expected shift+click to be handled")
+	}
+	if !m.sidebar.IsKeySelected("ws:ws1") || !m.sidebar.IsKeySelected("ws:ws2") || !m.sidebar.IsKeySelected("ws:ws3") {
+		t.Fatalf("expected inclusive shift+click range from ws1 to ws3")
+	}
+}
+
+func TestMouseReducerSidebarWorktreeShiftClickAddsInclusiveRangeFromSingleSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree 1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "Worktree 2"},
+			{ID: "wt3", WorkspaceID: "ws1", Name: "Worktree 3"},
+		},
+	}
+	m.sessions = []*types.Session{}
+	m.sessionMeta = map[string]*types.SessionMeta{}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectByKey("wt:wt1") {
+		t.Fatalf("expected to focus wt1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if m.sidebar.SelectedKeyCount() != 1 {
+		t.Fatalf("expected one selected item before shift+click")
+	}
+
+	row3 := -1
+	for y := 0; y < 30; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorktree && entry.worktree != nil && entry.worktree.ID == "wt3" {
+			row3 = y
+			break
+		}
+	}
+	if row3 < 0 {
+		t.Fatalf("expected visible wt3 row")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 6, Y: row3}, layout) {
+		t.Fatalf("expected shift+click to be handled")
+	}
+	if !m.sidebar.IsKeySelected("wt:wt1") || !m.sidebar.IsKeySelected("wt:wt2") || !m.sidebar.IsKeySelected("wt:wt3") {
+		t.Fatalf("expected inclusive shift+click range from wt1 to wt3")
+	}
+}
+
+func TestMouseReducerSidebarWorkflowShiftClickAddsInclusiveRangeFromSingleSelection(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+		{ID: "s3", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorkflowRunID: "gwf-2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws1", WorkflowRunID: "gwf-3"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectByKey("gwf:gwf-1") {
+		t.Fatalf("expected to focus gwf-1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if m.sidebar.SelectedKeyCount() != 1 {
+		t.Fatalf("expected one selected item before shift+click")
+	}
+
+	row3 := -1
+	for y := 0; y < 40; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkflow && entry.workflowRunID() == "gwf-3" {
+			row3 = y
+			break
+		}
+	}
+	if row3 < 0 {
+		t.Fatalf("expected visible gwf-3 row")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 6, Y: row3}, layout) {
+		t.Fatalf("expected shift+click to be handled")
+	}
+	if !m.sidebar.IsKeySelected("gwf:gwf-1") || !m.sidebar.IsKeySelected("gwf:gwf-2") || !m.sidebar.IsKeySelected("gwf:gwf-3") {
+		t.Fatalf("expected inclusive shift+click range from gwf-1 to gwf-3")
+	}
+}
+
+func TestMouseReducerSidebarWorkspaceShiftClickFallsBackToReplaceWhenMultiSelected(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{
+		{ID: "ws1", Name: "Workspace 1", RepoPath: "/tmp/ws1"},
+		{ID: "ws2", Name: "Workspace 2", RepoPath: "/tmp/ws2"},
+		{ID: "ws3", Name: "Workspace 3", RepoPath: "/tmp/ws3"},
+	}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{}
+	m.sessionMeta = map[string]*types.SessionMeta{}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectByKey("ws:ws1") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected ws1 selected")
+	}
+	if !m.sidebar.SelectByKey("ws:ws2") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected ws2 selected")
+	}
+	if m.sidebar.SelectedKeyCount() != 2 {
+		t.Fatalf("expected two selected items before shift+click")
+	}
+
+	row3 := -1
+	for y := 0; y < 30; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkspace && entry.workspace != nil && entry.workspace.ID == "ws3" {
+			row3 = y
+			break
+		}
+	}
+	if row3 < 0 {
+		t.Fatalf("expected visible ws3 row")
+	}
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 6, Y: row3}, layout) {
+		t.Fatalf("expected shift+click to be handled")
+	}
+	if m.sidebar.SelectedKeyCount() != 0 {
+		t.Fatalf("expected shift+click fallback to replace to clear prior multi-selection")
+	}
+	if m.sidebar.SelectedKey() != "ws:ws3" {
+		t.Fatalf("expected shift+click fallback to focus clicked key, got %q", m.sidebar.SelectedKey())
+	}
+}
+
+func TestMouseReducerSidebarWorktreeShiftClickFallsBackToReplaceWhenMultiSelected(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree 1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "Worktree 2"},
+			{ID: "wt3", WorkspaceID: "ws1", Name: "Worktree 3"},
+		},
+	}
+	m.sessions = []*types.Session{}
+	m.sessionMeta = map[string]*types.SessionMeta{}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectByKey("wt:wt1") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected wt1 selected")
+	}
+	if !m.sidebar.SelectByKey("wt:wt2") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected wt2 selected")
+	}
+	if m.sidebar.SelectedKeyCount() != 2 {
+		t.Fatalf("expected two selected items before shift+click")
+	}
+
+	row3 := -1
+	for y := 0; y < 30; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorktree && entry.worktree != nil && entry.worktree.ID == "wt3" {
+			row3 = y
+			break
+		}
+	}
+	if row3 < 0 {
+		t.Fatalf("expected visible wt3 row")
+	}
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 6, Y: row3}, layout) {
+		t.Fatalf("expected shift+click to be handled")
+	}
+	if m.sidebar.SelectedKeyCount() != 0 {
+		t.Fatalf("expected shift+click fallback to replace to clear prior multi-selection")
+	}
+	if m.sidebar.SelectedKey() != "wt:wt3" {
+		t.Fatalf("expected shift+click fallback to focus clicked key, got %q", m.sidebar.SelectedKey())
+	}
+}
+
+func TestMouseReducerSidebarWorkflowShiftClickFallsBackToReplaceWhenMultiSelected(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+		{ID: "s3", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorkflowRunID: "gwf-2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws1", WorkflowRunID: "gwf-3"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	if !m.sidebar.SelectByKey("gwf:gwf-1") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected gwf-1 selected")
+	}
+	if !m.sidebar.SelectByKey("gwf:gwf-2") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected gwf-2 selected")
+	}
+	if m.sidebar.SelectedKeyCount() != 2 {
+		t.Fatalf("expected two selected items before shift+click")
+	}
+
+	row3 := -1
+	for y := 0; y < 40; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkflow && entry.workflowRunID() == "gwf-3" {
+			row3 = y
+			break
+		}
+	}
+	if row3 < 0 {
+		t.Fatalf("expected visible gwf-3 row")
+	}
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 6, Y: row3}, layout) {
+		t.Fatalf("expected shift+click to be handled")
+	}
+	if m.sidebar.SelectedKeyCount() != 0 {
+		t.Fatalf("expected shift+click fallback to replace to clear prior multi-selection")
+	}
+	if m.sidebar.SelectedKey() != "gwf:gwf-3" {
+		t.Fatalf("expected shift+click fallback to focus clicked key, got %q", m.sidebar.SelectedKey())
 	}
 }
 

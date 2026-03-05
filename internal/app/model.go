@@ -313,6 +313,7 @@ type Model struct {
 	sidebarSortPolicy                   SidebarSortPolicy
 	sortStripHintPolicy                 SortStripHintPolicy
 	sortStripVisibilityPolicy           SortStripVisibilityPolicy
+	sidebarSelectionRangeAnchorPolicy   SidebarSelectionRangeAnchorPolicy
 	sidebarSelectionIntentPolicy        SidebarSelectionIntentPolicy
 	sidebarSelectionService             SidebarSelectionService
 	sidebarExpansionIntentPolicy        SidebarExpansionIntentPolicy
@@ -581,7 +582,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
 		sortStripHintPolicy:                 defaultSortStripHintPolicy{},
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
-		sidebarSelectionIntentPolicy:        defaultSidebarSelectionIntentPolicy{},
+		sidebarSelectionRangeAnchorPolicy:   singleSelectedSidebarRangeAnchorPolicy{},
+		sidebarSelectionIntentPolicy:        newDefaultSidebarSelectionIntentPolicy(singleSelectedSidebarRangeAnchorPolicy{}),
 		sidebarSelectionService:             defaultSidebarSelectionService{},
 		sidebarExpansionIntentPolicy:        defaultSidebarExpansionIntentPolicy{},
 		sidebarExpansionService:             defaultSidebarExpansionService{},

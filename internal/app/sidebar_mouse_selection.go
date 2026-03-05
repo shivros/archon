@@ -38,25 +38,69 @@ type SidebarSelectionController interface {
 }
 
 type SidebarSelectionIntentPolicy interface {
+	// ResolveIntent maps a click gesture to a selection intent.
 	ResolveIntent(sidebar SidebarSelectionReader, clickedKey string, mouse tea.Mouse) sidebarSelectionIntent
 }
 
+type SidebarSelectionRangeAnchorPolicy interface {
+	// ResolveAnchor returns the anchor key for range selection.
+	// Returning an empty key means range selection is not available.
+	ResolveAnchor(sidebar SidebarSelectionReader, clickedKey string, mouse tea.Mouse) string
+}
+
 type SidebarSelectionService interface {
+	// ApplyIntent mutates selection state and returns true when selection state changed.
 	ApplyIntent(sidebar SidebarSelectionController, intent sidebarSelectionIntent) bool
 }
 
-type defaultSidebarSelectionIntentPolicy struct{}
+type sidebarSelectionRangeAnchorAware interface {
+	WithRangeAnchorPolicy(policy SidebarSelectionRangeAnchorPolicy) SidebarSelectionIntentPolicy
+}
 
-func (defaultSidebarSelectionIntentPolicy) ResolveIntent(sidebar SidebarSelectionReader, clickedKey string, mouse tea.Mouse) sidebarSelectionIntent {
+type defaultSidebarSelectionIntentPolicy struct {
+	rangeAnchorPolicy SidebarSelectionRangeAnchorPolicy
+}
+
+type singleSelectedSidebarRangeAnchorPolicy struct{}
+
+func (singleSelectedSidebarRangeAnchorPolicy) ResolveAnchor(sidebar SidebarSelectionReader, _ string, _ tea.Mouse) string {
+	if sidebar == nil || sidebar.SelectedKeyCount() != 1 {
+		return ""
+	}
+	return strings.TrimSpace(sidebar.SingleSelectedKey())
+}
+
+func (p defaultSidebarSelectionIntentPolicy) rangeAnchorPolicyOrDefault() SidebarSelectionRangeAnchorPolicy {
+	if p.rangeAnchorPolicy == nil {
+		return singleSelectedSidebarRangeAnchorPolicy{}
+	}
+	return p.rangeAnchorPolicy
+}
+
+func (p defaultSidebarSelectionIntentPolicy) WithRangeAnchorPolicy(policy SidebarSelectionRangeAnchorPolicy) SidebarSelectionIntentPolicy {
+	p.rangeAnchorPolicy = policy
+	return p
+}
+
+func newDefaultSidebarSelectionIntentPolicy(anchor SidebarSelectionRangeAnchorPolicy) SidebarSelectionIntentPolicy {
+	return defaultSidebarSelectionIntentPolicy{
+		rangeAnchorPolicy: anchor,
+	}
+}
+
+func (p defaultSidebarSelectionIntentPolicy) ResolveIntent(sidebar SidebarSelectionReader, clickedKey string, mouse tea.Mouse) sidebarSelectionIntent {
 	clickedKey = strings.TrimSpace(clickedKey)
 	if sidebar == nil || clickedKey == "" {
 		return sidebarSelectionIntent{kind: sidebarSelectionIntentNone}
 	}
-	if mouse.Mod.Contains(tea.ModShift) && sidebar.SelectedKeyCount() == 1 {
-		return sidebarSelectionIntent{
-			kind:      sidebarSelectionIntentRangeAdd,
-			targetKey: clickedKey,
-			anchorKey: strings.TrimSpace(sidebar.SingleSelectedKey()),
+	if mouse.Mod.Contains(tea.ModShift) {
+		anchor := p.rangeAnchorPolicyOrDefault().ResolveAnchor(sidebar, clickedKey, mouse)
+		if anchor != "" {
+			return sidebarSelectionIntent{
+				kind:      sidebarSelectionIntentRangeAdd,
+				targetKey: clickedKey,
+				anchorKey: anchor,
+			}
 		}
 	}
 	if mouse.Mod.Contains(tea.ModCtrl) {
@@ -102,8 +146,7 @@ func (defaultSidebarSelectionService) ApplyIntent(sidebar SidebarSelectionContro
 		if !sidebar.SelectByKey(target) {
 			return false
 		}
-		_ = sidebar.AddSelectionRangeByKeys(anchor, target)
-		return true
+		return sidebar.AddSelectionRangeByKeys(anchor, target)
 	default:
 		return false
 	}
@@ -115,7 +158,7 @@ func WithSidebarSelectionIntentPolicy(policy SidebarSelectionIntentPolicy) Model
 			return
 		}
 		if policy == nil {
-			m.sidebarSelectionIntentPolicy = defaultSidebarSelectionIntentPolicy{}
+			m.sidebarSelectionIntentPolicy = newDefaultSidebarSelectionIntentPolicy(m.sidebarSelectionRangeAnchorPolicyOrDefault())
 			return
 		}
 		m.sidebarSelectionIntentPolicy = policy
@@ -135,9 +178,32 @@ func WithSidebarSelectionService(service SidebarSelectionService) ModelOption {
 	}
 }
 
+func WithSidebarSelectionRangeAnchorPolicy(policy SidebarSelectionRangeAnchorPolicy) ModelOption {
+	return func(m *Model) {
+		if m == nil {
+			return
+		}
+		if policy == nil {
+			m.sidebarSelectionRangeAnchorPolicy = singleSelectedSidebarRangeAnchorPolicy{}
+		} else {
+			m.sidebarSelectionRangeAnchorPolicy = policy
+		}
+		if aware, ok := m.sidebarSelectionIntentPolicy.(sidebarSelectionRangeAnchorAware); ok {
+			m.sidebarSelectionIntentPolicy = aware.WithRangeAnchorPolicy(m.sidebarSelectionRangeAnchorPolicyOrDefault())
+		}
+	}
+}
+
 func (m *Model) sidebarSelectionIntentPolicyOrDefault() SidebarSelectionIntentPolicy {
+	anchorPolicy := SidebarSelectionRangeAnchorPolicy(singleSelectedSidebarRangeAnchorPolicy{})
+	if m != nil {
+		anchorPolicy = m.sidebarSelectionRangeAnchorPolicyOrDefault()
+	}
 	if m == nil || m.sidebarSelectionIntentPolicy == nil {
-		return defaultSidebarSelectionIntentPolicy{}
+		return newDefaultSidebarSelectionIntentPolicy(anchorPolicy)
+	}
+	if aware, ok := m.sidebarSelectionIntentPolicy.(sidebarSelectionRangeAnchorAware); ok {
+		return aware.WithRangeAnchorPolicy(m.sidebarSelectionRangeAnchorPolicyOrDefault())
 	}
 	return m.sidebarSelectionIntentPolicy
 }
@@ -147,4 +213,11 @@ func (m *Model) sidebarSelectionServiceOrDefault() SidebarSelectionService {
 		return defaultSidebarSelectionService{}
 	}
 	return m.sidebarSelectionService
+}
+
+func (m *Model) sidebarSelectionRangeAnchorPolicyOrDefault() SidebarSelectionRangeAnchorPolicy {
+	if m == nil || m.sidebarSelectionRangeAnchorPolicy == nil {
+		return singleSelectedSidebarRangeAnchorPolicy{}
+	}
+	return m.sidebarSelectionRangeAnchorPolicy
 }
