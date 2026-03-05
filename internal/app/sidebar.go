@@ -1308,19 +1308,7 @@ func isDismissedSession(session *types.Session, meta *types.SessionMeta) bool {
 }
 
 func sessionTitle(session *types.Session, meta *types.SessionMeta) string {
-	if meta != nil && strings.TrimSpace(meta.Title) != "" {
-		return truncateText(cleanTitle(meta.Title), sidebarTitleMax)
-	}
-	if meta != nil && strings.TrimSpace(meta.InitialInput) != "" {
-		return truncateText(cleanTitle(meta.InitialInput), sidebarTitleMax)
-	}
-	if session != nil && strings.TrimSpace(session.Title) != "" {
-		return truncateText(cleanTitle(session.Title), sidebarTitleMax)
-	}
-	if session != nil && session.ID != "" {
-		return session.ID
-	}
-	return ""
+	return truncateText(ResolveSessionTitle(session, meta, ""), sidebarTitleMax)
 }
 
 func cleanTitle(input string) string {

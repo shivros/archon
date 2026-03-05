@@ -274,6 +274,11 @@ type Model struct {
 	debugPanelVisible                   bool
 	debugPanelWidth                     int
 	debugPanelMainWidth                 int
+	contextPanelVisible                 bool
+	contextPanelWidth                   int
+	contextPanelMainWidth               int
+	sidePanelModePolicy                 SidePanelModePolicy
+	threadContextMetricsService         ThreadContextMetricsService
 	debugPanel                          debugPanelView
 	debugPanelPresenter                 debugPanelPresenter
 	debugPanelBlocksRenderer            debugPanelBlocksRenderer
@@ -487,6 +492,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		debugStream:                         debugStream,
 		debugStreamSnapshot:                 debugStream,
 		debugPanel:                          debugPanel,
+		threadContextMetricsService:         NewDefaultThreadContextMetricsService(nil),
 		debugPanelPresenter:                 NewDefaultDebugPanelPresenter(DefaultDebugPanelDisplayPolicy()),
 		debugPanelBlocksRenderer:            NewDefaultDebugPanelBlocksRenderer(),
 		debugPanelInteractionService:        NewDefaultDebugPanelInteractionService(),
@@ -996,12 +1002,7 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	m.width = width
 	m.height = height
 
-	panelMode := sidePanelModeNone
-	if m.appState.DebugStreamsEnabled {
-		panelMode = sidePanelModeDebug
-	} else if m.notesPanelOpen {
-		panelMode = sidePanelModeNotes
-	}
+	panelMode := m.activeSidePanelMode()
 	layout := resolveResizeLayout(width, height, m.appState.SidebarCollapsed, panelMode, m.usesViewport())
 	contentHeight := layout.contentHeight
 	contentWidth := layout.contentWidth
@@ -1013,6 +1014,19 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		m.notesPanelVisible = false
 		m.notesPanelWidth = 0
 		m.notesPanelMainWidth = layout.panelMain
+		m.contextPanelVisible = false
+		m.contextPanelWidth = 0
+		m.contextPanelMainWidth = layout.panelMain
+	} else if panelMode == sidePanelModeContext {
+		m.contextPanelVisible = layout.panelVisible
+		m.contextPanelWidth = layout.panelWidth
+		m.contextPanelMainWidth = layout.panelMain
+		m.notesPanelVisible = false
+		m.notesPanelWidth = 0
+		m.notesPanelMainWidth = layout.panelMain
+		m.debugPanelVisible = false
+		m.debugPanelWidth = 0
+		m.debugPanelMainWidth = layout.panelMain
 	} else {
 		m.notesPanelVisible = layout.panelVisible
 		m.notesPanelWidth = layout.panelWidth
@@ -1020,6 +1034,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		m.debugPanelVisible = false
 		m.debugPanelWidth = 0
 		m.debugPanelMainWidth = layout.panelMain
+		m.contextPanelVisible = false
+		m.contextPanelWidth = 0
+		m.contextPanelMainWidth = layout.panelMain
 	}
 
 	if m.sidebar != nil {

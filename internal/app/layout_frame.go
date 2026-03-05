@@ -26,6 +26,7 @@ const (
 	sidePanelModeNone sidePanelMode = iota
 	sidePanelModeNotes
 	sidePanelModeDebug
+	sidePanelModeContext
 )
 
 const (
@@ -88,8 +89,14 @@ func (m *Model) layoutFrame() layoutFrame {
 }
 
 func (m *Model) activePanelDimensions() (visible bool, main int, width int) {
-	if m != nil && m.appState.DebugStreamsEnabled {
+	switch m.activeSidePanelMode() {
+	case sidePanelModeDebug:
 		return m.debugPanelVisible && m.debugPanelWidth > 0, m.debugPanelMainWidth, m.debugPanelWidth
+	case sidePanelModeContext:
+		return m.contextPanelVisible && m.contextPanelWidth > 0, m.contextPanelMainWidth, m.contextPanelWidth
+	case sidePanelModeNotes:
+		return m.notesPanelVisible && m.notesPanelWidth > 0, m.notesPanelMainWidth, m.notesPanelWidth
+	default:
+		return false, 0, 0
 	}
-	return m.notesPanelVisible && m.notesPanelWidth > 0, m.notesPanelMainWidth, m.notesPanelWidth
 }

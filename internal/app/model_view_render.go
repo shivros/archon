@@ -40,9 +40,13 @@ func (m *Model) renderRightPaneView() string {
 	}
 	panelView := ""
 	panelHeight := 0
-	if m.appState.DebugStreamsEnabled {
+	switch m.activeSidePanelMode() {
+	case sidePanelModeDebug:
 		panelView, panelHeight = m.renderDebugPanelView()
-	} else {
+	case sidePanelModeContext:
+		panelView = m.renderContextPanelView()
+		panelHeight = lipgloss.Height(panelView)
+	default:
 		panelView = m.renderNotesPanelView()
 		panelHeight = lipgloss.Height(panelView)
 	}

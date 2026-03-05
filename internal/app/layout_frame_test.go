@@ -77,3 +77,27 @@ func TestLayoutFrameUsesDebugPanelDimensionsWhenEnabled(t *testing.T) {
 		t.Fatalf("expected debug panel main width %d, got %d", m.debugPanelMainWidth, frame.panelMain)
 	}
 }
+
+func TestLayoutFrameUsesContextPanelDimensionsInComposeMode(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.notesPanelOpen = true
+	m.resize(180, 40)
+
+	if m.notesPanelVisible {
+		t.Fatalf("expected notes panel hidden while context panel is active")
+	}
+	if !m.contextPanelVisible {
+		t.Fatalf("expected context panel to be visible")
+	}
+	frame := m.layoutFrame()
+	if !frame.panelVisible {
+		t.Fatalf("expected panel visible in layout frame")
+	}
+	if frame.panelWidth != m.contextPanelWidth {
+		t.Fatalf("expected context panel width %d, got %d", m.contextPanelWidth, frame.panelWidth)
+	}
+	if frame.panelMain != m.contextPanelMainWidth {
+		t.Fatalf("expected context panel main width %d, got %d", m.contextPanelMainWidth, frame.panelMain)
+	}
+}
