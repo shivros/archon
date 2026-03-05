@@ -240,6 +240,41 @@ func TestSaveAppStateCmdPersistsSidebarSortSettings(t *testing.T) {
 	}
 }
 
+func TestSaveAppStateCmdPersistsSplitLayoutPreferences(t *testing.T) {
+	m := NewModel(nil)
+	m.stateAPI = &appStateSyncStub{}
+	m.hasAppState = true
+	m.notesPanelOpen = true
+	m.appState.SidebarSplit = &types.AppStateSplitPreference{Columns: 30, Ratio: 0.25}
+	m.appState.MainSideSplit = &types.AppStateSplitPreference{Columns: 36, Ratio: 0.33}
+	m.appState.NotesPanelWidth = 36
+	m.resize(180, 40)
+
+	cmd := m.saveAppStateCmd()
+	if cmd == nil {
+		t.Fatalf("expected save command")
+	}
+	msg, ok := cmd().(appStateSavedMsg)
+	if !ok {
+		t.Fatalf("expected appStateSavedMsg, got %T", cmd())
+	}
+	if msg.state == nil {
+		t.Fatalf("expected saved app state payload")
+	}
+	if msg.state.LayoutVersion != splitLayoutVersion {
+		t.Fatalf("expected split layout version %d, got %d", splitLayoutVersion, msg.state.LayoutVersion)
+	}
+	if msg.state.SidebarSplit == nil || msg.state.SidebarSplit.Columns <= 0 {
+		t.Fatalf("expected sidebar split preference to persist, got %#v", msg.state.SidebarSplit)
+	}
+	if msg.state.MainSideSplit == nil || msg.state.MainSideSplit.Columns <= 0 {
+		t.Fatalf("expected main/side split preference to persist, got %#v", msg.state.MainSideSplit)
+	}
+	if msg.state.NotesPanelWidth <= 0 {
+		t.Fatalf("expected notes panel width preference to persist, got %d", msg.state.NotesPanelWidth)
+	}
+}
+
 func TestAppStateInitialLoadDefaultsContextPanelToShownWhenFieldMissing(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {

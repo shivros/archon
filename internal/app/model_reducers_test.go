@@ -224,6 +224,7 @@ func TestComposeReducerEnterEmptyShowsValidation(t *testing.T) {
 
 func TestComposeReducerArrowKeysMoveInputCursorLine(t *testing.T) {
 	m := NewModel(nil)
+	m.resize(120, 40)
 	m.enterCompose("s1")
 	if m.chatInput == nil {
 		t.Fatalf("expected chat input")

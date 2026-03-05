@@ -34,21 +34,21 @@ const (
 	sidePanelMaxWidth = 56
 )
 
-func computeSidebarWidth(totalWidth int, collapsed bool) int {
-	if collapsed {
-		return 0
-	}
-	listWidth := clamp(totalWidth/3, minListWidth, maxListWidth)
-	if totalWidth-listWidth-1 < minViewportWidth {
-		listWidth = max(minListWidth, totalWidth/2)
-	}
-	return listWidth
+func computeSidebarWidth(totalWidth int, collapsed bool, pref *SplitPreference) int {
+	return resolveSidebarWidth(totalWidth, collapsed, pref)
 }
 
-func resolveResizeLayout(width, height int, sidebarCollapsed bool, panelMode sidePanelMode, usesViewport bool) resizeLayout {
+func resolveResizeLayout(
+	width, height int,
+	sidebarCollapsed bool,
+	sidebarSplit, mainSideSplit *SplitPreference,
+	panelWidth int,
+	panelMode sidePanelMode,
+	usesViewport bool,
+) resizeLayout {
 	layout := resizeLayout{
 		contentHeight: max(minContentHeight, height-2),
-		sidebarWidth:  computeSidebarWidth(width, sidebarCollapsed),
+		sidebarWidth:  computeSidebarWidth(width, sidebarCollapsed, sidebarSplit),
 		viewportWidth: width,
 	}
 	if layout.sidebarWidth > 0 {
@@ -57,7 +57,7 @@ func resolveResizeLayout(width, height int, sidebarCollapsed bool, panelMode sid
 	layout.contentWidth = layout.viewportWidth
 	layout.panelMain = layout.viewportWidth
 	if panelMode != sidePanelModeNone {
-		layout.panelWidth = clamp(layout.viewportWidth/3, sidePanelMinWidth, sidePanelMaxWidth)
+		layout.panelWidth = resolveSidePanelWidth(layout.viewportWidth, mainSideSplit, panelWidth)
 		if layout.viewportWidth-layout.panelWidth-1 >= minViewportWidth {
 			layout.panelVisible = true
 			layout.panelMain = layout.viewportWidth - layout.panelWidth - 1

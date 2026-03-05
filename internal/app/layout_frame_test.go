@@ -46,10 +46,10 @@ func TestLayoutFrameCollapsedSidebarStartsRightPaneAtZero(t *testing.T) {
 }
 
 func TestComputeSidebarWidthUsesSharedRule(t *testing.T) {
-	if got := computeSidebarWidth(120, true); got != 0 {
+	if got := computeSidebarWidth(120, true, nil); got != 0 {
 		t.Fatalf("expected collapsed sidebar width 0, got %d", got)
 	}
-	if got := computeSidebarWidth(120, false); got <= 0 {
+	if got := computeSidebarWidth(120, false, nil); got <= 0 {
 		t.Fatalf("expected expanded sidebar width > 0, got %d", got)
 	}
 }
@@ -102,5 +102,18 @@ func TestLayoutFrameUsesContextPanelDimensionsInSessionMode(t *testing.T) {
 	}
 	if frame.panelMain != m.contextPanelMainWidth {
 		t.Fatalf("expected context panel main width %d, got %d", m.contextPanelMainWidth, frame.panelMain)
+	}
+}
+
+func TestActivePanelDimensionsReturnsZeroWhenNoPanelMode(t *testing.T) {
+	m := NewModel(nil)
+	m.notesPanelOpen = false
+	m.appState.DebugStreamsEnabled = false
+	m.appState.ContextPanelHidden = true
+	m.resize(180, 40)
+
+	visible, main, width := m.activePanelDimensions()
+	if visible || main != 0 || width != 0 {
+		t.Fatalf("expected no active panel dimensions, got visible=%v main=%d width=%d", visible, main, width)
 	}
 }

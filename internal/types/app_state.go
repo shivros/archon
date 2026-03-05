@@ -7,6 +7,12 @@ type AppState struct {
 	ActiveWorktreeID               string                            `json:"active_worktree_id"`
 	ActiveWorkspaceGroupIDs        []string                          `json:"active_workspace_group_ids"`
 	SidebarCollapsed               bool                              `json:"sidebar_collapsed"`
+	LayoutVersion                  int                               `json:"layout_version,omitempty"`
+	SidebarSplit                   *AppStateSplitPreference          `json:"sidebar_split,omitempty"`
+	MainSideSplit                  *AppStateSplitPreference          `json:"main_side_split,omitempty"`
+	NotesPanelWidth                int                               `json:"notes_panel_width,omitempty"`
+	DebugPanelWidth                int                               `json:"debug_panel_width,omitempty"`
+	ContextPanelWidth              int                               `json:"context_panel_width,omitempty"`
 	DebugStreamsEnabled            bool                              `json:"debug_streams_enabled,omitempty"`
 	ContextPanelHidden             bool                              `json:"context_panel_hidden,omitempty"`
 	SidebarWorkspaceExpanded       map[string]bool                   `json:"sidebar_workspace_expanded,omitempty"`
@@ -22,6 +28,11 @@ type AppState struct {
 	ProviderBadges                 map[string]*ProviderBadgeConfig   `json:"provider_badges,omitempty"`
 	Recents                        *AppStateRecents                  `json:"recents,omitempty"`
 	GuidedWorkflowTelemetry        *GuidedWorkflowTelemetryState     `json:"guided_workflow_telemetry,omitempty"`
+}
+
+type AppStateSplitPreference struct {
+	Columns int     `json:"columns,omitempty"`
+	Ratio   float64 `json:"ratio,omitempty"`
 }
 
 type ProviderBadgeConfig struct {

@@ -227,6 +227,9 @@ type Model struct {
 	pendingMouseCmd                     tea.Cmd
 	lastSidebarWheelAt                  time.Time
 	sidebarDragging                     bool
+	splitDraggingTarget                 splitDragTarget
+	splitDraggingPanelMode              sidePanelMode
+	splitDraggingChanged                bool
 	lastSessionMetaRefreshAt            time.Time
 	lastSessionMetaSyncAt               time.Time
 	sessionMetaRefreshPending           bool
@@ -903,12 +906,12 @@ func (m *Model) View() tea.View {
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
-	v.MouseMode = resolveMouseMode(m.sidebarDragging)
+	v.MouseMode = resolveMouseMode(m.sidebarDragging, m.splitDraggingTarget != splitDragTargetNone)
 	return v
 }
 
-func resolveMouseMode(sidebarDragging bool) tea.MouseMode {
-	if sidebarDragging {
+func resolveMouseMode(sidebarDragging, splitDragging bool) tea.MouseMode {
+	if sidebarDragging || splitDragging {
 		return tea.MouseModeAllMotion
 	}
 	return tea.MouseModeCellMotion
@@ -1003,7 +1006,16 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	m.height = height
 
 	panelMode := m.activeSidePanelMode()
-	layout := resolveResizeLayout(width, height, m.appState.SidebarCollapsed, panelMode, m.usesViewport())
+	layout := resolveResizeLayout(
+		width,
+		height,
+		m.appState.SidebarCollapsed,
+		fromAppStateSplit(m.appState.SidebarSplit),
+		fromAppStateSplit(m.appState.MainSideSplit),
+		m.panelWidthPreference(panelMode),
+		panelMode,
+		m.usesViewport(),
+	)
 	contentHeight := layout.contentHeight
 	contentWidth := layout.contentWidth
 	mainViewportWidth := layout.panelMain
@@ -2121,7 +2133,11 @@ func (m *Model) applySidebarItemsIfDirtyWithReason(reason sidebarApplyReason) {
 }
 
 func (m *Model) sidebarWidth() int {
-	return computeSidebarWidth(m.width, m.appState.SidebarCollapsed)
+	return computeSidebarWidth(m.width, m.appState.SidebarCollapsed, fromAppStateSplit(m.appState.SidebarSplit))
+}
+
+func (m *Model) panelWidthPreference(mode sidePanelMode) int {
+	return panelLayoutPersistencePolicy(mode).Width(&m.appState)
 }
 
 func (m *Model) handleMenuAction(action MenuAction) tea.Cmd {
@@ -3771,6 +3787,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 		return false
 	}
 	layout := m.resolveMouseLayout()
+	if m.reduceSplitDragMouse(msg, layout) {
+		return true
+	}
 	if m.reduceSidebarDragMouse(msg, layout) {
 		return true
 	}
@@ -4149,6 +4168,11 @@ func (m *Model) applyAppState(state *types.AppState) {
 		return
 	}
 	m.appState = *state
+	m.appState.SidebarSplit = toAppStateSplit(sanitizeSplitPreference(fromAppStateSplit(m.appState.SidebarSplit)))
+	m.appState.MainSideSplit = toAppStateSplit(sanitizeSplitPreference(fromAppStateSplit(m.appState.MainSideSplit)))
+	m.appState.NotesPanelWidth = max(0, m.appState.NotesPanelWidth)
+	m.appState.DebugPanelWidth = max(0, m.appState.DebugPanelWidth)
+	m.appState.ContextPanelWidth = max(0, m.appState.ContextPanelWidth)
 	m.sidebarSort = m.sidebarSortPolicyOrDefault().Normalize(sidebarSortState{
 		Key:     parseSidebarSortKey(state.SidebarSortKey),
 		Reverse: state.SidebarSortReverse,
@@ -4225,6 +4249,74 @@ func (m *Model) syncAppStateSidebarSort() bool {
 	return true
 }
 
+func (m *Model) syncAppStateSplitLayout() bool {
+	if m == nil {
+		return false
+	}
+	changed := m.syncLayoutVersion()
+	if m.syncSidebarSplit() {
+		changed = true
+	}
+	if m.syncActivePanelSplit() {
+		changed = true
+	}
+	if changed {
+		m.hasAppState = true
+	}
+	return changed
+}
+
+func (m *Model) syncLayoutVersion() bool {
+	if m == nil {
+		return false
+	}
+	if m.appState.LayoutVersion == splitLayoutVersion {
+		return false
+	}
+	m.appState.LayoutVersion = splitLayoutVersion
+	return true
+}
+
+func (m *Model) syncSidebarSplit() bool {
+	if m == nil || m.appState.SidebarCollapsed || m.width <= 0 {
+		return false
+	}
+	nextSidebar := captureSplitPreference(m.width, m.sidebarWidth(), fromAppStateSplit(m.appState.SidebarSplit))
+	if splitPreferenceEqual(fromAppStateSplit(m.appState.SidebarSplit), nextSidebar) {
+		return false
+	}
+	m.appState.SidebarSplit = toAppStateSplit(nextSidebar)
+	return true
+}
+
+func (m *Model) syncActivePanelSplit() bool {
+	if m == nil {
+		return false
+	}
+	panelMode := m.activeSidePanelMode()
+	if panelMode == sidePanelModeNone {
+		return false
+	}
+	viewportWidth := m.width
+	if sidebarWidth := m.sidebarWidth(); sidebarWidth > 0 {
+		viewportWidth = max(minViewportWidth, m.width-sidebarWidth-1)
+	}
+	panelVisible, _, panelWidth := m.activePanelDimensions()
+	if !panelVisible || panelWidth <= 0 {
+		return false
+	}
+	changed := false
+	nextSplit := captureSplitPreference(viewportWidth, panelWidth, fromAppStateSplit(m.appState.MainSideSplit))
+	if !splitPreferenceEqual(fromAppStateSplit(m.appState.MainSideSplit), nextSplit) {
+		m.appState.MainSideSplit = toAppStateSplit(nextSplit)
+		changed = true
+	}
+	if policy := panelLayoutPersistencePolicy(panelMode); policy.SetWidth(&m.appState, panelWidth) {
+		changed = true
+	}
+	return changed
+}
+
 func (m *Model) saveAppStateCmd() tea.Cmd {
 	if m.stateAPI == nil || !m.hasAppState {
 		return nil
@@ -4233,6 +4325,7 @@ func (m *Model) saveAppStateCmd() tea.Cmd {
 	m.syncAppStateInputDrafts()
 	m.syncAppStateRecents()
 	m.syncAppStateSidebarSort()
+	m.syncAppStateSplitLayout()
 	m.appStateSaveSeq++
 	requestSeq := m.appStateSaveSeq
 	state := m.appState

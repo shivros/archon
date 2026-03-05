@@ -36,11 +36,14 @@ func TestShouldUpdateSidebarForMessageRoutesOnlyInteractiveMessages(t *testing.T
 }
 
 func TestResolveMouseModeUsesAllMotionOnlyWhileDragging(t *testing.T) {
-	if got := resolveMouseMode(false); got != tea.MouseModeCellMotion {
+	if got := resolveMouseMode(false, false); got != tea.MouseModeCellMotion {
 		t.Fatalf("expected cell motion when not dragging, got %v", got)
 	}
-	if got := resolveMouseMode(true); got != tea.MouseModeAllMotion {
+	if got := resolveMouseMode(true, false); got != tea.MouseModeAllMotion {
 		t.Fatalf("expected all motion when dragging, got %v", got)
+	}
+	if got := resolveMouseMode(false, true); got != tea.MouseModeAllMotion {
+		t.Fatalf("expected all motion when split dragging, got %v", got)
 	}
 }
 
