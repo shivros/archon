@@ -13,14 +13,15 @@ const (
 	sidebarExpansionIntentSingleToggle
 	sidebarExpansionIntentAllWorkspaces
 	sidebarExpansionIntentWorktreesForWorktree
-	sidebarExpansionIntentSelectedWorkflows
+	sidebarExpansionIntentWorkflowsForWorkspace
+	sidebarExpansionIntentWorkflowsForWorktree
 )
 
 type sidebarExpansionIntent struct {
-	kind       sidebarExpansionIntentKind
-	expanded   bool
-	worktreeID string
-	workflowID string
+	kind        sidebarExpansionIntentKind
+	expanded    bool
+	workspaceID string
+	worktreeID  string
 }
 
 type SidebarExpansionIntentPolicy interface {
@@ -28,23 +29,15 @@ type SidebarExpansionIntentPolicy interface {
 }
 
 type SidebarExpansionService interface {
-	ApplyIntent(sidebar SidebarExpansionTarget, intent sidebarExpansionIntent) bool
+	ApplyIntent(sidebar SidebarExpansionMutator, intent sidebarExpansionIntent) bool
 }
 
 type SidebarExpansionMutator interface {
 	ToggleSelectedContainer() bool
 	SetAllWorkspacesExpanded(expanded bool) bool
 	SetWorktreesExpandedForWorktree(worktreeID string, expanded bool) bool
-	SetWorkflowsExpanded(workflowIDs []string, expanded bool) bool
-}
-
-type SidebarWorkflowSelectionReader interface {
-	SelectedKeys() []string
-}
-
-type SidebarExpansionTarget interface {
-	SidebarExpansionMutator
-	SidebarWorkflowSelectionReader
+	SetWorkflowsExpandedForWorkspace(workspaceID string, expanded bool) bool
+	SetWorkflowsExpandedForWorktree(worktreeID string, expanded bool) bool
 }
 
 type defaultSidebarExpansionIntentPolicy struct{}
@@ -71,13 +64,26 @@ func (defaultSidebarExpansionIntentPolicy) ResolveIntent(entry *sidebarItem, mou
 		intent.kind = sidebarExpansionIntentWorktreesForWorktree
 		intent.worktreeID = strings.TrimSpace(entry.worktree.ID)
 	case sidebarWorkflow:
-		workflowID := strings.TrimSpace(entry.workflowRunID())
-		if workflowID == "" {
+		if strings.TrimSpace(entry.workflowRunID()) == "" {
 			intent.kind = sidebarExpansionIntentNone
 			return intent
 		}
-		intent.kind = sidebarExpansionIntentSelectedWorkflows
-		intent.workflowID = workflowID
+		worktreeID := strings.TrimSpace(entry.workflowWorktreeID())
+		if worktreeID != "" {
+			intent.kind = sidebarExpansionIntentWorkflowsForWorktree
+			intent.worktreeID = worktreeID
+			return intent
+		}
+		workspaceID := strings.TrimSpace(entry.workflowWorkspaceID())
+		if workspaceID == "" {
+			workspaceID = unassignedWorkspaceID
+		}
+		if workspaceID == "" {
+			intent.kind = sidebarExpansionIntentNone
+			return intent
+		}
+		intent.kind = sidebarExpansionIntentWorkflowsForWorkspace
+		intent.workspaceID = workspaceID
 	default:
 		intent.kind = sidebarExpansionIntentSingleToggle
 	}
@@ -86,7 +92,7 @@ func (defaultSidebarExpansionIntentPolicy) ResolveIntent(entry *sidebarItem, mou
 
 type defaultSidebarExpansionService struct{}
 
-func (defaultSidebarExpansionService) ApplyIntent(sidebar SidebarExpansionTarget, intent sidebarExpansionIntent) bool {
+func (defaultSidebarExpansionService) ApplyIntent(sidebar SidebarExpansionMutator, intent sidebarExpansionIntent) bool {
 	if sidebar == nil {
 		return false
 	}
@@ -100,43 +106,21 @@ func (defaultSidebarExpansionService) ApplyIntent(sidebar SidebarExpansionTarget
 			return false
 		}
 		return sidebar.SetWorktreesExpandedForWorktree(intent.worktreeID, intent.expanded)
-	case sidebarExpansionIntentSelectedWorkflows:
-		workflowIDs := selectedWorkflowIDs(sidebar.SelectedKeys())
-		if len(workflowIDs) == 0 {
-			fallback := strings.TrimSpace(intent.workflowID)
-			if fallback == "" {
-				return false
-			}
-			workflowIDs = []string{fallback}
+	case sidebarExpansionIntentWorkflowsForWorkspace:
+		workspaceID := strings.TrimSpace(intent.workspaceID)
+		if workspaceID == "" {
+			return false
 		}
-		return sidebar.SetWorkflowsExpanded(workflowIDs, intent.expanded)
+		return sidebar.SetWorkflowsExpandedForWorkspace(workspaceID, intent.expanded)
+	case sidebarExpansionIntentWorkflowsForWorktree:
+		worktreeID := strings.TrimSpace(intent.worktreeID)
+		if worktreeID == "" {
+			return false
+		}
+		return sidebar.SetWorkflowsExpandedForWorktree(worktreeID, intent.expanded)
 	default:
 		return false
 	}
-}
-
-func selectedWorkflowIDs(keys []string) []string {
-	if len(keys) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(keys))
-	seen := map[string]struct{}{}
-	for _, key := range keys {
-		key = strings.TrimSpace(key)
-		if !strings.HasPrefix(key, "gwf:") {
-			continue
-		}
-		id := strings.TrimSpace(strings.TrimPrefix(key, "gwf:"))
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	return ids
 }
 
 func WithSidebarExpansionIntentPolicy(policy SidebarExpansionIntentPolicy) ModelOption {

@@ -314,9 +314,13 @@ func TestSidebarControllerSetWorkflowsExpandedNoopBranches(t *testing.T) {
 			CreatedAt:   now,
 		},
 	}
-	sessions := []*types.Session{{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now}}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
 	meta := map[string]*types.SessionMeta{
 		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1", WorkflowRunID: "gwf-2"},
 	}
 	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, workflows, meta, "ws1", "", false)
 
@@ -445,6 +449,9 @@ func TestSidebarControllerSetWorktreesExpandedForWorktree(t *testing.T) {
 	}
 
 	controller.Apply(workspaces, worktrees, sessions, nil, meta, "", "", false)
+	if !controller.SelectByKey("ws:ws1") {
+		t.Fatalf("expected workspace selection setup")
+	}
 	if !controller.SetAllWorkspacesExpanded(true) {
 		t.Fatalf("expected workspaces to expand for scoped worktree test")
 	}
@@ -481,6 +488,233 @@ func TestSidebarControllerSetWorktreesExpandedForWorktreeRejectsUnknown(t *testi
 	}, nil, nil, nil, "", "", false)
 	if controller.SetWorktreesExpandedForWorktree("wt-missing", true) {
 		t.Fatalf("expected unknown worktree id to be rejected")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorkspace(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{
+		{ID: "ws1", Name: "Workspace A"},
+		{ID: "ws2", Name: "Workspace B"},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+		{ID: "s3", Status: types.SessionStatusRunning, CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorkflowRunID: "gwf-2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws2", WorkflowRunID: "gwf-3"},
+	}
+
+	controller.Apply(workspaces, map[string][]*types.Worktree{}, sessions, nil, meta, "", "", false)
+	if !controller.SetAllWorkspacesExpanded(true) {
+		t.Fatalf("expected workspaces to expand for scoped workflow test")
+	}
+	if !controller.SetWorkflowExpanded("gwf-1", true) || !controller.SetWorkflowExpanded("gwf-2", true) || !controller.SetWorkflowExpanded("gwf-3", true) {
+		t.Fatalf("expected baseline workflow expansion setup")
+	}
+	if !controller.SetWorkflowsExpandedForWorkspace("ws1", false) {
+		t.Fatalf("expected workspace-scoped workflow collapse to change state")
+	}
+	if controller.IsWorkflowExpanded("gwf-1") || controller.IsWorkflowExpanded("gwf-2") {
+		t.Fatalf("expected ws1 workflows collapsed")
+	}
+	if !controller.IsWorkflowExpanded("gwf-3") {
+		t.Fatalf("expected ws2 workflow to remain expanded")
+	}
+	if !controller.SetWorkflowsExpandedForWorkspace("ws1", true) {
+		t.Fatalf("expected workspace-scoped workflow expand to change state")
+	}
+	if !controller.IsWorkflowExpanded("gwf-1") || !controller.IsWorkflowExpanded("gwf-2") {
+		t.Fatalf("expected ws1 workflows expanded")
+	}
+	if !controller.IsWorkflowExpanded("gwf-3") {
+		t.Fatalf("expected ws2 workflow to remain expanded")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorktree(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetExpandByDefault(false)
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace A"}}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Feature 1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "Feature 2"},
+		},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+		{ID: "s3", Status: types.SessionStatusRunning, CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1", WorkflowRunID: "gwf-2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws1", WorktreeID: "wt2", WorkflowRunID: "gwf-3"},
+	}
+
+	controller.Apply(workspaces, worktrees, sessions, nil, meta, "", "", false)
+	if !controller.SetAllWorkspacesExpanded(true) {
+		t.Fatalf("expected workspace expansion setup")
+	}
+	if !controller.SetWorktreeExpanded("wt1", true) || !controller.SetWorktreeExpanded("wt2", true) {
+		t.Fatalf("expected worktree expansion setup")
+	}
+	if !controller.SetWorkflowExpanded("gwf-1", true) || !controller.SetWorkflowExpanded("gwf-2", true) || !controller.SetWorkflowExpanded("gwf-3", true) {
+		t.Fatalf("expected baseline workflow expansion setup")
+	}
+	if !controller.SetWorkflowsExpandedForWorktree("wt1", false) {
+		t.Fatalf("expected worktree-scoped workflow collapse to change state")
+	}
+	if controller.IsWorkflowExpanded("gwf-1") || controller.IsWorkflowExpanded("gwf-2") {
+		t.Fatalf("expected wt1 workflows collapsed")
+	}
+	if !controller.IsWorkflowExpanded("gwf-3") {
+		t.Fatalf("expected wt2 workflow to remain expanded")
+	}
+	if !controller.SetWorkflowsExpandedForWorktree("wt1", true) {
+		t.Fatalf("expected worktree-scoped workflow expand to change state")
+	}
+	if !controller.IsWorkflowExpanded("gwf-1") || !controller.IsWorkflowExpanded("gwf-2") {
+		t.Fatalf("expected wt1 workflows expanded")
+	}
+	if !controller.IsWorkflowExpanded("gwf-3") {
+		t.Fatalf("expected wt2 workflow to remain expanded")
+	}
+}
+
+type testWorkflowScopeResolver struct {
+	workspaceIDs []string
+	worktreeIDs  []string
+	workspaceArg string
+	worktreeArg  string
+	workspaceHit int
+	worktreeHit  int
+}
+
+func (r *testWorkflowScopeResolver) WorkflowIDsForWorkspace(input SidebarWorkflowScopeInput, workspaceID string) []string {
+	r.workspaceHit++
+	r.workspaceArg = workspaceID
+	return append([]string(nil), r.workspaceIDs...)
+}
+
+func (r *testWorkflowScopeResolver) WorkflowIDsForWorktree(input SidebarWorkflowScopeInput, worktreeID string) []string {
+	r.worktreeHit++
+	r.worktreeArg = worktreeID
+	return append([]string(nil), r.worktreeIDs...)
+}
+
+func TestSidebarControllerSetWorkflowScopeResolver(t *testing.T) {
+	controller := NewSidebarController()
+	resolver := &testWorkflowScopeResolver{
+		workspaceIDs: []string{"gwf-1"},
+		worktreeIDs:  []string{"gwf-2"},
+	}
+	controller.SetWorkflowScopeResolver(resolver)
+
+	now := time.Now().UTC()
+	workspaces := []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	worktrees := map[string][]*types.Worktree{
+		"ws1": {{ID: "wt1", WorkspaceID: "ws1", Name: "WT1"}},
+	}
+	sessions := []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+	}
+	meta := map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1", WorkflowRunID: "gwf-2"},
+	}
+	controller.Apply(workspaces, worktrees, sessions, nil, meta, "", "", false)
+
+	if !controller.SetWorkflowExpanded("gwf-1", true) || !controller.SetWorkflowExpanded("gwf-2", true) {
+		t.Fatalf("expected baseline expansion setup")
+	}
+	if !controller.SetWorkflowsExpandedForWorkspace("ws1", false) {
+		t.Fatalf("expected custom resolver to drive workspace-scoped update")
+	}
+	if resolver.workspaceHit != 1 || resolver.workspaceArg != "ws1" {
+		t.Fatalf("expected custom resolver workspace method call, got hit=%d arg=%q", resolver.workspaceHit, resolver.workspaceArg)
+	}
+	if !controller.SetWorkflowsExpandedForWorktree("wt1", false) {
+		t.Fatalf("expected custom resolver to drive worktree-scoped update")
+	}
+	if resolver.worktreeHit != 1 || resolver.worktreeArg != "wt1" {
+		t.Fatalf("expected custom resolver worktree method call, got hit=%d arg=%q", resolver.worktreeHit, resolver.worktreeArg)
+	}
+
+	controller.SetWorkflowScopeResolver(nil)
+	if controller.workflowScopeResolver == nil {
+		t.Fatalf("expected nil resolver to restore default resolver")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorkspaceRejectsNilController(t *testing.T) {
+	var controller *SidebarController
+	if controller.SetWorkflowsExpandedForWorkspace("ws1", false) {
+		t.Fatalf("expected nil controller to reject workspace-scoped workflow expansion")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorktreeRejectsNilController(t *testing.T) {
+	var controller *SidebarController
+	if controller.SetWorkflowsExpandedForWorktree("wt1", false) {
+		t.Fatalf("expected nil controller to reject worktree-scoped workflow expansion")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorkspaceNoIDsFromResolver(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetWorkflowScopeResolver(&testWorkflowScopeResolver{})
+	if controller.SetWorkflowsExpandedForWorkspace("ws1", false) {
+		t.Fatalf("expected workspace-scoped workflow expansion with no ids to be no-op")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorktreeNoIDsFromResolver(t *testing.T) {
+	controller := NewSidebarController()
+	controller.SetWorkflowScopeResolver(&testWorkflowScopeResolver{})
+	if controller.SetWorkflowsExpandedForWorktree("wt1", false) {
+		t.Fatalf("expected worktree-scoped workflow expansion with no ids to be no-op")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorkspaceNoChange(t *testing.T) {
+	controller := NewSidebarController()
+	if !controller.SetWorkflowExpanded("gwf-1", false) {
+		t.Fatalf("expected baseline workflow expansion override setup")
+	}
+	controller.SetWorkflowScopeResolver(&testWorkflowScopeResolver{workspaceIDs: []string{"gwf-1"}})
+	if controller.SetWorkflowsExpandedForWorkspace("ws1", false) {
+		t.Fatalf("expected workspace-scoped workflow expansion with same state to be no-op")
+	}
+}
+
+func TestSidebarControllerSetWorkflowsExpandedForWorktreeNoChange(t *testing.T) {
+	controller := NewSidebarController()
+	if !controller.SetWorkflowExpanded("gwf-1", false) {
+		t.Fatalf("expected baseline workflow expansion override setup")
+	}
+	controller.SetWorkflowScopeResolver(&testWorkflowScopeResolver{worktreeIDs: []string{"gwf-1"}})
+	if controller.SetWorkflowsExpandedForWorktree("wt1", false) {
+		t.Fatalf("expected worktree-scoped workflow expansion with same state to be no-op")
+	}
+}
+
+func TestSidebarControllerWorkflowScopeResolverOrDefaultAndInputNilController(t *testing.T) {
+	var controller *SidebarController
+	if resolver := controller.workflowScopeResolverOrDefault(); resolver == nil {
+		t.Fatalf("expected default resolver for nil controller")
+	}
+	input := controller.workflowScopeInput()
+	if len(input.Workspaces) != 0 || len(input.Worktrees) != 0 || len(input.Sessions) != 0 || len(input.WorkflowRuns) != 0 || len(input.Meta) != 0 {
+		t.Fatalf("expected empty workflow scope input for nil controller, got %#v", input)
 	}
 }
 

@@ -87,6 +87,8 @@ type sidebarItem struct {
 	worktree     *types.Worktree
 	workflow     *guidedworkflows.WorkflowRun
 	workflowID   string
+	workflowWSID string
+	workflowWTID string
 	session      *types.Session
 	meta         *types.SessionMeta
 	recents      sidebarRecentsFilter
@@ -215,6 +217,32 @@ func (s *sidebarItem) workflowRunID() string {
 	}
 	if s.workflow != nil {
 		return strings.TrimSpace(s.workflow.ID)
+	}
+	return ""
+}
+
+func (s *sidebarItem) workflowWorkspaceID() string {
+	if s == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(s.workflowWSID); id != "" {
+		return id
+	}
+	if s.workflow != nil {
+		return strings.TrimSpace(s.workflow.WorkspaceID)
+	}
+	return ""
+}
+
+func (s *sidebarItem) workflowWorktreeID() string {
+	if s == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(s.workflowWTID); id != "" {
+		return id
+	}
+	if s.workflow != nil {
+		return strings.TrimSpace(s.workflow.WorktreeID)
 	}
 	return ""
 }
@@ -737,7 +765,7 @@ func buildSidebarItemsWithOptions(
 				worktreeID = ""
 			}
 		}
-		workflowItem := buildWorkflowSidebarItem(runID, run, len(workflowSessionBuckets[runID]), options.expansion)
+		workflowItem := buildWorkflowSidebarItem(runID, run, workspaceID, worktreeID, len(workflowSessionBuckets[runID]), options.expansion)
 		if worktreeID != "" {
 			workflowItem.depth = 2
 			workflowByWorktree[worktreeID] = append(workflowByWorktree[worktreeID], workflowItem)
@@ -781,7 +809,7 @@ func buildSidebarItemsWithOptions(
 				worktreeID = ""
 			}
 		}
-		workflowItem := buildWorkflowSidebarItem(runID, nil, len(bucket), options.expansion)
+		workflowItem := buildWorkflowSidebarItem(runID, nil, workspaceID, worktreeID, len(bucket), options.expansion)
 		if worktreeID != "" {
 			workflowItem.depth = 2
 			workflowByWorktree[worktreeID] = append(workflowByWorktree[worktreeID], workflowItem)
@@ -959,17 +987,21 @@ func buildSidebarItemsWithOptions(
 	return filterSidebarItems(items, options.filterQuery)
 }
 
-func buildWorkflowSidebarItem(runID string, run *guidedworkflows.WorkflowRun, sessionCount int, expansion sidebarExpansionResolver) *sidebarItem {
+func buildWorkflowSidebarItem(runID string, run *guidedworkflows.WorkflowRun, workspaceID, worktreeID string, sessionCount int, expansion sidebarExpansionResolver) *sidebarItem {
 	runID = strings.TrimSpace(runID)
 	if runID == "" && run != nil {
 		runID = strings.TrimSpace(run.ID)
 	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	worktreeID = strings.TrimSpace(worktreeID)
 	collapsible := sessionCount > 0
 	expanded := !collapsible || expansion.workflowExpanded(runID)
 	return &sidebarItem{
 		kind:         sidebarWorkflow,
 		workflow:     run,
 		workflowID:   runID,
+		workflowWSID: workspaceID,
+		workflowWTID: worktreeID,
 		sessionCount: sessionCount,
 		collapsible:  collapsible,
 		expanded:     expanded,

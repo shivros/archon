@@ -43,6 +43,7 @@ type SidebarController struct {
 	filterKeyBadge        string
 	reverseKeyBadge       string
 	sortStripPresenter    *SidebarSortStripPresenter
+	workflowScopeResolver SidebarWorkflowScopeResolver
 }
 
 type sessionSidebarParent struct {
@@ -101,6 +102,7 @@ func NewSidebarController() *SidebarController {
 		sortState:             defaultSidebarSortState(),
 		sortStripFocus:        sidebarSortStripSegmentNone,
 		sortStripPresenter:    NewSidebarSortStripPresenter(),
+		workflowScopeResolver: NewDefaultSidebarWorkflowScopeResolver(),
 	}
 }
 
@@ -1115,6 +1117,44 @@ func (c *SidebarController) SetWorktreesExpandedForWorktree(worktreeID string, e
 	return c.SetWorktreesExpandedForWorkspace(workspaceID, expanded)
 }
 
+func (c *SidebarController) SetWorkflowsExpandedForWorkspace(workspaceID string, expanded bool) bool {
+	if c == nil {
+		return false
+	}
+	ids := c.workflowScopeResolverOrDefault().WorkflowIDsForWorkspace(c.workflowScopeInput(), workspaceID)
+	if len(ids) == 0 {
+		return false
+	}
+	changed := false
+	for _, id := range ids {
+		changed = c.setWorkflowExpanded(id, expanded) || changed
+	}
+	if !changed {
+		return false
+	}
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
+func (c *SidebarController) SetWorkflowsExpandedForWorktree(worktreeID string, expanded bool) bool {
+	if c == nil {
+		return false
+	}
+	ids := c.workflowScopeResolverOrDefault().WorkflowIDsForWorktree(c.workflowScopeInput(), worktreeID)
+	if len(ids) == 0 {
+		return false
+	}
+	changed := false
+	for _, id := range ids {
+		changed = c.setWorkflowExpanded(id, expanded) || changed
+	}
+	if !changed {
+		return false
+	}
+	c.rebuild(c.SelectedKey())
+	return true
+}
+
 func (c *SidebarController) IsWorkspaceExpanded(id string) bool {
 	if c == nil || strings.TrimSpace(id) == "" {
 		return c != nil && c.expandByDefault
@@ -1207,6 +1247,17 @@ func (c *SidebarController) SetProviderBadges(overrides map[string]*types.Provid
 		return
 	}
 	c.delegate.providerBadges = normalizeProviderBadgeOverrides(overrides)
+}
+
+func (c *SidebarController) SetWorkflowScopeResolver(resolver SidebarWorkflowScopeResolver) {
+	if c == nil {
+		return
+	}
+	if resolver == nil {
+		c.workflowScopeResolver = NewDefaultSidebarWorkflowScopeResolver()
+		return
+	}
+	c.workflowScopeResolver = resolver
 }
 
 func (c *SidebarController) SetRecentsState(state sidebarRecentsState) bool {
@@ -1556,6 +1607,26 @@ func (c *SidebarController) worktreeIDsForWorkspace(workspaceID string) []string
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (c *SidebarController) workflowScopeResolverOrDefault() SidebarWorkflowScopeResolver {
+	if c == nil || c.workflowScopeResolver == nil {
+		return NewDefaultSidebarWorkflowScopeResolver()
+	}
+	return c.workflowScopeResolver
+}
+
+func (c *SidebarController) workflowScopeInput() SidebarWorkflowScopeInput {
+	if c == nil {
+		return SidebarWorkflowScopeInput{}
+	}
+	return SidebarWorkflowScopeInput{
+		Workspaces:   c.workspacesSnapshot,
+		Worktrees:    c.worktreesSnapshot,
+		Sessions:     c.sessionsSnapshot,
+		WorkflowRuns: c.workflowRunsSnapshot,
+		Meta:         c.metaSnapshot,
+	}
 }
 
 func (c *SidebarController) rebuild(selectedKey string) {

@@ -838,6 +838,70 @@ func TestMouseReducerSidebarWorkflowCtrlCaretClickAppliesToSelectedWorkflows(t *
 	}
 }
 
+func TestMouseReducerSidebarWorkflowCtrlCaretClickAppliesToWorktreeScopeOnly(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Feature 1"},
+			{ID: "wt2", WorkspaceID: "ws1", Name: "Feature 2"},
+		},
+	}
+	now := time.Now().UTC()
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning, CreatedAt: now},
+		{ID: "s2", Status: types.SessionStatusRunning, CreatedAt: now.Add(-time.Minute)},
+		{ID: "s3", Status: types.SessionStatusRunning, CreatedAt: now.Add(-2 * time.Minute)},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorktreeID: "wt1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorktreeID: "wt1", WorkflowRunID: "gwf-2"},
+		"s3": {SessionID: "s3", WorkspaceID: "ws1", WorktreeID: "wt2", WorkflowRunID: "gwf-3"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	rowForWorkflow := func(id string) int {
+		for y := 0; y < 40; y++ {
+			entry := m.sidebar.ItemAtRow(y)
+			if entry != nil && entry.kind == sidebarWorkflow && entry.workflowRunID() == id {
+				return y
+			}
+		}
+		return -1
+	}
+	row1 := rowForWorkflow("gwf-1")
+	if row1 < 0 {
+		t.Fatalf("expected visible workflow row for gwf-1")
+	}
+
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 5, Y: row1}, layout) {
+		t.Fatalf("expected ctrl+caret click to be handled")
+	}
+	if m.sidebar.IsWorkflowExpanded("gwf-1") || m.sidebar.IsWorkflowExpanded("gwf-2") {
+		t.Fatalf("expected wt1 workflows to collapse")
+	}
+	if !m.sidebar.IsWorkflowExpanded("gwf-3") {
+		t.Fatalf("expected wt2 workflow to remain expanded")
+	}
+
+	row1 = rowForWorkflow("gwf-1")
+	if row1 < 0 {
+		t.Fatalf("expected visible workflow row for gwf-1 after collapse")
+	}
+	if !m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 5, Y: row1}, layout) {
+		t.Fatalf("expected second ctrl+caret click to be handled")
+	}
+	if !m.sidebar.IsWorkflowExpanded("gwf-1") || !m.sidebar.IsWorkflowExpanded("gwf-2") {
+		t.Fatalf("expected wt1 workflows to expand")
+	}
+	if !m.sidebar.IsWorkflowExpanded("gwf-3") {
+		t.Fatalf("expected wt2 workflow to remain expanded")
+	}
+}
+
 func TestMouseReducerLeftPressInputFocusesComposeInput(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
