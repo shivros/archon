@@ -239,3 +239,54 @@ func TestSaveAppStateCmdPersistsSidebarSortSettings(t *testing.T) {
 		t.Fatalf("expected reverse sort flag to persist")
 	}
 }
+
+func TestAppStateInitialLoadDefaultsContextPanelToShownWhenFieldMissing(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+
+	handled, cmd := m.reduceStateMessages(appStateInitialLoadMsg{
+		state: &types.AppState{
+			ActiveWorkspaceGroupIDs: []string{"ungrouped"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected app state initial load to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command")
+	}
+	if m.appState.ContextPanelHidden {
+		t.Fatalf("expected missing context preference to default to shown")
+	}
+	if got := m.activeSidePanelMode(); got != sidePanelModeContext {
+		t.Fatalf("expected context panel mode after load, got %v", got)
+	}
+}
+
+func TestAppStateInitialLoadAppliesHiddenContextPanelPreference(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+
+	handled, cmd := m.reduceStateMessages(appStateInitialLoadMsg{
+		state: &types.AppState{
+			ActiveWorkspaceGroupIDs: []string{"ungrouped"},
+			ContextPanelHidden:      true,
+		},
+	})
+	if !handled {
+		t.Fatalf("expected app state initial load to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command")
+	}
+	if !m.appState.ContextPanelHidden {
+		t.Fatalf("expected hidden context panel preference to be applied")
+	}
+	if got := m.activeSidePanelMode(); got != sidePanelModeNone {
+		t.Fatalf("expected no side panel mode when hidden, got %v", got)
+	}
+}

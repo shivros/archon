@@ -844,6 +844,8 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if !m.notesPanelOpen {
 			return true, nil
 		}
+		// Force a viewport pass after deferred panel layout updates.
+		m.renderedForWidth = 0
 		m.renderViewport()
 		m.renderNotesPanel()
 		return true, nil

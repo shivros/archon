@@ -10,12 +10,27 @@ import (
 func TestRenderRightPaneViewUsesContextPanelInComposeMode(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.mode = uiModeCompose
-	m.notesPanelOpen = true
+	m.notesPanelOpen = false
 	m.resize(180, 40)
 
 	plain := xansi.Strip(m.renderRightPaneView())
 	if !strings.Contains(plain, "Context") {
 		t.Fatalf("expected context panel in compose mode, got %q", plain)
+	}
+}
+
+func TestRenderRightPaneViewUsesContextPanelInSessionMode(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.mode = uiModeNormal
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.notesPanelOpen = false
+	m.resize(180, 40)
+
+	plain := xansi.Strip(m.renderRightPaneView())
+	if !strings.Contains(plain, "Context") {
+		t.Fatalf("expected context panel in session mode, got %q", plain)
 	}
 }
 

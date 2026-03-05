@@ -69,7 +69,7 @@ func TestLoadKeybindingsArrayOverride(t *testing.T) {
 
 func TestLoadKeybindingsMapOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "keybindings.json")
-	data := []byte(`{"ui.toggleSidebar":"alt+b","ui.copySessionID":"alt+y"}`)
+	data := []byte(`{"ui.toggleSidebar":"alt+b","ui.copySessionID":"alt+y","ui.toggleContextPanel":"f6"}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -82,6 +82,9 @@ func TestLoadKeybindingsMapOverride(t *testing.T) {
 	}
 	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "alt+y" {
 		t.Fatalf("unexpected copy id binding: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandToggleContextPanel, ""); got != "f6" {
+		t.Fatalf("unexpected context panel binding: %q", got)
 	}
 }
 
@@ -306,6 +309,9 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandMenu, ""); got != "ctrl+m" {
 		t.Fatalf("expected default menu key ctrl+m, got %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandOpenSettings, ""); got != "esc" {
+		t.Fatalf("expected default open settings key esc, got %q", got)
+	}
 	if got := bindings.KeyFor(KeyCommandRename, ""); got != "m" {
 		t.Fatalf("expected default rename key m, got %q", got)
 	}
@@ -341,6 +347,9 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	}
 	if got := bindings.KeyFor(KeyCommandSidebarSortReverse, ""); got != "alt+r" {
 		t.Fatalf("expected default sidebar reverse key alt+r, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandToggleContextPanel, ""); got != "ctrl+l" {
+		t.Fatalf("expected default context panel key ctrl+l, got %q", got)
 	}
 	if got := bindings.KeyFor(KeyCommandDebugPanelUp, ""); got != "J" {
 		t.Fatalf("expected default debug panel up key J, got %q", got)

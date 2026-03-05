@@ -248,22 +248,17 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionAccess)
 			}
 		}
+		if handled, cmd := m.reduceGlobalKey(keyMsg, globalKeyOptions{
+			AllowMenu:          true,
+			AllowToggleSidebar: true,
+			AllowToggleNotes:   true,
+			AllowToggleContext: true,
+		}); handled {
+			return true, cmd
+		}
 		switch {
 		case m.keyMatchesCommand(keyMsg, KeyCommandQuit, "q"):
 			return true, tea.Quit
-		case m.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b"):
-			m.toggleSidebar()
-			return true, m.requestAppStateSaveCmd()
-		case m.keyMatchesCommand(keyMsg, KeyCommandToggleNotesPanel, "ctrl+o"):
-			return true, m.toggleNotesPanel()
-		case m.keyMatchesCommand(keyMsg, KeyCommandMenu, "ctrl+m"):
-			if m.menu != nil {
-				if m.contextMenu != nil {
-					m.contextMenu.Close()
-				}
-				m.menu.Toggle()
-			}
-			return true, nil
 		case m.keyMatchesCommand(keyMsg, KeyCommandDismissSelection, "d"):
 			if m.guidedWorkflow != nil {
 				if runID := strings.TrimSpace(m.guidedWorkflow.RunID()); runID != "" {
@@ -866,21 +861,16 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 		onSubmit: func(string) tea.Cmd {
 			return m.startGuidedWorkflowRun()
 		},
-		preHandle: func(key string, keyMsg tea.KeyMsg) (bool, tea.Cmd) {
+		preHandle: func(_ string, keyMsg tea.KeyMsg) (bool, tea.Cmd) {
+			if handled, cmd := m.reduceGlobalKey(keyMsg, globalKeyOptions{
+				AllowMenu:          true,
+				AllowToggleSidebar: true,
+				AllowToggleNotes:   true,
+				AllowToggleContext: true,
+			}); handled {
+				return true, cmd
+			}
 			switch {
-			case m.keyMatchesCommand(keyMsg, KeyCommandToggleSidebar, "ctrl+b"):
-				m.toggleSidebar()
-				return true, m.requestAppStateSaveCmd()
-			case m.keyMatchesCommand(keyMsg, KeyCommandToggleNotesPanel, "ctrl+o"):
-				return true, m.toggleNotesPanel()
-			case m.keyMatchesCommand(keyMsg, KeyCommandMenu, "ctrl+m"):
-				if m.menu != nil {
-					if m.contextMenu != nil {
-						m.contextMenu.Close()
-					}
-					m.menu.Toggle()
-				}
-				return true, nil
 			case m.keyMatchesCommand(keyMsg, KeyCommandComposeModel, "ctrl+1"):
 				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionModel)
 			case m.keyMatchesCommand(keyMsg, KeyCommandComposeReasoning, "ctrl+2"):

@@ -581,15 +581,17 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 				}
 				return true, m.copyWithStatusCmd(id, "copied session id")
 			}
-			if m.keyMatchesCommand(msg, KeyCommandToggleDebugStreams, "ctrl+d") {
-				return true, m.toggleDebugStreams()
+			if handled, cmd := m.reduceGlobalKey(msg, globalKeyOptions{
+				AllowToggleNotes:   true,
+				AllowToggleContext: true,
+				AllowToggleDebug:   true,
+			}); handled {
+				return true, cmd
 			}
 			if m.keyMatchesOverriddenCommand(msg, KeyCommandNotesNew, "n") {
 				return true, m.enterAddNoteForSelection()
 			}
 			switch key {
-			case "ctrl+o":
-				return true, m.toggleNotesPanel()
 			case "ctrl+1":
 				return true, m.requestComposeOptionPicker(composeOptionModel)
 			case "ctrl+2":
@@ -668,7 +670,7 @@ func isComposeInputCommand(command string) bool {
 		KeyCommandInputDeleteWordLeft, KeyCommandInputDeleteWordRight,
 		KeyCommandComposeModel, KeyCommandComposeReasoning, KeyCommandComposeAccess,
 		KeyCommandCopySessionID,
-		KeyCommandToggleNotesPanel, KeyCommandToggleDebugStreams:
+		KeyCommandToggleNotesPanel, KeyCommandToggleContextPanel, KeyCommandToggleDebugStreams:
 		return true
 	default:
 		return false

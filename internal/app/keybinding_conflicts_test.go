@@ -67,6 +67,24 @@ func TestDetectKeybindingConflictsDetectsComposeInputConflict(t *testing.T) {
 	}
 }
 
+func TestDetectKeybindingConflictsDetectsContextToggleConflictInComposeInput(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandToggleContextPanel: "ctrl+1",
+	})
+
+	conflicts := DetectKeybindingConflicts(bindings)
+	found := false
+	for _, conflict := range conflicts {
+		if conflict.Scope == keyScopeComposeInput && conflict.Key == "ctrl+1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected compose input conflict for ctrl+1 from context toggle, got %#v", conflicts)
+	}
+}
+
 func TestDetectKeybindingConflictsDetectsSearchInputConflictForInputClear(t *testing.T) {
 	bindings := NewKeybindings(map[string]string{
 		KeyCommandInputClear: "enter",

@@ -102,3 +102,71 @@ func TestResolveHotkeysAppliesStartGuidedWorkflowOverride(t *testing.T) {
 		t.Fatalf("expected start guided workflow hotkey to be present")
 	}
 }
+
+func TestDefaultHotkeysUseOpenSettingsCommand(t *testing.T) {
+	hotkeys := DefaultHotkeys()
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command == KeyCommandOpenSettings {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected open settings command in default hotkeys")
+	}
+}
+
+func TestResolveHotkeysAppliesOpenSettingsOverride(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandOpenSettings: "f12",
+	})
+	hotkeys := ResolveHotkeys(DefaultHotkeys(), bindings)
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command != KeyCommandOpenSettings {
+			continue
+		}
+		found = true
+		if hotkey.Key != "f12" {
+			t.Fatalf("expected overridden open settings key f12, got %q", hotkey.Key)
+		}
+	}
+	if !found {
+		t.Fatalf("expected open settings hotkey to be present")
+	}
+}
+
+func TestDefaultHotkeysUseToggleContextPanelCommand(t *testing.T) {
+	hotkeys := DefaultHotkeys()
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command == KeyCommandToggleContextPanel {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected toggle context panel command in default hotkeys")
+	}
+}
+
+func TestResolveHotkeysAppliesToggleContextPanelOverride(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandToggleContextPanel: "f6",
+	})
+	hotkeys := ResolveHotkeys(DefaultHotkeys(), bindings)
+	found := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command != KeyCommandToggleContextPanel {
+			continue
+		}
+		found = true
+		if hotkey.Key != "f6" {
+			t.Fatalf("expected overridden context panel key f6, got %q", hotkey.Key)
+		}
+	}
+	if !found {
+		t.Fatalf("expected toggle context panel hotkey to be present")
+	}
+}

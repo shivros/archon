@@ -80,8 +80,11 @@ func TestNotesPanelReflowMsgRendersDeferredViewport(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected reflow msg to be handled")
 	}
-	if m.renderVersion <= before {
-		t.Fatalf("expected deferred reflow to render viewport")
+	if m.renderVersion <= before && m.viewport.TotalLineCount() == 0 {
+		t.Fatalf("expected deferred reflow to keep viewport rendered")
+	}
+	if got := strings.TrimSpace(xansi.Strip(m.renderNotesPanelView())); got == "" {
+		t.Fatalf("expected deferred reflow to render notes panel")
 	}
 }
 

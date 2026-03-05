@@ -637,6 +637,163 @@ func TestEscOpensSettingsMenuInNormalMode(t *testing.T) {
 	}
 }
 
+func TestReduceGlobalKeyTogglesContextPanelWhenAllowed(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.resize(180, 40)
+
+	handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl}, globalKeyOptions{
+		AllowToggleContext: true,
+	})
+	if !handled {
+		t.Fatalf("expected ctrl+l to be handled when context toggle is allowed")
+	}
+	if cmd == nil {
+		t.Fatalf("expected context toggle to return persistence command")
+	}
+	if !m.appState.ContextPanelHidden {
+		t.Fatalf("expected context panel hidden after toggle")
+	}
+}
+
+func TestReduceGlobalKeyIgnoresContextToggleWhenDisallowed(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl}, globalKeyOptions{})
+	if handled {
+		t.Fatalf("expected ctrl+l to be ignored when context toggle is disallowed")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command when toggle is disallowed")
+	}
+}
+
+func TestReduceGlobalKeyMenuSettingsSidebarNotesDebugMatrix(t *testing.T) {
+	newSessionModel := func(t *testing.T) Model {
+		t.Helper()
+		m := newPhase0ModelWithSession("codex")
+		if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+			t.Fatalf("expected selected session")
+		}
+		m.resize(180, 40)
+		return m
+	}
+
+	{
+		m := newSessionModel(t)
+		handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: 'm', Mod: tea.ModCtrl}, globalKeyOptions{AllowMenu: true})
+		if !handled || cmd != nil {
+			t.Fatalf("expected menu toggle handled without command")
+		}
+		if m.menu == nil || !m.menu.IsActive() {
+			t.Fatalf("expected menu to be open")
+		}
+	}
+
+	{
+		m := newSessionModel(t)
+		handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: tea.KeyEsc}, globalKeyOptions{AllowSettings: true})
+		if !handled || cmd != nil {
+			t.Fatalf("expected settings open handled without command")
+		}
+		if m.settingsMenu == nil || !m.settingsMenu.IsOpen() {
+			t.Fatalf("expected settings menu to be open")
+		}
+	}
+
+	{
+		m := newSessionModel(t)
+		handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl}, globalKeyOptions{AllowToggleSidebar: true})
+		if !handled || cmd == nil {
+			t.Fatalf("expected sidebar toggle handled with persistence command")
+		}
+	}
+
+	{
+		m := newSessionModel(t)
+		m.notesPanelOpen = false
+		handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl}, globalKeyOptions{AllowToggleNotes: true})
+		if !handled || cmd == nil {
+			t.Fatalf("expected notes toggle handled with reflow/fetch command")
+		}
+		if !m.notesPanelOpen {
+			t.Fatalf("expected notes panel open after toggle")
+		}
+	}
+
+	{
+		m := newSessionModel(t)
+		m.appState.DebugStreamsEnabled = false
+		handled, cmd := m.reduceGlobalKey(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}, globalKeyOptions{AllowToggleDebug: true})
+		if !handled || cmd == nil {
+			t.Fatalf("expected debug toggle handled with command batch")
+		}
+		if !m.appState.DebugStreamsEnabled {
+			t.Fatalf("expected debug streams enabled after toggle")
+		}
+	}
+}
+
+func TestOpenSettingsKeyUsesRebindableCommand(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandOpenSettings: "s",
+	}))
+	handled, cmd := m.reduceMenuAndAppKeys(keyRune('s'))
+	if !handled {
+		t.Fatalf("expected rebound open-settings key to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command on rebound open-settings key")
+	}
+	if m.settingsMenu == nil || !m.settingsMenu.IsOpen() {
+		t.Fatalf("expected settings menu to open from rebound key")
+	}
+
+	m.settingsMenu.Close()
+	handled, _ = m.reduceMenuAndAppKeys(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if handled {
+		t.Fatalf("expected esc to stop opening settings when open-settings is rebound")
+	}
+	if m.settingsMenu.IsOpen() {
+		t.Fatalf("did not expect settings menu to open from default esc after rebinding")
+	}
+}
+
+func TestEscDoesNotQuitWhenOpenSettingsAndQuitAreBothRebound(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandOpenSettings: "ctrl+shift+s",
+		KeyCommandQuit:         "ctrl+q",
+	}))
+
+	handled, cmd := m.reduceMenuAndAppKeys(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if handled {
+		t.Fatalf("expected esc to be unhandled when open-settings is rebound off esc")
+	}
+	if cmd != nil {
+		t.Fatalf("did not expect quit command from esc with rebound quit key")
+	}
+}
+
+func TestUpdateEscDoesNotQuitViaSidebarDefaultsWhenOpenSettingsRebound(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandOpenSettings: "ctrl+shift+s",
+		KeyCommandQuit:         "ctrl+q",
+	}))
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	next, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("expected model update result")
+	}
+	if next.settingsMenu != nil && next.settingsMenu.IsOpen() {
+		t.Fatalf("did not expect esc to open settings when open-settings is rebound")
+	}
+}
+
 func TestEscDoesNotOpenSettingsMenuInComposeMode(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeCompose

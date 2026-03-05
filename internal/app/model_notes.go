@@ -201,9 +201,13 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.enterAddNote()
 		return true, nil
 	}
+	if handled, cmd := m.reduceGlobalKey(msg, globalKeyOptions{
+		AllowToggleNotes:   true,
+		AllowToggleContext: true,
+	}); handled {
+		return true, cmd
+	}
 	switch m.keyString(msg) {
-	case "ctrl+o":
-		return true, m.toggleNotesPanel()
 	case "1":
 		return true, m.toggleNotesFilterScope(types.NoteScopeWorkspace)
 	case "2":
@@ -229,9 +233,11 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 		return false, nil
 	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch m.keyString(keyMsg) {
-		case "ctrl+o":
-			return true, m.toggleNotesPanel()
+		if handled, cmd := m.reduceGlobalKey(keyMsg, globalKeyOptions{
+			AllowToggleNotes:   true,
+			AllowToggleContext: true,
+		}); handled {
+			return true, cmd
 		}
 	} else if _, ok := msg.(tea.PasteMsg); !ok {
 		return false, nil

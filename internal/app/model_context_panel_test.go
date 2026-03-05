@@ -26,10 +26,13 @@ func (s stubThreadContextMetricsService) BuildPanelData(ThreadContextMetricsInpu
 	return s.data
 }
 
-func TestActiveSidePanelModeUsesContextInComposeMode(t *testing.T) {
-	m := NewModel(nil)
-	m.mode = uiModeCompose
-	m.notesPanelOpen = true
+func TestActiveSidePanelModeUsesContextForSelectedSession(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
+	m.notesPanelOpen = false
 	m.resize(180, 40)
 
 	if got := m.activeSidePanelMode(); got != sidePanelModeContext {
@@ -44,8 +47,11 @@ func TestActiveSidePanelModeUsesContextInComposeMode(t *testing.T) {
 }
 
 func TestActiveSidePanelModePrefersDebugOverContext(t *testing.T) {
-	m := NewModel(nil)
-	m.mode = uiModeCompose
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
 	m.appState.DebugStreamsEnabled = true
 	m.resize(180, 40)
 
@@ -57,6 +63,26 @@ func TestActiveSidePanelModePrefersDebugOverContext(t *testing.T) {
 	}
 	if m.contextPanelVisible {
 		t.Fatalf("expected context panel to be hidden when debug is enabled")
+	}
+}
+
+func TestActiveSidePanelModePrefersNotesOverContext(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
+	m.notesPanelOpen = true
+	m.resize(180, 40)
+
+	if got := m.activeSidePanelMode(); got != sidePanelModeNotes {
+		t.Fatalf("expected side panel mode notes, got %v", got)
+	}
+	if !m.notesPanelVisible {
+		t.Fatalf("expected notes panel to be visible")
+	}
+	if m.contextPanelVisible {
+		t.Fatalf("expected context panel hidden when notes panel is open")
 	}
 }
 
@@ -137,5 +163,43 @@ func TestRenderContextPanelViewFallsBackToThreadTitle(t *testing.T) {
 	text := xansi.Strip(m.renderContextPanelView())
 	if !strings.Contains(text, "Thread") {
 		t.Fatalf("expected thread fallback title, got %q", text)
+	}
+}
+
+func TestSetContextPanelHiddenReportsChange(t *testing.T) {
+	m := NewModel(nil)
+	if changed := m.setContextPanelHidden(false); changed {
+		t.Fatalf("expected unchanged when already shown")
+	}
+	if changed := m.setContextPanelHidden(true); !changed {
+		t.Fatalf("expected change when hiding context panel")
+	}
+	if !m.appState.ContextPanelHidden {
+		t.Fatalf("expected context panel hidden state")
+	}
+	if !m.hasAppState {
+		t.Fatalf("expected app state to be marked dirty")
+	}
+}
+
+func TestContextPanelToggleStatusMessages(t *testing.T) {
+	if got := contextPanelToggleStatus(true); got != "context panel hidden" {
+		t.Fatalf("unexpected hidden status: %q", got)
+	}
+	if got := contextPanelToggleStatus(false); got != "context panel shown" {
+		t.Fatalf("unexpected shown status: %q", got)
+	}
+}
+
+func TestContextPanelVisibilityHelpersHandleNilModel(t *testing.T) {
+	var m *Model
+	if m.contextPanelEnabled() {
+		t.Fatalf("expected nil model context panel to be disabled")
+	}
+	if changed := m.setContextPanelHidden(true); changed {
+		t.Fatalf("expected nil model setContextPanelHidden to report unchanged")
+	}
+	if cmd := m.toggleContextPanel(); cmd != nil {
+		t.Fatalf("expected nil model toggle command to be nil")
 	}
 }

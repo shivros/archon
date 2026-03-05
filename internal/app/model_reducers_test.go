@@ -342,6 +342,48 @@ func TestUpdateNormalModeCtrlDTogglesDebugStreamsBeforeViewportScroll(t *testing
 	}
 }
 
+func TestUpdateNormalModeCtrlLTogglesContextPanelPreference(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
+	m.resize(180, 40)
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	if !m.appState.ContextPanelHidden {
+		t.Fatalf("expected ctrl+l to hide context panel")
+	}
+	if m.contextPanelVisible {
+		t.Fatalf("expected context panel to be hidden")
+	}
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	if m.appState.ContextPanelHidden {
+		t.Fatalf("expected ctrl+l to show context panel")
+	}
+	if !m.contextPanelVisible {
+		t.Fatalf("expected context panel to be visible")
+	}
+}
+
+func TestUpdateNormalModeUsesRemappedContextPanelToggleKey(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandToggleContextPanel: "f6",
+	}))
+	m.resize(180, 40)
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	if !m.appState.ContextPanelHidden {
+		t.Fatalf("expected remapped key to hide context panel")
+	}
+}
+
 func TestUpdateComposeModePasteUpdatesInput(t *testing.T) {
 	m := NewModel(nil)
 	m.enterCompose("s1")
@@ -674,6 +716,12 @@ func TestWorkspaceEditReducerRenameWorktreeEnterReturnsCommand(t *testing.T) {
 	}
 	if m.renameWorktreeWorkspaceID != "" || m.renameWorktreeID != "" {
 		t.Fatalf("expected rename worktree ids to clear")
+	}
+}
+
+func TestIsComposeInputCommandIncludesContextToggle(t *testing.T) {
+	if !isComposeInputCommand(KeyCommandToggleContextPanel) {
+		t.Fatalf("expected context panel toggle to be treated as compose input command")
 	}
 }
 

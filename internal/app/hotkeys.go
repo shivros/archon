@@ -34,11 +34,13 @@ func DefaultHotkeys() []Hotkey {
 	return []Hotkey{
 		{Key: "ctrl+b", Command: KeyCommandToggleSidebar, Label: "sidebar", Context: HotkeyGlobal, Priority: 10},
 		{Key: "ctrl+o", Command: KeyCommandToggleNotesPanel, Label: "notes panel", Context: HotkeyGlobal, Priority: 10},
+		{Key: "ctrl+l", Command: KeyCommandToggleContextPanel, Label: "context panel", Context: HotkeyGlobal, Priority: 10},
 		{Key: "ctrl+d", Command: KeyCommandToggleDebugStreams, Label: "debug streams", Context: HotkeyGlobal, Priority: 10},
 		{Key: "J/K", Label: "debug scroll", Context: HotkeySidebar, Priority: 58},
 		{Key: "shift+pgup/pgdn", Label: "debug page", Context: HotkeySidebar, Priority: 59},
 		{Key: "shift+home/end", Label: "debug top/bottom", Context: HotkeySidebar, Priority: 60},
 		{Key: "ctrl+m", Command: KeyCommandMenu, Label: "menu", Context: HotkeyGlobal, Priority: 11},
+		{Key: "esc", Command: KeyCommandOpenSettings, Label: "settings", Context: HotkeyGlobal, Priority: 12},
 		{Key: "q", Command: KeyCommandQuit, Label: "quit", Context: HotkeyGlobal, Priority: 90},
 		{Key: "a", Command: KeyCommandAddWorkspace, Label: "add workspace", Context: HotkeySidebar, Priority: 20},
 		{Key: "t", Command: KeyCommandAddWorktree, Label: "add worktree", Context: HotkeySidebar, Priority: 21},

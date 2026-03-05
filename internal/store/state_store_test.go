@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -24,6 +25,7 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	state.ActiveWorkspaceID = "ws_1"
 	state.ActiveWorktreeID = "wt_1"
 	state.SidebarCollapsed = true
+	state.ContextPanelHidden = true
 	state.SidebarWorkspaceExpanded = map[string]bool{
 		"ws_1": false,
 	}
@@ -59,6 +61,9 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	if loaded.ActiveWorkspaceID != "ws_1" || loaded.ActiveWorktreeID != "wt_1" || !loaded.SidebarCollapsed {
 		t.Fatalf("unexpected reload state")
 	}
+	if !loaded.ContextPanelHidden {
+		t.Fatalf("expected context panel hidden preference to round-trip")
+	}
 	if got, ok := loaded.SidebarWorkspaceExpanded["ws_1"]; !ok || got {
 		t.Fatalf("expected workspace expansion override ws_1=false, got=%v ok=%v", got, ok)
 	}
@@ -85,5 +90,26 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 	}
 	if got := loaded.Recents.DismissedTurn["s-dismissed"]; got != "turn-a0" {
 		t.Fatalf("expected dismissed turn to round-trip, got %q", got)
+	}
+}
+
+func TestAppStateStoreLoadLegacyStateWithoutContextPanelField(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := NewFileAppStateStore(path)
+	legacy := []byte(`{"active_workspace_id":"ws_legacy","sidebar_collapsed":false}`)
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+
+	loaded, err := store.Load(ctx)
+	if err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if loaded.ActiveWorkspaceID != "ws_legacy" {
+		t.Fatalf("expected legacy workspace id, got %q", loaded.ActiveWorkspaceID)
+	}
+	if loaded.ContextPanelHidden {
+		t.Fatalf("expected missing context panel field to default to shown (hidden=false)")
 	}
 }

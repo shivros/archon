@@ -157,29 +157,17 @@ func (m *Model) reduceNotesEntryKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 }
 
 func (m *Model) reduceMenuAndAppKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	if m.keyMatchesCommand(msg, KeyCommandMenu, "ctrl+m") {
-		if m.menu != nil {
-			if m.contextMenu != nil {
-				m.contextMenu.Close()
-			}
-			m.menu.Toggle()
-		}
-		return true, nil
-	}
-	if m.keyMatchesCommand(msg, KeyCommandToggleSidebar, "ctrl+b") {
-		m.toggleSidebar()
-		return true, m.requestAppStateSaveCmd()
-	}
-	if m.keyMatchesCommand(msg, KeyCommandToggleNotesPanel, "ctrl+o") {
-		return true, m.toggleNotesPanel()
-	}
-	if m.keyMatchesCommand(msg, KeyCommandToggleDebugStreams, "ctrl+d") {
-		return true, m.toggleDebugStreams()
+	if handled, cmd := m.reduceGlobalKey(msg, globalKeyOptions{
+		AllowMenu:          true,
+		AllowSettings:      true,
+		AllowToggleSidebar: true,
+		AllowToggleNotes:   true,
+		AllowToggleContext: true,
+		AllowToggleDebug:   true,
+	}); handled {
+		return true, cmd
 	}
 	switch m.keyString(msg) {
-	case "esc":
-		m.openSettingsMenu()
-		return true, nil
 	case "q":
 		if m.debugStream != nil {
 			m.debugStream.Close()

@@ -78,10 +78,13 @@ func TestLayoutFrameUsesDebugPanelDimensionsWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestLayoutFrameUsesContextPanelDimensionsInComposeMode(t *testing.T) {
-	m := NewModel(nil)
-	m.mode = uiModeCompose
-	m.notesPanelOpen = true
+func TestLayoutFrameUsesContextPanelDimensionsInSessionMode(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected selected session")
+	}
+	m.mode = uiModeNormal
+	m.notesPanelOpen = false
 	m.resize(180, 40)
 
 	if m.notesPanelVisible {

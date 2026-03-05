@@ -12,10 +12,12 @@ import (
 
 const (
 	KeyCommandMenu                 = "ui.menu"
+	KeyCommandOpenSettings         = "ui.openSettings"
 	KeyCommandRename               = "ui.rename"
 	KeyCommandQuit                 = "ui.quit"
 	KeyCommandToggleSidebar        = "ui.toggleSidebar"
 	KeyCommandToggleNotesPanel     = "ui.toggleNotesPanel"
+	KeyCommandToggleContextPanel   = "ui.toggleContextPanel"
 	KeyCommandToggleDebugStreams   = "ui.toggleDebugStreams"
 	KeyCommandDebugPanelUp         = "ui.debugPanelUp"
 	KeyCommandDebugPanelDown       = "ui.debugPanelDown"
@@ -81,10 +83,12 @@ const (
 
 var defaultKeybindingByCommand = map[string]string{
 	KeyCommandMenu:                 "ctrl+m",
+	KeyCommandOpenSettings:         "esc",
 	KeyCommandRename:               "m",
 	KeyCommandQuit:                 "q",
 	KeyCommandToggleSidebar:        "ctrl+b",
 	KeyCommandToggleNotesPanel:     "ctrl+o",
+	KeyCommandToggleContextPanel:   "ctrl+l",
 	KeyCommandToggleDebugStreams:   "ctrl+d",
 	KeyCommandDebugPanelUp:         "J",
 	KeyCommandDebugPanelDown:       "K",
@@ -297,6 +301,18 @@ func (m *Model) keyMatchesCommand(msg tea.KeyMsg, command, fallback string) bool
 		return true
 	}
 	canonical := strings.TrimSpace(fallback)
+	return canonical != "" && strings.TrimSpace(m.keyString(msg)) == canonical
+}
+
+func (m *Model) keyMatchesCommandStrict(msg tea.KeyMsg, command, fallback string) bool {
+	bound := strings.TrimSpace(m.keyForCommand(command, fallback))
+	canonical := strings.TrimSpace(fallback)
+	if bound != "" && canonical != "" && bound != canonical {
+		return strings.TrimSpace(msg.String()) == bound
+	}
+	if bound != "" && strings.TrimSpace(msg.String()) == bound {
+		return true
+	}
 	return canonical != "" && strings.TrimSpace(m.keyString(msg)) == canonical
 }
 

@@ -367,9 +367,11 @@ Clipboard copy always tries the system clipboard first, then OSC52 as fallback.
 The following command IDs are supported in `keybindings.json`:
 
 - `ui.menu`
+- `ui.openSettings`
 - `ui.quit`
 - `ui.toggleSidebar`
 - `ui.toggleNotesPanel`
+- `ui.toggleContextPanel`
 - `ui.copySessionID`
 - `ui.openSearch`
 - `ui.viewportTop`
