@@ -248,15 +248,20 @@ func (s *asyncTitleGenerationService) process(job titleGenerationJob) {
 }
 
 type defaultGeneratedSessionTitleUpdater struct {
-	manager *SessionManager
-	stores  *Stores
+	manager  *SessionManager
+	stores   *Stores
+	metadata MetadataEventPublisher
 }
 
-func newDefaultGeneratedSessionTitleUpdater(manager *SessionManager, stores *Stores) generatedSessionTitleUpdater {
+func newDefaultGeneratedSessionTitleUpdater(
+	manager *SessionManager,
+	stores *Stores,
+	metadata MetadataEventPublisher,
+) generatedSessionTitleUpdater {
 	if manager == nil && (stores == nil || stores.Sessions == nil) {
 		return nil
 	}
-	return &defaultGeneratedSessionTitleUpdater{manager: manager, stores: stores}
+	return &defaultGeneratedSessionTitleUpdater{manager: manager, stores: stores, metadata: metadata}
 }
 
 func (u *defaultGeneratedSessionTitleUpdater) TryUpdateGeneratedSessionTitle(
@@ -322,12 +327,26 @@ func (u *defaultGeneratedSessionTitleUpdater) TryUpdateGeneratedSessionTitle(
 	if _, err := u.stores.Sessions.UpsertRecord(ctx, record); err != nil {
 		return false, err
 	}
+	now := time.Now().UTC()
 	if u.stores.SessionMeta != nil {
-		now := time.Now().UTC()
 		_, _ = u.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
 			SessionID:    sessionID,
 			Title:        generatedTitle,
 			LastActiveAt: &now,
+		})
+	}
+	if u.metadata != nil {
+		u.metadata.PublishMetadataEvent(types.MetadataEvent{
+			Version: types.MetadataEventSchemaVersionV1,
+			Type:    types.MetadataEventTypeSessionUpdated,
+			Session: &types.MetadataEntityUpdated{
+				ID:        sessionID,
+				Title:     generatedTitle,
+				UpdatedAt: now,
+				Changed: map[string]any{
+					"title": generatedTitle,
+				},
+			},
 		})
 	}
 	return true, nil

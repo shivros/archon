@@ -32,6 +32,7 @@ type API struct {
 	WorkflowSessionInterrupt  WorkflowRunSessionInterruptService
 	WorkflowRunStop           WorkflowRunStopCoordinator
 	TitleGeneration           TitleGenerationQueue
+	MetadataEvents            MetadataEventStreamService
 	Logger                    logging.Logger
 }
 
@@ -103,6 +104,10 @@ type WorkflowRunResumeRequest struct {
 
 type WorkflowRunRenameRequest struct {
 	Name string `json:"name,omitempty"`
+}
+
+type MetadataEventStreamService interface {
+	Subscribe(afterRevision string) (<-chan types.MetadataEvent, func(), error)
 }
 
 type GuidedWorkflowRunService interface {

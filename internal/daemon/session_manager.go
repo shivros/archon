@@ -49,6 +49,7 @@ type SessionManager struct {
 	metaStore    SessionMetaStore
 	sessionStore SessionIndexStore
 	notifier     NotificationPublisher
+	metadata     MetadataEventPublisher
 	emitter      SessionLifecycleEmitter
 	defaultEmit  bool
 	logger       logging.Logger
@@ -198,6 +199,12 @@ func (m *SessionManager) SetNotificationPublisher(notifier NotificationPublisher
 	m.notifier = notifier
 	m.emitter = NewSessionLifecycleEmitter(notifier, m.metaStore, nil)
 	m.defaultEmit = true
+}
+
+func (m *SessionManager) SetMetadataEventPublisher(publisher MetadataEventPublisher) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.metadata = publisher
 }
 
 func (m *SessionManager) SetSessionLifecycleEmitter(emitter SessionLifecycleEmitter) {
@@ -893,19 +900,49 @@ func (m *SessionManager) UpdateGeneratedSessionTitle(id, title string) error {
 }
 
 func (m *SessionManager) updateSessionTitleWithLock(id, title string, lockTitle bool) error {
+	id = strings.TrimSpace(id)
+	normalizedTitle := strings.TrimSpace(sanitizeTitle(title))
+	currentCanonical := ""
+	hasCurrentCanonical := false
+
 	m.mu.Lock()
 	store := m.metaStore
 	sessionStore := m.sessionStore
+	metadataPublisher := m.metadata
 	if state, ok := m.sessions[id]; ok && state != nil && state.session != nil {
-		state.session.Title = strings.TrimSpace(title)
+		currentCanonical = strings.TrimSpace(sanitizeTitle(state.session.Title))
+		hasCurrentCanonical = true
+		state.session.Title = normalizedTitle
 	}
 	m.mu.Unlock()
+
+	if !hasCurrentCanonical && sessionStore != nil {
+		record, ok, err := sessionStore.GetRecord(context.Background(), id)
+		if err != nil {
+			return err
+		}
+		if ok && record != nil && record.Session != nil {
+			currentCanonical = strings.TrimSpace(sanitizeTitle(record.Session.Title))
+			hasCurrentCanonical = true
+		}
+	}
+	if !hasCurrentCanonical && store != nil {
+		meta, ok, err := store.Get(context.Background(), id)
+		if err != nil {
+			return err
+		}
+		if ok && meta != nil {
+			currentCanonical = strings.TrimSpace(sanitizeTitle(meta.Title))
+			hasCurrentCanonical = true
+		}
+	}
+
 	if store == nil {
 		if sessionStore == nil {
 			return nil
 		}
 	}
-	sanitized := sanitizeTitle(title)
+	sanitized := normalizedTitle
 	meta := &types.SessionMeta{
 		SessionID:   id,
 		Title:       sanitized,
@@ -923,12 +960,29 @@ func (m *SessionManager) updateSessionTitleWithLock(id, title string, lockTitle 
 		}
 		if ok && record.Session != nil {
 			copy := *record.Session
-			copy.Title = strings.TrimSpace(title)
+			copy.Title = normalizedTitle
 			record.Session = &copy
 			if _, err := sessionStore.UpsertRecord(context.Background(), record); err != nil {
 				return err
 			}
 		}
+	}
+	shouldPublish := !hasCurrentCanonical || currentCanonical != normalizedTitle
+	if metadataPublisher != nil && shouldPublish {
+		now := time.Now().UTC()
+		metadataPublisher.PublishMetadataEvent(types.MetadataEvent{
+			Version: types.MetadataEventSchemaVersionV1,
+			Type:    types.MetadataEventTypeSessionUpdated,
+			Session: &types.MetadataEntityUpdated{
+				ID:        id,
+				Title:     normalizedTitle,
+				UpdatedAt: now,
+				Changed: map[string]any{
+					"title":        normalizedTitle,
+					"title_locked": lockTitle,
+				},
+			},
+		})
 	}
 	return nil
 }

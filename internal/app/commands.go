@@ -689,6 +689,22 @@ func openDebugStreamCmdWithContext(api SessionDebugStreamAPI, id string, parent 
 	}
 }
 
+func openMetadataStreamCmd(api MetadataStreamAPI, afterRevision string) tea.Cmd {
+	return func() tea.Msg {
+		if api == nil {
+			return metadataStreamMsg{err: errors.New("metadata stream api is unavailable"), afterRevision: afterRevision}
+		}
+		ch, cancel, err := api.MetadataStream(context.Background(), afterRevision)
+		return metadataStreamMsg{ch: ch, cancel: cancel, err: err, afterRevision: afterRevision}
+	}
+}
+
+func reconnectMetadataStreamCmd(delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return metadataStreamReconnectMsg{}
+	})
+}
+
 func fetchApprovalsCmd(api SessionApprovalsAPI, id string) tea.Cmd {
 	return fetchApprovalsCmdWithContext(api, id, nil)
 }

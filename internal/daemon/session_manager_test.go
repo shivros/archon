@@ -2,16 +2,37 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"control/internal/store"
 	"control/internal/types"
 )
+
+type captureSessionMetadataPublisher struct {
+	mu     sync.Mutex
+	events []types.MetadataEvent
+}
+
+func (c *captureSessionMetadataPublisher) PublishMetadataEvent(event types.MetadataEvent) {
+	c.mu.Lock()
+	c.events = append(c.events, event)
+	c.mu.Unlock()
+}
+
+func (c *captureSessionMetadataPublisher) Events() []types.MetadataEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]types.MetadataEvent, len(c.events))
+	copy(out, c.events)
+	return out
+}
 
 func TestSessionManagerStartAndTail(t *testing.T) {
 	manager := newTestManager(t)
@@ -246,6 +267,113 @@ func TestUpdateSessionTitleUpdatesLiveSession(t *testing.T) {
 	waitForStatus(t, manager, session.ID, types.SessionStatusExited, 2*time.Second)
 }
 
+func TestUpdateSessionTitlePublishesMetadataEvent(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	manager.SetMetaStore(metaStore)
+	manager.SetSessionStore(sessionStore)
+	publisher := &captureSessionMetadataPublisher{}
+	manager.SetMetadataEventPublisher(publisher)
+
+	now := time.Now().UTC()
+	_, err := sessionStore.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s1",
+			Provider:  "custom",
+			Title:     "before",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	if err := manager.UpdateSessionTitle("s1", "after"); err != nil {
+		t.Fatalf("UpdateSessionTitle: %v", err)
+	}
+	events := publisher.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one metadata event, got %d", len(events))
+	}
+	if events[0].Type != types.MetadataEventTypeSessionUpdated {
+		t.Fatalf("unexpected event type: %q", events[0].Type)
+	}
+	if events[0].Session == nil || events[0].Session.ID != "s1" || events[0].Session.Title != "after" {
+		t.Fatalf("unexpected session payload: %#v", events[0].Session)
+	}
+}
+
+func TestUpdateSessionTitleSkipsNoOpMetadataPublish(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	manager.SetMetaStore(metaStore)
+	manager.SetSessionStore(sessionStore)
+	publisher := &captureSessionMetadataPublisher{}
+	manager.SetMetadataEventPublisher(publisher)
+
+	now := time.Now().UTC()
+	_, err := sessionStore.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s1",
+			Provider:  "custom",
+			Title:     "same",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	if err := manager.UpdateSessionTitle("s1", "same"); err != nil {
+		t.Fatalf("UpdateSessionTitle: %v", err)
+	}
+	if got := len(publisher.Events()); got != 0 {
+		t.Fatalf("expected no metadata event for no-op title update, got %d", got)
+	}
+}
+
+func TestUpdateSessionTitlePublishesCanonicalTitleValue(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	manager.SetMetaStore(metaStore)
+	manager.SetSessionStore(sessionStore)
+	publisher := &captureSessionMetadataPublisher{}
+	manager.SetMetadataEventPublisher(publisher)
+
+	now := time.Now().UTC()
+	_, err := sessionStore.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s1",
+			Provider:  "custom",
+			Title:     "before",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	if err := manager.UpdateSessionTitle("s1", "  after  "); err != nil {
+		t.Fatalf("UpdateSessionTitle: %v", err)
+	}
+	events := publisher.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one metadata event, got %d", len(events))
+	}
+	if got := events[0].Session.Title; got != "after" {
+		t.Fatalf("expected canonical emitted title 'after', got %q", got)
+	}
+}
+
 func TestUpdateGeneratedSessionTitleDoesNotLock(t *testing.T) {
 	manager := newTestManager(t)
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
@@ -293,6 +421,139 @@ func TestUpdateGeneratedSessionTitleDoesNotLock(t *testing.T) {
 	}
 	if meta.TitleLocked {
 		t.Fatalf("expected generated update to keep title unlocked")
+	}
+}
+
+type failingTitleSessionIndexStore struct {
+	getErr    error
+	upsertErr error
+	record    *types.SessionRecord
+}
+
+func (s *failingTitleSessionIndexStore) ListRecords(context.Context) ([]*types.SessionRecord, error) {
+	if s.record == nil {
+		return []*types.SessionRecord{}, nil
+	}
+	return []*types.SessionRecord{s.record}, nil
+}
+
+func (s *failingTitleSessionIndexStore) GetRecord(context.Context, string) (*types.SessionRecord, bool, error) {
+	if s.getErr != nil {
+		return nil, false, s.getErr
+	}
+	if s.record == nil {
+		return nil, false, nil
+	}
+	return s.record, true, nil
+}
+
+func (s *failingTitleSessionIndexStore) UpsertRecord(_ context.Context, record *types.SessionRecord) (*types.SessionRecord, error) {
+	if s.upsertErr != nil {
+		return nil, s.upsertErr
+	}
+	s.record = record
+	return record, nil
+}
+
+func (s *failingTitleSessionIndexStore) DeleteRecord(context.Context, string) error { return nil }
+
+type failingTitleSessionMetaStore struct {
+	getErr    error
+	upsertErr error
+	entry     *types.SessionMeta
+}
+
+func (s *failingTitleSessionMetaStore) List(context.Context) ([]*types.SessionMeta, error) {
+	if s.entry == nil {
+		return []*types.SessionMeta{}, nil
+	}
+	return []*types.SessionMeta{s.entry}, nil
+}
+
+func (s *failingTitleSessionMetaStore) Get(_ context.Context, sessionID string) (*types.SessionMeta, bool, error) {
+	if s.getErr != nil {
+		return nil, false, s.getErr
+	}
+	if s.entry == nil || s.entry.SessionID != sessionID {
+		return nil, false, nil
+	}
+	return s.entry, true, nil
+}
+
+func (s *failingTitleSessionMetaStore) Upsert(_ context.Context, meta *types.SessionMeta) (*types.SessionMeta, error) {
+	if s.upsertErr != nil {
+		return nil, s.upsertErr
+	}
+	s.entry = meta
+	return meta, nil
+}
+
+func (s *failingTitleSessionMetaStore) Delete(context.Context, string) error { return nil }
+
+func TestUpdateSessionTitleReturnsSessionStoreGetError(t *testing.T) {
+	manager := newTestManager(t)
+	manager.SetSessionStore(&failingTitleSessionIndexStore{getErr: errors.New("get failed")})
+	err := manager.UpdateSessionTitle("s1", "after")
+	if err == nil || !strings.Contains(err.Error(), "get failed") {
+		t.Fatalf("expected session store get error, got %v", err)
+	}
+}
+
+func TestUpdateSessionTitleReturnsMetaStoreGetError(t *testing.T) {
+	manager := newTestManager(t)
+	manager.SetMetaStore(&failingTitleSessionMetaStore{getErr: errors.New("meta get failed")})
+	err := manager.UpdateSessionTitle("s1", "after")
+	if err == nil || !strings.Contains(err.Error(), "meta get failed") {
+		t.Fatalf("expected meta store get error, got %v", err)
+	}
+}
+
+func TestUpdateSessionTitleReturnsMetaStoreUpsertError(t *testing.T) {
+	manager := newTestManager(t)
+	manager.SetMetaStore(&failingTitleSessionMetaStore{upsertErr: errors.New("upsert failed")})
+	err := manager.UpdateSessionTitle("s1", "after")
+	if err == nil || !strings.Contains(err.Error(), "upsert failed") {
+		t.Fatalf("expected meta store upsert error, got %v", err)
+	}
+}
+
+func TestUpdateSessionTitleReturnsSessionStoreUpsertError(t *testing.T) {
+	manager := newTestManager(t)
+	manager.SetMetaStore(&failingTitleSessionMetaStore{})
+	manager.SetSessionStore(&failingTitleSessionIndexStore{
+		record: &types.SessionRecord{
+			Session: &types.Session{ID: "s1", Title: "before"},
+			Source:  sessionSourceInternal,
+		},
+		upsertErr: errors.New("session upsert failed"),
+	})
+	err := manager.UpdateSessionTitle("s1", "after")
+	if err == nil || !strings.Contains(err.Error(), "session upsert failed") {
+		t.Fatalf("expected session store upsert error, got %v", err)
+	}
+}
+
+func TestUpdateSessionTitlePublishesWhenNoCurrentCanonical(t *testing.T) {
+	manager := newTestManager(t)
+	manager.SetMetaStore(&failingTitleSessionMetaStore{})
+	publisher := &captureSessionMetadataPublisher{}
+	manager.SetMetadataEventPublisher(publisher)
+	if err := manager.UpdateSessionTitle("s1", "after"); err != nil {
+		t.Fatalf("UpdateSessionTitle: %v", err)
+	}
+	events := publisher.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected metadata event publish for missing canonical title, got %d", len(events))
+	}
+	if events[0].Session == nil || events[0].Session.Title != "after" {
+		t.Fatalf("unexpected metadata session payload: %#v", events[0].Session)
+	}
+}
+
+func TestUpdateSessionTitleNoStoresNoop(t *testing.T) {
+	manager := newTestManager(t)
+	if err := manager.UpdateSessionTitle("s1", "after"); err != nil {
+		t.Fatalf("expected nil error when stores are unavailable, got %v", err)
 	}
 }
 
@@ -482,11 +743,11 @@ func TestHelperProcess(t *testing.T) {
 				stderrLines = 1
 			}
 		case strings.HasPrefix(arg, "stdout_lines="):
-			fmt.Sscanf(strings.TrimPrefix(arg, "stdout_lines="), "%d", &stdoutLines)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(arg, "stdout_lines="), "%d", &stdoutLines)
 		case strings.HasPrefix(arg, "stderr_lines="):
-			fmt.Sscanf(strings.TrimPrefix(arg, "stderr_lines="), "%d", &stderrLines)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(arg, "stderr_lines="), "%d", &stderrLines)
 		case strings.HasPrefix(arg, "sleep_ms="):
-			fmt.Sscanf(strings.TrimPrefix(arg, "sleep_ms="), "%d", &sleepMs)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(arg, "sleep_ms="), "%d", &sleepMs)
 		case strings.HasPrefix(arg, "exit="):
 			fmt.Sscanf(strings.TrimPrefix(arg, "exit="), "%d", &exitCode)
 		case strings.HasPrefix(arg, "args_file="):
@@ -500,7 +761,7 @@ func TestHelperProcess(t *testing.T) {
 
 	for i := 0; i < stdoutLines; i++ {
 		if stdoutText != "" {
-			fmt.Fprintln(os.Stdout, stdoutText)
+			_, _ = fmt.Fprintln(os.Stdout, stdoutText)
 		}
 	}
 	for i := 0; i < stderrLines; i++ {

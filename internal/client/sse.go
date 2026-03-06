@@ -479,3 +479,99 @@ func (c *Client) DebugStream(ctx context.Context, id string) (<-chan types.Debug
 
 	return ch, cancel, nil
 }
+
+func (c *Client) MetadataStream(ctx context.Context, afterRevision string) (<-chan types.MetadataEvent, func(), error) {
+	if err := c.ensureToken(); err != nil {
+		return nil, nil, err
+	}
+	query := "follow=1"
+	if strings.TrimSpace(afterRevision) != "" {
+		query += "&after_revision=" + url.QueryEscape(strings.TrimSpace(afterRevision))
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	streamURL := fmt.Sprintf("%s/v1/metadata/stream?%s", c.baseURL, query)
+	if streamDebugEnabled() {
+		streamLogf("stream metadata open after=%s url=%s", strings.TrimSpace(afterRevision), streamURL)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "text/event-stream")
+	if strings.TrimSpace(afterRevision) != "" {
+		req.Header.Set("Last-Event-ID", strings.TrimSpace(afterRevision))
+	}
+
+	httpClient := &http.Client{}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer func() { _ = resp.Body.Close() }()
+		cancel()
+		if streamDebugEnabled() {
+			streamLogf("stream metadata error status=%d", resp.StatusCode)
+		}
+		return nil, nil, decodeAPIError(resp)
+	}
+
+	ch := make(chan types.MetadataEvent, 256)
+	go func() {
+		defer close(ch)
+		defer func() { _ = resp.Body.Close() }()
+
+		start := time.Now()
+		count := 0
+		reason := "eof"
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		var dataLines []string
+		lastID := ""
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				if len(dataLines) == 0 {
+					lastID = ""
+					continue
+				}
+				payload := strings.Join(dataLines, "\n")
+				dataLines = dataLines[:0]
+				var event types.MetadataEvent
+				if err := json.Unmarshal([]byte(payload), &event); err == nil {
+					if strings.TrimSpace(event.Revision) == "" && strings.TrimSpace(lastID) != "" {
+						event.Revision = strings.TrimSpace(lastID)
+					}
+					select {
+					case ch <- event:
+					default:
+					}
+					count++
+				}
+				lastID = ""
+				continue
+			}
+			if strings.HasPrefix(line, "id:") {
+				lastID = strings.TrimSpace(line[len("id:"):])
+				continue
+			}
+			if strings.HasPrefix(line, "data:") {
+				dataLines = append(dataLines, strings.TrimSpace(line[len("data:"):]))
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			reason = "scan_error"
+			if streamDebugEnabled() {
+				streamLogf("stream metadata scan error err=%v", err)
+			}
+		}
+		if streamDebugEnabled() {
+			streamLogf("stream metadata close reason=%s count=%d dur=%s", reason, count, time.Since(start))
+		}
+	}()
+	return ch, cancel, nil
+}

@@ -19,6 +19,7 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/workflow-runs/metrics", a.WorkflowRunMetricsEndpoint)
 	mux.HandleFunc("/v1/workflow-runs/metrics/reset", a.WorkflowRunMetricsResetEndpoint)
 	mux.HandleFunc("/v1/workflow-runs/", a.WorkflowRunByID)
+	mux.HandleFunc("/v1/metadata/stream", a.MetadataStreamEndpoint)
 	mux.HandleFunc("/v1/diagnostics/codex/thread", a.CodexThreadDiagnostics)
 	mux.HandleFunc("/v1/shutdown", a.ShutdownDaemon)
 }

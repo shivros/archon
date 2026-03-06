@@ -152,6 +152,10 @@ type SessionDebugStreamAPI interface {
 	DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error)
 }
 
+type MetadataStreamAPI interface {
+	MetadataStream(ctx context.Context, afterRevision string) (<-chan types.MetadataEvent, func(), error)
+}
+
 type SessionTranscriptSnapshotAPI interface {
 	GetTranscriptSnapshot(ctx context.Context, id string, lines int) (*client.TranscriptSnapshotResponse, error)
 }
@@ -415,6 +419,10 @@ func (a *ClientAPI) TailStream(ctx context.Context, id, stream string) (<-chan t
 
 func (a *ClientAPI) DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error) {
 	return a.client.DebugStream(ctx, id)
+}
+
+func (a *ClientAPI) MetadataStream(ctx context.Context, afterRevision string) (<-chan types.MetadataEvent, func(), error) {
+	return a.client.MetadataStream(ctx, afterRevision)
 }
 
 func (a *ClientAPI) GetTranscriptSnapshot(ctx context.Context, id string, lines int) (*client.TranscriptSnapshotResponse, error) {

@@ -126,6 +126,7 @@ type InMemoryRunService struct {
 	state            RunStateStore
 	contextResolver  MissingRunContextResolver
 	tombstoneFactory MissingRunTombstoneFactory
+	metadataEvents   MetadataEventPublisher
 }
 
 type runServiceMetrics struct {
@@ -367,6 +368,15 @@ func WithTurnMismatchRecovery(enabled bool) RunServiceOption {
 	}
 }
 
+func WithMetadataEventPublisher(publisher MetadataEventPublisher) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || publisher == nil {
+			return
+		}
+		s.metadataEvents = publisher
+	}
+}
+
 func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	service := &InMemoryRunService{
 		cfg:                    NormalizeConfig(cfg),
@@ -444,6 +454,15 @@ func (s *InMemoryRunService) Close() {
 	if persistence != nil {
 		persistence.Flush()
 	}
+}
+
+func (s *InMemoryRunService) SetMetadataEventPublisher(publisher MetadataEventPublisher) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.metadataEvents = publisher
+	s.mu.Unlock()
 }
 
 func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest) (*WorkflowRun, error) {
@@ -1163,11 +1182,23 @@ func (s *InMemoryRunService) RenameRun(ctx context.Context, runID, name string) 
 	})
 	snapshot := s.captureRunSnapshot(run.ID)
 	clone := cloneWorkflowRun(run)
+	metadataPublisher := s.metadataEvents
 	s.mu.Unlock()
 
 	releaseRunLock()
 
 	s.persistRunSnapshotAsync(ctx, snapshot)
+	if metadataPublisher != nil {
+		metadataPublisher.PublishMetadataEvent(WorkflowMetadataEvent{
+			Type:      WorkflowMetadataEventTypeRunUpdated,
+			RunID:     strings.TrimSpace(clone.ID),
+			Title:     strings.TrimSpace(clone.TemplateName),
+			UpdatedAt: now,
+			Changed: map[string]any{
+				"title": strings.TrimSpace(clone.TemplateName),
+			},
+		})
+	}
 
 	return clone, nil
 }

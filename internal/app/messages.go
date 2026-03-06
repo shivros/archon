@@ -331,6 +331,15 @@ type debugStreamMsg struct {
 	err    error
 }
 
+type metadataStreamMsg struct {
+	ch            <-chan types.MetadataEvent
+	cancel        func()
+	err           error
+	afterRevision string
+}
+
+type metadataStreamReconnectMsg struct{}
+
 type selectDebounceMsg struct {
 	id  string
 	seq int

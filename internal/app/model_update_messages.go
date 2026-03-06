@@ -1291,6 +1291,10 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case debugStreamMsg:
 		m.applyDebugStreamMsg(msg)
 		return true, nil
+	case metadataStreamMsg:
+		return true, m.applyMetadataStreamMsg(msg)
+	case metadataStreamReconnectMsg:
+		return true, openMetadataStreamCmd(m.metadataStreamAPI, strings.TrimSpace(m.metadataStreamRevision))
 	default:
 		return false, nil
 	}
@@ -1634,6 +1638,43 @@ func (m *Model) applyDebugStreamMsg(msg debugStreamMsg) {
 		m.debugStream.SetStream(msg.ch, msg.cancel)
 	}
 	m.setBackgroundStatus("streaming debug")
+}
+
+func (m *Model) applyMetadataStreamMsg(msg metadataStreamMsg) tea.Cmd {
+	if msg.err != nil {
+		m.setBackgroundError("metadata stream error: " + msg.err.Error())
+		decision := m.metadataStreamRecoveryPolicyOrDefault().OnError(m.metadataStreamReconnectAttempts)
+		m.metadataStreamReconnectAttempts = decision.NextAttempts
+		cmds := make([]tea.Cmd, 0, 2)
+		if decision.RefreshLists {
+			cmds = append(cmds, tea.Batch(m.fetchSessionsCmd(false), fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed)))
+		}
+		cmds = append(cmds, reconnectMetadataStreamCmd(decision.ReconnectDelay))
+		return tea.Batch(cmds...)
+	}
+	if m == nil || m.metadataStream == nil {
+		return nil
+	}
+	m.metadataStream.SetStream(msg.ch, msg.cancel)
+	m.metadataStreamReconnectAttempts = m.metadataStreamRecoveryPolicyOrDefault().OnConnected().NextAttempts
+	m.setBackgroundStatus("streaming metadata")
+	return nil
+}
+
+func (m *Model) applyMetadataEvent(event types.MetadataEvent) {
+	if m == nil {
+		return
+	}
+	if revision := strings.TrimSpace(event.Revision); revision != "" {
+		m.metadataStreamRevision = revision
+	}
+	result := m.metadataEventApplierOrDefault().Apply(m, event)
+	if result.SidebarDirty {
+		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
+	}
+	if result.GuidedWorkflowDirty && m.mode == uiModeGuidedWorkflow {
+		m.renderGuidedWorkflowContent()
+	}
 }
 
 func (m *Model) handleProviderOptionsMsg(msg providerOptionsMsg) tea.Cmd {

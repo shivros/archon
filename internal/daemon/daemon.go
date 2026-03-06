@@ -174,9 +174,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if titleGeneratorErr != nil && d.logger != nil {
 		d.logger.Warn("title_generation_provider_init_failed", logging.F("error", titleGeneratorErr))
 	}
+	metadataEvents := newMetadataEventHub(d.logger)
 	titleGeneration := newAsyncTitleGenerationService(
 		titleGenerator,
-		newDefaultGeneratedSessionTitleUpdater(d.manager, d.stores),
+		newDefaultGeneratedSessionTitleUpdater(d.manager, d.stores, metadataEvents),
 		newDefaultGeneratedWorkflowTitleUpdater(workflowRuns),
 		d.logger,
 		titleGenerationWorkerOptionsFromCoreConfig(coreCfg),
@@ -189,6 +190,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	eventPublisher := NewGuidedWorkflowNotificationPublisher(notifier, guided, turnProcessor)
 	if d.manager != nil {
 		d.manager.SetNotificationPublisher(eventPublisher)
+		d.manager.SetMetadataEventPublisher(metadataEvents)
+	}
+	if metadataAware, ok := workflowRuns.(interface {
+		SetMetadataEventPublisher(guidedworkflows.MetadataEventPublisher)
+	}); ok {
+		metadataAware.SetMetadataEventPublisher(newGuidedWorkflowMetadataEventAdapter(metadataEvents))
 	}
 	api.Notifier = eventPublisher
 	api.GuidedWorkflows = guided
@@ -206,6 +213,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.WorkflowPolicy = newGuidedWorkflowPolicyResolver(coreCfg)
 	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg)
 	api.TitleGeneration = titleGeneration
+	api.MetadataEvents = metadataEvents
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)

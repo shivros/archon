@@ -50,6 +50,8 @@ const (
 	requestRefreshCooldown     = 3 * time.Second
 	sessionMetaRefreshDelay    = 15 * time.Second
 	sessionMetaSyncDelay       = 2 * time.Minute
+	metadataStreamRetryBase    = 1 * time.Second
+	metadataStreamRetryMax     = 30 * time.Second
 	selectionHistoryMaxEntries = 256
 	guidedWorkflowPollInterval = 1500 * time.Millisecond
 )
@@ -89,6 +91,7 @@ const (
 type Model struct {
 	workspaceAPI                        WorkspaceAPI
 	sessionAPI                          SessionAPI
+	metadataStreamAPI                   MetadataStreamAPI
 	sessionTranscriptAPI                SessionTranscriptAPI
 	guidedWorkflowAPI                   GuidedWorkflowRunAPI
 	guidedWorkflowTemplateAPI           GuidedWorkflowTemplateAPI
@@ -171,6 +174,11 @@ type Model struct {
 	codexStream                         *CodexStreamController
 	itemStream                          *ItemStreamController
 	debugStream                         debugStreamConsumer
+	metadataStream                      *MetadataStreamController
+	metadataStreamRevision              string
+	metadataStreamReconnectAttempts     int
+	metadataEventApplier                MetadataEventApplier
+	metadataStreamRecoveryPolicy        MetadataStreamRecoveryPolicy
 	debugStreamSnapshot                 debugStreamSnapshot
 	input                               *InputController
 	pendingApproval                     *ApprovalRequest
@@ -462,6 +470,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
 	itemStream := NewItemStreamController(maxViewportLines, maxEventsPerTick)
 	debugStream := NewDebugStreamController(defaultDebugStreamRetentionPolicy(), maxEventsPerTick)
+	metadataStream := NewMetadataStreamController(maxEventsPerTick)
 	debugPanel := NewDebugPanelController(minViewportWidth, minContentHeight-1, nil)
 	loader := spinner.New()
 	loader.Spinner = spinner.Line
@@ -474,6 +483,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	model := Model{
 		workspaceAPI:                        api,
 		sessionAPI:                          api,
+		metadataStreamAPI:                   api,
 		sessionTranscriptAPI:                transcriptAPI,
 		guidedWorkflowAPI:                   api,
 		guidedWorkflowTemplateAPI:           api,
@@ -493,6 +503,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		codexStream:                         codexStream,
 		itemStream:                          itemStream,
 		debugStream:                         debugStream,
+		metadataStream:                      metadataStream,
+		metadataEventApplier:                defaultMetadataEventApplier{},
+		metadataStreamRecoveryPolicy:        newDefaultMetadataStreamRecoveryPolicy(),
 		debugStreamSnapshot:                 debugStream,
 		debugPanel:                          debugPanel,
 		threadContextMetricsService:         NewDefaultThreadContextMetricsService(nil),
@@ -691,6 +704,7 @@ func (m *Model) Init() tea.Cmd {
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
 		m.fetchSessionsCmd(false),
 		fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed),
+		openMetadataStreamCmd(m.metadataStreamAPI, strings.TrimSpace(m.metadataStreamRevision)),
 		fetchProviderOptionsCmd(m.sessionAPI, "codex"),
 		fetchProviderOptionsCmd(m.sessionAPI, "claude"),
 		m.tickCmd(),
@@ -2525,6 +2539,9 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if cmd := m.consumeDebugTick(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	if cmd := m.consumeMetadataTick(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.streamRenderScheduler != nil && m.streamRenderScheduler.ShouldRender(now) {
 		m.renderViewport()
 		m.streamRenderScheduler.MarkRendered(now)
@@ -2797,6 +2814,40 @@ func (m *Model) consumeDebugTick(now time.Time) tea.Cmd {
 		return cmd
 	}
 	return nil
+}
+
+func (m *Model) consumeMetadataTick(_ time.Time) tea.Cmd {
+	if m == nil || m.metadataStream == nil {
+		return nil
+	}
+	events, changed, closed := m.metadataStream.ConsumeTick()
+	if closed {
+		m.setBackgroundStatus("metadata stream closed")
+		decision := m.metadataStreamRecoveryPolicyOrDefault().OnClosed(m.metadataStreamReconnectAttempts)
+		m.metadataStreamReconnectAttempts = decision.NextAttempts
+		return reconnectMetadataStreamCmd(decision.ReconnectDelay)
+	}
+	if !changed {
+		return nil
+	}
+	for _, event := range events {
+		m.applyMetadataEvent(event)
+	}
+	return nil
+}
+
+func (m *Model) metadataEventApplierOrDefault() MetadataEventApplier {
+	if m == nil || m.metadataEventApplier == nil {
+		return defaultMetadataEventApplier{}
+	}
+	return m.metadataEventApplier
+}
+
+func (m *Model) metadataStreamRecoveryPolicyOrDefault() MetadataStreamRecoveryPolicy {
+	if m == nil || m.metadataStreamRecoveryPolicy == nil {
+		return newDefaultMetadataStreamRecoveryPolicy()
+	}
+	return m.metadataStreamRecoveryPolicy
 }
 
 func (m *Model) fetchSessionsCmd(refresh bool) tea.Cmd {

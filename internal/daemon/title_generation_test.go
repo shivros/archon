@@ -258,7 +258,7 @@ func TestDefaultGeneratedSessionTitleUpdaterSkipsLockedTitle(t *testing.T) {
 		t.Fatalf("upsert meta: %v", err)
 	}
 
-	updater := newDefaultGeneratedSessionTitleUpdater(nil, stores)
+	updater := newDefaultGeneratedSessionTitleUpdater(nil, stores, nil)
 	updated, err := updater.TryUpdateGeneratedSessionTitle(context.Background(), "sess-lock", "Fallback", "Generated")
 	if err != nil {
 		t.Fatalf("TryUpdateGeneratedSessionTitle: %v", err)
@@ -308,7 +308,7 @@ func TestDefaultGeneratedSessionTitleUpdaterAppliesWhenExpectedMatches(t *testin
 		t.Fatalf("upsert meta: %v", err)
 	}
 
-	updater := newDefaultGeneratedSessionTitleUpdater(manager, stores)
+	updater := newDefaultGeneratedSessionTitleUpdater(manager, stores, nil)
 	updated, err := updater.TryUpdateGeneratedSessionTitle(context.Background(), "sess-apply", "Fallback", "Generated")
 	if err != nil {
 		t.Fatalf("TryUpdateGeneratedSessionTitle: %v", err)
@@ -344,7 +344,7 @@ func TestDefaultGeneratedSessionTitleUpdaterSkipsExpectedMismatch(t *testing.T) 
 	if err != nil {
 		t.Fatalf("upsert session: %v", err)
 	}
-	updater := newDefaultGeneratedSessionTitleUpdater(nil, stores)
+	updater := newDefaultGeneratedSessionTitleUpdater(nil, stores, nil)
 	updated, err := updater.TryUpdateGeneratedSessionTitle(context.Background(), "sess-mismatch", "Different", "Generated")
 	if err != nil {
 		t.Fatalf("TryUpdateGeneratedSessionTitle: %v", err)
@@ -359,7 +359,7 @@ func TestDefaultGeneratedSessionTitleUpdaterSkipsMissingSession(t *testing.T) {
 		Sessions:    storeSessionsIndex(t),
 		SessionMeta: storeSessionMetaStore(t),
 	}
-	updater := newDefaultGeneratedSessionTitleUpdater(nil, stores)
+	updater := newDefaultGeneratedSessionTitleUpdater(nil, stores, nil)
 	updated, err := updater.TryUpdateGeneratedSessionTitle(context.Background(), "sess-missing", "Fallback", "Generated")
 	if err != nil {
 		t.Fatalf("TryUpdateGeneratedSessionTitle: %v", err)
@@ -414,6 +414,102 @@ func TestDefaultGeneratedWorkflowTitleUpdaterReturnsRenameError(t *testing.T) {
 	_, err := updater.TryUpdateGeneratedWorkflowTitle(context.Background(), "run-1", "Old", "New")
 	if err == nil {
 		t.Fatalf("expected rename error")
+	}
+}
+
+func TestGeneratedSessionTitleUpdaterPublishesMetadataEvent(t *testing.T) {
+	stores := &Stores{
+		Sessions:    storeSessionsIndex(t),
+		SessionMeta: storeSessionMetaStore(t),
+	}
+	manager, err := NewSessionManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSessionManager: %v", err)
+	}
+	manager.SetSessionStore(stores.Sessions)
+	manager.SetMetaStore(stores.SessionMeta)
+	hub := newMetadataEventHub(nil)
+	manager.SetMetadataEventPublisher(hub)
+	ch, cancel, err := hub.Subscribe("")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	now := time.Now().UTC()
+	if _, err := stores.Sessions.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-ai",
+			Provider:  "custom",
+			Title:     "Old",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	updater := newDefaultGeneratedSessionTitleUpdater(manager, stores, nil)
+	updated, err := updater.TryUpdateGeneratedSessionTitle(context.Background(), "sess-ai", "Old", "New Title")
+	if err != nil {
+		t.Fatalf("TryUpdateGeneratedSessionTitle: %v", err)
+	}
+	if !updated {
+		t.Fatalf("expected session title update")
+	}
+	select {
+	case event := <-ch:
+		if event.Type != types.MetadataEventTypeSessionUpdated {
+			t.Fatalf("unexpected event type: %q", event.Type)
+		}
+		if event.Session == nil || event.Session.ID != "sess-ai" || event.Session.Title != "New Title" {
+			t.Fatalf("unexpected session payload: %#v", event.Session)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for metadata event")
+	}
+}
+
+func TestGeneratedWorkflowTitleUpdaterPublishesMetadataEvent(t *testing.T) {
+	hub := newMetadataEventHub(nil)
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithMetadataEventPublisher(newGuidedWorkflowMetadataEventAdapter(hub)),
+	)
+	t.Cleanup(runService.Close)
+	run, err := runService.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		WorkspaceID: "ws-1",
+		UserPrompt:  "ship it",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	ch, cancel, err := hub.Subscribe("")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	updater := newDefaultGeneratedWorkflowTitleUpdater(runService)
+	updated, err := updater.TryUpdateGeneratedWorkflowTitle(context.Background(), run.ID, run.TemplateName, "AI Workflow")
+	if err != nil {
+		t.Fatalf("TryUpdateGeneratedWorkflowTitle: %v", err)
+	}
+	if !updated {
+		t.Fatalf("expected workflow title update")
+	}
+	select {
+	case event := <-ch:
+		if event.Type != types.MetadataEventTypeWorkflowRunUpdated {
+			t.Fatalf("unexpected event type: %q", event.Type)
+		}
+		if event.Workflow == nil || event.Workflow.ID != run.ID || event.Workflow.Title != "AI Workflow" {
+			t.Fatalf("unexpected workflow payload: %#v", event.Workflow)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for metadata event")
 	}
 }
 
