@@ -166,19 +166,96 @@ func TestOpenCodeAdapterMapEventErrorFallbackMessage(t *testing.T) {
 	}
 }
 
-func TestOpenCodeAdapterMapEventUnknownDefaultsToProviderEventDelta(t *testing.T) {
+func TestOpenCodeAdapterMapEventUnknownIgnored(t *testing.T) {
 	adapter := NewOpenCodeTranscriptAdapter("opencode")
 	events := adapter.MapEvent(MappingContext{
 		SessionID: "s1",
 		Revision:  transcriptdomain.MustParseRevisionToken("10"),
 	}, types.CodexEvent{Method: "item/unknown"})
-	if len(events) != 1 {
-		t.Fatalf("expected one event, got %d", len(events))
+	if len(events) != 0 {
+		t.Fatalf("expected unknown event to be ignored, got %#v", events)
 	}
-	if events[0].Kind != transcriptdomain.TranscriptEventDelta {
-		t.Fatalf("expected delta, got %q", events[0].Kind)
+}
+
+func TestOpenCodeAdapterUsesStoredClassifier(t *testing.T) {
+	adapter := NewOpenCodeTranscriptAdapter("opencode")
+	if adapter.classifier == nil {
+		t.Fatal("expected classifier to be configured")
 	}
-	if len(events[0].Delta) != 1 || events[0].Delta[0].Kind != "provider_event" {
-		t.Fatalf("unexpected provider-event delta payload: %#v", events[0].Delta)
+	events := adapter.MapEvent(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("10"),
+	}, types.CodexEvent{Method: "session.idle"})
+	if len(events) != 1 || events[0].Kind != transcriptdomain.TranscriptEventStreamStatus {
+		t.Fatalf("expected classifier-backed stream status event, got %#v", events)
+	}
+}
+
+func TestOpenCodeAdapterLiveNoiseIgnored(t *testing.T) {
+	adapter := NewOpenCodeTranscriptAdapter("opencode")
+	tests := []string{
+		"account/rateLimits/updated",
+		"codex/event/exec_command_begin",
+		"codex/event/item_started",
+		"codex/event/task_complete",
+		"codex/event/token_count",
+		"codex/event/turn_diff",
+		"item/started",
+		"item/completed",
+		"thread/status/changed",
+		"thread/tokenUsage/updated",
+		"turn/diff/updated",
+	}
+	for _, method := range tests {
+		t.Run(method, func(t *testing.T) {
+			events := adapter.MapEvent(MappingContext{
+				SessionID: "s1",
+				Revision:  transcriptdomain.MustParseRevisionToken("11"),
+			}, types.CodexEvent{Method: method})
+			if len(events) != 0 {
+				t.Fatalf("expected noisy live event %q to be ignored, got %#v", method, events)
+			}
+		})
+	}
+}
+
+func TestOpenCodeAdapterMapItemIgnoresNilAndMalformedItems(t *testing.T) {
+	adapter := NewOpenCodeTranscriptAdapter("opencode")
+	if events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("12"),
+	}, nil); len(events) != 0 {
+		t.Fatalf("expected nil item to be ignored, got %#v", events)
+	}
+	if events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("12"),
+	}, map[string]any{"type": "agentMessageDelta"}); len(events) != 0 {
+		t.Fatalf("expected malformed item to be ignored, got %#v", events)
+	}
+}
+
+func TestOpenCodeAdapterMapTurnCompletionItemWithoutTurnIDIgnored(t *testing.T) {
+	adapter := NewOpenCodeTranscriptAdapter("opencode")
+	events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("13"),
+	}, map[string]any{"type": "turnCompletion", "status": "completed"})
+	if len(events) != 0 {
+		t.Fatalf("expected missing turn id item to be ignored, got %#v", events)
+	}
+}
+
+func TestOpenCodeAdapterMapTurnCompletionItemErrorStatus(t *testing.T) {
+	adapter := NewOpenCodeTranscriptAdapter("opencode")
+	events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("14"),
+	}, map[string]any{"type": "turnCompletion", "turn_id": "turn-3", "status": "error"})
+	if len(events) != 1 || events[0].Kind != transcriptdomain.TranscriptEventTurnFailed {
+		t.Fatalf("expected failed turn event, got %#v", events)
+	}
+	if events[0].Turn == nil || events[0].Turn.Error == "" {
+		t.Fatalf("expected fallback error for failed turn, got %#v", events[0].Turn)
 	}
 }

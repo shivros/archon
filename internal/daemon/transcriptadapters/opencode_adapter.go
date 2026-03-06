@@ -10,6 +10,7 @@ import (
 
 type openCodeTranscriptAdapter struct {
 	providerName string
+	classifier   ProviderEventClassifier
 }
 
 func NewOpenCodeTranscriptAdapter(providerName string) *openCodeTranscriptAdapter {
@@ -17,7 +18,10 @@ func NewOpenCodeTranscriptAdapter(providerName string) *openCodeTranscriptAdapte
 	if providerName == "" {
 		providerName = "opencode"
 	}
-	return &openCodeTranscriptAdapter{providerName: providerName}
+	return &openCodeTranscriptAdapter{
+		providerName: providerName,
+		classifier:   NewOpenCodeEventClassifier(providerName),
+	}
 }
 
 func (a openCodeTranscriptAdapter) Provider() string {
@@ -25,15 +29,34 @@ func (a openCodeTranscriptAdapter) Provider() string {
 }
 
 func (a openCodeTranscriptAdapter) MapEvent(ctx MappingContext, event types.CodexEvent) []transcriptdomain.TranscriptEvent {
-	mapped := mapOpenCodeEvent(a.providerName, ctx, event)
+	classifier := a.classifier
+	if classifier == nil {
+		classifier = NewOpenCodeEventClassifier(a.providerName)
+	}
+	mapped, ok := mapOpenCodeEventWithClassifier(a.providerName, classifier, ctx, event)
+	if !ok {
+		return nil
+	}
 	if err := transcriptdomain.ValidateEvent(mapped); err != nil {
 		return nil
 	}
 	return []transcriptdomain.TranscriptEvent{mapped}
 }
 
-func mapOpenCodeEvent(providerName string, ctx MappingContext, event types.CodexEvent) transcriptdomain.TranscriptEvent {
-	method := strings.ToLower(strings.TrimSpace(event.Method))
+func mapOpenCodeEvent(providerName string, ctx MappingContext, event types.CodexEvent) (transcriptdomain.TranscriptEvent, bool) {
+	return mapOpenCodeEventWithClassifier(providerName, NewOpenCodeEventClassifier(providerName), ctx, event)
+}
+
+func mapOpenCodeEventWithClassifier(
+	providerName string,
+	classifier ProviderEventClassifier,
+	ctx MappingContext,
+	event types.CodexEvent,
+) (transcriptdomain.TranscriptEvent, bool) {
+	if classifier == nil {
+		classifier = NewOpenCodeEventClassifier(providerName)
+	}
+	classified := classifier.ClassifyEvent(event)
 	canonical := transcriptdomain.TranscriptEvent{
 		Kind:      transcriptdomain.TranscriptEventDelta,
 		SessionID: strings.TrimSpace(ctx.SessionID),
@@ -44,39 +67,39 @@ func mapOpenCodeEvent(providerName string, ctx MappingContext, event types.Codex
 		canonical.OccurredAt = &ts
 	}
 
-	switch {
-	case method == "turn/started":
+	switch classified.Intent {
+	case EventIntentTurnStarted:
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateRunning)
 		if strings.TrimSpace(turn.TurnID) == "" {
 			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
 		}
 		canonical.Kind = transcriptdomain.TranscriptEventTurnStarted
 		canonical.Turn = &turn
-	case method == "turn/completed":
+	case EventIntentTurnCompleted:
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateCompleted)
 		if strings.TrimSpace(turn.TurnID) == "" {
 			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
 		}
 		canonical.Kind = transcriptdomain.TranscriptEventTurnCompleted
 		canonical.Turn = &turn
-	case method == "session.idle":
+	case EventIntentStreamReady:
 		canonical.Kind = transcriptdomain.TranscriptEventStreamStatus
 		canonical.StreamStatus = transcriptdomain.StreamStatusReady
-	case method == "error":
+	case EventIntentTurnFailed:
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateFailed)
 		if strings.TrimSpace(turn.TurnID) == "" {
 			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
 		}
 		canonical.Kind = transcriptdomain.TranscriptEventTurnFailed
 		canonical.Turn = &turn
-	case strings.Contains(method, "requestapproval"):
+	case EventIntentApprovalPending:
 		canonical.Kind = transcriptdomain.TranscriptEventApprovalPending
 		canonical.Approval = &transcriptdomain.ApprovalState{
 			RequestID: approvalRequestID(event),
 			State:     "pending",
 			Method:    strings.TrimSpace(event.Method),
 		}
-	case strings.Contains(method, "approvalresolved") || strings.Contains(method, "replypermission"):
+	case EventIntentApprovalResolved:
 		canonical.Kind = transcriptdomain.TranscriptEventApprovalResolved
 		canonical.Approval = &transcriptdomain.ApprovalState{
 			RequestID: approvalRequestID(event),
@@ -84,13 +107,9 @@ func mapOpenCodeEvent(providerName string, ctx MappingContext, event types.Codex
 			Method:    strings.TrimSpace(event.Method),
 		}
 	default:
-		canonical.Delta = []transcriptdomain.Block{{
-			Kind: "provider_event",
-			Role: "system",
-			Text: strings.TrimSpace(event.Method),
-		}}
+		return transcriptdomain.TranscriptEvent{}, false
 	}
-	return canonical
+	return canonical, true
 }
 
 func (a openCodeTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any) []transcriptdomain.TranscriptEvent {

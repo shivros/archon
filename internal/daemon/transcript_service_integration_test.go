@@ -322,6 +322,93 @@ func TestSessionServiceSubscribeTranscriptFiltersCodexControlNoiseAndEmitsAssist
 	}
 }
 
+func TestSessionServiceSubscribeTranscriptMixedLiveNoiseKeepsOnlyTranscriptRelevantEvents(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-codex-mixed",
+			Provider:  "codex",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	events := make(chan types.CodexEvent, 12)
+	reqID := 9
+	events <- types.CodexEvent{Method: "account/rateLimits/updated", Params: json.RawMessage(`{"limits":[]}`)}
+	events <- types.CodexEvent{Method: "thread/status/changed", Params: json.RawMessage(`{"threadId":"thread-1","status":{"type":"active"}}`)}
+	events <- types.CodexEvent{Method: "codex/event/token_count", Params: json.RawMessage(`{"total":123}`)}
+	events <- types.CodexEvent{Method: "item/fileChange/requestApproval", ID: &reqID}
+	events <- types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"threadId":"thread-1","itemId":"msg_2","delta":"assistant reply"}`),
+	}
+	events <- types.CodexEvent{Method: "thread/tokenUsage/updated", Params: json.RawMessage(`{"input_tokens":10}`)}
+	events <- types.CodexEvent{Method: "thread/status/changed", Params: json.RawMessage(`{"threadId":"thread-1","status":{"type":"idle"}}`)}
+	close(events)
+
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil,
+		WithTranscriptMapper(NewDefaultTranscriptMapper(nil)),
+		WithTranscriptTransportSelector(fixedTranscriptTransportSelector{
+			transport: transcriptTransport{eventsCh: events},
+		}),
+	)
+
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-codex-mixed", "")
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	if len(streamEvents) == 0 {
+		t.Fatalf("expected transcript stream events")
+	}
+
+	var hasAssistantDelta bool
+	var hasApprovalPending bool
+	var hasReadyStatus bool
+	for _, event := range streamEvents {
+		switch event.Kind {
+		case transcriptdomain.TranscriptEventDelta:
+			if len(event.Delta) == 1 && event.Delta[0].Text == "assistant reply" && event.Delta[0].Role == "assistant" {
+				hasAssistantDelta = true
+				continue
+			}
+			t.Fatalf("unexpected transcript delta from mixed noise stream: %#v", event)
+		case transcriptdomain.TranscriptEventApprovalPending:
+			if event.Approval != nil && event.Approval.RequestID == reqID {
+				hasApprovalPending = true
+				continue
+			}
+			t.Fatalf("unexpected approval payload: %#v", event)
+		case transcriptdomain.TranscriptEventStreamStatus:
+			if event.StreamStatus == transcriptdomain.StreamStatusReady {
+				hasReadyStatus = true
+			}
+		case transcriptdomain.TranscriptEventHeartbeat:
+		default:
+			t.Fatalf("unexpected transcript event kind from mixed noise stream: %#v", event)
+		}
+	}
+
+	if !hasAssistantDelta {
+		t.Fatalf("expected assistant delta event in mixed noise stream, got %#v", streamEvents)
+	}
+	if !hasApprovalPending {
+		t.Fatalf("expected approval pending event in mixed noise stream, got %#v", streamEvents)
+	}
+	if !hasReadyStatus {
+		t.Fatalf("expected ready status in mixed noise stream, got %#v", streamEvents)
+	}
+}
+
 func collectTranscriptEvents(ch <-chan transcriptdomain.TranscriptEvent) []transcriptdomain.TranscriptEvent {
 	events := make([]transcriptdomain.TranscriptEvent, 0, 8)
 	for event := range ch {

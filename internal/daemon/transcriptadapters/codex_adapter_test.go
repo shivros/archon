@@ -121,6 +121,66 @@ func TestTranscriptEventFromCodexEventAgentMessageDelta(t *testing.T) {
 	}
 }
 
+func TestDeltaBlockFromCodexEventMethodReasoningVariant(t *testing.T) {
+	block, ok := deltaBlockFromCodexEventMethod("item/reasoning/delta", json.RawMessage(`{"itemId":"r_1","delta":"thinking"}`))
+	if !ok {
+		t.Fatal("expected reasoning delta block")
+	}
+	if block.Role != "reasoning" || block.Variant != "reasoning" || block.ID != "r_1" {
+		t.Fatalf("unexpected reasoning delta payload: %#v", block)
+	}
+}
+
+func TestTranscriptEventFromCodexEventItemContentFallback(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/assistant_message",
+		Params: json.RawMessage(`{"itemId":"fallback-1","item":{"type":"assistant_message","content":"hello from item"}}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != transcriptdomain.TranscriptEventDelta || len(got.Delta) != 1 {
+		t.Fatalf("expected mapped item delta, got %#v", got)
+	}
+	if got.Delta[0].Text != "hello from item" || got.Delta[0].ID != "fallback-1" {
+		t.Fatalf("unexpected item payload: %#v", got.Delta[0])
+	}
+}
+
+func TestTranscriptEventFromCodexEventReasoningItemVariantFallback(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/reasoning",
+		Params: json.RawMessage(`{"item":{"type":"reasoning","text":"pondering"}}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != transcriptdomain.TranscriptEventDelta || len(got.Delta) != 1 {
+		t.Fatalf("expected mapped reasoning item, got %#v", got)
+	}
+	if got.Delta[0].Variant != "reasoning" {
+		t.Fatalf("expected reasoning variant fallback, got %#v", got.Delta[0])
+	}
+}
+
+func TestTranscriptEventFromCodexEventAgentDeltaRequiresText(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"itemId":"msg_1"}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != "" {
+		t.Fatalf("expected empty delta event when no text is present, got %#v", got)
+	}
+}
+
+func TestTranscriptEventFromCodexEventMalformedItemIgnored(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/assistant_message",
+		Params: json.RawMessage(`{"item":{"type":"assistant_message"}}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != "" {
+		t.Fatalf("expected malformed item to be ignored, got %#v", got)
+	}
+}
+
 func TestTranscriptEventFromCodexEventThreadStatusChangedIdleMapsToReady(t *testing.T) {
 	event := types.CodexEvent{
 		Method: "thread/status/changed",
@@ -151,6 +211,32 @@ func TestTranscriptEventFromCodexEventMCPStartupIgnored(t *testing.T) {
 	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
 	if got.Kind != "" {
 		t.Fatalf("expected mcp startup event ignored, got %#v", got)
+	}
+}
+
+func TestTranscriptEventFromCodexEventLiveNoiseIgnored(t *testing.T) {
+	tests := []string{
+		"account/rateLimits/updated",
+		"codex/event/agent_message_content_delta",
+		"codex/event/agent_message_delta",
+		"codex/event/exec_command_begin",
+		"codex/event/item_started",
+		"codex/event/task_complete",
+		"codex/event/token_count",
+		"codex/event/turn_diff",
+		"item/started",
+		"item/completed",
+		"thread/tokenUsage/updated",
+		"turn/diff/updated",
+	}
+	for _, method := range tests {
+		t.Run(method, func(t *testing.T) {
+			event := types.CodexEvent{Method: method}
+			got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("12"), event)
+			if got.Kind != "" {
+				t.Fatalf("expected noisy live event %q to be ignored, got %#v", method, got)
+			}
+		})
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 type codexTranscriptAdapter struct {
 	providerName string
+	classifier   ProviderEventClassifier
 }
 
 func NewCodexTranscriptAdapter(providerName string) *codexTranscriptAdapter {
@@ -19,7 +20,10 @@ func NewCodexTranscriptAdapter(providerName string) *codexTranscriptAdapter {
 	if providerName == "" {
 		providerName = "codex"
 	}
-	return &codexTranscriptAdapter{providerName: providerName}
+	return &codexTranscriptAdapter{
+		providerName: providerName,
+		classifier:   NewCodexEventClassifier(providerName),
+	}
 }
 
 func (a codexTranscriptAdapter) Provider() string {
@@ -27,7 +31,11 @@ func (a codexTranscriptAdapter) Provider() string {
 }
 
 func (a codexTranscriptAdapter) MapEvent(ctx MappingContext, event types.CodexEvent) []transcriptdomain.TranscriptEvent {
-	mapped, ok := mapCodexEvent(a.providerName, ctx, event)
+	classifier := a.classifier
+	if classifier == nil {
+		classifier = NewCodexEventClassifier(a.providerName)
+	}
+	mapped, ok := mapCodexEventWithClassifier(a.providerName, classifier, ctx, event)
 	if !ok {
 		return nil
 	}
@@ -49,7 +57,20 @@ func (a codexTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any)
 }
 
 func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEvent) (transcriptdomain.TranscriptEvent, bool) {
-	method := strings.ToLower(strings.TrimSpace(event.Method))
+	return mapCodexEventWithClassifier(providerName, NewCodexEventClassifier(providerName), ctx, event)
+}
+
+func mapCodexEventWithClassifier(
+	providerName string,
+	classifier ProviderEventClassifier,
+	ctx MappingContext,
+	event types.CodexEvent,
+) (transcriptdomain.TranscriptEvent, bool) {
+	if classifier == nil {
+		classifier = NewCodexEventClassifier(providerName)
+	}
+	classified := classifier.ClassifyEvent(event)
+	method := classified.Method
 	canonical := transcriptdomain.TranscriptEvent{
 		Kind:      transcriptdomain.TranscriptEventDelta,
 		SessionID: strings.TrimSpace(ctx.SessionID),
@@ -60,63 +81,45 @@ func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEve
 		canonical.OccurredAt = &ts
 	}
 
-	switch {
-	case strings.Contains(method, "requestapproval"):
+	switch classified.Intent {
+	case EventIntentApprovalPending:
 		canonical.Kind = transcriptdomain.TranscriptEventApprovalPending
 		canonical.Approval = &transcriptdomain.ApprovalState{
 			RequestID: approvalRequestID(event),
 			State:     "pending",
 			Method:    strings.TrimSpace(event.Method),
 		}
-	case strings.Contains(method, "approvalresolved") || strings.Contains(method, "replypermission"):
+	case EventIntentApprovalResolved:
 		canonical.Kind = transcriptdomain.TranscriptEventApprovalResolved
 		canonical.Approval = &transcriptdomain.ApprovalState{
 			RequestID: approvalRequestID(event),
 			State:     "resolved",
 			Method:    strings.TrimSpace(event.Method),
 		}
-	case method == "item/agentmessage/delta":
+	case EventIntentAssistantDelta:
 		block, ok := deltaBlockFromCodexEventMethod(method, event.Params)
 		if !ok {
 			return transcriptdomain.TranscriptEvent{}, false
 		}
 		canonical.Delta = []transcriptdomain.Block{block}
-	case strings.HasPrefix(method, "item/"):
-		block, ok := blockFromCodexEventItem(method, event.Params)
-		if !ok {
-			return transcriptdomain.TranscriptEvent{}, false
-		}
-		canonical.Delta = []transcriptdomain.Block{block}
-	case method == "thread/status/changed":
-		status := threadStatusFromEventParams(event.Params)
-		if status == "idle" {
-			canonical.Kind = transcriptdomain.TranscriptEventStreamStatus
-			canonical.StreamStatus = transcriptdomain.StreamStatusReady
-			return canonical, true
-		}
-		return transcriptdomain.TranscriptEvent{}, false
-	case method == "thread/started", method == "thread/updated", method == "thread/completed":
-		return transcriptdomain.TranscriptEvent{}, false
-	case strings.HasPrefix(method, "codex/event/mcp_startup"):
-		return transcriptdomain.TranscriptEvent{}, false
-	case method == "turn/started":
+	case EventIntentTurnStarted:
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateRunning)
 		if strings.TrimSpace(turn.TurnID) == "" {
 			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
 		}
 		canonical.Kind = transcriptdomain.TranscriptEventTurnStarted
 		canonical.Turn = &turn
-	case method == "turn/completed":
+	case EventIntentTurnCompleted:
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateCompleted)
 		if strings.TrimSpace(turn.TurnID) == "" {
 			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
 		}
 		canonical.Kind = transcriptdomain.TranscriptEventTurnCompleted
 		canonical.Turn = &turn
-	case method == "session.idle":
+	case EventIntentStreamReady:
 		canonical.Kind = transcriptdomain.TranscriptEventStreamStatus
 		canonical.StreamStatus = transcriptdomain.StreamStatusReady
-	case method == "error":
+	case EventIntentTurnFailed:
 		turn := turnStateFromEventParams(event.Params, transcriptdomain.TurnStateFailed)
 		if strings.TrimSpace(turn.TurnID) == "" {
 			turn.TurnID = strings.TrimSpace(ctx.ActiveTurnID)
@@ -124,11 +127,16 @@ func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEve
 		canonical.Kind = transcriptdomain.TranscriptEventTurnFailed
 		canonical.Turn = &turn
 	default:
-		canonical.Delta = []transcriptdomain.Block{{
-			Kind: "provider_event",
-			Role: "system",
-			Text: strings.TrimSpace(event.Method),
-		}}
+		switch {
+		case strings.HasPrefix(method, "item/"):
+			block, ok := blockFromCodexEventItem(method, event.Params)
+			if !ok {
+				return transcriptdomain.TranscriptEvent{}, false
+			}
+			canonical.Delta = []transcriptdomain.Block{block}
+		default:
+			return transcriptdomain.TranscriptEvent{}, false
+		}
 	}
 	return canonical, true
 }
