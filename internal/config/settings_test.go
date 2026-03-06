@@ -18,6 +18,15 @@ func TestLoadCoreConfigDefaults(t *testing.T) {
 	if cfg.DaemonBaseURL() != "http://127.0.0.1:7777" {
 		t.Fatalf("unexpected daemon base url: %q", cfg.DaemonBaseURL())
 	}
+	if cfg.CloudBaseURL() != "" {
+		t.Fatalf("unexpected default cloud base url: %q", cfg.CloudBaseURL())
+	}
+	if cfg.CloudClientID() != "archon-cli" {
+		t.Fatalf("unexpected default cloud client id: %q", cfg.CloudClientID())
+	}
+	if cfg.CloudTimeoutSeconds() != 10 {
+		t.Fatalf("unexpected default cloud timeout: %d", cfg.CloudTimeoutSeconds())
+	}
 }
 
 func TestLoadCoreConfigFromTOML(t *testing.T) {
@@ -31,6 +40,11 @@ func TestLoadCoreConfigFromTOML(t *testing.T) {
 	content := []byte(`
 [daemon]
 address = "http://127.0.0.1:9999/"
+
+[cloud]
+base_url = " https://app.archon.ai/ "
+client_id = " archon-desktop "
+timeout_seconds = 17
 
 [logging]
 level = "debug"
@@ -132,6 +146,15 @@ command = "/usr/local/bin/gemini"
 	}
 	if cfg.DaemonBaseURL() != "http://127.0.0.1:9999" {
 		t.Fatalf("unexpected daemon base url: %q", cfg.DaemonBaseURL())
+	}
+	if got := cfg.CloudBaseURL(); got != "https://app.archon.ai" {
+		t.Fatalf("unexpected cloud base url: %q", got)
+	}
+	if got := cfg.CloudClientID(); got != "archon-desktop" {
+		t.Fatalf("unexpected cloud client id: %q", got)
+	}
+	if got := cfg.CloudTimeoutSeconds(); got != 17 {
+		t.Fatalf("unexpected cloud timeout seconds: %d", got)
 	}
 	if got := cfg.LogLevel(); got != "debug" {
 		t.Fatalf("unexpected log level: %q", got)

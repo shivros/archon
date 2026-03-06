@@ -13,12 +13,12 @@ import (
 
 type UICommand struct {
 	stderr             io.Writer
-	newClient          clientFactory
+	newClient          daemonVersionClientFactory
 	configureUILogging func()
 	version            string
 }
 
-func NewUICommand(stderr io.Writer, newClient clientFactory, configureUILogging func(), version string) *UICommand {
+func NewUICommand(stderr io.Writer, newClient daemonVersionClientFactory, configureUILogging func(), version string) *UICommand {
 	return &UICommand{
 		stderr:             stderr,
 		newClient:          newClient,

@@ -11,10 +11,10 @@ import (
 type TailCommand struct {
 	stdout    io.Writer
 	stderr    io.Writer
-	newClient clientFactory
+	newClient sessionClientFactory
 }
 
-func NewTailCommand(stdout, stderr io.Writer, newClient clientFactory) *TailCommand {
+func NewTailCommand(stdout, stderr io.Writer, newClient sessionClientFactory) *TailCommand {
 	return &TailCommand{
 		stdout:    stdout,
 		stderr:    stderr,

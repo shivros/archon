@@ -11,10 +11,10 @@ import (
 type KillCommand struct {
 	stdout    io.Writer
 	stderr    io.Writer
-	newClient clientFactory
+	newClient sessionClientFactory
 }
 
-func NewKillCommand(stdout, stderr io.Writer, newClient clientFactory) *KillCommand {
+func NewKillCommand(stdout, stderr io.Writer, newClient sessionClientFactory) *KillCommand {
 	return &KillCommand{
 		stdout:    stdout,
 		stderr:    stderr,

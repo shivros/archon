@@ -38,6 +38,7 @@ type configOutput struct {
 	WorkflowTemplatesPath string                          `json:"workflow_templates_path,omitempty" toml:"workflow_templates_path,omitempty"`
 	Chat                  *uiChatConfigOutput             `json:"chat,omitempty" toml:"chat,omitempty"`
 	Daemon                *effectiveDaemonConfig          `json:"daemon,omitempty" toml:"daemon,omitempty"`
+	Cloud                 *effectiveCloudConfig           `json:"cloud,omitempty" toml:"cloud,omitempty"`
 	Logging               *effectiveLoggingConfig         `json:"logging,omitempty" toml:"logging,omitempty"`
 	Debug                 *effectiveDebugConfig           `json:"debug,omitempty" toml:"debug,omitempty"`
 	Notifications         *effectiveNotificationsConfig   `json:"notifications,omitempty" toml:"notifications,omitempty"`
@@ -49,6 +50,7 @@ type configOutput struct {
 
 type coreConfigOutput struct {
 	Daemon          coreDaemonConfigOut            `json:"daemon" toml:"daemon"`
+	Cloud           effectiveCloudConfig           `json:"cloud" toml:"cloud"`
 	Logging         effectiveLoggingConfig         `json:"logging" toml:"logging"`
 	Debug           effectiveDebugConfig           `json:"debug" toml:"debug"`
 	Notifications   effectiveNotificationsConfig   `json:"notifications" toml:"notifications"`
@@ -80,6 +82,12 @@ type workflowTemplatesConfigOutput struct {
 type effectiveDaemonConfig struct {
 	Address string `json:"address" toml:"address"`
 	BaseURL string `json:"base_url" toml:"base_url"`
+}
+
+type effectiveCloudConfig struct {
+	BaseURL        string `json:"base_url,omitempty" toml:"base_url,omitempty"`
+	ClientID       string `json:"client_id" toml:"client_id"`
+	TimeoutSeconds int    `json:"timeout_seconds" toml:"timeout_seconds"`
 }
 
 type effectiveLoggingConfig struct {
@@ -273,6 +281,11 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 			Address: coreCfg.DaemonAddress(),
 			BaseURL: coreCfg.DaemonBaseURL(),
 		}
+		out.Cloud = &effectiveCloudConfig{
+			BaseURL:        coreCfg.CloudBaseURL(),
+			ClientID:       coreCfg.CloudClientID(),
+			TimeoutSeconds: coreCfg.CloudTimeoutSeconds(),
+		}
 		out.Logging = &effectiveLoggingConfig{
 			Level: coreCfg.LogLevel(),
 		}
@@ -458,6 +471,10 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 	if scopeSelected(scopes, configScopeCore) {
 		out := coreConfigOutput{
 			Daemon: coreDaemonConfigOut{},
+			Cloud: effectiveCloudConfig{
+				ClientID:       "archon-cli",
+				TimeoutSeconds: 10,
+			},
 			Logging: effectiveLoggingConfig{
 				Level: "info",
 			},
@@ -504,6 +521,9 @@ func projectedConfigPayload(payload configOutput, scopes map[string]struct{}) an
 		}
 		if payload.Logging != nil {
 			out.Logging = *payload.Logging
+		}
+		if payload.Cloud != nil {
+			out.Cloud = *payload.Cloud
 		}
 		if payload.Debug != nil {
 			out.Debug = *payload.Debug

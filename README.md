@@ -76,6 +76,11 @@ Example `config.toml`:
 [daemon]
 address = "127.0.0.1:7777"
 
+[cloud]
+base_url = "https://app.archon.ai"
+client_id = "archon-cli"
+timeout_seconds = 10
+
 [logging]
 level = "info" # debug | info | warn | error
 
@@ -174,6 +179,21 @@ timeout_seconds = 90
 [providers.gemini]
 command = "gemini"
 ```
+
+### Cloud Login
+
+Archon supports linking a local daemon to the Archon web app with a device-style login flow:
+
+```bash
+archon login
+archon whoami
+archon logout
+```
+
+- `archon login` opens the browser when possible and always prints a fallback verification URL and user code.
+- Cloud auth is stored separately from the local daemon bearer token.
+- `~/.archon/token` remains local CLI <-> local daemon auth only.
+- Cloud link state is stored in `~/.archon/cloud_auth.json`.
 
 ### Title Generation
 

@@ -34,6 +34,15 @@ func TokenPath() (string, error) {
 	return filepath.Join(dataDir, "token"), nil
 }
 
+// CloudAuthPath returns the path to the persisted cloud auth state file.
+func CloudAuthPath() (string, error) {
+	dataDir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "cloud_auth.json"), nil
+}
+
 // WorkspacesPath returns the path to the workspace metadata file.
 func WorkspacesPath() (string, error) {
 	dataDir, err := DataDir()

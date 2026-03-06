@@ -12,7 +12,11 @@ type commandRunner interface {
 type commandWiring struct {
 	stdout             io.Writer
 	stderr             io.Writer
-	newClient          clientFactory
+	newCloudAuthClient cloudAuthClientFactory
+	newSessionClient   sessionClientFactory
+	newUIClient        daemonVersionClientFactory
+	newDaemonAdmin     daemonAdminClientFactory
+	openBrowser        browserOpener
 	runDaemon          func(background bool) error
 	killDaemon         func() error
 	configureUILogging func()
@@ -27,12 +31,16 @@ func defaultCommandWiring(stdout, stderr io.Writer) commandWiring {
 		stderr = os.Stderr
 	}
 	return commandWiring{
-		stdout:    stdout,
-		stderr:    stderr,
-		newClient: newControlClient,
-		runDaemon: runDaemonProcess,
+		stdout:             stdout,
+		stderr:             stderr,
+		newCloudAuthClient: newCloudAuthClient,
+		newSessionClient:   newSessionClient,
+		newUIClient:        newDaemonVersionClient,
+		newDaemonAdmin:     newDaemonAdminClient,
+		openBrowser:        openBrowserURL,
+		runDaemon:          runDaemonProcess,
 		killDaemon: func() error {
-			return killDaemonWithFactory(newControlClient)
+			return killDaemonWithFactory(newDaemonAdminClient)
 		},
 		configureUILogging: configureUILogging,
 		version:            buildVersion(),
@@ -43,10 +51,13 @@ func buildCommands(wiring commandWiring) map[string]commandRunner {
 	return map[string]commandRunner{
 		"daemon": NewDaemonCommand(wiring.stderr, wiring.runDaemon, wiring.killDaemon),
 		"config": NewConfigCommand(wiring.stdout, wiring.stderr),
-		"ps":     NewPSCommand(wiring.stdout, wiring.stderr, wiring.newClient),
-		"start":  NewStartCommand(wiring.stdout, wiring.stderr, wiring.newClient),
-		"kill":   NewKillCommand(wiring.stdout, wiring.stderr, wiring.newClient),
-		"tail":   NewTailCommand(wiring.stdout, wiring.stderr, wiring.newClient),
-		"ui":     NewUICommand(wiring.stderr, wiring.newClient, wiring.configureUILogging, wiring.version),
+		"login":  NewLoginCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient, wiring.openBrowser),
+		"whoami": NewWhoAmICommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
+		"logout": NewLogoutCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
+		"ps":     NewPSCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"start":  NewStartCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"kill":   NewKillCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"tail":   NewTailCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"ui":     NewUICommand(wiring.stderr, wiring.newUIClient, wiring.configureUILogging, wiring.version),
 	}
 }

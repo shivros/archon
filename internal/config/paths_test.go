@@ -33,6 +33,14 @@ func TestPaths(t *testing.T) {
 		t.Fatalf("unexpected token path: %s", tokenPath)
 	}
 
+	cloudAuthPath, err := CloudAuthPath()
+	if err != nil {
+		t.Fatalf("CloudAuthPath: %v", err)
+	}
+	if !strings.HasSuffix(cloudAuthPath, filepath.Join(".archon", "cloud_auth.json")) {
+		t.Fatalf("unexpected cloud auth path: %s", cloudAuthPath)
+	}
+
 	workspacesPath, err := WorkspacesPath()
 	if err != nil {
 		t.Fatalf("WorkspacesPath: %v", err)

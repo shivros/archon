@@ -133,11 +133,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.logger == nil {
 		d.logger = logging.New(log.Writer(), logging.ParseLevel(coreCfg.LogLevel()))
 	}
+	cloudAuth, err := newCloudAuthRuntime(coreCfg, d.version)
+	if err != nil {
+		return err
+	}
 	api := &API{
-		Version: d.version,
-		Manager: d.manager,
-		Stores:  d.stores,
-		Logger:  d.logger,
+		Version:   d.version,
+		Manager:   d.manager,
+		Stores:    d.stores,
+		CloudAuth: cloudAuth,
+		Logger:    d.logger,
 	}
 	notifier := NewNotificationService(
 		NewNotificationPolicyResolver(notificationDefaultsFromCoreConfig(coreCfg), d.stores, d.logger),

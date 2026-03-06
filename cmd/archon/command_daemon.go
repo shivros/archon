@@ -165,7 +165,7 @@ func runDaemonProcess(background bool) error {
 	return d.Run(ctx)
 }
 
-func killDaemonWithFactory(newClient clientFactory) error {
+func killDaemonWithFactory(newClient daemonAdminClientFactory) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	client, err := newClient()

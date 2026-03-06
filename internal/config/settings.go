@@ -50,6 +50,7 @@ var defaultNotificationMethods = []string{"auto"}
 
 type CoreConfig struct {
 	Daemon          CoreDaemonConfig          `toml:"daemon"`
+	Cloud           CoreCloudConfig           `toml:"cloud"`
 	Providers       CoreProvidersConfig       `toml:"providers"`
 	Logging         CoreLoggingConfig         `toml:"logging"`
 	Debug           CoreDebugConfig           `toml:"debug"`
@@ -60,6 +61,12 @@ type CoreConfig struct {
 
 type CoreDaemonConfig struct {
 	Address string `toml:"address"`
+}
+
+type CoreCloudConfig struct {
+	BaseURL        string `toml:"base_url"`
+	ClientID       string `toml:"client_id"`
+	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
 
 type CoreLoggingConfig struct {
@@ -289,6 +296,25 @@ func (c CoreConfig) DaemonAddress() string {
 func (c CoreConfig) DaemonBaseURL() string {
 	addr := strings.TrimSpace(c.DaemonAddress())
 	return "http://" + addr
+}
+
+func (c CoreConfig) CloudBaseURL() string {
+	return strings.TrimRight(strings.TrimSpace(c.Cloud.BaseURL), "/")
+}
+
+func (c CoreConfig) CloudClientID() string {
+	clientID := strings.TrimSpace(c.Cloud.ClientID)
+	if clientID == "" {
+		return "archon-cli"
+	}
+	return clientID
+}
+
+func (c CoreConfig) CloudTimeoutSeconds() int {
+	if c.Cloud.TimeoutSeconds > 0 {
+		return c.Cloud.TimeoutSeconds
+	}
+	return 10
 }
 
 func (c CoreConfig) LogLevel() string {

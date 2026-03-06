@@ -13,10 +13,10 @@ import (
 type StartCommand struct {
 	stdout    io.Writer
 	stderr    io.Writer
-	newClient clientFactory
+	newClient sessionClientFactory
 }
 
-func NewStartCommand(stdout, stderr io.Writer, newClient clientFactory) *StartCommand {
+func NewStartCommand(stdout, stderr io.Writer, newClient sessionClientFactory) *StartCommand {
 	return &StartCommand{
 		stdout:    stdout,
 		stderr:    stderr,

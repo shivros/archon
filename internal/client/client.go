@@ -66,6 +66,38 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	return &resp, nil
 }
 
+func (c *Client) StartCloudLogin(ctx context.Context) (*CloudDeviceAuthorizationResponse, error) {
+	var resp CloudDeviceAuthorizationResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/cloud-auth/device", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) PollCloudLogin(ctx context.Context) (*CloudAuthPollResponse, error) {
+	var resp CloudAuthPollResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/cloud-auth/poll", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) CloudAuthStatus(ctx context.Context) (*CloudAuthStatusResponse, error) {
+	var resp CloudAuthStatusResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/cloud-auth/status", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) LogoutCloud(ctx context.Context) (*CloudLogoutResponse, error) {
+	var resp CloudLogoutResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/cloud-auth/logout", nil, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) ListSessions(ctx context.Context) ([]*types.Session, error) {
 	var resp SessionsResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sessions", nil, true, &resp); err != nil {

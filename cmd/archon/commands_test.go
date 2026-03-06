@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	controlclient "control/internal/client"
 	"control/internal/types"
@@ -45,7 +46,7 @@ func TestStartCommandWritesSessionID(t *testing.T) {
 	fake := &fakeCommandClient{
 		startSessionResp: &types.Session{ID: "session-123"},
 	}
-	cmd := NewStartCommand(stdout, &bytes.Buffer{}, fixedFactory(fake))
+	cmd := NewStartCommand(stdout, &bytes.Buffer{}, fixedSessionFactory(fake))
 
 	err := cmd.Run([]string{
 		"--provider", "codex",
@@ -93,7 +94,7 @@ func TestPSCommandPrintsSessions(t *testing.T) {
 			{ID: "s1", Status: types.SessionStatusRunning, Provider: "codex", PID: 42, Title: "demo"},
 		},
 	}
-	cmd := NewPSCommand(stdout, &bytes.Buffer{}, fixedFactory(fake))
+	cmd := NewPSCommand(stdout, &bytes.Buffer{}, fixedSessionFactory(fake))
 
 	if err := cmd.Run(nil); err != nil {
 		t.Fatalf("expected ps to succeed, got err=%v", err)
@@ -120,7 +121,7 @@ func TestTailCommandWritesItemsJSON(t *testing.T) {
 			Items: []map[string]any{{"type": "log", "text": "hello"}},
 		},
 	}
-	cmd := NewTailCommand(stdout, &bytes.Buffer{}, fixedFactory(fake))
+	cmd := NewTailCommand(stdout, &bytes.Buffer{}, fixedSessionFactory(fake))
 
 	if err := cmd.Run([]string{"--lines", "50", "session-1"}); err != nil {
 		t.Fatalf("expected tail to succeed, got err=%v", err)
@@ -146,7 +147,7 @@ func TestUICommandEnsuresVersionAndRunsUI(t *testing.T) {
 
 	cmd := NewUICommand(
 		&bytes.Buffer{},
-		fixedFactory(fake),
+		fixedDaemonVersionFactory(fake),
 		func() { logConfigured++ },
 		"v-test",
 	)
@@ -177,7 +178,7 @@ func TestUICommandIgnoresVersionMismatchWhenFlagSet(t *testing.T) {
 
 	cmd := NewUICommand(
 		&bytes.Buffer{},
-		fixedFactory(fake),
+		fixedDaemonVersionFactory(fake),
 		func() { logConfigured++ },
 		"v-test",
 	)
@@ -200,10 +201,268 @@ func TestUICommandIgnoresVersionMismatchWhenFlagSet(t *testing.T) {
 }
 
 func TestStartCommandRequiresProvider(t *testing.T) {
-	cmd := NewStartCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedFactory(&fakeCommandClient{}))
+	cmd := NewStartCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedSessionFactory(&fakeCommandClient{}))
 	err := cmd.Run(nil)
 	if err == nil || !strings.Contains(err.Error(), "provider is required") {
 		t.Fatalf("expected provider validation error, got %v", err)
+	}
+}
+
+func TestLoginCommandPrintsFallbackAndPollsUntilApproved(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	fake := &fakeCommandClient{
+		cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+			DeviceCode:              "device-1",
+			UserCode:                "ABCD-EFGH",
+			VerificationURI:         "https://archon.example/activate",
+			VerificationURIComplete: "https://archon.example/activate?user_code=ABCD-EFGH",
+			ExpiresIn:               600,
+			Interval:                0,
+		},
+		cloudPollResponses: []*controlclient.CloudAuthPollResponse{
+			{Status: "authorization_pending"},
+			{Status: "approved", Auth: &controlclient.CloudAuthStatusResponse{
+				Linked: true,
+				User:   &controlclient.CloudLinkedUser{Email: "user@example.com"},
+			}},
+		},
+	}
+	var opened string
+	cmd := NewLoginCommand(stdout, stderr, fixedCloudAuthFactory(fake), func(_ context.Context, target string) error {
+		opened = target
+		return nil
+	})
+	cmd.sleep = func(context.Context, time.Duration) error { return nil }
+
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected login to succeed, got err=%v", err)
+	}
+	if fake.ensureDaemonCalls != 1 {
+		t.Fatalf("expected ensure daemon once, got %d", fake.ensureDaemonCalls)
+	}
+	if fake.cloudLoginStartCalls != 1 {
+		t.Fatalf("expected cloud login start once, got %d", fake.cloudLoginStartCalls)
+	}
+	if fake.cloudPollCalls != 2 {
+		t.Fatalf("expected two poll attempts, got %d", fake.cloudPollCalls)
+	}
+	if opened != "https://archon.example/activate?user_code=ABCD-EFGH" {
+		t.Fatalf("unexpected browser target: %q", opened)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "https://archon.example/activate") || !strings.Contains(out, "ABCD-EFGH") {
+		t.Fatalf("expected fallback instructions in output, got %q", out)
+	}
+	if !strings.Contains(out, "user@example.com") {
+		t.Fatalf("expected linked user output, got %q", out)
+	}
+}
+
+func TestLoginCommandContinuesWhenBrowserOpenFails(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	fake := &fakeCommandClient{
+		cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+			DeviceCode:      "device-1",
+			UserCode:        "ABCD-EFGH",
+			VerificationURI: "https://archon.example/activate",
+			ExpiresIn:       600,
+			Interval:        0,
+		},
+		cloudPollResponses: []*controlclient.CloudAuthPollResponse{
+			{Status: "approved", Auth: &controlclient.CloudAuthStatusResponse{Linked: true}},
+		},
+	}
+	cmd := NewLoginCommand(stdout, stderr, fixedCloudAuthFactory(fake), func(context.Context, string) error {
+		return errors.New("boom")
+	})
+	cmd.sleep = func(context.Context, time.Duration) error { return nil }
+
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected login to succeed, got err=%v", err)
+	}
+	if !strings.Contains(stderr.String(), "browser open failed") {
+		t.Fatalf("expected browser failure warning, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Code: ABCD-EFGH") {
+		t.Fatalf("expected fallback code in output, got %q", stdout.String())
+	}
+}
+
+func TestLoginCommandHonorsNoBrowserFlag(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	fake := &fakeCommandClient{
+		cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+			DeviceCode:      "device-1",
+			UserCode:        "ABCD-EFGH",
+			VerificationURI: "https://archon.example/activate",
+			ExpiresIn:       600,
+		},
+		cloudPollResponses: []*controlclient.CloudAuthPollResponse{
+			{Status: "approved", Auth: &controlclient.CloudAuthStatusResponse{Linked: true}},
+		},
+	}
+	called := false
+	cmd := NewLoginCommand(stdout, &bytes.Buffer{}, fixedCloudAuthFactory(fake), func(context.Context, string) error {
+		called = true
+		return nil
+	})
+	cmd.sleep = func(context.Context, time.Duration) error { return nil }
+
+	if err := cmd.Run([]string{"--no-browser"}); err != nil {
+		t.Fatalf("expected login to succeed, got err=%v", err)
+	}
+	if called {
+		t.Fatalf("expected browser opener not to be called")
+	}
+}
+
+func TestLoginCommandHandlesSlowDownAndUnexpectedStatus(t *testing.T) {
+	t.Run("slow down", func(t *testing.T) {
+		fake := &fakeCommandClient{
+			cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+				DeviceCode:      "device-1",
+				UserCode:        "ABCD-EFGH",
+				VerificationURI: "https://archon.example/activate",
+				ExpiresIn:       600,
+				Interval:        1,
+			},
+			cloudPollResponses: []*controlclient.CloudAuthPollResponse{
+				{Status: "slow_down"},
+				{Status: "approved", Auth: &controlclient.CloudAuthStatusResponse{Linked: true}},
+			},
+		}
+		var sleeps []time.Duration
+		cmd := NewLoginCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedCloudAuthFactory(fake), nil)
+		cmd.sleep = func(_ context.Context, d time.Duration) error {
+			sleeps = append(sleeps, d)
+			return nil
+		}
+		if err := cmd.Run(nil); err != nil {
+			t.Fatalf("expected login to succeed, got err=%v", err)
+		}
+		if len(sleeps) == 0 || sleeps[0] != 6*time.Second {
+			t.Fatalf("expected slow_down backoff to 6s, got %#v", sleeps)
+		}
+	})
+
+	t.Run("unexpected status", func(t *testing.T) {
+		fake := &fakeCommandClient{
+			cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+				DeviceCode:      "device-1",
+				UserCode:        "ABCD-EFGH",
+				VerificationURI: "https://archon.example/activate",
+				ExpiresIn:       600,
+			},
+			cloudPollResponses: []*controlclient.CloudAuthPollResponse{
+				{Status: "mystery"},
+			},
+		}
+		cmd := NewLoginCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedCloudAuthFactory(fake), nil)
+		cmd.sleep = func(context.Context, time.Duration) error { return nil }
+		if err := cmd.Run(nil); err == nil || !strings.Contains(err.Error(), "unexpected cloud login status") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestLoginCommandHandlesPollErrorAndSleepCancellation(t *testing.T) {
+	t.Run("poll error", func(t *testing.T) {
+		fake := &fakeCommandClient{
+			cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+				DeviceCode:      "device-1",
+				UserCode:        "ABCD-EFGH",
+				VerificationURI: "https://archon.example/activate",
+				ExpiresIn:       600,
+			},
+			cloudPollErrs: []error{errors.New("poll failed")},
+		}
+		cmd := NewLoginCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedCloudAuthFactory(fake), nil)
+		if err := cmd.Run(nil); err == nil || !strings.Contains(err.Error(), "poll failed") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("sleep canceled", func(t *testing.T) {
+		fake := &fakeCommandClient{
+			cloudLoginStartResp: &controlclient.CloudDeviceAuthorizationResponse{
+				DeviceCode:      "device-1",
+				UserCode:        "ABCD-EFGH",
+				VerificationURI: "https://archon.example/activate",
+				ExpiresIn:       600,
+			},
+			cloudPollResponses: []*controlclient.CloudAuthPollResponse{
+				{Status: "authorization_pending"},
+			},
+		}
+		cmd := NewLoginCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedCloudAuthFactory(fake), nil)
+		cmd.sleep = func(context.Context, time.Duration) error { return context.Canceled }
+		if err := cmd.Run(nil); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled, got %v", err)
+		}
+	})
+}
+
+func TestWhoAmICommandPrintsLinkedStatus(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	fake := &fakeCommandClient{
+		cloudStatusResp: &controlclient.CloudAuthStatusResponse{
+			Linked:       true,
+			User:         &controlclient.CloudLinkedUser{DisplayName: "Shiv"},
+			Installation: &controlclient.CloudInstallation{Name: "Archon Laptop"},
+		},
+	}
+	cmd := NewWhoAmICommand(stdout, &bytes.Buffer{}, fixedCloudAuthFactory(fake))
+
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected whoami to succeed, got err=%v", err)
+	}
+	if !strings.Contains(stdout.String(), "Shiv") || !strings.Contains(stdout.String(), "Archon Laptop") {
+		t.Fatalf("unexpected whoami output: %q", stdout.String())
+	}
+}
+
+func TestLogoutCommandCallsClient(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	fake := &fakeCommandClient{}
+	cmd := NewLogoutCommand(stdout, &bytes.Buffer{}, fixedCloudAuthFactory(fake))
+
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected logout to succeed, got err=%v", err)
+	}
+	if fake.logoutCloudCalls != 1 {
+		t.Fatalf("expected logout call once, got %d", fake.logoutCloudCalls)
+	}
+	if got := stdout.String(); got != "revoked remote token and cleared local cloud credentials\n" {
+		t.Fatalf("unexpected logout output: %q", got)
+	}
+}
+
+func TestLogoutCommandPrintsPartialLogoutResult(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	fake := &fakeCommandClient{
+		logoutCloudResp: &controlclient.CloudLogoutResponse{
+			Status:       "unlinked_local_only",
+			LocalCleared: true,
+			Message:      "remote revoke failed; cleared local cloud credentials only",
+		},
+	}
+	cmd := NewLogoutCommand(stdout, &bytes.Buffer{}, fixedCloudAuthFactory(fake))
+
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected logout to succeed, got err=%v", err)
+	}
+	if !strings.Contains(stdout.String(), "remote revoke failed") {
+		t.Fatalf("unexpected partial logout output: %q", stdout.String())
+	}
+}
+
+func TestSleepContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleepContext(ctx, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got %v", err)
 	}
 }
 
@@ -734,14 +993,17 @@ func TestBuildCommandsIncludesConfig(t *testing.T) {
 	wiring := commandWiring{
 		stdout:             &bytes.Buffer{},
 		stderr:             &bytes.Buffer{},
-		newClient:          fixedFactory(&fakeCommandClient{}),
+		newCloudAuthClient: fixedCloudAuthFactory(&fakeCommandClient{}),
+		newSessionClient:   fixedSessionFactory(&fakeCommandClient{}),
+		newUIClient:        fixedDaemonVersionFactory(&fakeCommandClient{}),
+		newDaemonAdmin:     fixedDaemonAdminFactory(&fakeCommandClient{}),
 		runDaemon:          func(bool) error { return nil },
 		killDaemon:         func() error { return nil },
 		configureUILogging: func() {},
 		version:            "v-test",
 	}
 	commands := buildCommands(wiring)
-	required := []string{"daemon", "config", "ps", "start", "kill", "tail", "ui"}
+	required := []string{"daemon", "config", "login", "whoami", "logout", "ps", "start", "kill", "tail", "ui"}
 	for _, name := range required {
 		if commands[name] == nil {
 			t.Fatalf("expected %q command to be present", name)
@@ -760,7 +1022,7 @@ func TestDefaultCommandWiringUsesStandardStreams(t *testing.T) {
 	if wiring.stderr != os.Stderr {
 		t.Fatalf("expected stderr fallback to os.Stderr")
 	}
-	if wiring.newClient == nil || wiring.runDaemon == nil || wiring.killDaemon == nil || wiring.configureUILogging == nil {
+	if wiring.newCloudAuthClient == nil || wiring.newSessionClient == nil || wiring.newUIClient == nil || wiring.newDaemonAdmin == nil || wiring.runDaemon == nil || wiring.killDaemon == nil || wiring.configureUILogging == nil {
 		t.Fatalf("expected default wiring to populate dependencies")
 	}
 }
@@ -779,6 +1041,21 @@ type fakeCommandClient struct {
 	ensureVersionCalls    int
 	ensureVersionExpected string
 	ensureVersionRestart  bool
+
+	cloudLoginStartErr   error
+	cloudLoginStartResp  *controlclient.CloudDeviceAuthorizationResponse
+	cloudLoginStartCalls int
+
+	cloudPollErrs      []error
+	cloudPollResponses []*controlclient.CloudAuthPollResponse
+	cloudPollCalls     int
+
+	cloudStatusErr  error
+	cloudStatusResp *controlclient.CloudAuthStatusResponse
+
+	logoutCloudErr   error
+	logoutCloudResp  *controlclient.CloudLogoutResponse
+	logoutCloudCalls int
 
 	listSessionsErr   error
 	listSessionsCalls int
@@ -814,6 +1091,50 @@ func (f *fakeCommandClient) EnsureDaemonVersion(_ context.Context, expectedVersi
 	f.ensureVersionExpected = expectedVersion
 	f.ensureVersionRestart = restart
 	return f.ensureVersionErr
+}
+
+func (f *fakeCommandClient) StartCloudLogin(context.Context) (*controlclient.CloudDeviceAuthorizationResponse, error) {
+	f.cloudLoginStartCalls++
+	if f.cloudLoginStartErr != nil {
+		return nil, f.cloudLoginStartErr
+	}
+	if f.cloudLoginStartResp == nil {
+		return nil, errors.New("cloudLoginStartResp not configured")
+	}
+	return f.cloudLoginStartResp, nil
+}
+
+func (f *fakeCommandClient) PollCloudLogin(context.Context) (*controlclient.CloudAuthPollResponse, error) {
+	index := f.cloudPollCalls
+	f.cloudPollCalls++
+	if index < len(f.cloudPollErrs) && f.cloudPollErrs[index] != nil {
+		return nil, f.cloudPollErrs[index]
+	}
+	if index < len(f.cloudPollResponses) && f.cloudPollResponses[index] != nil {
+		return f.cloudPollResponses[index], nil
+	}
+	return nil, errors.New("cloudPollResponses not configured")
+}
+
+func (f *fakeCommandClient) CloudAuthStatus(context.Context) (*controlclient.CloudAuthStatusResponse, error) {
+	if f.cloudStatusErr != nil {
+		return nil, f.cloudStatusErr
+	}
+	if f.cloudStatusResp == nil {
+		return &controlclient.CloudAuthStatusResponse{}, nil
+	}
+	return f.cloudStatusResp, nil
+}
+
+func (f *fakeCommandClient) LogoutCloud(context.Context) (*controlclient.CloudLogoutResponse, error) {
+	f.logoutCloudCalls++
+	if f.logoutCloudErr != nil {
+		return nil, f.logoutCloudErr
+	}
+	if f.logoutCloudResp == nil {
+		return &controlclient.CloudLogoutResponse{Status: "revoked_and_unlinked", Message: "revoked remote token and cleared local cloud credentials", RemoteRevoked: true, LocalCleared: true}, nil
+	}
+	return f.logoutCloudResp, nil
 }
 
 func (f *fakeCommandClient) ListSessions(context.Context) ([]*types.Session, error) {
@@ -863,8 +1184,26 @@ func (f *fakeCommandClient) RunUI() error {
 	return f.runUIErr
 }
 
-func fixedFactory(client commandClient) clientFactory {
-	return func() (commandClient, error) {
+func fixedCloudAuthFactory(client cloudAuthCommandClient) cloudAuthClientFactory {
+	return func() (cloudAuthCommandClient, error) {
+		return client, nil
+	}
+}
+
+func fixedSessionFactory(client sessionCommandClient) sessionClientFactory {
+	return func() (sessionCommandClient, error) {
+		return client, nil
+	}
+}
+
+func fixedDaemonVersionFactory(client daemonVersionClient) daemonVersionClientFactory {
+	return func() (daemonVersionClient, error) {
+		return client, nil
+	}
+}
+
+func fixedDaemonAdminFactory(client daemonAdminClient) daemonAdminClientFactory {
+	return func() (daemonAdminClient, error) {
 		return client, nil
 	}
 }

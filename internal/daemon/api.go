@@ -15,6 +15,7 @@ type API struct {
 	Version                   string
 	Manager                   *SessionManager
 	Stores                    *Stores
+	CloudAuth                 CloudAuthService
 	Shutdown                  func(context.Context) error
 	Syncer                    SessionSyncer
 	LiveCodex                 *CodexLiveManager
@@ -197,6 +198,13 @@ func (a *API) newSessionService() *SessionService {
 		opts = append(opts, WithTitleGenerationQueue(a.TitleGeneration))
 	}
 	return NewSessionService(a.Manager, a.Stores, a.Logger, opts...)
+}
+
+func (a *API) cloudAuthService() CloudAuthService {
+	if a == nil {
+		return nil
+	}
+	return a.CloudAuth
 }
 
 func (a *API) workflowRunService() GuidedWorkflowRunService {

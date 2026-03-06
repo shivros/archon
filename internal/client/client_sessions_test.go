@@ -109,3 +109,74 @@ func TestClientGetTranscriptSnapshotReturnsAPIErrorOnNon2xx(t *testing.T) {
 		t.Fatalf("expected non-2xx error")
 	}
 }
+
+func TestClientCloudAuthEndpoints(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/cloud-auth/device":
+			_, _ = w.Write([]byte(`{"device_code":"dev-1","user_code":"ABCD-EFGH","verification_uri":"https://archon.example/activate","expires_in":600,"interval":5}`))
+		case "/v1/cloud-auth/poll":
+			_, _ = w.Write([]byte(`{"status":"approved","auth":{"linked":true}}`))
+		case "/v1/cloud-auth/status":
+			_, _ = w.Write([]byte(`{"linked":true}`))
+		case "/v1/cloud-auth/logout":
+			_, _ = w.Write([]byte(`{"status":"revoked_and_unlinked","remote_revoked":true,"local_cleared":true}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		baseURL: server.URL,
+		token:   "token",
+		http: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	}
+
+	started, err := c.StartCloudLogin(context.Background())
+	if err != nil || started.DeviceCode != "dev-1" {
+		t.Fatalf("StartCloudLogin error=%v resp=%#v", err, started)
+	}
+	polled, err := c.PollCloudLogin(context.Background())
+	if err != nil || polled.Status != "approved" {
+		t.Fatalf("PollCloudLogin error=%v resp=%#v", err, polled)
+	}
+	status, err := c.CloudAuthStatus(context.Background())
+	if err != nil || !status.Linked {
+		t.Fatalf("CloudAuthStatus error=%v resp=%#v", err, status)
+	}
+	logoutResp, err := c.LogoutCloud(context.Background())
+	if err != nil {
+		t.Fatalf("LogoutCloud error: %v", err)
+	}
+	if logoutResp.Status == "" {
+		t.Fatalf("expected logout response payload, got %#v", logoutResp)
+	}
+	if len(calls) != 4 {
+		t.Fatalf("expected four cloud auth calls, got %#v", calls)
+	}
+}
+
+func TestClientCloudAuthLogoutReturnsAPIErrorOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{
+		baseURL: server.URL,
+		token:   "token",
+		http: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	}
+	if _, err := c.LogoutCloud(context.Background()); err == nil {
+		t.Fatalf("expected non-2xx error")
+	}
+}

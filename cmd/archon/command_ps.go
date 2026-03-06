@@ -9,10 +9,10 @@ import (
 type PSCommand struct {
 	stdout    io.Writer
 	stderr    io.Writer
-	newClient clientFactory
+	newClient sessionClientFactory
 }
 
-func NewPSCommand(stdout, stderr io.Writer, newClient clientFactory) *PSCommand {
+func NewPSCommand(stdout, stderr io.Writer, newClient sessionClientFactory) *PSCommand {
 	return &PSCommand{
 		stdout:    stdout,
 		stderr:    stderr,

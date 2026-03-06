@@ -121,6 +121,14 @@ type HealthResponse struct {
 	PID     int    `json:"pid"`
 }
 
+type CloudDeviceAuthorizationResponse = types.CloudDeviceAuthorization
+type CloudLinkedUser = types.CloudLinkedUser
+type CloudInstallation = types.CloudInstallation
+type CloudPendingStatus = types.CloudPendingStatus
+type CloudAuthStatusResponse = types.CloudAuthStatus
+type CloudAuthPollResponse = types.CloudAuthPollResult
+type CloudLogoutResponse = types.CloudLogoutResult
+
 type CreateWorkflowRunRequest struct {
 	TemplateID                string                                    `json:"template_id,omitempty"`
 	WorkspaceID               string                                    `json:"workspace_id,omitempty"`

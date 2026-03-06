@@ -13,6 +13,9 @@ Usage:
 Commands:
   daemon   run background daemon
   config   print configuration (effective or defaults)
+  login    link this Archon daemon to Archon Cloud
+  whoami   show current Archon Cloud link status
+  logout   unlink this Archon daemon from Archon Cloud
   ps       list sessions
   start    start a session
   kill     kill a session
