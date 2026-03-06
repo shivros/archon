@@ -707,8 +707,20 @@ type uiHarness struct {
 	model *Model
 }
 
+type stableMetadataStreamAPI struct{}
+
+func (stableMetadataStreamAPI) MetadataStream(_ context.Context, _ string) (<-chan types.MetadataEvent, func(), error) {
+	// Keep metadata stream open in UI harness tests to avoid reconnect backoff
+	// loops that can block synchronous command execution.
+	ch := make(chan types.MetadataEvent)
+	return ch, func() { close(ch) }, nil
+}
+
 func newUIHarness(t *testing.T, model *Model) *uiHarness {
 	t.Helper()
+	if model != nil {
+		model.metadataStreamAPI = stableMetadataStreamAPI{}
+	}
 	return &uiHarness{t: t, model: model}
 }
 
