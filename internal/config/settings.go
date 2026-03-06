@@ -55,6 +55,7 @@ type CoreConfig struct {
 	Debug           CoreDebugConfig           `toml:"debug"`
 	Notifications   CoreNotificationsConfig   `toml:"notifications"`
 	GuidedWorkflows CoreGuidedWorkflowsConfig `toml:"guided_workflows"`
+	TitleGeneration CoreTitleGenerationConfig `toml:"title_generation"`
 }
 
 type CoreDaemonConfig struct {
@@ -123,6 +124,19 @@ type CoreGuidedWorkflowsRolloutConfig struct {
 	RequireCommitApproval       *bool `toml:"require_commit_approval"`
 	MaxRetryAttempts            int   `toml:"max_retry_attempts"`
 	AllowTurnIDMismatchRecovery *bool `toml:"allow_turn_id_mismatch_recovery"`
+}
+
+type CoreTitleGenerationConfig struct {
+	Provider       string                              `toml:"provider"`
+	Model          string                              `toml:"model"`
+	TimeoutSeconds int                                 `toml:"timeout_seconds"`
+	OpenRouter     CoreTitleGenerationOpenRouterConfig `toml:"openrouter"`
+}
+
+type CoreTitleGenerationOpenRouterConfig struct {
+	APIKey    string `toml:"api_key"`
+	APIKeyEnv string `toml:"api_key_env"`
+	BaseURL   string `toml:"base_url"`
 }
 
 type CoreProvidersConfig struct {
@@ -514,6 +528,50 @@ func (c CoreConfig) GuidedWorkflowsRolloutMaxRetryAttempts() int {
 
 func (c CoreConfig) GuidedWorkflowsRolloutAllowTurnIDMismatchRecovery() bool {
 	return boolFromPtrWithDefault(c.GuidedWorkflows.Rollout.AllowTurnIDMismatchRecovery, false)
+}
+
+func (c CoreConfig) TitleGenerationProvider() string {
+	switch strings.ToLower(strings.TrimSpace(c.TitleGeneration.Provider)) {
+	case "openrouter":
+		return "openrouter"
+	default:
+		return ""
+	}
+}
+
+func (c CoreConfig) TitleGenerationModel() string {
+	model := strings.TrimSpace(c.TitleGeneration.Model)
+	if model == "" {
+		return "openrouter/auto"
+	}
+	return model
+}
+
+func (c CoreConfig) TitleGenerationTimeoutSeconds() int {
+	if c.TitleGeneration.TimeoutSeconds > 0 {
+		return c.TitleGeneration.TimeoutSeconds
+	}
+	return 10
+}
+
+func (c CoreConfig) TitleGenerationOpenRouterAPIKey() string {
+	return strings.TrimSpace(c.TitleGeneration.OpenRouter.APIKey)
+}
+
+func (c CoreConfig) TitleGenerationOpenRouterAPIKeyEnv() string {
+	name := strings.TrimSpace(c.TitleGeneration.OpenRouter.APIKeyEnv)
+	if name == "" {
+		return "OPENROUTER_API_KEY"
+	}
+	return name
+}
+
+func (c CoreConfig) TitleGenerationOpenRouterBaseURL() string {
+	baseURL := strings.TrimSpace(c.TitleGeneration.OpenRouter.BaseURL)
+	if baseURL == "" {
+		return "https://openrouter.ai/api/v1"
+	}
+	return strings.TrimRight(baseURL, "/")
 }
 
 func (c CoreConfig) ProviderCommand(provider string) string {

@@ -31,6 +31,7 @@ type API struct {
 	WorkflowSessionVisibility WorkflowRunSessionVisibilityService
 	WorkflowSessionInterrupt  WorkflowRunSessionInterruptService
 	WorkflowRunStop           WorkflowRunStopCoordinator
+	TitleGeneration           TitleGenerationQueue
 	Logger                    logging.Logger
 }
 
@@ -186,6 +187,9 @@ func (a *API) newSessionService() *SessionService {
 	}
 	if a != nil && a.LiveManager != nil {
 		opts = append(opts, WithLiveManager(a.LiveManager))
+	}
+	if a != nil && a.TitleGeneration != nil {
+		opts = append(opts, WithTitleGenerationQueue(a.TitleGeneration))
 	}
 	return NewSessionService(a.Manager, a.Stores, a.Logger, opts...)
 }

@@ -170,6 +170,18 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if closer, ok := any(workflowRuns).(guidedWorkflowRunCloser); ok {
 		defer closer.Close()
 	}
+	titleGenerator, titleGeneratorErr := newTitleGeneratorFromCoreConfig(coreCfg, d.logger)
+	if titleGeneratorErr != nil && d.logger != nil {
+		d.logger.Warn("title_generation_provider_init_failed", logging.F("error", titleGeneratorErr))
+	}
+	titleGeneration := newAsyncTitleGenerationService(
+		titleGenerator,
+		newDefaultGeneratedSessionTitleUpdater(d.manager, d.stores),
+		newDefaultGeneratedWorkflowTitleUpdater(workflowRuns),
+		d.logger,
+		titleGenerationWorkerOptionsFromCoreConfig(coreCfg),
+	)
+	defer titleGeneration.Close()
 	var turnProcessor guidedworkflows.TurnEventProcessor
 	if processor, ok := any(workflowRuns).(guidedworkflows.TurnEventProcessor); ok {
 		turnProcessor = processor
@@ -193,6 +205,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.WorkflowTemplates = workflowRuns
 	api.WorkflowPolicy = newGuidedWorkflowPolicyResolver(coreCfg)
 	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg)
+	api.TitleGeneration = titleGeneration
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)

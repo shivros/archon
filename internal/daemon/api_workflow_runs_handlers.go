@@ -61,6 +61,13 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))
 			return
 		}
+		if a != nil && a.TitleGeneration != nil {
+			a.TitleGeneration.EnqueueWorkflowTitle(WorkflowTitleGenerationRequest{
+				RunID:         strings.TrimSpace(run.ID),
+				Prompt:        strings.TrimSpace(run.UserPrompt),
+				ExpectedTitle: strings.TrimSpace(run.TemplateName),
+			})
+		}
 		if a.Logger != nil {
 			settings := guidedWorkflowEffectiveDispatchSettings(run.DefaultAccessLevel, a.workflowDispatchDefaults())
 			a.Logger.Info("guided_workflow_run_created",

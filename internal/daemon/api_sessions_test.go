@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,24 @@ type fakeSessionSyncer struct {
 	calls        int
 	workspaceIDs []string
 	err          error
+}
+
+type captureTitleGenerationQueue struct {
+	mu               sync.Mutex
+	sessionRequests  []SessionTitleGenerationRequest
+	workflowRequests []WorkflowTitleGenerationRequest
+}
+
+func (q *captureTitleGenerationQueue) EnqueueSessionTitle(req SessionTitleGenerationRequest) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.sessionRequests = append(q.sessionRequests, req)
+}
+
+func (q *captureTitleGenerationQueue) EnqueueWorkflowTitle(req WorkflowTitleGenerationRequest) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.workflowRequests = append(q.workflowRequests, req)
 }
 
 func (f *fakeSessionSyncer) SyncAll(context.Context) error {
@@ -85,6 +104,44 @@ func TestAPISessionEndpoints(t *testing.T) {
 	}
 
 	killSession(t, server, session.ID)
+}
+
+func TestAPISessionStartEnqueuesTitleGeneration(t *testing.T) {
+	manager := newTestManager(t)
+	queue := &captureTitleGenerationQueue{}
+	api := &API{
+		Version:         "test",
+		Manager:         manager,
+		TitleGeneration: queue,
+	}
+	server := newTestServerWithAPI(t, api)
+	defer server.Close()
+
+	session := startSession(t, server, StartSessionRequest{
+		Provider: "custom",
+		Cmd:      os.Args[0],
+		Args:     helperArgs("stdout=title-enqueue", "sleep_ms=50", "exit=0"),
+		Env:      []string{"GO_WANT_HELPER_PROCESS=1"},
+		Text:     "Fix flaky CI failures in workflow tests",
+	})
+	if session == nil || session.ID == "" {
+		t.Fatalf("expected session to be created")
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if len(queue.sessionRequests) != 1 {
+		t.Fatalf("expected one session title request, got %d", len(queue.sessionRequests))
+	}
+	got := queue.sessionRequests[0]
+	if got.SessionID != session.ID {
+		t.Fatalf("expected session id %q, got %q", session.ID, got.SessionID)
+	}
+	if !strings.Contains(got.Prompt, "stdout=title-enqueue") {
+		t.Fatalf("unexpected prompt: %q", got.Prompt)
+	}
+	if strings.TrimSpace(got.ExpectedTitle) == "" {
+		t.Fatalf("expected non-empty fallback title")
+	}
 }
 
 func TestAPISessionSendUnsupported(t *testing.T) {

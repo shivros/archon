@@ -160,6 +160,42 @@ func TestWorkflowRunEndpointsStop(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunCreateEnqueuesTitleGeneration(t *testing.T) {
+	queue := &captureTitleGenerationQueue{}
+	api := &API{
+		Version:         "test",
+		WorkflowRuns:    guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+		TitleGeneration: queue,
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	created := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		TemplateID:  guidedworkflows.TemplateIDSolidPhaseDelivery,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		UserPrompt:  "Refactor provider bridge for new title generation flow",
+	})
+	if created == nil || created.ID == "" {
+		t.Fatalf("expected workflow run id")
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if len(queue.workflowRequests) != 1 {
+		t.Fatalf("expected one workflow title request, got %d", len(queue.workflowRequests))
+	}
+	got := queue.workflowRequests[0]
+	if got.RunID != created.ID {
+		t.Fatalf("expected run id %q, got %q", created.ID, got.RunID)
+	}
+	if got.Prompt != "Refactor provider bridge for new title generation flow" {
+		t.Fatalf("unexpected prompt: %q", got.Prompt)
+	}
+	if strings.TrimSpace(got.ExpectedTitle) == "" {
+		t.Fatalf("expected non-empty expected title")
+	}
+}
+
 func TestWorkflowRunEndpointsStopInterruptsSessionsBestEffort(t *testing.T) {
 	var logOut bytes.Buffer
 	interruptor := &recordWorkflowRunSessionInterruptService{

@@ -133,6 +133,16 @@ allow_commit = false
 require_commit_approval = true
 max_retry_attempts = 2
 
+[title_generation]
+provider = "" # "" disables feature, "openrouter" enables async AI title generation
+model = "openrouter/auto"
+timeout_seconds = 10
+
+[title_generation.openrouter]
+api_key = "" # optional; prefer api_key_env
+api_key_env = "OPENROUTER_API_KEY"
+base_url = "https://openrouter.ai/api/v1"
+
 [providers.codex]
 command = "codex"
 default_model = "gpt-5.1-codex"
@@ -164,6 +174,17 @@ timeout_seconds = 90
 [providers.gemini]
 command = "gemini"
 ```
+
+### Title Generation
+
+When `[title_generation].provider` is set to `openrouter` and the API key resolves,
+Archon generates titles asynchronously after session/workflow creation.
+
+- Initial title behavior is unchanged (fallback title is shown immediately).
+- AI title updates are compare-and-set: if the title changed in the meantime, the update is skipped.
+- User-initiated renames remain locked.
+- AI-generated title updates are treated as system updates and do not lock titles.
+- Provider error logs are sanitized and do not include raw provider response bodies.
 
 ### Notifications
 

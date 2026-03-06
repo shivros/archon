@@ -18,6 +18,7 @@ type SessionService struct {
 	manager                   *SessionManager
 	stores                    *Stores
 	liveManager               LiveManager
+	titleGeneration           TitleGenerationQueue
 	logger                    logging.Logger
 	paths                     WorkspacePathResolver
 	notifier                  NotificationPublisher
@@ -89,6 +90,15 @@ func WithLiveManager(liveManager LiveManager) SessionServiceOption {
 			return
 		}
 		s.liveManager = liveManager
+	}
+}
+
+func WithTitleGenerationQueue(queue TitleGenerationQueue) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || queue == nil {
+			return
+		}
+		s.titleGeneration = queue
 	}
 }
 
@@ -757,6 +767,13 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 				)
 			}
 		}(session.ID, req.Provider)
+	}
+	if s.titleGeneration != nil && strings.TrimSpace(initialText) != "" {
+		s.titleGeneration.EnqueueSessionTitle(SessionTitleGenerationRequest{
+			SessionID:     session.ID,
+			Prompt:        initialText,
+			ExpectedTitle: strings.TrimSpace(session.Title),
+		})
 	}
 	return session, nil
 }

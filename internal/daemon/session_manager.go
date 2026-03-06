@@ -885,6 +885,14 @@ func (m *SessionManager) rekeySession(oldID, newID string, state *sessionRuntime
 }
 
 func (m *SessionManager) UpdateSessionTitle(id, title string) error {
+	return m.updateSessionTitleWithLock(id, title, true)
+}
+
+func (m *SessionManager) UpdateGeneratedSessionTitle(id, title string) error {
+	return m.updateSessionTitleWithLock(id, title, false)
+}
+
+func (m *SessionManager) updateSessionTitleWithLock(id, title string, lockTitle bool) error {
 	m.mu.Lock()
 	store := m.metaStore
 	sessionStore := m.sessionStore
@@ -901,7 +909,7 @@ func (m *SessionManager) UpdateSessionTitle(id, title string) error {
 	meta := &types.SessionMeta{
 		SessionID:   id,
 		Title:       sanitized,
-		TitleLocked: true,
+		TitleLocked: lockTitle,
 	}
 	if store != nil {
 		if _, err := store.Upsert(context.Background(), meta); err != nil {

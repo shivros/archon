@@ -246,6 +246,56 @@ func TestUpdateSessionTitleUpdatesLiveSession(t *testing.T) {
 	waitForStatus(t, manager, session.ID, types.SessionStatusExited, 2*time.Second)
 }
 
+func TestUpdateGeneratedSessionTitleDoesNotLock(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	manager.SetMetaStore(metaStore)
+	manager.SetSessionStore(sessionStore)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	_, err := sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "sess-generated",
+			Provider:  "custom",
+			Title:     "Fallback",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	_, err = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:    "sess-generated",
+		Title:        "Fallback",
+		TitleLocked:  false,
+		LastActiveAt: &now,
+	})
+	if err != nil {
+		t.Fatalf("seed meta: %v", err)
+	}
+
+	if err := manager.UpdateGeneratedSessionTitle("sess-generated", "AI Generated"); err != nil {
+		t.Fatalf("UpdateGeneratedSessionTitle: %v", err)
+	}
+	meta, ok, err := metaStore.Get(ctx, "sess-generated")
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected meta record")
+	}
+	if meta.Title != "AI Generated" {
+		t.Fatalf("expected updated title, got %q", meta.Title)
+	}
+	if meta.TitleLocked {
+		t.Fatalf("expected generated update to keep title unlocked")
+	}
+}
+
 func TestRekeySessionMigratesStores(t *testing.T) {
 	manager := newTestManager(t)
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
