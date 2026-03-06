@@ -71,6 +71,66 @@ func TestTextInputModeControllerCtrlJInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestTextInputModeControllerNewlineHandledBeforePreHandle(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("hello")
+
+	preHandled := false
+	controller := textInputModeController{
+		input: input,
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		preHandle: func(key string, msg tea.KeyMsg) (bool, tea.Cmd) {
+			preHandled = true
+			return true, nil
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	if !handled {
+		t.Fatalf("expected shift+enter to be handled")
+	}
+	if preHandled {
+		t.Fatalf("expected newline handling to bypass preHandle")
+	}
+	if got := input.Value(); got != "hello\n" {
+		t.Fatalf("expected newline insert, got %q", got)
+	}
+}
+
+type denyNewlinePolicy struct{}
+
+func (denyNewlinePolicy) IsInputNewline(msg tea.KeyMsg, resolvedKey string, newlineCommandMatched bool) bool {
+	return false
+}
+
+func TestTextInputModeControllerUsesInjectedCommandPolicy(t *testing.T) {
+	input := NewTextInput(40, TextInputConfig{Height: 3})
+	input.Focus()
+	input.SetValue("hello")
+
+	controller := textInputModeController{
+		input:         input,
+		commandPolicy: denyNewlinePolicy{},
+		keyString: func(msg tea.KeyMsg) string {
+			return msg.String()
+		},
+		keyMatchesCommand: func(msg tea.KeyMsg, command, fallback string) bool {
+			return command == KeyCommandInputNewline && msg.String() == "f7"
+		},
+	}
+
+	handled, _ := controller.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected key message to be handled")
+	}
+	if got := input.Value(); got == "hello\n" {
+		t.Fatalf("expected injected policy to override default newline behavior")
+	}
+}
+
 func TestTextInputModeControllerLineUpAndDownMoveCursorLine(t *testing.T) {
 	upInput := NewTextInput(40, TextInputConfig{Height: 3})
 	upInput.Focus()

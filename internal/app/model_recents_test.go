@@ -162,6 +162,37 @@ func TestRecentsReplyShiftEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestRecentsReplyRemappedInputNewlineInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputNewline: "f7",
+	}))
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace"}}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.mode = uiModeRecents
+	m.recentsSelectedSessionID = "s1"
+	if !m.startRecentsReply() {
+		t.Fatalf("expected to start recents reply")
+	}
+
+	handled, _ := m.reduceRecentsMode(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected remapped input newline to be handled by recents reply input")
+	}
+	if got := m.recentsReplyInput.Value(); !strings.Contains(got, "\n") {
+		t.Fatalf("expected remapped input newline to insert newline, got %q", got)
+	}
+}
+
 func TestRecentsReplyClearCommandClearsInput(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()

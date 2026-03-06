@@ -634,6 +634,109 @@ func TestGuidedWorkflowSetupCapturesPromptFromPaste(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowSetupShiftEnterInsertsNewline(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	m = asModel(t, updated)
+
+	if m.guidedWorkflowPromptInput == nil {
+		t.Fatalf("expected guided workflow prompt input")
+	}
+	if got := m.guidedWorkflowPromptInput.Value(); got != "a\nb" {
+		t.Fatalf("expected shift+enter to insert newline in setup prompt, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowSetupCtrlEnterInsertsNewline(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	m = asModel(t, updated)
+
+	if m.guidedWorkflowPromptInput == nil {
+		t.Fatalf("expected guided workflow prompt input")
+	}
+	if got := m.guidedWorkflowPromptInput.Value(); got != "a\nb" {
+		t.Fatalf("expected ctrl+enter to insert newline in setup prompt, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowSetupCtrlJInsertsNewline(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	m = asModel(t, updated)
+
+	if m.guidedWorkflowPromptInput == nil {
+		t.Fatalf("expected guided workflow prompt input")
+	}
+	if got := m.guidedWorkflowPromptInput.Value(); got != "a\nb" {
+		t.Fatalf("expected ctrl+j to insert newline in setup prompt, got %q", got)
+	}
+}
+
+func TestGuidedWorkflowSetupRemappedInputNewlineInsertsNewline(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputNewline: "f7",
+	}))
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws1",
+		worktreeID:  "wt1",
+		sessionID:   "s1",
+	})
+
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF7})
+	m = asModel(t, updated)
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'b', Text: "b"})
+	m = asModel(t, updated)
+
+	if m.guidedWorkflowPromptInput == nil {
+		t.Fatalf("expected guided workflow prompt input")
+	}
+	if got := m.guidedWorkflowPromptInput.Value(); got != "a\nb" {
+		t.Fatalf("expected remapped input newline command to insert newline, got %q", got)
+	}
+}
+
 func TestGuidedWorkflowSetupTypingQDoesNotQuit(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{

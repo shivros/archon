@@ -140,6 +140,34 @@ func TestApprovalResponseReducerClearCommandClearsInput(t *testing.T) {
 	}
 }
 
+func TestApprovalResponseReducerShiftEnterInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	req := &ApprovalRequest{
+		RequestID: 7,
+		SessionID: "s1",
+		Method:    approvalMethodRequestUserInput,
+		Summary:   "user input",
+		Detail:    "Provide a reason",
+	}
+	m.enterApprovalResponse("s1", req)
+	if m.approvalInput == nil {
+		t.Fatalf("expected approval input")
+	}
+	m.approvalInput.SetValue("line one")
+
+	handled, cmd := m.reduceApprovalResponseMode(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	if !handled {
+		t.Fatalf("expected approval response reducer to handle shift+enter")
+	}
+	_ = cmd
+	if got := m.approvalInput.Value(); got != "line one\n" {
+		t.Fatalf("expected shift+enter to insert newline, got %q", got)
+	}
+	if m.mode != uiModeApprovalResponse {
+		t.Fatalf("expected mode to remain approval response, got %v", m.mode)
+	}
+}
+
 func TestSearchReducerSupportsRemappedSubmitCommand(t *testing.T) {
 	m := NewModel(nil)
 	m.applyKeybindings(NewKeybindings(map[string]string{
@@ -242,6 +270,60 @@ func TestComposeReducerArrowKeysMoveInputCursorLine(t *testing.T) {
 	}
 	if got := m.chatInput.Value(); got != "topx\nbottom" {
 		t.Fatalf("expected up to move cursor to previous line, got %q", got)
+	}
+}
+
+func TestComposeReducerShiftEnterInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello")
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle shift+enter")
+	}
+	_ = cmd
+	if got := m.chatInput.Value(); got != "hello\n" {
+		t.Fatalf("expected shift+enter to insert newline, got %q", got)
+	}
+}
+
+func TestComposeReducerCtrlEnterInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello")
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle ctrl+enter")
+	}
+	_ = cmd
+	if got := m.chatInput.Value(); got != "hello\n" {
+		t.Fatalf("expected ctrl+enter to insert newline, got %q", got)
+	}
+}
+
+func TestComposeReducerCtrlJInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello")
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle ctrl+j")
+	}
+	_ = cmd
+	if got := m.chatInput.Value(); got != "hello\n" {
+		t.Fatalf("expected ctrl+j to insert newline, got %q", got)
 	}
 }
 
@@ -1010,6 +1092,50 @@ func TestReduceComposeInputKeySupportsRemappedClearCommand(t *testing.T) {
 	}
 	if m.status != "input cleared" {
 		t.Fatalf("expected input cleared status, got %q", m.status)
+	}
+}
+
+func TestReduceComposeInputKeySupportsRemappedInputNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputNewline: "f7",
+	}))
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello compose")
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle remapped input newline command")
+	}
+	_ = cmd
+	if got := m.chatInput.Value(); got != "hello compose\n" {
+		t.Fatalf("expected compose input newline from remap, got %q", got)
+	}
+}
+
+func TestSearchReducerRemappedInputNewlineIgnoredForSingleLineInput(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputNewline: "f7",
+	}))
+	m.enterSearch()
+	if m.searchInput == nil {
+		t.Fatalf("expected search input")
+	}
+	m.searchInput.SetValue("hello")
+
+	handled, cmd := m.reduceSearchModeKey(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected search reducer to handle remapped newline command")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for single-line newline handling")
+	}
+	if got := m.searchInput.Value(); got != "hello" {
+		t.Fatalf("expected single-line search input to ignore newline insertion, got %q", got)
 	}
 }
 

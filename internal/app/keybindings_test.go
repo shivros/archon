@@ -167,6 +167,25 @@ func TestLoadKeybindingsLegacyComposeClearAliasArrayFormat(t *testing.T) {
 	}
 }
 
+func TestKeybindingsDefaultIncludesInputNewline(t *testing.T) {
+	bindings := DefaultKeybindings()
+	if got := bindings.KeyFor(KeyCommandInputNewline, ""); got != "shift+enter" {
+		t.Fatalf("expected default input newline binding shift+enter, got %q", got)
+	}
+}
+
+func TestKeybindingsRemapForInputNewline(t *testing.T) {
+	bindings := NewKeybindings(map[string]string{
+		KeyCommandInputNewline: "f7",
+	})
+	if got := bindings.KeyFor(KeyCommandInputNewline, ""); got != "f7" {
+		t.Fatalf("expected remapped input newline binding f7, got %q", got)
+	}
+	if got := bindings.Remap("f7"); got != "shift+enter" {
+		t.Fatalf("expected remapped input newline to canonical shift+enter, got %q", got)
+	}
+}
+
 func TestResolveHotkeysUsesBindings(t *testing.T) {
 	bindings := NewKeybindings(map[string]string{
 		KeyCommandToggleSidebar: "alt+b",

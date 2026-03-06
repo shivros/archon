@@ -366,6 +366,47 @@ func TestReduceAddNoteModeClearCommandClearsInput(t *testing.T) {
 	}
 }
 
+func TestReduceAddNoteModeShiftEnterInsertsNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeAddNote
+	if m.noteInput == nil {
+		t.Fatalf("expected note input")
+	}
+	m.noteInput.Focus()
+	m.noteInput.SetValue("line one")
+
+	handled, cmd := m.reduceAddNoteMode(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	if !handled {
+		t.Fatalf("expected shift+enter to be handled in add note mode")
+	}
+	_ = cmd
+	if got := m.noteInput.Value(); got != "line one\n" {
+		t.Fatalf("expected shift+enter to insert newline, got %q", got)
+	}
+}
+
+func TestReduceAddNoteModeSupportsRemappedInputNewline(t *testing.T) {
+	m := NewModel(nil)
+	m.applyKeybindings(NewKeybindings(map[string]string{
+		KeyCommandInputNewline: "f7",
+	}))
+	m.mode = uiModeAddNote
+	if m.noteInput == nil {
+		t.Fatalf("expected note input")
+	}
+	m.noteInput.Focus()
+	m.noteInput.SetValue("line one")
+
+	handled, cmd := m.reduceAddNoteMode(tea.KeyPressMsg{Code: tea.KeyF7})
+	if !handled {
+		t.Fatalf("expected remapped input newline to be handled in add note mode")
+	}
+	_ = cmd
+	if got := m.noteInput.Value(); got != "line one\n" {
+		t.Fatalf("expected remapped input newline to insert newline, got %q", got)
+	}
+}
+
 func TestUpdateNotesMsgWhileAddNoteModeRendersNotes(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

@@ -10,6 +10,7 @@ type textInputModeController struct {
 	input             *TextInput
 	keyString         func(tea.KeyMsg) string
 	keyMatchesCommand func(tea.KeyMsg, string, string) bool
+	commandPolicy     textInputCommandPolicy
 	onCancel          func() tea.Cmd
 	onSubmit          func(text string) tea.Cmd
 	onClear           func() tea.Cmd
@@ -32,6 +33,13 @@ func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 	key := keyMsg.String()
 	if c.keyString != nil {
 		key = c.keyString(keyMsg)
+	}
+	newlineCommandMatched := c.matchesCommand(keyMsg, KeyCommandInputNewline, "shift+enter")
+	// Input newline must win over mode-specific pre-handlers so multiline
+	// composers stay consistent even when surrounding reducers register
+	// additional keyboard hooks.
+	if c.commandPolicyOrDefault().IsInputNewline(keyMsg, key, newlineCommandMatched) {
+		return true, c.input.InsertNewline()
 	}
 	if c.preHandle != nil {
 		if handled, cmd := c.preHandle(key, keyMsg); handled {
@@ -75,9 +83,6 @@ func (c textInputModeController) Update(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	}
-	if c.matchesCommand(keyMsg, KeyCommandInputNewline, "shift+enter") || key == "ctrl+enter" || key == "ctrl+j" || isShiftOrCtrlEnterKey(keyMsg) {
-		return true, c.input.InsertNewline()
-	}
 	switch key {
 	case "esc":
 		if c.onCancel != nil {
@@ -116,6 +121,13 @@ func (c textInputModeController) matchesCommand(msg tea.KeyMsg, command, fallbac
 		return strings.TrimSpace(c.keyString(msg)) == fallback
 	}
 	return false
+}
+
+func (c textInputModeController) commandPolicyOrDefault() textInputCommandPolicy {
+	if c.commandPolicy != nil {
+		return c.commandPolicy
+	}
+	return defaultTextInputCommandPolicy{}
 }
 
 func isShiftOrCtrlEnterKey(msg tea.KeyMsg) bool {
