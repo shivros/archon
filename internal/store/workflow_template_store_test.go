@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"control/internal/guidedworkflows"
@@ -207,5 +209,121 @@ func TestWorkflowTemplateStoreValidatesStepRuntimeReasoning(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected validation error for invalid step runtime_options.reasoning")
+	}
+}
+
+func TestWorkflowTemplateStoreExpandsCompositionRefs(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+	raw := `{
+		"version": 1,
+		"definitions": {
+			"prompts": {"quality": "run tests"},
+			"steps": {
+				"quality_checks": {"id": "quality_checks", "name": "quality checks", "prompt_ref": "quality"}
+			},
+			"phase_templates": {
+				"delivery": {
+					"id": "phase_delivery",
+					"name": "Delivery",
+					"step_refs": ["quality_checks"]
+				}
+			}
+		},
+		"templates": [{
+			"id": "composed",
+			"name": "Composed",
+			"phases": [{"phase_template_ref": "delivery"}]
+		}]
+	}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	templates, err := store.ListWorkflowTemplates(ctx)
+	if err != nil {
+		t.Fatalf("ListWorkflowTemplates: %v", err)
+	}
+	if len(templates) != 1 {
+		t.Fatalf("expected one template, got %d", len(templates))
+	}
+	if got := templates[0].Phases[0].Steps[0].Prompt; got != "run tests" {
+		t.Fatalf("expected expanded prompt, got %q", got)
+	}
+}
+
+func TestWorkflowTemplateStoreInvalidCompositionFailsFast(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+	raw := `{
+		"version": 1,
+		"templates": [{
+			"id": "bad",
+			"name": "Bad",
+			"phases": [{"id":"p1","name":"P1","step_refs":["missing"]}]
+		}]
+	}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	_, err := store.ListWorkflowTemplates(ctx)
+	if err == nil || !strings.Contains(err.Error(), "unknown step_ref") {
+		t.Fatalf("expected unknown step_ref error, got %v", err)
+	}
+}
+
+func TestWorkflowTemplateStoreRejectsDuplicatePhaseIDsOnUpsert(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+
+	_, err := store.UpsertWorkflowTemplate(ctx, guidedworkflows.WorkflowTemplate{
+		ID:   "dup_phase_template",
+		Name: "Duplicate Phase Template",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "hello"},
+				},
+			},
+			{
+				ID:   "phase_1",
+				Name: "Phase 1 Duplicate",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_2", Name: "Step 2", Prompt: "world"},
+				},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate phase id") {
+		t.Fatalf("expected duplicate phase id error, got %v", err)
+	}
+}
+
+func TestWorkflowTemplateStoreRejectsDuplicateStepIDsWithinPhaseOnUpsert(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "workflow_templates.json")
+	store := NewFileWorkflowTemplateStore(path)
+
+	_, err := store.UpsertWorkflowTemplate(ctx, guidedworkflows.WorkflowTemplate{
+		ID:   "dup_step_phase_template",
+		Name: "Duplicate Step Template",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "hello"},
+					{ID: "step_1", Name: "Step 1 Dup", Prompt: "world"},
+				},
+			},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate step id in phase") {
+		t.Fatalf("expected duplicate step id in phase error, got %v", err)
 	}
 }

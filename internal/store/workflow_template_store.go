@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	osPkg "os"
 	"sort"
 	"strings"
@@ -151,15 +152,27 @@ func (s *FileWorkflowTemplateStore) DeleteWorkflowTemplate(ctx context.Context, 
 }
 
 func (s *FileWorkflowTemplateStore) load() (*workflowTemplateFile, error) {
-	file := &workflowTemplateFile{}
-	if err := readJSON(s.path, file); err != nil {
+	raw, err := osPkg.ReadFile(s.path)
+	if err != nil {
 		return nil, err
+	}
+	parsed, err := guidedworkflows.ParseWorkflowTemplateCatalogJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	file := &workflowTemplateFile{
+		Version:   parsed.Version,
+		Templates: make([]guidedworkflows.WorkflowTemplate, 0, len(parsed.Templates)),
 	}
 	if file.Version == 0 {
 		file.Version = workflowTemplateSchemaVersion
 	}
-	if file.Templates == nil {
-		file.Templates = []guidedworkflows.WorkflowTemplate{}
+	for _, template := range parsed.Templates {
+		normalized, normalizeErr := normalizeWorkflowTemplate(template)
+		if normalizeErr != nil {
+			return nil, fmt.Errorf("invalid workflow template %q: %w", strings.TrimSpace(template.ID), normalizeErr)
+		}
+		file.Templates = append(file.Templates, normalized)
 	}
 	return file, nil
 }
@@ -193,6 +206,7 @@ func normalizeWorkflowTemplate(template guidedworkflows.WorkflowTemplate) (guide
 	if len(template.Phases) == 0 {
 		return guidedworkflows.WorkflowTemplate{}, errors.New("template phases are required")
 	}
+	phaseIDs := map[string]struct{}{}
 	stepIDs := map[string]struct{}{}
 	for pIdx := range template.Phases {
 		phase := &template.Phases[pIdx]
@@ -204,9 +218,14 @@ func normalizeWorkflowTemplate(template guidedworkflows.WorkflowTemplate) (guide
 		if phase.Name == "" {
 			return guidedworkflows.WorkflowTemplate{}, errors.New("phase name is required")
 		}
+		if _, exists := phaseIDs[phase.ID]; exists {
+			return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate phase id: " + phase.ID)
+		}
+		phaseIDs[phase.ID] = struct{}{}
 		if len(phase.Steps) == 0 {
 			return guidedworkflows.WorkflowTemplate{}, errors.New("phase steps are required")
 		}
+		phaseStepIDs := map[string]struct{}{}
 		for sIdx := range phase.Steps {
 			step := &phase.Steps[sIdx]
 			step.ID = strings.TrimSpace(step.ID)
@@ -221,6 +240,10 @@ func normalizeWorkflowTemplate(template guidedworkflows.WorkflowTemplate) (guide
 			if step.Prompt == "" {
 				return guidedworkflows.WorkflowTemplate{}, errors.New("step prompt is required")
 			}
+			if _, exists := phaseStepIDs[step.ID]; exists {
+				return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate step id in phase: " + step.ID)
+			}
+			phaseStepIDs[step.ID] = struct{}{}
 			if _, exists := stepIDs[step.ID]; exists {
 				return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate step id: " + step.ID)
 			}

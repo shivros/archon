@@ -289,6 +289,44 @@ Example `workflow_templates.json` (custom replacement file):
 
 If you still want to use `solid_phase_delivery` when providing a custom file, include a template with that same `id` in your file.
 
+Reusable definitions are optional and additive. You can define shared prompts, steps, and phase templates once, then reference them:
+
+```json
+{
+  "version": 1,
+  "definitions": {
+    "prompts": {
+      "quality_checks": "Run relevant tests and quality checks, fix what is reasonable, then rerun."
+    },
+    "steps": {
+      "quality_checks": {
+        "id": "quality_checks",
+        "name": "quality checks",
+        "prompt_ref": "quality_checks"
+      }
+    },
+    "phase_templates": {
+      "delivery": {
+        "id": "phase_delivery",
+        "name": "Delivery",
+        "step_refs": ["quality_checks"]
+      }
+    }
+  },
+  "templates": [
+    {
+      "id": "feature_delivery",
+      "name": "Feature Delivery",
+      "phases": [
+        {
+          "phase_template_ref": "delivery"
+        }
+      ]
+    }
+  ]
+}
+```
+
 When enabled, daemon exposes guided workflow lifecycle endpoints:
 
 - `GET /v1/workflow-templates`

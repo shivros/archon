@@ -483,7 +483,10 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		}
 		return nil, err
 	}
-	templates := s.resolveTemplates(ctx)
+	templates, err := s.resolveTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
 	templateID := strings.TrimSpace(req.TemplateID)
 	if templateID == "" {
 		templateID = defaultTemplateID(templates)
@@ -572,7 +575,10 @@ func (s *InMemoryRunService) ListTemplates(ctx context.Context) ([]WorkflowTempl
 	if s == nil {
 		return nil, fmt.Errorf("%w: run service is nil", ErrInvalidTransition)
 	}
-	resolved := s.resolveTemplates(ctx)
+	resolved, err := s.resolveTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]WorkflowTemplate, 0, len(resolved))
 	for _, tpl := range resolved {
 		out = append(out, cloneTemplate(tpl))
@@ -612,17 +618,23 @@ func defaultTemplateID(templates map[string]WorkflowTemplate) string {
 	return ids[0]
 }
 
-func (s *InMemoryRunService) resolveTemplates(ctx context.Context) map[string]WorkflowTemplate {
+func (s *InMemoryRunService) resolveTemplates(ctx context.Context) (map[string]WorkflowTemplate, error) {
 	defaults := make(map[string]WorkflowTemplate, len(s.templates))
 	for id, tpl := range s.templates {
 		defaults[id] = cloneTemplate(tpl)
 	}
 	if s.templateProvider == nil {
-		return defaults
+		return defaults, nil
 	}
 	templates, err := s.templateProvider.ListWorkflowTemplates(ctx)
 	if err != nil {
-		return defaults
+		if awareProvider, ok := s.templateProvider.(TemplateConfigPresenceProvider); ok {
+			if configured, cfgErr := awareProvider.HasWorkflowTemplateConfig(ctx); cfgErr == nil && configured {
+				// Explicit config exists: fail fast and preserve the root cause for diagnostics.
+				return nil, fmt.Errorf("%w: %w", ErrTemplateConfigInvalid, err)
+			}
+		}
+		return defaults, nil
 	}
 	resolved := map[string]WorkflowTemplate{}
 	for _, tpl := range templates {
@@ -642,9 +654,9 @@ func (s *InMemoryRunService) resolveTemplates(ctx context.Context) map[string]Wo
 		}
 	}
 	if hasExplicitConfig {
-		return resolved
+		return resolved, nil
 	}
-	return defaults
+	return defaults, nil
 }
 
 func templateHasSteps(template WorkflowTemplate) bool {

@@ -640,6 +640,80 @@ func TestRunLifecycleListTemplatesFallsBackToDefaultsWhenProviderErrors(t *testi
 	}
 }
 
+func TestRunLifecycleListTemplatesFailsFastWhenExplicitConfigIsInvalid(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			err:            errors.New("invalid workflow templates file"),
+			explicitConfig: true,
+		}),
+	)
+
+	_, err := service.ListTemplates(context.Background())
+	if !errors.Is(err, ErrTemplateConfigInvalid) {
+		t.Fatalf("expected ErrTemplateConfigInvalid, got %v", err)
+	}
+}
+
+func TestRunLifecycleCreateRunFailsFastWhenExplicitConfigIsInvalid(t *testing.T) {
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			err:            errors.New("invalid workflow templates file"),
+			explicitConfig: true,
+		}),
+	)
+
+	_, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if !errors.Is(err, ErrTemplateConfigInvalid) {
+		t.Fatalf("expected ErrTemplateConfigInvalid, got %v", err)
+	}
+}
+
+func TestRunLifecycleListTemplatesPreservesUnderlyingExplicitConfigError(t *testing.T) {
+	rootErr := errors.New("template provider parse failed")
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			err:            rootErr,
+			explicitConfig: true,
+		}),
+	)
+
+	_, err := service.ListTemplates(context.Background())
+	if !errors.Is(err, ErrTemplateConfigInvalid) {
+		t.Fatalf("expected ErrTemplateConfigInvalid, got %v", err)
+	}
+	if !errors.Is(err, rootErr) {
+		t.Fatalf("expected wrapped root error, got %v", err)
+	}
+}
+
+func TestRunLifecycleCreateRunPreservesUnderlyingExplicitConfigError(t *testing.T) {
+	rootErr := errors.New("template provider parse failed")
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplateProvider(&stubTemplateProvider{
+			err:            rootErr,
+			explicitConfig: true,
+		}),
+	)
+
+	_, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if !errors.Is(err, ErrTemplateConfigInvalid) {
+		t.Fatalf("expected ErrTemplateConfigInvalid, got %v", err)
+	}
+	if !errors.Is(err, rootErr) {
+		t.Fatalf("expected wrapped root error, got %v", err)
+	}
+}
+
 func TestRunLifecycleTemplateProviderPresenceProbeErrorFallsBackToDefaults(t *testing.T) {
 	service := NewRunService(
 		Config{Enabled: true},

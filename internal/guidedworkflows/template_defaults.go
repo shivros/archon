@@ -2,15 +2,9 @@ package guidedworkflows
 
 import (
 	_ "embed"
-	"encoding/json"
 	"strings"
 	"sync"
 )
-
-type workflowTemplateDefaultsFile struct {
-	Version   int                `json:"version"`
-	Templates []WorkflowTemplate `json:"templates"`
-}
 
 var (
 	//go:embed default_workflow_templates.json
@@ -43,15 +37,15 @@ func defaultWorkflowTemplateByID(id string) (WorkflowTemplate, bool) {
 }
 
 func mustParseDefaultWorkflowTemplates(raw []byte) []WorkflowTemplate {
-	var file workflowTemplateDefaultsFile
-	if err := json.Unmarshal(raw, &file); err != nil {
+	parsed, err := ParseWorkflowTemplateCatalogJSON(raw)
+	if err != nil {
 		panic("guidedworkflows: failed to parse default workflow templates JSON: " + err.Error())
 	}
-	if len(file.Templates) == 0 {
+	if len(parsed.Templates) == 0 {
 		panic("guidedworkflows: default workflow templates JSON contains no templates")
 	}
-	out := make([]WorkflowTemplate, 0, len(file.Templates))
-	for _, tpl := range file.Templates {
+	out := make([]WorkflowTemplate, 0, len(parsed.Templates))
+	for _, tpl := range parsed.Templates {
 		id := strings.TrimSpace(tpl.ID)
 		if id == "" {
 			continue
