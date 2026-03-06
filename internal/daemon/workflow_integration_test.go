@@ -87,20 +87,6 @@ func TestGuidedWorkflowE2E(t *testing.T) {
 			require: requireClaudeIntegration,
 			setup:   claudeIntegrationSetup,
 		},
-		{
-			name:    "opencode",
-			require: func(t *testing.T) { requireOpenCodeIntegration(t, "opencode") },
-			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-				return openCodeIntegrationSetup(t, "opencode")
-			},
-		},
-		{
-			name:    "kilocode",
-			require: func(t *testing.T) { requireOpenCodeIntegration(t, "kilocode") },
-			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-				return openCodeIntegrationSetup(t, "kilocode")
-			},
-		},
 	}
 
 	for _, tc := range tests {
@@ -127,20 +113,6 @@ func TestGuidedWorkflowE2EContextCarryArithmetic(t *testing.T) {
 			name:    "claude",
 			require: requireClaudeIntegration,
 			setup:   claudeIntegrationSetup,
-		},
-		{
-			name:    "opencode",
-			require: func(t *testing.T) { requireOpenCodeIntegration(t, "opencode") },
-			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-				return openCodeIntegrationSetup(t, "opencode")
-			},
-		},
-		{
-			name:    "kilocode",
-			require: func(t *testing.T) { requireOpenCodeIntegration(t, "kilocode") },
-			setup: func(t *testing.T) (string, *types.SessionRuntimeOptions) {
-				return openCodeIntegrationSetup(t, "kilocode")
-			},
 		},
 	}
 

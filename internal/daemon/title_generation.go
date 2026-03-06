@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"control/internal/guidedworkflows"
@@ -51,6 +52,7 @@ type asyncTitleGenerationService struct {
 	jobs      chan titleGenerationJob
 	closeOnce sync.Once
 	closed    chan struct{}
+	isClosed  atomic.Bool
 	wg        sync.WaitGroup
 }
 
@@ -112,6 +114,7 @@ func (s *asyncTitleGenerationService) Close() {
 		return
 	}
 	s.closeOnce.Do(func() {
+		s.isClosed.Store(true)
 		close(s.closed)
 		if s.jobs != nil {
 			close(s.jobs)
@@ -148,6 +151,14 @@ func (s *asyncTitleGenerationService) EnqueueWorkflowTitle(req WorkflowTitleGene
 
 func (s *asyncTitleGenerationService) enqueue(job titleGenerationJob) {
 	if s == nil || s.jobs == nil {
+		return
+	}
+	select {
+	case <-s.closed:
+		return
+	default:
+	}
+	if s.isClosed.Load() {
 		return
 	}
 	if strings.TrimSpace(job.targetID) == "" || strings.TrimSpace(job.prompt) == "" {

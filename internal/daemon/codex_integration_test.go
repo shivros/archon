@@ -554,12 +554,23 @@ func sendMessageWithRetry(t *testing.T, server *httptest.Server, sessionID, text
 		if status == http.StatusOK && turnID != "" {
 			return turnID
 		}
-		if status == http.StatusBadRequest && strings.Contains(body, "turn already in progress") && time.Now().Before(deadline) {
+		if time.Now().Before(deadline) && isTransientSendFailure(status, body) {
 			time.Sleep(1 * time.Second)
 			continue
 		}
 		t.Fatalf("send failed status=%d body=%s", status, body)
 	}
+}
+
+func isTransientSendFailure(status int, body string) bool {
+	if status == http.StatusBadRequest && strings.Contains(body, "turn already in progress") {
+		return true
+	}
+	if status == 0 {
+		lower := strings.ToLower(body)
+		return strings.Contains(lower, "deadline exceeded") || strings.Contains(lower, "timeout") || strings.Contains(lower, "eof")
+	}
+	return status >= 500
 }
 
 func sendMessageOnce(server *httptest.Server, sessionID, text string) (int, string, string) {

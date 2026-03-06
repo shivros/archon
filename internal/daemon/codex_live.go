@@ -618,7 +618,10 @@ func isClosedPipeError(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "file already closed") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "closed pipe")
+	return strings.Contains(msg, "file already closed") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "closed pipe") ||
+		strings.Contains(msg, "eof")
 }
 
 func isCodexMissingThreadError(err error) bool {
