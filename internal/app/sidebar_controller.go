@@ -84,6 +84,7 @@ func NewSidebarController() *SidebarController {
 	mlist.SetFilteringEnabled(false)
 	mlist.SetShowPagination(false)
 	mlist.SetShowStatusBar(false)
+	mlist.DisableQuitKeybindings()
 	mlist.Styles.Title = headerStyle
 	mlist.Styles.TitleBar = mlist.Styles.TitleBar.Padding(0, 0)
 	return &SidebarController{
