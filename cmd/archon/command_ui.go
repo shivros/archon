@@ -30,7 +30,7 @@ func NewUICommand(stderr io.Writer, newClient daemonVersionClientFactory, config
 func (c *UICommand) Run(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
-	restartDaemon := fs.Bool("restart-daemon", false, "restart daemon if version mismatch")
+	restartDaemon := fs.Bool("restart-daemon", false, "restart daemon before launching UI")
 	ignoreDaemonMismatch := fs.Bool("ignore-daemon-mismatch", false, "start UI even if daemon version mismatches")
 	if err := fs.Parse(args); err != nil {
 		return err

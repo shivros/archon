@@ -725,10 +725,11 @@ func (c *Client) ShutdownDaemon(ctx context.Context) error {
 func (c *Client) ensureDaemon(ctx context.Context, expectedVersion string, restart bool) error {
 	resp, err := c.Health(ctx)
 	if err == nil && resp.OK {
-		if expectedVersion == "" || resp.Version == expectedVersion {
+		versionMatches := expectedVersion == "" || resp.Version == expectedVersion
+		if versionMatches && !restart {
 			return nil
 		}
-		if !restart {
+		if !versionMatches && !restart {
 			return fmt.Errorf("daemon version mismatch: %s (expected %s)", resp.Version, expectedVersion)
 		}
 		if err := c.ShutdownDaemon(ctx); err != nil {
