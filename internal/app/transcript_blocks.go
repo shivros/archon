@@ -35,7 +35,54 @@ func transcriptBlocksToChatBlocks(blocks []transcriptdomain.Block) []ChatBlock {
 		}
 		out = append(out, chatBlock)
 	}
+	return coalesceAdjacentTranscriptChatBlocks(out)
+}
+
+func coalesceAdjacentTranscriptChatBlocks(blocks []ChatBlock) []ChatBlock {
+	if len(blocks) < 2 {
+		return blocks
+	}
+	out := make([]ChatBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if len(out) == 0 {
+			out = append(out, block)
+			continue
+		}
+		last := &out[len(out)-1]
+		if shouldCoalesceTranscriptChatBlock(*last, block) {
+			last.Text = concatAdjacentAgentText(last.Text, block.Text)
+			if last.CreatedAt.IsZero() && !block.CreatedAt.IsZero() {
+				last.CreatedAt = block.CreatedAt
+			}
+			if strings.TrimSpace(last.TurnID) == "" {
+				last.TurnID = strings.TrimSpace(block.TurnID)
+			}
+			if strings.TrimSpace(last.ProviderMessageID) == "" {
+				last.ProviderMessageID = strings.TrimSpace(block.ProviderMessageID)
+			}
+			continue
+		}
+		out = append(out, block)
+	}
 	return out
+}
+
+func shouldCoalesceTranscriptChatBlock(current, next ChatBlock) bool {
+	if current.Role != next.Role {
+		return false
+	}
+	if current.Role != ChatRoleAgent && current.Role != ChatRoleReasoning {
+		return false
+	}
+	if strings.TrimSpace(current.Text) == "" || strings.TrimSpace(next.Text) == "" {
+		return false
+	}
+	currentID := strings.TrimSpace(current.ID)
+	nextID := strings.TrimSpace(next.ID)
+	if currentID == "" || nextID == "" || currentID != nextID {
+		return false
+	}
+	return true
 }
 
 func transcriptBlockRole(block transcriptdomain.Block) ChatRole {

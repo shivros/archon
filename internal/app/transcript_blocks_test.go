@@ -73,6 +73,23 @@ func TestTranscriptBlocksToChatBlocksSkipsEmptyText(t *testing.T) {
 	}
 }
 
+func TestTranscriptBlocksToChatBlocksCoalescesAdjacentAssistantFragmentsWithSameID(t *testing.T) {
+	blocks := transcriptBlocksToChatBlocks([]transcriptdomain.Block{
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "stream"},
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "fragment"},
+		{ID: "msg-2", Kind: "assistant_delta", Role: "assistant", Text: "separate"},
+	})
+	if len(blocks) != 2 {
+		t.Fatalf("expected adjacent fragments to coalesce, got %#v", blocks)
+	}
+	if blocks[0].Text != "streamfragment" {
+		t.Fatalf("expected merged first fragment, got %#v", blocks[0])
+	}
+	if blocks[1].Text != "separate" {
+		t.Fatalf("expected second message to remain separate, got %#v", blocks[1])
+	}
+}
+
 func TestTranscriptAnyIntSupportsCommonShapes(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -1187,7 +1187,9 @@ func startTestCodexAppServer(ctx context.Context, cwd, codexHome string) (*testC
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	go io.Copy(io.Discard, stderr)
+	go func() {
+		_, _ = io.Copy(io.Discard, stderr)
+	}()
 
 	server := &testCodexAppServer{
 		cmd:     cmd,

@@ -155,6 +155,7 @@ func (c *TranscriptStreamController) applyEvent(event transcriptdomain.Transcrip
 			return false, true, false
 		}
 		c.blocks = append(c.blocks, delta...)
+		c.blocks = coalesceAdjacentTranscriptChatBlocks(c.blocks)
 		return true, true, transcriptBlocksContainUserRelevantContent(event.Delta)
 	case transcriptdomain.TranscriptEventTurnStarted,
 		transcriptdomain.TranscriptEventTurnCompleted,
