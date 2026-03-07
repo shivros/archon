@@ -39,9 +39,26 @@ type ThreadSyncPolicy interface {
 	ShouldRemoveStale(record *types.SessionRecord, meta *types.SessionMeta, workspaceID, worktreeID string, seen map[string]struct{}) bool
 }
 
+type SessionOwnershipPolicy interface {
+	Resolve(existing *types.SessionMeta, syncWorkspaceID, syncWorktreeID string) SessionOwnershipResolution
+}
+
+type SessionOwnershipResolution struct {
+	WorkspaceID       string
+	WorktreeID        string
+	PreservedExisting bool
+}
+
 type SyncMetricsSink interface {
 	RecordSyncPath(metric SyncPathMetric)
 }
+
+type codexThreadClient interface {
+	ListThreads(ctx context.Context, cursor *string) (*codexThreadListResult, error)
+	Close()
+}
+
+type codexThreadClientFactory func(ctx context.Context, cwd, codexHome string, logger logging.Logger) (codexThreadClient, error)
 
 type threadDisposition int
 
@@ -78,6 +95,8 @@ type CodexSyncer struct {
 	paths      WorkspacePathResolver
 	snapshots  SyncSnapshotLoader
 	policy     ThreadSyncPolicy
+	ownership  SessionOwnershipPolicy
+	clients    codexThreadClientFactory
 	metrics    SyncMetricsSink
 	logger     logging.Logger
 }
@@ -107,24 +126,57 @@ type storeSyncSnapshotLoader struct {
 }
 
 type defaultThreadSyncPolicy struct{}
+type stickySessionOwnershipPolicy struct{}
 
 type logSyncMetricsSink struct {
 	logger logging.Logger
 }
 
-func NewCodexSyncer(stores *Stores, logger logging.Logger) *CodexSyncer {
-	return NewCodexSyncerWithPathResolver(stores, logger, nil)
+type CodexSyncerOption func(*CodexSyncer)
+
+func WithSessionOwnershipPolicy(policy SessionOwnershipPolicy) CodexSyncerOption {
+	return func(syncer *CodexSyncer) {
+		if syncer == nil || policy == nil {
+			return
+		}
+		syncer.ownership = policy
+	}
 }
 
-func NewCodexSyncerWithPathResolver(stores *Stores, logger logging.Logger, paths WorkspacePathResolver) *CodexSyncer {
+func WithCodexThreadClientFactory(factory codexThreadClientFactory) CodexSyncerOption {
+	return func(syncer *CodexSyncer) {
+		if syncer == nil || factory == nil {
+			return
+		}
+		syncer.clients = factory
+	}
+}
+
+func NewCodexSyncer(stores *Stores, logger logging.Logger, opts ...CodexSyncerOption) *CodexSyncer {
+	return NewCodexSyncerWithPathResolver(stores, logger, nil, opts...)
+}
+
+func NewCodexSyncerWithPathResolver(stores *Stores, logger logging.Logger, paths WorkspacePathResolver, opts ...CodexSyncerOption) *CodexSyncer {
 	if logger == nil {
 		logger = logging.Nop()
 	}
 	syncer := &CodexSyncer{
-		logger:  logger,
-		paths:   workspacePathResolverOrDefault(paths),
-		policy:  &defaultThreadSyncPolicy{},
+		logger:    logger,
+		paths:     workspacePathResolverOrDefault(paths),
+		policy:    &defaultThreadSyncPolicy{},
+		ownership: stickySessionOwnershipPolicy{},
+		clients: func(ctx context.Context, cwd, codexHome string, logger logging.Logger) (codexThreadClient, error) {
+			return startCodexAppServer(ctx, cwd, codexHome, logger)
+		},
 		metrics: &logSyncMetricsSink{logger: logger},
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(syncer)
+		}
+	}
+	if syncer.ownership == nil {
+		syncer.ownership = stickySessionOwnershipPolicy{}
 	}
 	if stores == nil {
 		syncer.snapshots = &storeSyncSnapshotLoader{}
@@ -234,7 +286,13 @@ func (s *CodexSyncer) syncCodexPath(ctx context.Context, cwd, workspacePath, wor
 	syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	codexHome := resolveCodexHome(cwd, workspacePath)
-	client, err := startCodexAppServer(syncCtx, cwd, codexHome, s.logger)
+	clientFactory := s.clients
+	if clientFactory == nil {
+		clientFactory = func(ctx context.Context, cwd, codexHome string, logger logging.Logger) (codexThreadClient, error) {
+			return startCodexAppServer(ctx, cwd, codexHome, logger)
+		}
+	}
+	client, err := clientFactory(syncCtx, cwd, codexHome, s.logger)
 	if err != nil {
 		return err
 	}
@@ -298,7 +356,7 @@ func (s *CodexSyncer) processThread(ctx context.Context, thread codexThreadSumma
 	}
 	if ownerMeta == nil || ownerMeta.DismissedAt == nil {
 		lastActive := syncThreadLastActive(thread, time.Now().UTC())
-		meta, err := s.upsertSyncedMeta(ctx, ownerSessionID, thread.ID, workspaceID, worktreeID, lastActive)
+		meta, err := s.upsertSyncedMeta(ctx, ownerSessionID, ownerMeta, thread.ID, workspaceID, worktreeID, lastActive)
 		if err != nil {
 			return err
 		}
@@ -398,6 +456,13 @@ func (s *CodexSyncer) shouldRemoveStale(record *types.SessionRecord, meta *types
 	return s.policy.ShouldRemoveStale(record, meta, workspaceID, worktreeID, seen)
 }
 
+func (s *CodexSyncer) ownershipPolicyOrDefault() SessionOwnershipPolicy {
+	if s == nil || s.ownership == nil {
+		return stickySessionOwnershipPolicy{}
+	}
+	return s.ownership
+}
+
 var ErrCodexSyncUnavailable = errors.New("codex sync unavailable")
 
 func syncThreadLastActive(thread codexThreadSummary, fallback time.Time) time.Time {
@@ -408,24 +473,116 @@ func syncThreadLastActive(thread codexThreadSummary, fallback time.Time) time.Ti
 	return lastActive
 }
 
-func (s *CodexSyncer) upsertSyncedMeta(ctx context.Context, sessionID, threadID, workspaceID, worktreeID string, lastActive time.Time) (*types.SessionMeta, error) {
+func (s *CodexSyncer) upsertSyncedMeta(
+	ctx context.Context,
+	sessionID string,
+	existing *types.SessionMeta,
+	threadID, workspaceID, worktreeID string,
+	lastActive time.Time,
+) (*types.SessionMeta, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	threadID = strings.TrimSpace(threadID)
 	if sessionID == "" || threadID == "" {
 		return nil, errors.New("thread/session id required for codex sync metadata update")
 	}
+	resolution := s.resolveSyncedOwnership(existing, workspaceID, worktreeID)
+	s.logOwnershipConflictPreserved(sessionID, threadID, existing, workspaceID, worktreeID, resolution)
 	meta := &types.SessionMeta{
 		SessionID:    sessionID,
-		WorkspaceID:  workspaceID,
-		WorktreeID:   worktreeID,
+		WorkspaceID:  resolution.WorkspaceID,
+		WorktreeID:   resolution.WorktreeID,
 		ThreadID:     threadID,
 		LastActiveAt: &lastActive,
+	}
+	return s.persistSyncedMeta(ctx, meta)
+}
+
+func (s *CodexSyncer) resolveSyncedOwnership(existing *types.SessionMeta, workspaceID, worktreeID string) SessionOwnershipResolution {
+	return s.ownershipPolicyOrDefault().Resolve(existing, workspaceID, worktreeID)
+}
+
+func (s *CodexSyncer) logOwnershipConflictPreserved(
+	sessionID, threadID string,
+	existing *types.SessionMeta,
+	syncWorkspaceID, syncWorktreeID string,
+	resolution SessionOwnershipResolution,
+) {
+	if s == nil || s.logger == nil || !resolution.PreservedExisting {
+		return
+	}
+	existingWorkspaceID := ""
+	existingWorktreeID := ""
+	if existing != nil {
+		existingWorkspaceID = strings.TrimSpace(existing.WorkspaceID)
+		existingWorktreeID = strings.TrimSpace(existing.WorktreeID)
+	}
+	if existingWorkspaceID == "" {
+		return
+	}
+	syncWorkspaceID = strings.TrimSpace(syncWorkspaceID)
+	if syncWorkspaceID == "" || existingWorkspaceID == syncWorkspaceID {
+		return
+	}
+	s.logger.Info("codex_sync_workspace_ownership_preserved",
+		logging.F("session_id", strings.TrimSpace(sessionID)),
+		logging.F("thread_id", strings.TrimSpace(threadID)),
+		logging.F("existing_workspace_id", existingWorkspaceID),
+		logging.F("existing_worktree_id", existingWorktreeID),
+		logging.F("sync_workspace_id", syncWorkspaceID),
+		logging.F("sync_worktree_id", strings.TrimSpace(syncWorktreeID)),
+	)
+}
+
+func (s *CodexSyncer) persistSyncedMeta(ctx context.Context, meta *types.SessionMeta) (*types.SessionMeta, error) {
+	if s == nil || s.meta == nil {
+		return nil, ErrCodexSyncUnavailable
 	}
 	_, err := s.meta.Upsert(ctx, meta)
 	if err != nil {
 		return nil, err
 	}
 	return meta, nil
+}
+
+func (stickySessionOwnershipPolicy) Resolve(existing *types.SessionMeta, syncWorkspaceID, syncWorktreeID string) SessionOwnershipResolution {
+	syncWorkspaceID = strings.TrimSpace(syncWorkspaceID)
+	syncWorktreeID = strings.TrimSpace(syncWorktreeID)
+	if existing == nil {
+		return SessionOwnershipResolution{
+			WorkspaceID: syncWorkspaceID,
+			WorktreeID:  syncWorktreeID,
+		}
+	}
+	existingWorkspaceID := strings.TrimSpace(existing.WorkspaceID)
+	existingWorktreeID := strings.TrimSpace(existing.WorktreeID)
+	if existingWorkspaceID == "" {
+		return SessionOwnershipResolution{
+			WorkspaceID: syncWorkspaceID,
+			WorktreeID:  syncWorktreeID,
+		}
+	}
+	if existingWorkspaceID != syncWorkspaceID {
+		return SessionOwnershipResolution{
+			WorkspaceID:       existingWorkspaceID,
+			WorktreeID:        existingWorktreeID,
+			PreservedExisting: true,
+		}
+	}
+	if existingWorktreeID != "" {
+		return SessionOwnershipResolution{
+			WorkspaceID: existingWorkspaceID,
+			WorktreeID:  existingWorktreeID,
+		}
+	}
+	if syncWorktreeID != "" {
+		return SessionOwnershipResolution{
+			WorkspaceID: existingWorkspaceID,
+			WorktreeID:  syncWorktreeID,
+		}
+	}
+	return SessionOwnershipResolution{
+		WorkspaceID: existingWorkspaceID,
+	}
 }
 
 func isSyncTombstonedStatus(status types.SessionStatus) bool {

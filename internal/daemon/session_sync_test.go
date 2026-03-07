@@ -600,6 +600,124 @@ func TestProcessThreadDoesNotMaterializeStandaloneCodexSession(t *testing.T) {
 	}
 }
 
+func TestProcessThreadPreservesExistingWorkspaceOwnership(t *testing.T) {
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	ctx := context.Background()
+
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-1",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceInternal,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID:   "sess-1",
+		ThreadID:    "thread-1",
+		WorkspaceID: "ws-child",
+		WorktreeID:  "wt-child",
+	})
+
+	syncer := &CodexSyncer{
+		sessions: sessionStore,
+		meta:     metaStore,
+		policy:   &defaultThreadSyncPolicy{},
+	}
+	snapshot, err := syncer.loadSyncSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("loadSyncSnapshot() error = %v", err)
+	}
+
+	stats := &syncPathStats{}
+	err = syncer.processThread(
+		ctx,
+		codexThreadSummary{ID: "thread-1", Cwd: "/tmp/repo/packages/archon-ing"},
+		"/tmp/repo",
+		"ws-root",
+		"",
+		nil,
+		snapshot,
+		map[string]struct{}{},
+		stats,
+	)
+	if err != nil {
+		t.Fatalf("processThread() error = %v", err)
+	}
+	meta, ok, err := metaStore.Get(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("get meta: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected session meta")
+	}
+	if meta.WorkspaceID != "ws-child" {
+		t.Fatalf("expected ownership workspace to remain ws-child, got %q", meta.WorkspaceID)
+	}
+	if meta.WorktreeID != "wt-child" {
+		t.Fatalf("expected ownership worktree to remain wt-child, got %q", meta.WorktreeID)
+	}
+}
+
+func TestProcessThreadBackfillsMissingWorkspaceOwnership(t *testing.T) {
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	ctx := context.Background()
+
+	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
+		Session: &types.Session{
+			ID:       "sess-1",
+			Provider: "codex",
+			Status:   types.SessionStatusInactive,
+		},
+		Source: sessionSourceInternal,
+	})
+	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
+		SessionID: "sess-1",
+		ThreadID:  "thread-1",
+	})
+
+	syncer := &CodexSyncer{
+		sessions: sessionStore,
+		meta:     metaStore,
+		policy:   &defaultThreadSyncPolicy{},
+	}
+	snapshot, err := syncer.loadSyncSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("loadSyncSnapshot() error = %v", err)
+	}
+
+	stats := &syncPathStats{}
+	err = syncer.processThread(
+		ctx,
+		codexThreadSummary{ID: "thread-1", Cwd: "/tmp/repo/packages/archon-ing"},
+		"/tmp/repo",
+		"ws-root",
+		"wt-root",
+		nil,
+		snapshot,
+		map[string]struct{}{},
+		stats,
+	)
+	if err != nil {
+		t.Fatalf("processThread() error = %v", err)
+	}
+	meta, ok, err := metaStore.Get(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("get meta: %v", err)
+	}
+	if !ok || meta == nil {
+		t.Fatalf("expected session meta")
+	}
+	if meta.WorkspaceID != "ws-root" {
+		t.Fatalf("expected ownership workspace to backfill ws-root, got %q", meta.WorkspaceID)
+	}
+	if meta.WorktreeID != "wt-root" {
+		t.Fatalf("expected ownership worktree to backfill wt-root, got %q", meta.WorktreeID)
+	}
+}
+
 func TestProcessThreadLogsDismissedSkipTelemetry(t *testing.T) {
 	var logOut bytes.Buffer
 	dismissedAt := time.Now().UTC().Add(-time.Minute)
@@ -714,6 +832,355 @@ func TestNewCodexSyncerWithPathResolverDefaultsWhenNil(t *testing.T) {
 	}
 }
 
+func TestNewCodexSyncerWithSessionOwnershipPolicyOption(t *testing.T) {
+	custom := customSessionOwnershipPolicy{
+		resolution: SessionOwnershipResolution{
+			WorkspaceID: "ws-custom",
+			WorktreeID:  "wt-custom",
+		},
+	}
+	syncer := NewCodexSyncer(nil, nil, WithSessionOwnershipPolicy(custom))
+	if syncer == nil {
+		t.Fatalf("expected syncer")
+	}
+	if syncer.ownership == nil {
+		t.Fatalf("expected ownership policy to be set")
+	}
+	resolution := syncer.ownership.Resolve(nil, "ws-sync", "wt-sync")
+	if resolution.WorkspaceID != "ws-custom" || resolution.WorktreeID != "wt-custom" {
+		t.Fatalf("expected custom policy resolution, got %#v", resolution)
+	}
+}
+
+func TestNewCodexSyncerWithNilSessionOwnershipPolicyOptionUsesDefault(t *testing.T) {
+	var nilPolicy SessionOwnershipPolicy
+	syncer := NewCodexSyncer(nil, nil, WithSessionOwnershipPolicy(nilPolicy))
+	if syncer == nil || syncer.ownership == nil {
+		t.Fatalf("expected default ownership policy")
+	}
+	got := syncer.ownership.Resolve(&types.SessionMeta{WorkspaceID: "ws-existing"}, "ws-sync", "")
+	if got.WorkspaceID != "ws-existing" {
+		t.Fatalf("expected sticky default ownership policy, got %#v", got)
+	}
+}
+
+func TestNewCodexSyncerWithCodexThreadClientFactoryOption(t *testing.T) {
+	factory := &fakeCodexThreadClientFactory{
+		clients: []*fakeCodexThreadClient{{}},
+	}
+	syncer := NewCodexSyncer(nil, nil, WithCodexThreadClientFactory(factory.newClient))
+	if syncer == nil || syncer.clients == nil {
+		t.Fatalf("expected injected client factory")
+	}
+	client, err := syncer.clients(context.Background(), "/tmp/repo", "/tmp/repo/.archon", logging.Nop())
+	if err != nil {
+		t.Fatalf("client factory returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatalf("expected client instance")
+	}
+	if len(factory.calls) != 1 || factory.calls[0].cwd != "/tmp/repo" {
+		t.Fatalf("unexpected factory calls: %#v", factory.calls)
+	}
+	client.Close()
+}
+
+func TestWithCodexThreadClientFactoryIgnoresNilInputs(t *testing.T) {
+	var nilFactory codexThreadClientFactory
+	opt := WithCodexThreadClientFactory(nilFactory)
+	syncer := &CodexSyncer{}
+	opt(syncer)
+	if syncer.clients != nil {
+		t.Fatalf("expected nil factory to be ignored")
+	}
+	opt(nil)
+
+	nonNilFactory := WithCodexThreadClientFactory((&fakeCodexThreadClientFactory{}).newClient)
+	nonNilFactory(nil)
+}
+
+func TestStickySessionOwnershipPolicyResolve(t *testing.T) {
+	policy := stickySessionOwnershipPolicy{}
+	tests := []struct {
+		name          string
+		existing      *types.SessionMeta
+		syncWorkspace string
+		syncWorktree  string
+		want          SessionOwnershipResolution
+	}{
+		{
+			name:          "no existing uses sync ownership",
+			existing:      nil,
+			syncWorkspace: "ws-sync",
+			syncWorktree:  "wt-sync",
+			want: SessionOwnershipResolution{
+				WorkspaceID: "ws-sync",
+				WorktreeID:  "wt-sync",
+			},
+		},
+		{
+			name: "existing workspace preserved on conflict",
+			existing: &types.SessionMeta{
+				WorkspaceID: "ws-existing",
+				WorktreeID:  "wt-existing",
+			},
+			syncWorkspace: "ws-sync",
+			syncWorktree:  "wt-sync",
+			want: SessionOwnershipResolution{
+				WorkspaceID:       "ws-existing",
+				WorktreeID:        "wt-existing",
+				PreservedExisting: true,
+			},
+		},
+		{
+			name: "existing workspace with empty worktree backfills worktree",
+			existing: &types.SessionMeta{
+				WorkspaceID: "ws-existing",
+			},
+			syncWorkspace: "ws-existing",
+			syncWorktree:  "wt-sync",
+			want: SessionOwnershipResolution{
+				WorkspaceID: "ws-existing",
+				WorktreeID:  "wt-sync",
+			},
+		},
+		{
+			name: "existing workspace and worktree remain when sync matches workspace",
+			existing: &types.SessionMeta{
+				WorkspaceID: "ws-existing",
+				WorktreeID:  "wt-existing",
+			},
+			syncWorkspace: "ws-existing",
+			syncWorktree:  "wt-sync",
+			want: SessionOwnershipResolution{
+				WorkspaceID: "ws-existing",
+				WorktreeID:  "wt-existing",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := policy.Resolve(tc.existing, tc.syncWorkspace, tc.syncWorktree)
+			if got != tc.want {
+				t.Fatalf("Resolve() = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPersistSyncedMetaRequiresMetaStore(t *testing.T) {
+	syncer := &CodexSyncer{}
+	_, err := syncer.persistSyncedMeta(context.Background(), &types.SessionMeta{SessionID: "sess-1", ThreadID: "thread-1"})
+	if !errors.Is(err, ErrCodexSyncUnavailable) {
+		t.Fatalf("expected ErrCodexSyncUnavailable, got %v", err)
+	}
+}
+
+func TestPersistSyncedMetaWritesEntry(t *testing.T) {
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	syncer := &CodexSyncer{meta: metaStore}
+	lastActive := time.Now().UTC()
+	meta := &types.SessionMeta{
+		SessionID:    "sess-1",
+		ThreadID:     "thread-1",
+		WorkspaceID:  "ws-1",
+		WorktreeID:   "wt-1",
+		LastActiveAt: &lastActive,
+	}
+	got, err := syncer.persistSyncedMeta(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("persistSyncedMeta() error = %v", err)
+	}
+	if got == nil || got.SessionID != "sess-1" {
+		t.Fatalf("unexpected persisted meta result: %#v", got)
+	}
+	loaded, ok, err := metaStore.Get(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("metaStore.Get() error = %v", err)
+	}
+	if !ok || loaded == nil || loaded.WorkspaceID != "ws-1" || loaded.WorktreeID != "wt-1" {
+		t.Fatalf("expected stored ownership fields, got %#v", loaded)
+	}
+}
+
+func TestLogOwnershipConflictPreservedBranches(t *testing.T) {
+	tests := []struct {
+		name       string
+		syncer     *CodexSyncer
+		existing   *types.SessionMeta
+		syncWS     string
+		syncWT     string
+		resolution SessionOwnershipResolution
+		wantLog    bool
+	}{
+		{
+			name:       "preserved false no log",
+			syncer:     &CodexSyncer{logger: logging.New(&bytes.Buffer{}, logging.Info)},
+			existing:   &types.SessionMeta{WorkspaceID: "ws-existing", WorktreeID: "wt-existing"},
+			syncWS:     "ws-sync",
+			syncWT:     "wt-sync",
+			resolution: SessionOwnershipResolution{WorkspaceID: "ws-existing", WorktreeID: "wt-existing"},
+			wantLog:    false,
+		},
+		{
+			name:       "existing workspace empty no log",
+			syncer:     &CodexSyncer{logger: logging.New(&bytes.Buffer{}, logging.Info)},
+			existing:   &types.SessionMeta{},
+			syncWS:     "ws-sync",
+			resolution: SessionOwnershipResolution{WorkspaceID: "ws-sync", PreservedExisting: true},
+			wantLog:    false,
+		},
+		{
+			name:       "sync workspace empty no log",
+			syncer:     &CodexSyncer{logger: logging.New(&bytes.Buffer{}, logging.Info)},
+			existing:   &types.SessionMeta{WorkspaceID: "ws-existing"},
+			syncWS:     "",
+			resolution: SessionOwnershipResolution{WorkspaceID: "ws-existing", PreservedExisting: true},
+			wantLog:    false,
+		},
+		{
+			name:       "same workspace no log",
+			syncer:     &CodexSyncer{logger: logging.New(&bytes.Buffer{}, logging.Info)},
+			existing:   &types.SessionMeta{WorkspaceID: "ws-existing"},
+			syncWS:     "ws-existing",
+			resolution: SessionOwnershipResolution{WorkspaceID: "ws-existing", PreservedExisting: true},
+			wantLog:    false,
+		},
+		{
+			name:       "conflict emits log",
+			syncer:     &CodexSyncer{logger: logging.New(&bytes.Buffer{}, logging.Info)},
+			existing:   &types.SessionMeta{WorkspaceID: "ws-existing", WorktreeID: "wt-existing"},
+			syncWS:     "ws-sync",
+			syncWT:     "wt-sync",
+			resolution: SessionOwnershipResolution{WorkspaceID: "ws-existing", WorktreeID: "wt-existing", PreservedExisting: true},
+			wantLog:    true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tc.syncer.logger = logging.New(&buf, logging.Info)
+			tc.syncer.logOwnershipConflictPreserved("sess-1", "thread-1", tc.existing, tc.syncWS, tc.syncWT, tc.resolution)
+			logs := buf.String()
+			hasLog := strings.Contains(logs, "msg=codex_sync_workspace_ownership_preserved")
+			if hasLog != tc.wantLog {
+				t.Fatalf("expected log=%v, got logs=%q", tc.wantLog, logs)
+			}
+		})
+	}
+}
+
+func TestSyncCodexPathUsesInjectedClientFactoryAndMetrics(t *testing.T) {
+	next := "cursor-2"
+	client := &fakeCodexThreadClient{
+		pages: []*codexThreadListResult{
+			{
+				Data:       []codexThreadSummary{{ID: "thread-1", Cwd: "/tmp/repo"}},
+				NextCursor: &next,
+			},
+			{
+				Data: []codexThreadSummary{{ID: "thread-2", Cwd: "/tmp/other"}},
+			},
+		},
+	}
+	metrics := &captureSyncMetricsSink{}
+	factory := &fakeCodexThreadClientFactory{clients: []*fakeCodexThreadClient{client}}
+	syncer := &CodexSyncer{
+		policy:   &defaultThreadSyncPolicy{},
+		clients:  factory.newClient,
+		metrics:  metrics,
+		logger:   logging.Nop(),
+		sessions: nil,
+		meta:     nil,
+	}
+
+	err := syncer.syncCodexPath(context.Background(), "/tmp/repo", "/tmp/repo", "ws-1", "", nil, &syncSnapshot{})
+	if err != nil {
+		t.Fatalf("syncCodexPath() error = %v", err)
+	}
+	if !client.closed {
+		t.Fatalf("expected client to be closed")
+	}
+	if len(factory.calls) != 1 || factory.calls[0].cwd != "/tmp/repo" {
+		t.Fatalf("expected one factory call with cwd /tmp/repo, got %#v", factory.calls)
+	}
+	if len(client.cursors) != 2 || client.cursors[0] != "<nil>" || client.cursors[1] != "cursor-2" {
+		t.Fatalf("unexpected cursor sequence: %#v", client.cursors)
+	}
+	if len(metrics.metrics) != 1 {
+		t.Fatalf("expected one metrics record, got %d", len(metrics.metrics))
+	}
+	metric := metrics.metrics[0]
+	if metric.Pages != 2 || metric.ThreadsListed != 2 || metric.ThreadsConsidered != 1 || metric.ThreadsOutOfScope != 1 {
+		t.Fatalf("unexpected metric values: %#v", metric)
+	}
+}
+
+func TestSyncWorkspaceUsesInjectedClientFactory(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(base, "sessions_index.json"))
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(base, "sessions_meta.json"))
+
+	repoDir := filepath.Join(base, "repo")
+	worktreeDir := filepath.Join(base, "repo-wt")
+	if err := ensureDir(repoDir); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := ensureDir(worktreeDir); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	ws, err := workspaceStore.Add(ctx, &types.Workspace{RepoPath: repoDir})
+	if err != nil {
+		t.Fatalf("add workspace: %v", err)
+	}
+	if _, err := workspaceStore.AddWorktree(ctx, ws.ID, &types.Worktree{Path: worktreeDir}); err != nil {
+		t.Fatalf("add worktree: %v", err)
+	}
+
+	factory := &fakeCodexThreadClientFactory{
+		clients: []*fakeCodexThreadClient{
+			{pages: []*codexThreadListResult{{Data: []codexThreadSummary{}}}},
+			{pages: []*codexThreadListResult{{Data: []codexThreadSummary{}}}},
+		},
+	}
+	syncer := &CodexSyncer{
+		workspaces: workspaceStore,
+		worktrees:  workspaceStore,
+		sessions:   sessionStore,
+		meta:       metaStore,
+		snapshots: &storeSyncSnapshotLoader{
+			sessions: sessionStore,
+			meta:     metaStore,
+		},
+		paths: &stubWorkspacePathResolver{
+			workspacePath: "/tmp/ws-session",
+			worktreePath:  "/tmp/wt-session",
+		},
+		policy:    &defaultThreadSyncPolicy{},
+		ownership: stickySessionOwnershipPolicy{},
+		clients:   factory.newClient,
+		metrics:   &captureSyncMetricsSink{},
+		logger:    logging.Nop(),
+	}
+
+	if err := syncer.SyncWorkspace(ctx, ws.ID); err != nil {
+		t.Fatalf("SyncWorkspace() error = %v", err)
+	}
+	if len(factory.calls) != 2 {
+		t.Fatalf("expected two client factory calls (workspace + worktree), got %d", len(factory.calls))
+	}
+	if factory.calls[0].cwd != "/tmp/ws-session" || factory.calls[1].cwd != "/tmp/wt-session" {
+		t.Fatalf("unexpected sync cwd targets: %#v", factory.calls)
+	}
+}
+
 func TestCodexSyncerSyncWorkspaceReturnsResolverError(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
@@ -763,6 +1230,70 @@ func TestCodexSyncerSyncAllReturnsListError(t *testing.T) {
 
 type syncWorkspaceListErrorStore struct {
 	err error
+}
+
+type customSessionOwnershipPolicy struct {
+	resolution SessionOwnershipResolution
+}
+
+func (c customSessionOwnershipPolicy) Resolve(_ *types.SessionMeta, _, _ string) SessionOwnershipResolution {
+	return c.resolution
+}
+
+type fakeCodexThreadClient struct {
+	pages   []*codexThreadListResult
+	err     error
+	idx     int
+	cursors []string
+	closed  bool
+}
+
+func (c *fakeCodexThreadClient) ListThreads(_ context.Context, cursor *string) (*codexThreadListResult, error) {
+	if cursor == nil {
+		c.cursors = append(c.cursors, "<nil>")
+	} else {
+		c.cursors = append(c.cursors, *cursor)
+	}
+	if c.err != nil {
+		return nil, c.err
+	}
+	if c.idx >= len(c.pages) {
+		return &codexThreadListResult{}, nil
+	}
+	page := c.pages[c.idx]
+	c.idx++
+	return page, nil
+}
+
+func (c *fakeCodexThreadClient) Close() {
+	c.closed = true
+}
+
+type fakeClientFactoryCall struct {
+	cwd       string
+	codexHome string
+}
+
+type fakeCodexThreadClientFactory struct {
+	clients []*fakeCodexThreadClient
+	err     error
+	calls   []fakeClientFactoryCall
+}
+
+func (f *fakeCodexThreadClientFactory) newClient(_ context.Context, cwd, codexHome string, _ logging.Logger) (codexThreadClient, error) {
+	f.calls = append(f.calls, fakeClientFactoryCall{
+		cwd:       cwd,
+		codexHome: codexHome,
+	})
+	if f.err != nil {
+		return nil, f.err
+	}
+	if len(f.clients) == 0 {
+		return &fakeCodexThreadClient{}, nil
+	}
+	client := f.clients[0]
+	f.clients = f.clients[1:]
+	return client, nil
 }
 
 func (s *syncWorkspaceListErrorStore) List(context.Context) ([]*types.Workspace, error) {
