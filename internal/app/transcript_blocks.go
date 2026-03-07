@@ -15,15 +15,14 @@ func transcriptBlocksToChatBlocks(blocks []transcriptdomain.Block) []ChatBlock {
 	}
 	out := make([]ChatBlock, 0, len(blocks))
 	for _, block := range blocks {
-		text := strings.TrimSpace(block.Text)
-		if text == "" {
+		if strings.TrimSpace(block.Text) == "" {
 			continue
 		}
 		role := transcriptBlockRole(block)
 		chatBlock := ChatBlock{
 			ID:                strings.TrimSpace(block.ID),
 			Role:              role,
-			Text:              text,
+			Text:              block.Text,
 			TurnID:            transcriptMetaString(block.Meta, "turn_id", "turnId"),
 			ProviderMessageID: transcriptMetaString(block.Meta, "provider_message_id", "providerMessageID", "message_id"),
 		}

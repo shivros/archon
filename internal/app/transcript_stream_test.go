@@ -152,7 +152,7 @@ func TestTranscriptStreamControllerCoalescesAdjacentAssistantDeltasForSameMessag
 		Kind:     transcriptdomain.TranscriptEventDelta,
 		Revision: transcriptdomain.MustParseRevisionToken("1"),
 		Delta: []transcriptdomain.Block{
-			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "hello"},
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "hello "},
 		},
 	}
 	ch <- transcriptdomain.TranscriptEvent{
@@ -175,7 +175,7 @@ func TestTranscriptStreamControllerCoalescesAdjacentAssistantDeltasForSameMessag
 	if len(blocks) != 1 {
 		t.Fatalf("expected one coalesced assistant block, got %#v", blocks)
 	}
-	if blocks[0].Text != "helloworld" {
+	if blocks[0].Text != "hello world" {
 		t.Fatalf("expected merged assistant text, got %#v", blocks[0])
 	}
 }
