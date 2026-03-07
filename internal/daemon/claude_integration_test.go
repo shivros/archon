@@ -15,6 +15,8 @@ import (
 
 const claudeIntegrationEnv = "ARCHON_CLAUDE_INTEGRATION"
 
+const providerHistoryPollInterval = 100 * time.Millisecond
+
 func requireClaudeIntegration(t *testing.T) {
 	t.Helper()
 	if integrationEnvDisabled(claudeIntegrationEnv) {
@@ -73,7 +75,7 @@ func waitForAgentReply(t *testing.T, server *httptest.Server, manager *SessionMa
 		if historyHasAgentText(history.Items, needle) {
 			return
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(providerHistoryPollInterval)
 	}
 	t.Fatalf("timeout waiting for agent reply containing %q\n%s", needle, sessionDiagnostics(manager, sessionID))
 }

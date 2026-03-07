@@ -13,6 +13,8 @@ import (
 	"control/internal/types"
 )
 
+const integrationSSEPollInterval = 50 * time.Millisecond
+
 func openSSE(t *testing.T, server *httptest.Server, path string) (<-chan string, func()) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, server.URL+path, nil)
@@ -56,7 +58,7 @@ func waitForSSEData(ch <-chan string, timeout time.Duration) (string, bool) {
 				return "", false
 			}
 			return data, true
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(integrationSSEPollInterval):
 		}
 	}
 	return "", false
@@ -75,7 +77,7 @@ func collectEvents(ch <-chan string, timeout time.Duration) []types.CodexEvent {
 			if err := json.Unmarshal([]byte(data), &event); err == nil {
 				out = append(out, event)
 			}
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(integrationSSEPollInterval):
 		}
 	}
 	return out
@@ -95,7 +97,7 @@ func waitForEvent(ch <-chan string, method string, timeout time.Duration) bool {
 					return true
 				}
 			}
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(integrationSSEPollInterval):
 		}
 	}
 	return false

@@ -22,6 +22,8 @@ import (
 
 const codexIntegrationEnv = "ARCHON_CODEX_INTEGRATION"
 
+const codexIntegrationPollInterval = 50 * time.Millisecond
+
 func TestCodexAppServerIntegration(t *testing.T) {
 	t.Parallel()
 	requireCodexIntegration(t)
@@ -612,7 +614,7 @@ func waitForCodexTurn(t *testing.T, client *codexAppServer, turnID string, timeo
 					return
 				}
 			}
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(codexIntegrationPollInterval):
 		}
 	}
 	t.Fatalf("timeout waiting for turn completion")
@@ -653,7 +655,7 @@ func waitForApprovalEventWithTrace(ch <-chan string, timeout time.Duration) (*ty
 					return &event, seen
 				}
 			}
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(codexIntegrationPollInterval):
 		}
 	}
 	return nil, seen
@@ -718,7 +720,7 @@ func waitForApprovals(t *testing.T, server *httptest.Server, sessionID string, t
 		if len(approvals) > 0 {
 			return approvals
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(codexIntegrationPollInterval)
 	}
 	return []*types.Approval{}
 }
@@ -730,7 +732,7 @@ func waitForFile(t *testing.T, path string, timeout time.Duration) {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(codexIntegrationPollInterval)
 	}
 	t.Fatalf("expected %s to be created", path)
 }

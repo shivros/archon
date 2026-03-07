@@ -26,7 +26,7 @@ func waitForSSEDataWithFailure(ch <-chan string, failures <-chan string, timeout
 				return "", "", false
 			}
 			return data, "", true
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(integrationSSEPollInterval):
 		}
 	}
 	return "", "", false

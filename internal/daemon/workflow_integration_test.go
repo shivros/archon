@@ -71,6 +71,8 @@ var workflowContextCarryTemplate = guidedworkflows.WorkflowTemplate{
 	},
 }
 
+const workflowIntegrationPollInterval = 100 * time.Millisecond
+
 func TestGuidedWorkflowE2E(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -342,7 +344,7 @@ func waitForWorkflowSession(t *testing.T, server *httptest.Server, runID string,
 		if run.SessionID != "" {
 			return run.SessionID
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(workflowIntegrationPollInterval)
 	}
 	t.Fatalf("timeout waiting for workflow run %s to bind a session", runID)
 	return ""
@@ -381,7 +383,7 @@ func waitForNumberInHistory(t *testing.T, server *httptest.Server, manager *Sess
 				}
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(workflowIntegrationPollInterval)
 	}
 	t.Fatalf("timeout waiting for agent to pick a number\n%s", sessionDiagnostics(manager, sessionID))
 	return 0
@@ -400,7 +402,7 @@ func waitForWorkflowRunStatus(t *testing.T, server *httptest.Server, runID strin
 		if run.Status == guidedworkflows.WorkflowRunStatusFailed {
 			t.Fatalf("workflow run %s failed (wanted %s)", runID, want)
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(workflowIntegrationPollInterval)
 	}
 	t.Fatalf("timeout waiting for workflow run %s to reach %s (last=%s)", runID, want, last)
 }

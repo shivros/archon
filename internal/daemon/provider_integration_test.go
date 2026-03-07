@@ -11,6 +11,8 @@ import (
 	"control/internal/types"
 )
 
+const providerFailurePollInterval = 50 * time.Millisecond
+
 // providerTestCase defines the per-provider setup for table-driven integration tests.
 type providerTestCase struct {
 	name    string
@@ -245,7 +247,7 @@ func assertSessionFailsFastWithModelRequired(
 				if ok && isModelRequiredFailure(msg) {
 					return
 				}
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(providerFailurePollInterval):
 			}
 			t.Fatalf("session entered terminal state %q without model-required error\n%s", failure, sessionDiagnostics(manager, sessionID))
 		}
@@ -258,7 +260,7 @@ func assertSessionFailsFastWithModelRequired(
 				return
 			}
 			t.Fatalf("expected model-required failure, got %q\n%s", msg, sessionDiagnostics(manager, sessionID))
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(providerFailurePollInterval):
 		}
 	}
 	t.Fatalf("timeout waiting for model-required failure\n%s", sessionDiagnostics(manager, sessionID))
