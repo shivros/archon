@@ -171,8 +171,6 @@ type Model struct {
 	appStateSaveInFlight                bool
 	stream                              *StreamController
 	transcriptStream                    *TranscriptStreamController
-	codexStream                         *CodexStreamController
-	itemStream                          *ItemStreamController
 	debugStream                         debugStreamConsumer
 	metadataStream                      *MetadataStreamController
 	metadataStreamRevision              string
@@ -337,6 +335,8 @@ type Model struct {
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
 	sessionProjectionPolicy             SessionProjectionPolicy
 	sessionProjectionPostProcessor      SessionProjectionPostProcessor
+	approvalStateService                ApprovalStateService
+	transcriptComposer                  TranscriptComposer
 	transcriptSignalClassifier          TranscriptSignalClassifier
 	streamHealthPolicy                  StreamHealthPolicy
 	transcriptRecoveryScheduler         TranscriptRecoveryScheduler
@@ -467,8 +467,6 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	}
 	stream := NewStreamController(maxViewportLines, maxEventsPerTick)
 	transcriptStream := NewTranscriptStreamController(maxEventsPerTick)
-	codexStream := NewCodexStreamController(maxViewportLines, maxEventsPerTick)
-	itemStream := NewItemStreamController(maxViewportLines, maxEventsPerTick)
 	debugStream := NewDebugStreamController(defaultDebugStreamRetentionPolicy(), maxEventsPerTick)
 	metadataStream := NewMetadataStreamController(maxEventsPerTick)
 	debugPanel := NewDebugPanelController(minViewportWidth, minContentHeight-1, nil)
@@ -500,8 +498,6 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		notesPanelViewport:                  notesPanelVP,
 		stream:                              stream,
 		transcriptStream:                    transcriptStream,
-		codexStream:                         codexStream,
-		itemStream:                          itemStream,
 		debugStream:                         debugStream,
 		metadataStream:                      metadataStream,
 		metadataEventApplier:                defaultMetadataEventApplier{},
@@ -2534,8 +2530,6 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	if cmd := m.consumeTranscriptTick(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
-	m.consumeCodexTick(now)
-	m.consumeItemTick(now)
 	if cmd := m.consumeDebugTick(now); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -2600,12 +2594,6 @@ func (m *Model) resetStreamWithReason(reason string) {
 	if m.transcriptStream != nil {
 		m.transcriptStream.Reset()
 	}
-	if m.codexStream != nil {
-		m.codexStream.Reset()
-	}
-	if m.itemStream != nil {
-		m.itemStream.Reset()
-	}
 	if m.debugStream != nil {
 		m.debugStream.Reset()
 	}
@@ -2662,7 +2650,12 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 	if changed {
 		blocks := m.transcriptStream.Blocks()
 		if sessionID != "" {
-			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
+			blocks = m.transcriptComposerOrDefault().MergeApprovals(
+				blocks,
+				m.sessionApprovals[sessionID],
+				m.sessionApprovalResolutions[sessionID],
+				nil,
+			)
 		}
 		if m.transcriptViewportVisible() {
 			m.applyBlocksNoRender(blocks)
@@ -2679,120 +2672,6 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 		return cmd
 	}
 	return nil
-}
-
-func (m *Model) consumeCodexTick(now time.Time) {
-	if m.codexStream == nil {
-		return
-	}
-	changed, closed, events := m.codexStream.ConsumeTick()
-	sessionID := m.activeStreamTargetID()
-	if sessionID != "" && events > 0 {
-		m.noteRequestEvent(sessionID, events)
-	}
-	if closed {
-		m.setBackgroundStatus("events closed")
-		m.recordTranscriptBoundaryMetric(newStreamCloseMetric(transcriptReasonStreamCloseEventsChannel, transcriptSourceConsumeCodexTick, sessionID, "codex", "events"))
-		if sessionID != "" {
-			m.stopRequestActivityFor(sessionID)
-		}
-	}
-	if changed {
-		blocks := m.codexStream.Blocks()
-		if sessionID != "" {
-			blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[sessionID], m.sessionApprovalResolutions[sessionID])
-			m.codexStream.SetSnapshotBlocks(blocks)
-			blocks = m.codexStream.Blocks()
-		}
-		if m.transcriptViewportVisible() {
-			m.applyBlocksNoRender(blocks)
-			m.requestStreamRender(now)
-		}
-		if sessionID != "" {
-			if m.transcriptViewportVisible() {
-				m.noteRequestVisibleUpdate(sessionID)
-			}
-			if key := m.selectedKey(); key != "" {
-				m.cacheTranscriptBlocks(key, blocks)
-			}
-		}
-	}
-	if errMsg := m.codexStream.LastError(); errMsg != "" {
-		m.setBackgroundError("codex error: " + errMsg)
-	}
-	if approval := m.codexStream.PendingApproval(); approval != nil {
-		if sessionID != "" {
-			updated := m.upsertApprovalForSession(sessionID, approval)
-			requests := m.sessionApprovals[sessionID]
-			if updated {
-				base := m.codexStream.Blocks()
-				blocks := mergeApprovalBlocks(base, requests, m.sessionApprovalResolutions[sessionID])
-				m.codexStream.SetSnapshotBlocks(blocks)
-				blocks = m.codexStream.Blocks()
-				if m.transcriptViewportVisible() {
-					m.applyBlocksNoRender(blocks)
-					m.requestStreamRender(now)
-				}
-				if key := m.selectedKey(); key != "" {
-					m.cacheTranscriptBlocks(key, blocks)
-				}
-			}
-			m.pendingApproval = latestApprovalRequest(requests)
-		} else {
-			m.pendingApproval = cloneApprovalRequest(approval)
-		}
-		if m.pendingApproval != nil {
-			if m.pendingApproval.Summary != "" {
-				if m.pendingApproval.Detail != "" {
-					m.setApprovalStatus(fmt.Sprintf("approval required: %s (%s)", m.pendingApproval.Summary, m.pendingApproval.Detail))
-				} else {
-					m.setApprovalStatus("approval required: " + m.pendingApproval.Summary)
-				}
-			} else {
-				m.setApprovalStatus("approval required")
-			}
-		}
-	}
-}
-
-func (m *Model) consumeItemTick(now time.Time) {
-	if m.itemStream == nil {
-		return
-	}
-	changed, closed := m.itemStream.ConsumeTick()
-	sessionID := m.activeStreamTargetID()
-	if closed {
-		m.setBackgroundStatus("items stream closed")
-		m.recordTranscriptBoundaryMetric(newStreamCloseMetric(transcriptReasonStreamCloseItemsChannel, transcriptSourceConsumeItemTick, sessionID, m.providerForSessionID(sessionID), "items"))
-		// Item streams can close transiently (for example during selection churn)
-		// before the assistant reply arrives. Keep request activity running so the
-		// stale-history fallback continues polling and can surface delayed items.
-	}
-	if changed {
-		if m.loading {
-			loadingSessionID := sessionIDFromSidebarKey(m.loadingKey)
-			if loadingSessionID == "" || loadingSessionID == sessionID {
-				m.loading = false
-				if m.loadingKey != "" {
-					m.finishUILatencyAction(uiLatencyActionSwitchSession, m.loadingKey, uiLatencyOutcomeOK)
-				}
-			}
-		}
-		blocks := m.itemStream.Blocks()
-		if m.transcriptViewportVisible() {
-			m.applyBlocksNoRender(blocks)
-			m.requestStreamRender(now)
-		}
-		if sessionID != "" {
-			m.noteRequestEvent(sessionID, 1)
-			if m.transcriptViewportVisible() {
-				m.noteRequestVisibleUpdate(sessionID)
-			}
-			if key := m.selectedKey(); key != "" {
-				m.cacheTranscriptBlocks(key, blocks)
-			}
-		}
-	}
 }
 
 func (m *Model) consumeDebugTick(now time.Time) tea.Cmd {
@@ -3412,28 +3291,7 @@ func (m *Model) appendUserMessageLocal(provider, text string) int {
 	if strings.EqualFold(provider, "claude") {
 		return -1
 	}
-	if shouldStreamItems(provider) && m.itemStream != nil {
-		m.itemStream.SetSnapshotBlocks(m.currentBlocks())
-		headerIndex := m.itemStream.AppendUserMessage(text)
-		if headerIndex >= 0 {
-			_ = m.itemStream.MarkUserMessageSending(headerIndex)
-		}
-		blocks := m.itemStream.Blocks()
-		m.applyBlocks(blocks)
-		if key := m.selectedKey(); key != "" {
-			m.transcriptCache[key] = blocks
-		}
-		return headerIndex
-	}
-	if m.codexStream == nil {
-		return -1
-	}
-	m.codexStream.SetSnapshotBlocks(m.currentBlocks())
-	headerIndex := m.codexStream.AppendUserMessage(text)
-	if headerIndex >= 0 {
-		_ = m.codexStream.MarkUserMessageSending(headerIndex)
-	}
-	blocks := m.codexStream.Blocks()
+	blocks, headerIndex := m.transcriptComposerOrDefault().AppendOptimisticUser(m.currentBlocks(), text)
 	m.applyBlocks(blocks)
 	if key := m.selectedKey(); key != "" {
 		m.transcriptCache[key] = blocks
@@ -3478,25 +3336,10 @@ func (m *Model) clearPendingSend(token int) {
 			return
 		}
 		if entry.key == m.selectedKey() {
-			provider := entry.provider
-			if provider == "" {
-				provider = m.selectedSessionProvider()
-			}
-			if shouldStreamItems(provider) && m.itemStream != nil {
-				if m.itemStream.MarkUserMessageSent(entry.headerLine) {
-					blocks := m.itemStream.Blocks()
-					m.applyBlocks(blocks)
-					m.transcriptCache[entry.key] = blocks
-					return
-				}
-			}
-			if m.codexStream != nil {
-				if m.codexStream.MarkUserMessageSent(entry.headerLine) {
-					blocks := m.codexStream.Blocks()
-					m.applyBlocks(blocks)
-					m.transcriptCache[entry.key] = blocks
-					return
-				}
+			if blocks, changed := m.transcriptComposerOrDefault().MarkUserStatus(m.currentBlocks(), entry.headerLine, ChatStatusNone); changed {
+				m.applyBlocks(blocks)
+				m.transcriptCache[entry.key] = blocks
+				return
 			}
 		}
 		if cached, ok := m.transcriptCache[entry.key]; ok {
@@ -3518,25 +3361,10 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 		return
 	}
 	if entry.key == m.selectedKey() {
-		provider := entry.provider
-		if provider == "" {
-			provider = m.selectedSessionProvider()
-		}
-		if shouldStreamItems(provider) && m.itemStream != nil {
-			if m.itemStream.MarkUserMessageFailed(entry.headerLine) {
-				blocks := m.itemStream.Blocks()
-				m.applyBlocks(blocks)
-				m.transcriptCache[entry.key] = blocks
-				return
-			}
-		}
-		if m.codexStream != nil {
-			if m.codexStream.MarkUserMessageFailed(entry.headerLine) {
-				blocks := m.codexStream.Blocks()
-				m.applyBlocks(blocks)
-				m.transcriptCache[entry.key] = blocks
-				return
-			}
+		if blocks, changed := m.transcriptComposerOrDefault().MarkUserStatus(m.currentBlocks(), entry.headerLine, ChatStatusFailed); changed {
+			m.applyBlocks(blocks)
+			m.transcriptCache[entry.key] = blocks
+			return
 		}
 	}
 	if cached, ok := m.transcriptCache[entry.key]; ok {
@@ -3967,13 +3795,8 @@ func (m *Model) currentBlocks() []ChatBlock {
 	if m.contentBlocks != nil {
 		return m.contentBlocks
 	}
-	if m.itemStream != nil {
-		if blocks := m.itemStream.Blocks(); len(blocks) > 0 {
-			return blocks
-		}
-	}
-	if m.codexStream != nil {
-		if blocks := m.codexStream.Blocks(); len(blocks) > 0 {
+	if m.transcriptStream != nil {
+		if blocks := m.transcriptStream.Blocks(); len(blocks) > 0 {
 			return blocks
 		}
 	}
@@ -3997,25 +3820,13 @@ func (m *Model) setApprovalsForSession(sessionID string, requests []*ApprovalReq
 	if sessionID == "" {
 		return
 	}
-	normalized := normalizeApprovalRequests(requests)
-	for i := range normalized {
-		if normalized[i] == nil {
-			continue
-		}
-		if strings.TrimSpace(normalized[i].SessionID) == "" {
-			normalized[i].SessionID = sessionID
-		}
+	state := ApprovalSessionState{
+		Requests:    m.sessionApprovals[sessionID],
+		Resolutions: m.sessionApprovalResolutions[sessionID],
 	}
-	m.sessionApprovals[sessionID] = normalized
-	resolutions := m.sessionApprovalResolutions[sessionID]
-	for _, req := range normalized {
-		if req == nil {
-			continue
-		}
-		updated, _ := removeApprovalResolution(resolutions, req.RequestID)
-		resolutions = updated
-	}
-	m.sessionApprovalResolutions[sessionID] = resolutions
+	next := m.approvalStateServiceOrDefault().SetRequests(sessionID, state, requests)
+	m.sessionApprovals[sessionID] = next.Requests
+	m.sessionApprovalResolutions[sessionID] = next.Resolutions
 }
 
 func (m *Model) upsertApprovalForSession(sessionID string, request *ApprovalRequest) bool {
@@ -4023,20 +3834,13 @@ func (m *Model) upsertApprovalForSession(sessionID string, request *ApprovalRequ
 	if sessionID == "" {
 		return false
 	}
-	if request != nil && strings.TrimSpace(request.SessionID) == "" {
-		copy := *request
-		copy.SessionID = sessionID
-		request = &copy
+	state := ApprovalSessionState{
+		Requests:    m.sessionApprovals[sessionID],
+		Resolutions: m.sessionApprovalResolutions[sessionID],
 	}
-	updated, changed := upsertApprovalRequest(m.sessionApprovals[sessionID], request)
-	m.sessionApprovals[sessionID] = updated
-	if request != nil {
-		nextResolutions, removed := removeApprovalResolution(m.sessionApprovalResolutions[sessionID], request.RequestID)
-		m.sessionApprovalResolutions[sessionID] = nextResolutions
-		if removed {
-			changed = true
-		}
-	}
+	next, changed := m.approvalStateServiceOrDefault().UpsertRequest(sessionID, state, request)
+	m.sessionApprovals[sessionID] = next.Requests
+	m.sessionApprovalResolutions[sessionID] = next.Resolutions
 	return changed
 }
 
@@ -4045,8 +3849,12 @@ func (m *Model) removeApprovalForSession(sessionID string, requestID int) bool {
 	if sessionID == "" {
 		return false
 	}
-	updated, changed := removeApprovalRequest(m.sessionApprovals[sessionID], requestID)
-	m.sessionApprovals[sessionID] = updated
+	state := ApprovalSessionState{
+		Requests:    m.sessionApprovals[sessionID],
+		Resolutions: m.sessionApprovalResolutions[sessionID],
+	}
+	next, changed := m.approvalStateServiceOrDefault().RemoveRequest(state, requestID)
+	m.sessionApprovals[sessionID] = next.Requests
 	return changed
 }
 
@@ -4055,13 +3863,12 @@ func (m *Model) upsertApprovalResolutionForSession(sessionID string, resolution 
 	if sessionID == "" {
 		return false
 	}
-	if resolution != nil && strings.TrimSpace(resolution.SessionID) == "" {
-		copy := *resolution
-		copy.SessionID = sessionID
-		resolution = &copy
+	state := ApprovalSessionState{
+		Requests:    m.sessionApprovals[sessionID],
+		Resolutions: m.sessionApprovalResolutions[sessionID],
 	}
-	updated, changed := upsertApprovalResolution(m.sessionApprovalResolutions[sessionID], resolution)
-	m.sessionApprovalResolutions[sessionID] = updated
+	next, changed := m.approvalStateServiceOrDefault().UpsertResolution(sessionID, state, resolution)
+	m.sessionApprovalResolutions[sessionID] = next.Resolutions
 	return changed
 }
 
@@ -4106,8 +3913,12 @@ func (m *Model) removeApprovalResolutionForSession(sessionID string, requestID i
 	if sessionID == "" {
 		return false
 	}
-	updated, changed := removeApprovalResolution(m.sessionApprovalResolutions[sessionID], requestID)
-	m.sessionApprovalResolutions[sessionID] = updated
+	state := ApprovalSessionState{
+		Requests:    m.sessionApprovals[sessionID],
+		Resolutions: m.sessionApprovalResolutions[sessionID],
+	}
+	next, changed := m.approvalStateServiceOrDefault().RemoveResolution(state, requestID)
+	m.sessionApprovalResolutions[sessionID] = next.Resolutions
 	return changed
 }
 
@@ -4115,27 +3926,22 @@ func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
 	if strings.TrimSpace(sessionID) == "" || sessionID != m.selectedSessionID() {
 		return
 	}
-	provider := m.providerForSessionID(sessionID)
 	base := m.currentBlocks()
-	if !m.transcriptViewportVisible() {
-		if provider == "codex" && m.codexStream != nil {
-			base = m.codexStream.Blocks()
-		} else if shouldStreamItems(provider) && m.itemStream != nil {
-			base = m.itemStream.Blocks()
+	if key := m.selectedKey(); key != "" {
+		if cached := m.transcriptCache[key]; len(cached) > 0 {
+			base = append([]ChatBlock(nil), cached...)
+		}
+	}
+	if m.transcriptStream != nil {
+		if blocks := m.transcriptStream.Blocks(); len(blocks) > 0 {
+			base = blocks
 		}
 	}
 	requests := m.sessionApprovals[sessionID]
 	if len(base) == 0 && len(requests) == 0 {
 		return
 	}
-	blocks := mergeApprovalBlocks(base, requests, m.sessionApprovalResolutions[sessionID])
-	if provider == "codex" && m.codexStream != nil {
-		m.codexStream.SetSnapshotBlocks(blocks)
-		blocks = m.codexStream.Blocks()
-	} else if shouldStreamItems(provider) && m.itemStream != nil {
-		m.itemStream.SetSnapshotBlocks(blocks)
-		blocks = m.itemStream.Blocks()
-	}
+	blocks := m.transcriptComposerOrDefault().MergeApprovals(base, requests, m.sessionApprovalResolutions[sessionID], nil)
 	if m.transcriptViewportVisible() {
 		m.applyBlocks(blocks)
 	}

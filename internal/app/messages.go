@@ -294,20 +294,6 @@ type streamMsg struct {
 	err    error
 }
 
-type eventsMsg struct {
-	id     string
-	ch     <-chan types.CodexEvent
-	cancel func()
-	err    error
-}
-
-type itemsStreamMsg struct {
-	id     string
-	ch     <-chan map[string]any
-	cancel func()
-	err    error
-}
-
 type transcriptSnapshotMsg struct {
 	id             string
 	key            string

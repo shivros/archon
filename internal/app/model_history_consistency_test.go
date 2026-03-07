@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 	"time"
+
+	"control/internal/daemon/transcriptdomain"
 )
 
 func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
@@ -15,8 +17,13 @@ func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
 	streamBlocks := []ChatBlock{
 		{ID: "reasoning:r1", Role: ChatRoleReasoning, Text: "Reasoning\nlive stream"},
 	}
-	m.codexStream.SetSnapshotBlocks(streamBlocks)
-	m.setSnapshotBlocks(m.codexStream.Blocks())
+	_, _ = m.transcriptStream.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Blocks: []transcriptdomain.Block{
+			{Kind: "reasoning", Role: "reasoning", Text: "Reasoning\nlive stream", Meta: map[string]any{"id": "reasoning:r1"}},
+		},
+	})
+	m.setSnapshotBlocks(streamBlocks)
 
 	msg := historyMsg{
 		id:  "s1",
@@ -44,7 +51,7 @@ func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
 	}
 }
 
-func TestHistoryMsgCodexUsesCodexStreamSnapshotWhenApplyingHistory(t *testing.T) {
+func TestHistoryMsgCodexUsesProjectedSnapshotWhenApplyingHistory(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.enterCompose("s1")
 	m.pendingSessionKey = "sess:s1"
@@ -81,12 +88,12 @@ func TestHistoryMsgCodexUsesCodexStreamSnapshotWhenApplyingHistory(t *testing.T)
 		t.Fatalf("expected latest reasoning update text, got %q", got)
 	}
 
-	streamBlocks := m.codexStream.Blocks()
-	if len(streamBlocks) != 1 {
-		t.Fatalf("expected codex stream snapshot to stay aligned, got %d blocks", len(streamBlocks))
+	cached := m.transcriptCache["sess:s1"]
+	if len(cached) != 1 {
+		t.Fatalf("expected transcript cache snapshot to stay aligned, got %d blocks", len(cached))
 	}
-	if streamBlocks[0].Text != blocks[0].Text {
-		t.Fatalf("expected model and codex stream snapshots to match")
+	if cached[0].Text != blocks[0].Text {
+		t.Fatalf("expected model and cached snapshots to match")
 	}
 }
 
@@ -158,7 +165,7 @@ func TestHistoryMsgSplitsAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	}
 }
 
-func TestItemsStreamReplayDoesNotDuplicateExistingClaudeTranscript(t *testing.T) {
+func TestHistoryReplayDoesNotDuplicateExistingClaudeTranscript(t *testing.T) {
 	m := newPhase0ModelWithSession("claude")
 	m.enterCompose("s1")
 	m.pendingSessionKey = "sess:s1"
@@ -192,23 +199,17 @@ func TestItemsStreamReplayDoesNotDuplicateExistingClaudeTranscript(t *testing.T)
 		t.Fatalf("expected no follow-up command for history message")
 	}
 
-	streamItems := func() chan map[string]any {
-		ch := make(chan map[string]any, len(items))
-		for _, item := range items {
-			cloned := map[string]any{}
-			for k, v := range item {
-				cloned[k] = v
-			}
-			ch <- cloned
-		}
-		close(ch)
-		return ch
+	handled, cmd = m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: items,
+	})
+	if !handled {
+		t.Fatalf("expected replayed history message to be handled")
 	}
-
-	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: streamItems()})
-	m.consumeItemTick(time.Now().UTC())
-	m.applyItemsStreamMsg(itemsStreamMsg{id: "s1", ch: streamItems()})
-	m.consumeItemTick(time.Now().UTC())
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for replayed history message")
+	}
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {

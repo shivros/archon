@@ -453,11 +453,11 @@ func (m *Model) applyLiveSessionItemsSnapshot(ctx sessionItemsMessageContext) bo
 	if m == nil {
 		return false
 	}
-	if !m.shouldKeepLiveCodexSnapshot(ctx.provider, ctx.id) {
+	if !m.shouldKeepLiveTranscriptSnapshot(ctx.id) {
 		return false
 	}
 	if ctx.key != "" {
-		m.cacheTranscriptBlocks(ctx.key, m.activeTranscriptBlocks(ctx.provider))
+		m.cacheTranscriptBlocks(ctx.key, m.activeTranscriptBlocks())
 		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeOK)
 	}
 	m.setBackgroundStatus(string(ctx.source) + " refreshed")
@@ -472,7 +472,6 @@ func (m *Model) projectAndApplySessionItems(ctx sessionItemsMessageContext, item
 		return cmd
 	}
 	blocks := projectSessionBlocksFromItems(ctx.provider, items, previous, approvals, resolutions)
-	blocks = m.hydrateSessionBlocksForProvider(ctx.provider, blocks)
 	m.applySessionProjection(ctx.source, ctx.id, ctx.key, blocks)
 	return nil
 }
@@ -959,8 +958,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			))
 			return true, nil
 		}
-		blocks := m.hydrateSessionBlocksForProvider(msg.provider, msg.blocks)
-		m.applySessionProjection(msg.source, msg.id, msg.key, blocks)
+		m.applySessionProjection(msg.source, msg.id, msg.key, msg.blocks)
 		m.consumeSessionProjectionToken(msg.key, msg.id, msg.projectionSeq)
 		return true, nil
 	case debugPanelProjectedMsg:
@@ -1087,15 +1085,10 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		_ = m.upsertApprovalResolutionForSession(msg.id, resolution)
 		_ = m.removeApprovalForSession(msg.id, msg.requestID)
 		if msg.id == m.selectedSessionID() {
-			m.pendingApproval = latestApprovalRequest(m.sessionApprovals[msg.id])
+			m.pendingApproval = m.approvalStateServiceOrDefault().LatestRequest(m.sessionApprovals[msg.id])
 			m.refreshVisibleApprovalBlocks(msg.id)
 		}
 		m.setStatusInfo("approval sent")
-		if m.codexStream != nil {
-			if pending := m.codexStream.PendingApproval(); pending != nil && pending.RequestID == msg.requestID {
-				m.codexStream.ClearApproval()
-			}
-		}
 		return true, nil
 	case approvalsMsg:
 		if msg.err != nil {
@@ -1110,7 +1103,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.id != m.selectedSessionID() {
 			return true, nil
 		}
-		m.pendingApproval = latestApprovalRequest(m.sessionApprovals[msg.id])
+		m.pendingApproval = m.approvalStateServiceOrDefault().LatestRequest(m.sessionApprovals[msg.id])
 		m.refreshVisibleApprovalBlocks(msg.id)
 		if m.pendingApproval != nil {
 			if m.pendingApproval.Detail != "" {
@@ -1279,12 +1272,6 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case streamMsg:
 		m.applyStreamMsg(msg)
 		return true, nil
-	case eventsMsg:
-		m.applyEventsMsg(msg)
-		return true, nil
-	case itemsStreamMsg:
-		m.applyItemsStreamMsg(msg)
-		return true, nil
 	case transcriptStreamMsg:
 		m.applyTranscriptStreamMsg(msg)
 		return true, nil
@@ -1355,22 +1342,16 @@ func sessionSliceContainsID(sessions []*types.Session, sessionID string) bool {
 	return false
 }
 
-func (m *Model) shouldKeepLiveCodexSnapshot(provider, sessionID string) bool {
-	if provider != "codex" || !m.requestActivity.active {
+func (m *Model) shouldKeepLiveTranscriptSnapshot(sessionID string) bool {
+	if !m.requestActivity.active {
 		return false
 	}
 	return strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(sessionID) && m.requestActivity.eventCount > 0
 }
 
-func (m *Model) activeTranscriptBlocks(provider string) []ChatBlock {
+func (m *Model) activeTranscriptBlocks() []ChatBlock {
 	if m.transcriptStream != nil {
 		return m.transcriptStream.Blocks()
-	}
-	if provider == "codex" && m.codexStream != nil {
-		return m.codexStream.Blocks()
-	}
-	if shouldStreamItems(provider) && m.itemStream != nil {
-		return m.itemStream.Blocks()
 	}
 	return m.currentBlocks()
 }
@@ -1397,7 +1378,7 @@ func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []
 		normalizeApprovalRequests(m.sessionApprovals[sessionID]),
 		normalizeApprovalResolutions(m.sessionApprovalResolutions[sessionID]),
 	)
-	return m.hydrateSessionBlocksForProvider(provider, blocks)
+	return blocks
 }
 
 func projectSessionBlocksFromItems(
@@ -1414,18 +1395,6 @@ func projectSessionBlocksFromItems(
 	if providerSupportsApprovals(provider) {
 		blocks = mergeApprovalBlocks(blocks, approvals, resolutions)
 		blocks = preserveApprovalPositions(previous, blocks)
-	}
-	return blocks
-}
-
-func (m *Model) hydrateSessionBlocksForProvider(provider string, blocks []ChatBlock) []ChatBlock {
-	if shouldStreamItems(provider) && m.itemStream != nil {
-		m.itemStream.SetSnapshotBlocks(blocks)
-		blocks = m.itemStream.Blocks()
-	}
-	if provider == "codex" && m.codexStream != nil {
-		m.codexStream.SetSnapshotBlocks(blocks)
-		blocks = m.codexStream.Blocks()
 	}
 	return blocks
 }
@@ -1471,24 +1440,6 @@ func (m *Model) applyStreamMsg(msg streamMsg) {
 		m.stream.SetStream(msg.ch, msg.cancel)
 	}
 	m.setBackgroundStatus("streaming")
-}
-
-func (m *Model) applyEventsMsg(msg eventsMsg) {
-	provider := m.providerForSessionID(msg.id)
-	if msg.err != nil {
-		m.setBackgroundError("events error: " + msg.err.Error())
-		m.recordReconnectOutcome(msg.id, provider, "events", transcriptSourceApplyEventsStream, transcriptOutcomeError, transcriptReasonReconnectStreamError)
-		return
-	}
-	if ok, reason := m.streamMessageTargetDisposition(msg.id, msg.cancel); !ok {
-		m.recordReconnectOutcome(msg.id, provider, "events", transcriptSourceApplyEventsStream, transcriptOutcomeSkipped, reason)
-		return
-	}
-	if m.codexStream != nil {
-		m.codexStream.SetStream(msg.ch, msg.cancel)
-	}
-	m.setBackgroundStatus("streaming events")
-	m.recordReconnectOutcome(msg.id, provider, "events", transcriptSourceApplyEventsStream, transcriptOutcomeSuccess, transcriptReasonReconnectStreamAttached)
 }
 
 func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
@@ -1537,7 +1488,12 @@ func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
 		blocks = m.transcriptStream.Blocks()
 	}
 	m.setSessionTranscriptCapabilities(msg.id, msg.snapshot.Capabilities)
-	blocks = mergeApprovalBlocks(blocks, m.sessionApprovals[msg.id], m.sessionApprovalResolutions[msg.id])
+	blocks = m.transcriptComposerOrDefault().MergeApprovals(
+		blocks,
+		m.sessionApprovals[msg.id],
+		m.sessionApprovalResolutions[msg.id],
+		nil,
+	)
 	m.applySessionProjection(sessionProjectionSourceHistory, msg.id, msg.key, blocks)
 	m.markTranscriptLoadingSignal(msg.id)
 	if cmd := m.maybeBackfillSnapshotMissingUserTurns(msg.id, responseKey, blocks); cmd != nil {
@@ -1605,24 +1561,6 @@ func (m *Model) applyTranscriptStreamMsg(msg transcriptStreamMsg) {
 	} else {
 		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeSuccess, transcriptReasonReconnectMatchedSession)
 	}
-}
-
-func (m *Model) applyItemsStreamMsg(msg itemsStreamMsg) {
-	provider := m.providerForSessionID(msg.id)
-	if msg.err != nil {
-		m.setBackgroundError("items stream error: " + msg.err.Error())
-		m.recordReconnectOutcome(msg.id, provider, "items", transcriptSourceApplyItemsStream, transcriptOutcomeError, transcriptReasonReconnectStreamError)
-		return
-	}
-	if ok, reason := m.streamMessageTargetDisposition(msg.id, msg.cancel); !ok {
-		m.recordReconnectOutcome(msg.id, provider, "items", transcriptSourceApplyItemsStream, transcriptOutcomeSkipped, reason)
-		return
-	}
-	if m.itemStream != nil {
-		m.itemStream.SetStream(msg.ch, msg.cancel)
-	}
-	m.setBackgroundStatus("streaming items")
-	m.recordReconnectOutcome(msg.id, provider, "items", transcriptSourceApplyItemsStream, transcriptOutcomeSuccess, transcriptReasonReconnectStreamAttached)
 }
 
 func (m *Model) applyDebugStreamMsg(msg debugStreamMsg) {

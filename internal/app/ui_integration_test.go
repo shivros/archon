@@ -893,10 +893,6 @@ func (h *uiHarness) apply(msg tea.Msg) {
 		}
 	case streamMsg:
 		h.t.Logf("streamMsg id=%s err=%v", m.id, m.err)
-	case eventsMsg:
-		h.t.Logf("eventsMsg id=%s err=%v", m.id, m.err)
-	case itemsStreamMsg:
-		h.t.Logf("itemsStreamMsg id=%s err=%v", m.id, m.err)
 	}
 	model, cmd := h.model.Update(msg)
 	if updated, ok := model.(*Model); ok && updated != nil {

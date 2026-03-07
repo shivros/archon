@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -82,20 +83,23 @@ func TestApprovalsMsgDoesNotOverwriteNotesView(t *testing.T) {
 	}
 }
 
-func TestConsumeCodexTickDoesNotOverwriteNotesView(t *testing.T) {
+func TestConsumeTranscriptTickDoesNotOverwriteNotesView(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	_ = enterNotesModeForSession(t, &m, "s1", "ws1")
 	before := append([]ChatBlock(nil), m.currentBlocks()...)
 
-	ch := make(chan types.CodexEvent, 1)
-	ch <- types.CodexEvent{
-		Method: "item/updated",
-		Params: json.RawMessage(`{"item":{"type":"agentMessage","delta":"stream update"}}`),
+	ch := make(chan transcriptdomain.TranscriptEvent, 1)
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{
+			{Kind: "assistant_message", Role: "assistant", Text: "stream update"},
+		},
 	}
 	close(ch)
-	m.codexStream.SetStream(ch, nil)
+	m.transcriptStream.SetStream(ch, nil)
 
-	m.consumeCodexTick(time.Now())
+	_ = m.consumeTranscriptTick(time.Now())
 
 	after := m.currentBlocks()
 	if !reflect.DeepEqual(before, after) {
@@ -104,7 +108,7 @@ func TestConsumeCodexTickDoesNotOverwriteNotesView(t *testing.T) {
 	key := m.selectedKey()
 	cached := m.transcriptCache[key]
 	if len(cached) == 0 {
-		t.Fatalf("expected transcript cache to update from codex stream while notes view is active")
+		t.Fatalf("expected transcript cache to update from transcript stream while notes view is active")
 	}
 	if cached[len(cached)-1].Role != ChatRoleAgent {
 		t.Fatalf("expected cached stream update to be an agent block, got %#v", cached)

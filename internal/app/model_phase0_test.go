@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,67 @@ func TestPhase0ComposeSendKeepsLocalState(t *testing.T) {
 	}
 	if blocks[0].Role != ChatRoleUser || blocks[0].Status != ChatStatusSending || blocks[0].Text != "hello from compose" {
 		t.Fatalf("unexpected first block: %#v", blocks[0])
+	}
+}
+
+func TestPhase0SendErrorMarksOptimisticMessageFailed(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+	m.chatInput.SetValue("hello from compose")
+
+	nextModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	next := asModel(t, nextModel)
+	if len(next.currentBlocks()) == 0 {
+		t.Fatalf("expected optimistic user block before send error")
+	}
+
+	handled, cmd := next.reduceStateMessages(sendMsg{
+		id:    "s1",
+		token: 1,
+		err:   errors.New("boom"),
+	})
+	if !handled {
+		t.Fatalf("expected send error to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command on send error")
+	}
+	blocks := next.currentBlocks()
+	if len(blocks) == 0 {
+		t.Fatalf("expected transcript blocks after send error")
+	}
+	if blocks[0].Role != ChatRoleUser || blocks[0].Status != ChatStatusFailed {
+		t.Fatalf("expected optimistic user block marked failed, got %#v", blocks[0])
+	}
+}
+
+func TestPhase0MarkPendingSendFailedUpdatesCachedTranscriptWhenNotSelected(t *testing.T) {
+	m := NewModel(nil)
+	m.pendingSends[7] = pendingSend{
+		key:        "sess:s2",
+		sessionID:  "s2",
+		headerLine: 0,
+	}
+	m.transcriptCache["sess:s2"] = []ChatBlock{
+		{Role: ChatRoleUser, Text: "hello", Status: ChatStatusSending},
+	}
+
+	m.markPendingSendFailed(7, errors.New("boom"))
+
+	cached := m.transcriptCache["sess:s2"]
+	if len(cached) != 1 || cached[0].Status != ChatStatusFailed {
+		t.Fatalf("expected cached optimistic user block to be failed, got %#v", cached)
+	}
+}
+
+func TestPhase0MarkPendingSendFailedNoopWhenPendingEntryKeyMissing(t *testing.T) {
+	m := NewModel(nil)
+	m.pendingSends[5] = pendingSend{key: "", sessionID: "s1", headerLine: 0}
+
+	m.markPendingSendFailed(5, errors.New("boom"))
+
+	if _, ok := m.pendingSends[5]; ok {
+		t.Fatalf("expected pending send entry to be cleared")
 	}
 }
 
@@ -228,87 +290,6 @@ func TestPhase0SelectApprovalRequestChoosesLatest(t *testing.T) {
 	}
 }
 
-func TestPhase0ConsumeCodexTickSetsPendingApprovalStatus(t *testing.T) {
-	m := NewModel(nil)
-	requestID := 7
-
-	events := make(chan types.CodexEvent, 1)
-	events <- types.CodexEvent{
-		ID:     &requestID,
-		Method: "item/commandExecution/requestApproval",
-		Params: []byte(`{"parsedCmd":"go test ./..."}`),
-	}
-	close(events)
-
-	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick(time.Now())
-
-	if m.pendingApproval == nil {
-		t.Fatalf("expected pending approval to be visible")
-	}
-	if m.pendingApproval.RequestID != 7 {
-		t.Fatalf("expected request id 7, got %d", m.pendingApproval.RequestID)
-	}
-	if m.pendingApproval.Summary != "command" || m.pendingApproval.Detail != "go test ./..." {
-		t.Fatalf("unexpected pending approval: %#v", m.pendingApproval)
-	}
-	if m.status != "approval required: command (go test ./...)" {
-		t.Fatalf("unexpected status %q", m.status)
-	}
-}
-
-func TestPhase0ConsumeCodexTickKeepsApprovalOrderWithLaterAgentMessages(t *testing.T) {
-	m := newPhase0ModelWithSession("codex")
-	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
-		t.Fatalf("expected selected session")
-	}
-	m.codexStream.SetSnapshotBlocks([]ChatBlock{{Role: ChatRoleUser, Text: "user"}})
-
-	req1 := 1
-	req2 := 2
-	events := make(chan types.CodexEvent, 16)
-	events <- types.CodexEvent{
-		Method: "item/started",
-		Params: []byte(`{"item":{"type":"agentMessage","id":"agent-1"}}`),
-	}
-	events <- types.CodexEvent{Method: "item/agentMessage/delta", Params: []byte(`{"delta":"agent one"}`)}
-	events <- types.CodexEvent{Method: "item/completed", Params: []byte(`{"item":{"type":"agentMessage"}}`)}
-	events <- types.CodexEvent{
-		ID:     &req1,
-		Method: "item/commandExecution/requestApproval",
-		Params: []byte(`{"parsedCmd":"cmd one"}`),
-	}
-	events <- types.CodexEvent{
-		ID:     &req2,
-		Method: "item/commandExecution/requestApproval",
-		Params: []byte(`{"parsedCmd":"cmd two"}`),
-	}
-	events <- types.CodexEvent{
-		Method: "item/started",
-		Params: []byte(`{"item":{"type":"agentMessage","id":"agent-2"}}`),
-	}
-	events <- types.CodexEvent{Method: "item/agentMessage/delta", Params: []byte(`{"delta":"agent two"}`)}
-	events <- types.CodexEvent{Method: "item/completed", Params: []byte(`{"item":{"type":"agentMessage"}}`)}
-	close(events)
-
-	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick(time.Now())
-
-	blocks := m.currentBlocks()
-	if len(blocks) != 5 {
-		t.Fatalf("expected 5 blocks, got %#v", blocks)
-	}
-	expected := []ChatRole{ChatRoleUser, ChatRoleAgent, ChatRoleApproval, ChatRoleApproval, ChatRoleAgent}
-	for i, want := range expected {
-		if blocks[i].Role != want {
-			t.Fatalf("unexpected role order at %d: got %s want %s (blocks=%#v)", i, blocks[i].Role, want, blocks)
-		}
-	}
-	if blocks[2].RequestID != 1 || blocks[3].RequestID != 2 {
-		t.Fatalf("unexpected approval order: %#v", blocks)
-	}
-}
-
 func TestPhase0ApprovePendingAllowsRequestIDZero(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
@@ -350,104 +331,6 @@ func TestPhase0ApprovePendingUsesApprovalSessionWhenSidebarNotOnSession(t *testi
 	}
 	if m.status != "sending approval" {
 		t.Fatalf("unexpected status %q", m.status)
-	}
-}
-
-func TestPhase0ConsumeCodexTickAcceptsApprovalRequestIDZero(t *testing.T) {
-	m := NewModel(nil)
-	requestID := 0
-
-	events := make(chan types.CodexEvent, 1)
-	events <- types.CodexEvent{
-		ID:     &requestID,
-		Method: "item/commandExecution/requestApproval",
-		Params: []byte(`{"parsedCmd":"echo ok"}`),
-	}
-	close(events)
-
-	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick(time.Now())
-
-	if m.pendingApproval == nil {
-		t.Fatalf("expected pending approval to be visible")
-	}
-	if m.pendingApproval.RequestID != 0 {
-		t.Fatalf("expected request id 0, got %d", m.pendingApproval.RequestID)
-	}
-}
-
-func TestPhase0ConsumeCodexTickPersistsApprovalWhenActiveStreamTargetMissing(t *testing.T) {
-	m := newPhase0ModelWithSession("codex")
-	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
-		t.Fatalf("expected selected session")
-	}
-	items := m.sidebar.Items()
-	for i, item := range items {
-		entry, ok := item.(*sidebarItem)
-		if !ok || entry == nil || entry.kind != sidebarWorkspace {
-			continue
-		}
-		m.sidebar.Select(i)
-		break
-	}
-	if m.selectedSessionID() != "" {
-		t.Fatalf("expected no selected session")
-	}
-	m.pendingSessionKey = "sess:s1"
-	m.setSnapshotBlocks([]ChatBlock{
-		{Role: ChatRoleUser, Text: "user one"},
-		{Role: ChatRoleAgent, Text: "agent one"},
-	})
-
-	requestID := 9
-	events := make(chan types.CodexEvent, 1)
-	events <- types.CodexEvent{
-		ID:     &requestID,
-		Method: "item/commandExecution/requestApproval",
-		Params: []byte(`{"parsedCmd":"echo hi"}`),
-	}
-	close(events)
-
-	m.codexStream.SetStream(events, nil)
-	m.consumeCodexTick(time.Now())
-
-	if m.pendingApproval == nil || m.pendingApproval.RequestID != 9 {
-		t.Fatalf("expected pending approval request 9, got %#v", m.pendingApproval)
-	}
-	if len(m.sessionApprovals["s1"]) != 1 {
-		t.Fatalf("expected approval to persist for session s1, got %#v", m.sessionApprovals["s1"])
-	}
-	if m.sessionApprovals["s1"][0].RequestID != 9 {
-		t.Fatalf("expected persisted request id 9, got %#v", m.sessionApprovals["s1"])
-	}
-
-	handled, cmd := m.reduceStateMessages(historyMsg{
-		id:  "s1",
-		key: "sess:s1",
-		items: []map[string]any{
-			{"type": "userMessage", "text": "user one"},
-			{"type": "agentMessage", "text": "agent one"},
-		},
-	})
-	if !handled {
-		t.Fatalf("expected history message to be handled")
-	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
-	blocks := m.currentBlocks()
-	if len(blocks) < 3 {
-		t.Fatalf("expected approval block after history refresh, got %#v", blocks)
-	}
-	found := false
-	for _, block := range blocks {
-		if block.Role == ChatRoleApproval && block.RequestID == 9 {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected approval block for request 9 in %#v", blocks)
 	}
 }
 

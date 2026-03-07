@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"control/internal/types"
+	"control/internal/daemon/transcriptdomain"
 )
 
 func TestHistoryMsgDoesNotOverwriteRecentsView(t *testing.T) {
@@ -78,21 +78,24 @@ func TestTailMsgDoesNotOverwriteRecentsView(t *testing.T) {
 	}
 }
 
-func TestConsumeCodexTickDoesNotOverwriteRecentsView(t *testing.T) {
+func TestConsumeTranscriptTickDoesNotOverwriteRecentsView(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
 	m.pendingSessionKey = "sess:s1"
 	before := append([]ChatBlock(nil), m.currentBlocks()...)
 
-	ch := make(chan types.CodexEvent, 1)
-	ch <- types.CodexEvent{
-		Method: "item/updated",
-		Params: []byte(`{"item":{"type":"agentMessage","delta":"stream update"}}`),
+	ch := make(chan transcriptdomain.TranscriptEvent, 1)
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{
+			{Kind: "assistant_message", Role: "assistant", Text: "stream update"},
+		},
 	}
 	close(ch)
-	m.codexStream.SetStream(ch, nil)
+	m.transcriptStream.SetStream(ch, nil)
 
-	m.consumeCodexTick(time.Now())
+	_ = m.consumeTranscriptTick(time.Now())
 
 	after := m.currentBlocks()
 	if !reflect.DeepEqual(before, after) {
