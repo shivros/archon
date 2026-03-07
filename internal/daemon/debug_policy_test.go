@@ -6,6 +6,7 @@ import (
 )
 
 func TestDebugBatchPolicyNormalize(t *testing.T) {
+	t.Parallel()
 	policy := (DebugBatchPolicy{
 		FlushInterval:  -time.Second,
 		MaxBatchBytes:  -10,
@@ -20,6 +21,7 @@ func TestDebugBatchPolicyNormalize(t *testing.T) {
 }
 
 func TestDebugRetentionPolicyNormalize(t *testing.T) {
+	t.Parallel()
 	policy := (DebugRetentionPolicy{MaxEvents: 0, MaxBytes: -1}).normalize()
 	if policy.MaxEvents != debugMaxEvents {
 		t.Fatalf("expected MaxEvents to normalize to default %d, got %d", debugMaxEvents, policy.MaxEvents)

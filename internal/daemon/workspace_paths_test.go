@@ -9,6 +9,7 @@ import (
 )
 
 func TestResolverResolveWorkspaceSessionPath(t *testing.T) {
+	t.Parallel()
 	resolver := NewWorkspacePathResolver()
 	repoDir := t.TempDir()
 	sessionPath := filepath.Join(repoDir, "packages", "pennies")
@@ -30,6 +31,7 @@ func TestResolverResolveWorkspaceSessionPath(t *testing.T) {
 }
 
 func TestResolverResolveWorktreeSessionPath(t *testing.T) {
+	t.Parallel()
 	resolver := NewWorkspacePathResolver()
 	root := t.TempDir()
 	ws := &types.Workspace{
@@ -51,6 +53,7 @@ func TestResolverResolveWorktreeSessionPath(t *testing.T) {
 }
 
 func TestResolverValidateWorkspace(t *testing.T) {
+	t.Parallel()
 	resolver := NewWorkspacePathResolver()
 	root := t.TempDir()
 	pkgPath := filepath.Join(root, "packages", "pennies")

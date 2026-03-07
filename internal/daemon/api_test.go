@@ -11,6 +11,7 @@ import (
 )
 
 func TestAPIWorkflowDispatchDefaultsAccessor(t *testing.T) {
+	t.Parallel()
 	var nilAPI *API
 	if got := nilAPI.workflowDispatchDefaults(); got.Provider != "" || got.Model != "" || got.Access != "" || got.Reasoning != "" {
 		t.Fatalf("expected zero-value defaults for nil API, got %+v", got)
@@ -81,6 +82,7 @@ func (r *stubWorkflowPolicyResolver) ResolvePolicyOverrides(explicit *guidedwork
 }
 
 func TestAPIServiceAccessors(t *testing.T) {
+	t.Parallel()
 	var nilAPI *API
 	if nilAPI.workflowRunService() != nil {
 		t.Fatalf("expected nil run service for nil API")
@@ -140,6 +142,7 @@ func TestAPIServiceAccessors(t *testing.T) {
 }
 
 func TestAPIWorkflowTemplateAndPolicyResolverAccessors(t *testing.T) {
+	t.Parallel()
 	var nilAPI *API
 	if nilAPI.workflowTemplateService() != nil {
 		t.Fatalf("expected nil workflow template service for nil API")
@@ -170,6 +173,7 @@ func TestAPIWorkflowTemplateAndPolicyResolverAccessors(t *testing.T) {
 }
 
 func TestAPIBoolAndLineParsers(t *testing.T) {
+	t.Parallel()
 	if parseLines("") != 200 {
 		t.Fatalf("expected parseLines empty default")
 	}

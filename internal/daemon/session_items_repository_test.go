@@ -8,6 +8,7 @@ import (
 )
 
 func TestFileSessionItemsRepositoryAppendAndReadRoundTrip(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	repo := &fileSessionItemsRepository{
 		baseDirResolver: func() (string, error) { return baseDir, nil },
@@ -36,6 +37,7 @@ func TestFileSessionItemsRepositoryAppendAndReadRoundTrip(t *testing.T) {
 }
 
 func TestFileSessionItemsRepositoryReadMissingFile(t *testing.T) {
+	t.Parallel()
 	repo := &fileSessionItemsRepository{
 		baseDirResolver: func() (string, error) { return t.TempDir(), nil },
 	}
@@ -49,6 +51,7 @@ func TestFileSessionItemsRepositoryReadMissingFile(t *testing.T) {
 }
 
 func TestFileSessionItemsRepositoryBaseDirResolverError(t *testing.T) {
+	t.Parallel()
 	repo := &fileSessionItemsRepository{
 		baseDirResolver: func() (string, error) { return "", errors.New("resolver failed") },
 	}
@@ -61,6 +64,7 @@ func TestFileSessionItemsRepositoryBaseDirResolverError(t *testing.T) {
 }
 
 func TestNewFileSessionItemsRepositoryUsesManagerBaseDir(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	manager := &SessionManager{baseDir: baseDir}
 	repo, ok := newFileSessionItemsRepository(manager).(*fileSessionItemsRepository)
@@ -77,6 +81,7 @@ func TestNewFileSessionItemsRepositoryUsesManagerBaseDir(t *testing.T) {
 }
 
 func TestFileSessionItemsRepositoryAppendItemsNoopForEmptyInput(t *testing.T) {
+	t.Parallel()
 	repo := &fileSessionItemsRepository{
 		baseDirResolver: func() (string, error) { return t.TempDir(), nil },
 	}
@@ -89,6 +94,7 @@ func TestFileSessionItemsRepositoryAppendItemsNoopForEmptyInput(t *testing.T) {
 }
 
 func TestFileSessionItemsRepositoryAppendBroadcastsPreparedItems(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	calls := 0
 	var gotSession string

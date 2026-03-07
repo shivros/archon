@@ -9,6 +9,7 @@ import (
 )
 
 func TestWorkflowRunStopCoordinatorStopsRunAndInterruptsSessions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	runService := guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
 	created, err := runService.CreateRun(ctx, guidedworkflows.CreateRunRequest{
@@ -40,6 +41,7 @@ func TestWorkflowRunStopCoordinatorStopsRunAndInterruptsSessions(t *testing.T) {
 }
 
 func TestWorkflowRunStopCoordinatorIgnoresInterruptErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	runService := guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
 	created, err := runService.CreateRun(ctx, guidedworkflows.CreateRunRequest{
@@ -66,6 +68,7 @@ func TestWorkflowRunStopCoordinatorIgnoresInterruptErrors(t *testing.T) {
 }
 
 func TestWorkflowRunStopCoordinatorDoesNotInterruptOnStopFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	runService := guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true})
 	interrupt := &recordCoordinatorInterruptService{}
@@ -84,6 +87,7 @@ func TestWorkflowRunStopCoordinatorDoesNotInterruptOnStopFailure(t *testing.T) {
 }
 
 func TestNewWorkflowRunStopCoordinatorNilRunServiceReturnsNil(t *testing.T) {
+	t.Parallel()
 	coordinator := newWorkflowRunStopCoordinator(nil, &recordCoordinatorInterruptService{}, nil)
 	if coordinator != nil {
 		t.Fatalf("expected nil coordinator when run service is nil")

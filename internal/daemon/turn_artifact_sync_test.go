@@ -51,6 +51,7 @@ func (s *stubTurnArtifactRemote) ListSessionMessages(_ context.Context, _ string
 }
 
 func TestTurnArtifactSynchronizerBackfillsAndMarksReady(t *testing.T) {
+	t.Parallel()
 	remote := &stubTurnArtifactRemote{
 		messages: []openCodeSessionMessage{
 			{
@@ -91,6 +92,7 @@ func TestTurnArtifactSynchronizerBackfillsAndMarksReady(t *testing.T) {
 }
 
 func TestTurnArtifactSynchronizerFallsBackToEmptyDirectory(t *testing.T) {
+	t.Parallel()
 	remote := &stubTurnArtifactRemote{
 		errByDirectory: map[string]error{
 			"/tmp/repo": errors.New("directory scoped lookup failed"),
@@ -116,6 +118,7 @@ func TestTurnArtifactSynchronizerFallsBackToEmptyDirectory(t *testing.T) {
 }
 
 func TestTurnArtifactSynchronizerReturnsRemoteError(t *testing.T) {
+	t.Parallel()
 	remote := &stubTurnArtifactRemote{
 		errByDirectory: map[string]error{
 			"": errors.New("remote unavailable"),
@@ -133,6 +136,7 @@ func TestTurnArtifactSynchronizerReturnsRemoteError(t *testing.T) {
 }
 
 func TestTurnArtifactSynchronizerReturnsNopWhenMissingDependencies(t *testing.T) {
+	t.Parallel()
 	syncer := newOpenCodeTurnArtifactSynchronizer(" ", "prov-1", "", &stubTurnArtifactRemote{}, &stubTurnArtifactRepository{})
 	result := syncer.SyncTurnArtifacts(context.Background(), turnEventParams{Output: "hello"})
 	if result.Source != "noop" {
@@ -144,6 +148,7 @@ func TestTurnArtifactSynchronizerReturnsNopWhenMissingDependencies(t *testing.T)
 }
 
 func TestDefaultTurnCompletionPayloadBuilderUsesTurnOutputFallback(t *testing.T) {
+	t.Parallel()
 	builder := defaultTurnCompletionPayloadBuilder{}
 	output, payload := builder.Build(turnEventParams{Output: "turn output"}, TurnArtifactSyncResult{
 		Source:               "sync",
@@ -164,6 +169,7 @@ func TestDefaultTurnCompletionPayloadBuilderUsesTurnOutputFallback(t *testing.T)
 }
 
 func TestOpenCodeTurnArtifactRemoteSourceNilClient(t *testing.T) {
+	t.Parallel()
 	source := openCodeTurnArtifactRemoteSource{client: nil}
 	messages, err := source.ListSessionMessages(context.Background(), "sess-1", "", 10)
 	if err != nil {
@@ -175,6 +181,7 @@ func TestOpenCodeTurnArtifactRemoteSourceNilClient(t *testing.T) {
 }
 
 func TestOpenCodeTurnArtifactRemoteSourceDelegatesToClient(t *testing.T) {
+	t.Parallel()
 	source := openCodeTurnArtifactRemoteSource{client: &openCodeClient{}}
 	_, err := source.ListSessionMessages(context.Background(), "sess-1", "", 10)
 	if err == nil {
@@ -183,6 +190,7 @@ func TestOpenCodeTurnArtifactRemoteSourceDelegatesToClient(t *testing.T) {
 }
 
 func TestLatestAssistantEvidenceKeyPrefersProviderMessageID(t *testing.T) {
+	t.Parallel()
 	key := latestAssistantEvidenceKey([]map[string]any{
 		{"type": "assistant", "provider_created_at": "2026-02-28T00:00:00Z", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "hello"}}}},
 		{"type": "assistant", "provider_message_id": "msg-1", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "world"}}}},
@@ -193,6 +201,7 @@ func TestLatestAssistantEvidenceKeyPrefersProviderMessageID(t *testing.T) {
 }
 
 func TestLatestAssistantEvidenceKeyFallsBackToCreatedAtAndText(t *testing.T) {
+	t.Parallel()
 	key := latestAssistantEvidenceKey([]map[string]any{
 		{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "ignored"}}},
 		{"type": "assistant", "provider_created_at": "2026-02-28T00:00:00Z", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "final"}}}},
@@ -204,6 +213,7 @@ func TestLatestAssistantEvidenceKeyFallsBackToCreatedAtAndText(t *testing.T) {
 }
 
 func TestLatestAssistantEvidenceKeyEmptyWhenNoAssistant(t *testing.T) {
+	t.Parallel()
 	key := latestAssistantEvidenceKey([]map[string]any{
 		{"type": "userMessage", "content": []map[string]any{{"type": "text", "text": "hello"}}},
 	})

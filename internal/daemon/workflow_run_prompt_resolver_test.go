@@ -10,6 +10,7 @@ import (
 )
 
 func TestWorkflowRunPromptResolverPrefersRunUserPrompt(t *testing.T) {
+	t.Parallel()
 	resolver := newWorkflowRunPromptResolver(&Stores{
 		SessionMeta: &stubWorkflowRunPromptSessionMetaStore{
 			entries: map[string]*types.SessionMeta{
@@ -28,6 +29,7 @@ func TestWorkflowRunPromptResolverPrefersRunUserPrompt(t *testing.T) {
 }
 
 func TestWorkflowRunPromptResolverFallsBackToSessionMetaBySessionID(t *testing.T) {
+	t.Parallel()
 	resolver := newWorkflowRunPromptResolver(&Stores{
 		SessionMeta: &stubWorkflowRunPromptSessionMetaStore{
 			entries: map[string]*types.SessionMeta{
@@ -45,6 +47,7 @@ func TestWorkflowRunPromptResolverFallsBackToSessionMetaBySessionID(t *testing.T
 }
 
 func TestWorkflowRunPromptResolverFallsBackToSessionMetaByRunID(t *testing.T) {
+	t.Parallel()
 	resolver := newWorkflowRunPromptResolver(&Stores{
 		SessionMeta: &stubWorkflowRunPromptSessionMetaStore{
 			listEntries: []*types.SessionMeta{
@@ -59,6 +62,7 @@ func TestWorkflowRunPromptResolverFallsBackToSessionMetaByRunID(t *testing.T) {
 }
 
 func TestWorkflowRunPromptResolverReturnsEmptyWhenUnavailable(t *testing.T) {
+	t.Parallel()
 	resolver := newWorkflowRunPromptResolver(&Stores{
 		SessionMeta: &stubWorkflowRunPromptSessionMetaStore{
 			getErr:  errors.New("get failed"),
@@ -72,6 +76,7 @@ func TestWorkflowRunPromptResolverReturnsEmptyWhenUnavailable(t *testing.T) {
 }
 
 func TestWorkflowRunPromptResolverNilReceiverAndFormatterFallback(t *testing.T) {
+	t.Parallel()
 	var nilResolver *defaultWorkflowRunPromptResolver
 	if got := nilResolver.ResolveDisplayPrompt(context.Background(), &guidedworkflows.WorkflowRun{UserPrompt: "x"}); got != "" {
 		t.Fatalf("expected empty prompt from nil resolver, got %q", got)
@@ -88,6 +93,7 @@ func TestWorkflowRunPromptResolverNilReceiverAndFormatterFallback(t *testing.T) 
 }
 
 func TestWorkflowRunPromptResolverSkipsNilSource(t *testing.T) {
+	t.Parallel()
 	resolver := &defaultWorkflowRunPromptResolver{
 		sources: []workflowRunPromptSource{
 			nil,
@@ -101,6 +107,7 @@ func TestWorkflowRunPromptResolverSkipsNilSource(t *testing.T) {
 }
 
 func TestWorkflowRunPromptSourcesHandleNilInputs(t *testing.T) {
+	t.Parallel()
 	if got := (workflowRunPromptFieldSource{}).ResolvePrompt(context.Background(), nil); got != "" {
 		t.Fatalf("expected empty prompt for nil run, got %q", got)
 	}
@@ -113,6 +120,7 @@ func TestWorkflowRunPromptSourcesHandleNilInputs(t *testing.T) {
 }
 
 func TestWorkflowRunSessionMetaPromptSourceReturnsEmptyWhenRunIDMissing(t *testing.T) {
+	t.Parallel()
 	source := workflowRunSessionMetaPromptSource{
 		sessionMeta: &stubWorkflowRunPromptSessionMetaStore{
 			listEntries: []*types.SessionMeta{

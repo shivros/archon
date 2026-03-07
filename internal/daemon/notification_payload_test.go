@@ -3,6 +3,7 @@ package daemon
 import "testing"
 
 func TestCloneNotificationPayloadDeepClone(t *testing.T) {
+	t.Parallel()
 	original := map[string]any{
 		"trace_id": "trace-1",
 		"nested": map[string]any{
@@ -33,6 +34,7 @@ func TestCloneNotificationPayloadDeepClone(t *testing.T) {
 }
 
 func TestNotificationPayloadBoolParsing(t *testing.T) {
+	t.Parallel()
 	payload := map[string]any{
 		"bool_true":   true,
 		"bool_false":  false,
@@ -59,6 +61,7 @@ func TestNotificationPayloadBoolParsing(t *testing.T) {
 }
 
 func TestNotificationPayloadIntParsing(t *testing.T) {
+	t.Parallel()
 	payload := map[string]any{
 		"int_value":    3,
 		"float_value":  float64(4),

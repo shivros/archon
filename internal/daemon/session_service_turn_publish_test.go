@@ -16,6 +16,7 @@ func (p *captureSessionServiceNotificationPublisher) Publish(event types.Notific
 }
 
 func TestSessionServicePublishTurnCompletedWithPayload(t *testing.T) {
+	t.Parallel()
 	publisher := &captureSessionServiceNotificationPublisher{}
 	service := &SessionService{notifier: publisher}
 	session := &types.Session{
@@ -51,6 +52,7 @@ func TestSessionServicePublishTurnCompletedWithPayload(t *testing.T) {
 }
 
 func TestSessionServicePublishTurnCompletedWithoutPayload(t *testing.T) {
+	t.Parallel()
 	publisher := &captureSessionServiceNotificationPublisher{}
 	service := &SessionService{notifier: publisher}
 	session := &types.Session{

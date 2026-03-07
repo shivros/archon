@@ -8,6 +8,7 @@ import (
 )
 
 func TestNewWorkflowRunSessionVisibilitySyncService(t *testing.T) {
+	t.Parallel()
 	if got := newWorkflowRunSessionVisibilitySyncService(nil, nil); got != nil {
 		t.Fatalf("expected nil service when stores are nil")
 	}

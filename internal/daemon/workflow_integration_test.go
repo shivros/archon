@@ -91,6 +91,7 @@ func TestGuidedWorkflowE2E(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tc.require(t)
 			repoDir, runtimeOpts := tc.setup(t)
 			runWorkflowE2E(t, tc.name, repoDir, runtimeOpts)
@@ -119,6 +120,7 @@ func TestGuidedWorkflowE2EContextCarryArithmetic(t *testing.T) {
 	base := workflowContextCarryBaseNumber()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tc.require(t)
 			repoDir, runtimeOpts := tc.setup(t)
 			runWorkflowContextCarryE2E(t, tc.name, repoDir, runtimeOpts, base)
@@ -150,6 +152,7 @@ func TestGuidedWorkflowE2EInvalidModelFails(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tc.require(t)
 
 			repoDir, _ := tc.setup(t)
@@ -252,7 +255,7 @@ func runWorkflowContextCarryE2E(t *testing.T, provider, repoDir string, runtimeO
 func newWorkflowIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager, *Stores) {
 	t.Helper()
 
-	base := t.TempDir()
+	base := newDaemonIntegrationTempDir(t, "workflow-server-*")
 	manager, err := NewSessionManager(filepath.Join(base, "sessions"))
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)

@@ -23,6 +23,7 @@ import (
 const codexIntegrationEnv = "ARCHON_CODEX_INTEGRATION"
 
 func TestCodexAppServerIntegration(t *testing.T) {
+	t.Parallel()
 	requireCodexIntegration(t)
 
 	repoDir, codexHome := createCodexWorkspace(t)
@@ -61,6 +62,7 @@ func TestCodexAppServerIntegration(t *testing.T) {
 }
 
 func TestCodexTailStream(t *testing.T) {
+	t.Parallel()
 	requireCodexIntegration(t)
 
 	repoDir, codexHome := createCodexWorkspace(t)
@@ -96,6 +98,7 @@ func TestCodexTailStream(t *testing.T) {
 }
 
 func TestCodexInterruptFlow(t *testing.T) {
+	t.Parallel()
 	requireCodexIntegration(t)
 
 	repoDir, codexHome := createCodexWorkspace(t)
@@ -315,7 +318,8 @@ func modelSummaryName(summary codexModelSummary) string {
 
 func createCodexWorkspace(t *testing.T) (string, string) {
 	t.Helper()
-	repoDir := filepath.Join(t.TempDir(), "repo")
+	base := newDaemonIntegrationTempDir(t, "codex-workspace-*")
+	repoDir := filepath.Join(base, "repo")
 	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
@@ -454,7 +458,7 @@ func tryCopyAuthFile(t *testing.T, codexHome string) bool {
 
 func newCodexIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager, *Stores) {
 	t.Helper()
-	base := t.TempDir()
+	base := newDaemonIntegrationTempDir(t, "daemon-server-*")
 	manager, err := NewSessionManager(filepath.Join(base, "sessions"))
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)

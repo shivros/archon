@@ -9,6 +9,7 @@ import (
 )
 
 func TestDebugBatcherRespectsFlushPolicy(t *testing.T) {
+	t.Parallel()
 	batcher := newDebugBatcher(DebugBatchPolicy{
 		FlushInterval:  50 * time.Millisecond,
 		MaxBatchBytes:  16,
@@ -24,6 +25,7 @@ func TestDebugBatcherRespectsFlushPolicy(t *testing.T) {
 }
 
 func TestDebugBatcherFlushesOnSizeBoundary(t *testing.T) {
+	t.Parallel()
 	batcher := newDebugBatcher(DebugBatchPolicy{
 		FlushInterval:  time.Hour,
 		MaxBatchBytes:  4,
@@ -40,6 +42,7 @@ func TestDebugBatcherFlushesOnSizeBoundary(t *testing.T) {
 }
 
 func TestDebugBatcherHonorsFlushOnNewlineToggle(t *testing.T) {
+	t.Parallel()
 	batcher := newDebugBatcher(DebugBatchPolicy{
 		FlushInterval:  time.Hour,
 		MaxBatchBytes:  64,
@@ -57,6 +60,7 @@ func TestDebugBatcherHonorsFlushOnNewlineToggle(t *testing.T) {
 }
 
 func TestDebugBatcherSeparatesStreams(t *testing.T) {
+	t.Parallel()
 	batcher := newDebugBatcher(DebugBatchPolicy{
 		FlushInterval:  time.Hour,
 		MaxBatchBytes:  64,
@@ -77,6 +81,7 @@ func TestDebugBatcherSeparatesStreams(t *testing.T) {
 }
 
 func TestDebugBatcherNilAndEmptyInputs(t *testing.T) {
+	t.Parallel()
 	var nilBatcher *debugBatcher
 	if got := nilBatcher.Append("stdout", []byte("x"), time.Now()); got != nil {
 		t.Fatalf("expected nil batcher append to return nil, got %#v", got)
@@ -92,6 +97,7 @@ func TestDebugBatcherNilAndEmptyInputs(t *testing.T) {
 }
 
 func TestDebugJSONLWriterWriteAndCloseBehavior(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "debug.jsonl")
 	writer, err := newDebugJSONLWriter(path)

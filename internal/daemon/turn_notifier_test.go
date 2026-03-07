@@ -48,6 +48,7 @@ func (s stubTurnNotifierSessionMetaStore) Delete(context.Context, string) error 
 }
 
 func TestDefaultTurnCompletionNotifierNotifyTurnCompletedWrapsEvent(t *testing.T) {
+	t.Parallel()
 	publisher := &captureTurnNotifierPublisher{}
 	notifier := NewTurnCompletionNotifier(publisher, nil)
 	notifier.NotifyTurnCompleted(context.Background(), "sess-1", "turn-1", "codex", &types.SessionMeta{
@@ -67,6 +68,7 @@ func TestDefaultTurnCompletionNotifierNotifyTurnCompletedWrapsEvent(t *testing.T
 }
 
 func TestDefaultTurnCompletionNotifierNotifyTurnCompletedEventBackfillsMetaAndPayload(t *testing.T) {
+	t.Parallel()
 	publisher := &captureTurnNotifierPublisher{}
 	stores := &Stores{
 		SessionMeta: stubTurnNotifierSessionMetaStore{
@@ -101,6 +103,7 @@ func TestDefaultTurnCompletionNotifierNotifyTurnCompletedEventBackfillsMetaAndPa
 }
 
 func TestDefaultTurnCompletionNotifierSetNotificationPublisherSwapsPublisher(t *testing.T) {
+	t.Parallel()
 	publisherA := &captureTurnNotifierPublisher{}
 	publisherB := &captureTurnNotifierPublisher{}
 	notifier := NewTurnCompletionNotifier(publisherA, nil)
@@ -116,6 +119,7 @@ func TestDefaultTurnCompletionNotifierSetNotificationPublisherSwapsPublisher(t *
 }
 
 func TestDefaultTurnCompletionNotifierNotifyTurnCompletedEventDefaultsSource(t *testing.T) {
+	t.Parallel()
 	publisher := &captureTurnNotifierPublisher{}
 	notifier := NewTurnCompletionNotifier(publisher, nil)
 	notifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{
@@ -133,6 +137,7 @@ func TestDefaultTurnCompletionNotifierNotifyTurnCompletedEventDefaultsSource(t *
 }
 
 func TestDefaultTurnCompletionNotifierNotifyTurnCompletedEventNoPublisher(t *testing.T) {
+	t.Parallel()
 	notifier := NewTurnCompletionNotifier(nil, nil)
 	notifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{
 		SessionID: "sess-no-publisher",
@@ -141,11 +146,13 @@ func TestDefaultTurnCompletionNotifierNotifyTurnCompletedEventNoPublisher(t *tes
 }
 
 func TestDefaultTurnCompletionNotifierSetNotificationPublisherNilReceiver(t *testing.T) {
+	t.Parallel()
 	var notifier *DefaultTurnCompletionNotifier
 	notifier.SetNotificationPublisher(nil)
 }
 
 func TestNopTurnCompletionNotifierImplementsAllMethods(t *testing.T) {
+	t.Parallel()
 	var notifier TurnCompletionNotifier = NopTurnCompletionNotifier{}
 	notifier.NotifyTurnCompleted(context.Background(), "sess", "turn", "codex", nil)
 	notifier.NotifyTurnCompletedEvent(context.Background(), TurnCompletionEvent{SessionID: "sess", TurnID: "turn"})

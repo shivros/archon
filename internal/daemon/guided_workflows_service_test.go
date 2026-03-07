@@ -8,6 +8,7 @@ import (
 )
 
 func TestWithGuidedWorkflowOrchestratorOption(t *testing.T) {
+	t.Parallel()
 	orchestrator := guidedworkflows.New(guidedworkflows.Config{Enabled: true})
 	svc := &SessionService{}
 	WithGuidedWorkflowOrchestrator(orchestrator)(svc)
@@ -17,6 +18,7 @@ func TestWithGuidedWorkflowOrchestratorOption(t *testing.T) {
 }
 
 func TestSessionServiceStartGuidedWorkflowRunDisabledByDefault(t *testing.T) {
+	t.Parallel()
 	svc := &SessionService{}
 	_, err := svc.StartGuidedWorkflowRun(context.Background(), guidedworkflows.StartRunRequest{
 		WorktreeID: "wt-1",
@@ -27,6 +29,7 @@ func TestSessionServiceStartGuidedWorkflowRunDisabledByDefault(t *testing.T) {
 }
 
 func TestSessionServiceStartGuidedWorkflowRunDelegatesWhenConfigured(t *testing.T) {
+	t.Parallel()
 	orchestrator := guidedworkflows.New(guidedworkflows.Config{Enabled: true})
 	svc := &SessionService{guided: orchestrator}
 	run, err := svc.StartGuidedWorkflowRun(context.Background(), guidedworkflows.StartRunRequest{

@@ -7,6 +7,7 @@ import (
 )
 
 func TestTurnProgressionEvidenceFromNotificationCompletedFallback(t *testing.T) {
+	t.Parallel()
 	evidence := turnProgressionEvidenceFromNotification(types.NotificationEvent{
 		Trigger: types.NotificationTriggerTurnCompleted,
 	})
@@ -19,6 +20,7 @@ func TestTurnProgressionEvidenceFromNotificationCompletedFallback(t *testing.T) 
 }
 
 func TestTurnProgressionEvidenceFromNotificationReadsFreshnessAndKey(t *testing.T) {
+	t.Parallel()
 	evidence := turnProgressionEvidenceFromNotification(types.NotificationEvent{
 		Trigger: types.NotificationTriggerTurnCompleted,
 		Payload: map[string]any{

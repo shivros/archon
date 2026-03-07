@@ -10,6 +10,7 @@ import (
 )
 
 func TestLogGuidedWorkflowRunReconciliationOutcome(t *testing.T) {
+	t.Parallel()
 	t.Run("logs warning on reconcile error", func(t *testing.T) {
 		var out bytes.Buffer
 		logger := logging.New(&out, logging.Info)

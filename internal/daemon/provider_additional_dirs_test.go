@@ -6,6 +6,7 @@ import (
 )
 
 func TestProviderAdditionalDirectoryArgs(t *testing.T) {
+	t.Parallel()
 	t.Run("codex", func(t *testing.T) {
 		got, err := providerAdditionalDirectoryArgs("codex", []string{"/tmp/backend", "/tmp/shared"})
 		if err != nil {

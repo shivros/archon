@@ -12,6 +12,7 @@ import (
 )
 
 func TestResolveWorktreePathUsesWorkspaceSessionSubpath(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	base := t.TempDir()
 	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
@@ -48,6 +49,7 @@ func TestResolveWorktreePathUsesWorkspaceSessionSubpath(t *testing.T) {
 }
 
 func TestResolveWorktreePathUsesWorktreeSessionSubpath(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	base := t.TempDir()
 	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
@@ -92,6 +94,7 @@ func TestResolveWorktreePathUsesWorktreeSessionSubpath(t *testing.T) {
 }
 
 func TestResolveWorktreePathFailsWhenWorktreeSessionPathMissing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	base := t.TempDir()
 	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
@@ -126,6 +129,7 @@ func TestResolveWorktreePathFailsWhenWorktreeSessionPathMissing(t *testing.T) {
 }
 
 func TestWithWorkspacePathResolverOption(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	base := t.TempDir()
 	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
@@ -156,6 +160,7 @@ func TestWithWorkspacePathResolverOption(t *testing.T) {
 }
 
 func TestResolveAdditionalDirectoriesForSession(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	base := t.TempDir()
 	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))
@@ -196,6 +201,7 @@ func TestResolveAdditionalDirectoriesForSession(t *testing.T) {
 }
 
 func TestSessionStartRejectsMissingWorkspaceAdditionalDirectory(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	base := t.TempDir()
 	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(base, "workspaces.json"))

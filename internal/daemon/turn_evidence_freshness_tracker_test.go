@@ -3,6 +3,7 @@ package daemon
 import "testing"
 
 func TestTurnEvidenceFreshnessTrackerMarksDuplicateEvidenceStale(t *testing.T) {
+	t.Parallel()
 	tracker := NewTurnEvidenceFreshnessTracker()
 	if !tracker.MarkFresh("sess-1", "id:msg-1", "hello") {
 		t.Fatalf("expected first evidence to be fresh")
@@ -16,6 +17,7 @@ func TestTurnEvidenceFreshnessTrackerMarksDuplicateEvidenceStale(t *testing.T) {
 }
 
 func TestTurnEvidenceFreshnessTrackerFallbacksToOutputPresence(t *testing.T) {
+	t.Parallel()
 	tracker := NewTurnEvidenceFreshnessTracker()
 	if tracker.MarkFresh("sess-1", "", "") {
 		t.Fatalf("expected empty output without key to be stale")
@@ -26,6 +28,7 @@ func TestTurnEvidenceFreshnessTrackerFallbacksToOutputPresence(t *testing.T) {
 }
 
 func TestTurnEvidenceFreshnessTrackerSessionScopedKeys(t *testing.T) {
+	t.Parallel()
 	tracker := NewTurnEvidenceFreshnessTracker()
 	if !tracker.MarkFresh("sess-a", "id:msg-1", "a") {
 		t.Fatalf("expected first key in session A to be fresh")
@@ -36,6 +39,7 @@ func TestTurnEvidenceFreshnessTrackerSessionScopedKeys(t *testing.T) {
 }
 
 func TestTurnEvidenceFreshnessTrackerAllowsSessionlessKey(t *testing.T) {
+	t.Parallel()
 	tracker := NewTurnEvidenceFreshnessTracker()
 	if !tracker.MarkFresh("", "id:msg-1", "") {
 		t.Fatalf("expected sessionless key to be treated as fresh")

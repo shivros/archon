@@ -13,6 +13,7 @@ import (
 )
 
 func TestWorkspaceServiceUpdatePreservesGroupIDsWhenPatchOmitsGroups(t *testing.T) {
+	t.Parallel()
 	stores := newTestStores(t)
 	service := NewWorkspaceService(stores)
 	ctx := context.Background()
@@ -51,6 +52,7 @@ func TestWorkspaceServiceUpdatePreservesGroupIDsWhenPatchOmitsGroups(t *testing.
 }
 
 func TestWorkspaceServiceUpdateRejectsInvalidRepoPath(t *testing.T) {
+	t.Parallel()
 	stores := newTestStores(t)
 	ctx := context.Background()
 
@@ -87,6 +89,7 @@ func TestWorkspaceServiceUpdateRejectsInvalidRepoPath(t *testing.T) {
 }
 
 func TestApplyWorkspacePatchPreservesOmittedFields(t *testing.T) {
+	t.Parallel()
 	existing := &types.Workspace{
 		ID:                    "ws1",
 		Name:                  "Workspace",
@@ -124,6 +127,7 @@ func TestApplyWorkspacePatchPreservesOmittedFields(t *testing.T) {
 }
 
 func TestApplyWorkspacePatchMarksValidationWhenWorkspacePathsChange(t *testing.T) {
+	t.Parallel()
 	existing := &types.Workspace{
 		ID:                    "ws1",
 		Name:                  "Workspace",
@@ -158,12 +162,14 @@ func TestApplyWorkspacePatchMarksValidationWhenWorkspacePathsChange(t *testing.T
 }
 
 func TestValidateWorkspaceUpdateSkipsValidationWhenNotRequired(t *testing.T) {
+	t.Parallel()
 	if err := validateWorkspaceUpdate(nil, false, nil); err != nil {
 		t.Fatalf("expected no validation error when validation is skipped, got %v", err)
 	}
 }
 
 func TestApplyWorkspacePatchRejectsNilExisting(t *testing.T) {
+	t.Parallel()
 	_, _, err := applyWorkspacePatch("ws1", nil, &types.WorkspacePatch{})
 	if err == nil {
 		t.Fatalf("expected missing existing workspace error")
@@ -174,6 +180,7 @@ func TestApplyWorkspacePatchRejectsNilExisting(t *testing.T) {
 }
 
 func TestApplyWorkspacePatchRejectsNilPatch(t *testing.T) {
+	t.Parallel()
 	existing := &types.Workspace{
 		ID:       "ws1",
 		RepoPath: "/tmp/repo",
@@ -188,6 +195,7 @@ func TestApplyWorkspacePatchRejectsNilPatch(t *testing.T) {
 }
 
 func TestValidateWorkspaceUpdateRequiresWorkspaceWhenValidationNeeded(t *testing.T) {
+	t.Parallel()
 	err := validateWorkspaceUpdate(nil, true, &countingWorkspaceValidator{})
 	if err == nil {
 		t.Fatalf("expected missing workspace to fail")
@@ -198,6 +206,7 @@ func TestValidateWorkspaceUpdateRequiresWorkspaceWhenValidationNeeded(t *testing
 }
 
 func TestValidateWorkspaceUpdateRequiresValidatorWhenValidationNeeded(t *testing.T) {
+	t.Parallel()
 	repoPath := t.TempDir()
 	err := validateWorkspaceUpdate(&types.Workspace{RepoPath: repoPath}, true, nil)
 	if err == nil {
@@ -209,6 +218,7 @@ func TestValidateWorkspaceUpdateRequiresValidatorWhenValidationNeeded(t *testing
 }
 
 func TestValidateWorkspaceUpdateInvokesWorkspaceValidator(t *testing.T) {
+	t.Parallel()
 	repoPath := t.TempDir()
 	validator := &countingWorkspaceValidator{}
 	if err := validateWorkspaceUpdate(&types.Workspace{RepoPath: repoPath}, true, validator); err != nil {
@@ -220,6 +230,7 @@ func TestValidateWorkspaceUpdateInvokesWorkspaceValidator(t *testing.T) {
 }
 
 func TestValidateWorkspaceUpdatePropagatesWorkspaceValidatorError(t *testing.T) {
+	t.Parallel()
 	repoPath := t.TempDir()
 	validateErr := errors.New("validator boom")
 	validator := &countingWorkspaceValidator{err: validateErr}
@@ -233,6 +244,7 @@ func TestValidateWorkspaceUpdatePropagatesWorkspaceValidatorError(t *testing.T) 
 }
 
 func TestValidateWorkspaceUpdatePropagatesAdditionalDirectoryValidationError(t *testing.T) {
+	t.Parallel()
 	repoPath := t.TempDir()
 	additionalDirectories := []string{"./missing"}
 	err := validateWorkspaceUpdate(&types.Workspace{

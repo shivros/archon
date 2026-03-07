@@ -67,6 +67,7 @@ func (s *memoryWorkflowRunStore) UpsertWorkflowRun(_ context.Context, snapshot g
 }
 
 func TestGuidedWorkflowMetricsStoreRoundTrip(t *testing.T) {
+	t.Parallel()
 	appStateStore := &memoryAppStateStore{
 		state: &types.AppState{
 			ActiveWorkspaceID: "ws-keep",

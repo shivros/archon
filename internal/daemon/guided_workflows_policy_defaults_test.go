@@ -8,6 +8,7 @@ import (
 )
 
 func TestGuidedWorkflowPolicyDefaultsFromCoreConfig(t *testing.T) {
+	t.Parallel()
 	cfg := config.CoreConfig{
 		GuidedWorkflows: config.CoreGuidedWorkflowsConfig{
 			Defaults: config.CoreGuidedWorkflowsDefaultsConfig{
@@ -22,6 +23,7 @@ func TestGuidedWorkflowPolicyDefaultsFromCoreConfig(t *testing.T) {
 }
 
 func TestResolveGuidedWorkflowPolicyOverridesPrefersExplicitOverride(t *testing.T) {
+	t.Parallel()
 	confidence := 0.9
 	pause := 0.1
 	explicit := &guidedworkflows.CheckpointPolicyOverride{
@@ -47,6 +49,7 @@ func TestResolveGuidedWorkflowPolicyOverridesPrefersExplicitOverride(t *testing.
 }
 
 func TestResolveGuidedWorkflowPolicyOverridesUsesResolutionBoundary(t *testing.T) {
+	t.Parallel()
 	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{
 		ResolutionBoundary: guidedworkflows.PolicyPresetHigh,
 	})
@@ -62,6 +65,7 @@ func TestResolveGuidedWorkflowPolicyOverridesUsesResolutionBoundary(t *testing.T
 }
 
 func TestResolveGuidedWorkflowPolicyOverridesReturnsNilWhenBoundaryUnset(t *testing.T) {
+	t.Parallel()
 	got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{})
 	if got != nil {
 		t.Fatalf("expected nil override when boundary is unset, got %#v", got)
@@ -69,6 +73,7 @@ func TestResolveGuidedWorkflowPolicyOverridesReturnsNilWhenBoundaryUnset(t *test
 }
 
 func TestResolveGuidedWorkflowPolicyOverridesReturnsNilForBalancedOrUnknown(t *testing.T) {
+	t.Parallel()
 	if got := resolveGuidedWorkflowPolicyOverrides(nil, guidedWorkflowPolicyDefaults{ResolutionBoundary: guidedworkflows.PolicyPresetBalanced}); got != nil {
 		t.Fatalf("expected nil override for balanced boundary, got %#v", got)
 	}
@@ -78,6 +83,7 @@ func TestResolveGuidedWorkflowPolicyOverridesReturnsNilForBalancedOrUnknown(t *t
 }
 
 func TestGuidedWorkflowNoopPolicyResolverClonesExplicitOverrides(t *testing.T) {
+	t.Parallel()
 	confidence := 0.5
 	explicit := &guidedworkflows.CheckpointPolicyOverride{ConfidenceThreshold: &confidence}
 	resolver := guidedWorkflowNoopPolicyResolver{}

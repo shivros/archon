@@ -9,6 +9,7 @@ import (
 )
 
 func TestCodexHistoryPoolReusesClientPerWorkspace(t *testing.T) {
+	t.Parallel()
 	starts := 0
 	pool := &codexHistoryPool{
 		clients:    map[string]*pooledCodexHistoryClient{},
@@ -39,6 +40,7 @@ func TestCodexHistoryPoolReusesClientPerWorkspace(t *testing.T) {
 }
 
 func TestCodexHistoryPoolRetriesAfterClosedPipe(t *testing.T) {
+	t.Parallel()
 	starts := 0
 	first := &stubCodexHistoryClient{err: errors.New("broken pipe")}
 	second := &stubCodexHistoryClient{thread: &codexThread{ID: "thread-2"}}
@@ -73,6 +75,7 @@ func TestCodexHistoryPoolRetriesAfterClosedPipe(t *testing.T) {
 }
 
 func TestCodexHistoryPoolRecoversWhenThreadNotLoaded(t *testing.T) {
+	t.Parallel()
 	client := &stubCodexHistoryClient{
 		readErrs: []error{
 			errors.New("rpc error -32600: thread not loaded: thread-3"),
@@ -110,6 +113,7 @@ func TestCodexHistoryPoolRecoversWhenThreadNotLoaded(t *testing.T) {
 }
 
 func TestCodexHistoryPoolEvictsLRUWhenOverLimit(t *testing.T) {
+	t.Parallel()
 	clients := map[string]*stubCodexHistoryClient{}
 	pool := &codexHistoryPool{
 		clients:    map[string]*pooledCodexHistoryClient{},
@@ -135,6 +139,7 @@ func TestCodexHistoryPoolEvictsLRUWhenOverLimit(t *testing.T) {
 }
 
 func TestCodexHistoryPoolRetriesOnNewThreadNotYetIndexed(t *testing.T) {
+	t.Parallel()
 	client := &stubCodexHistoryClient{
 		readErrs: []error{
 			// tryReadWithResume attempt 0: ReadThread fails
@@ -182,6 +187,7 @@ func TestCodexHistoryPoolRetriesOnNewThreadNotYetIndexed(t *testing.T) {
 }
 
 func TestCodexHistoryPoolRetryRespectsContextCancellation(t *testing.T) {
+	t.Parallel()
 	client := &stubCodexHistoryClient{
 		readErrs: []error{
 			errors.New("rpc error -32600: thread not loaded: thread-x"),

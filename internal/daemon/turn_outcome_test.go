@@ -3,6 +3,7 @@ package daemon
 import "testing"
 
 func TestClassifyTurnOutcome(t *testing.T) {
+	t.Parallel()
 	out := classifyTurnOutcome("failed", "")
 	if !out.Terminal || !out.Failed {
 		t.Fatalf("expected failed status to be terminal+failed, got %#v", out)

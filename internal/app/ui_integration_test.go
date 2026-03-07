@@ -35,6 +35,7 @@ const (
 )
 
 func TestUICodexStreamingExistingSession(t *testing.T) {
+	t.Parallel()
 	requireUIIntegration(t)
 	requireCodexIntegration(t)
 
@@ -102,6 +103,7 @@ func TestUICodexStreamingExistingSession(t *testing.T) {
 }
 
 func TestUIClaudeStreamingExistingSession(t *testing.T) {
+	t.Parallel()
 	requireUIIntegration(t)
 	requireClaudeIntegration(t)
 
@@ -176,6 +178,7 @@ func containsAgentReply(blocks []ChatBlock) bool {
 }
 
 func TestUICodexStreamingNewSession(t *testing.T) {
+	t.Parallel()
 	requireUIIntegration(t)
 	requireCodexIntegration(t)
 
@@ -193,7 +196,6 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 	writeCodexConfig(t, codexHome, repoDir, "", "", "")
 	requireCodexAuth(t, repoDir, codexHome)
 	codexModel := resolveCodexModel(t, repoDir, codexHome)
-	t.Setenv("ARCHON_CODEX_MODEL", codexModel)
 
 	server, _, _ := newUITestServer(t)
 	defer server.Close()
@@ -233,6 +235,7 @@ func TestUICodexStreamingNewSession(t *testing.T) {
 }
 
 func TestUICodexStreamingResumeSession(t *testing.T) {
+	t.Parallel()
 	requireUIIntegration(t)
 	requireCodexIntegration(t)
 
@@ -301,6 +304,7 @@ func TestUICodexStreamingResumeSession(t *testing.T) {
 }
 
 func TestUIClaudeStreamingNewSession(t *testing.T) {
+	t.Parallel()
 	requireUIIntegration(t)
 	requireClaudeIntegration(t)
 
@@ -351,6 +355,7 @@ func TestUIClaudeStreamingNewSession(t *testing.T) {
 }
 
 func TestUIClaudeStreamingResumeSession(t *testing.T) {
+	t.Parallel()
 	requireUIIntegration(t)
 	requireClaudeIntegration(t)
 
@@ -992,7 +997,8 @@ func claudeIntegrationTimeout() time.Duration {
 
 func createCodexWorkspace(t *testing.T) (string, string) {
 	t.Helper()
-	repoDir := filepath.Join(t.TempDir(), "repo")
+	base := newUIIntegrationTempDir(t, "ui-codex-workspace-*")
+	repoDir := filepath.Join(base, "repo")
 	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
@@ -1005,11 +1011,30 @@ func createCodexWorkspace(t *testing.T) (string, string) {
 
 func createClaudeWorkspace(t *testing.T) string {
 	t.Helper()
-	repoDir := filepath.Join(t.TempDir(), "repo")
+	repoDir := filepath.Join(newUIIntegrationTempDir(t, "ui-claude-workspace-*"), "repo")
 	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 	return repoDir
+}
+
+func newUIIntegrationTempDir(t *testing.T, pattern string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		t.Fatalf("mkdir temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		const attempts = 5
+		for i := 0; i < attempts; i++ {
+			if err := os.RemoveAll(dir); err == nil {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Logf("warning: best-effort cleanup could not remove %s", dir)
+	})
+	return dir
 }
 
 func writeCodexConfig(t *testing.T, codexHome, repoDir, approvalPolicy, sandboxMode, trustLevel string) {
@@ -1356,7 +1381,7 @@ func resolveCodexModel(t *testing.T, repoDir, codexHome string) string {
 
 func newUITestServer(t *testing.T) (*httptest.Server, *daemon.SessionManager, *daemon.Stores) {
 	t.Helper()
-	base := t.TempDir()
+	base := newUIIntegrationTempDir(t, "ui-server-*")
 	manager, err := daemon.NewSessionManager(filepath.Join(base, "sessions"))
 	if err != nil {
 		t.Fatalf("NewSessionManager: %v", err)

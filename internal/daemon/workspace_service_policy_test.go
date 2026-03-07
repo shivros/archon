@@ -3,6 +3,7 @@ package daemon
 import "testing"
 
 func TestResolveWorkspacePatchRepoPath(t *testing.T) {
+	t.Parallel()
 	existing := "/tmp/existing"
 	if got := resolveWorkspacePatchRepoPath(existing, nil); got != existing {
 		t.Fatalf("expected existing repo path, got %q", got)
@@ -15,6 +16,7 @@ func TestResolveWorkspacePatchRepoPath(t *testing.T) {
 }
 
 func TestResolveWorkspacePatchName(t *testing.T) {
+	t.Parallel()
 	existingName := "Existing Name"
 	repoPath := "/tmp/repo-two"
 
@@ -34,6 +36,7 @@ func TestResolveWorkspacePatchName(t *testing.T) {
 }
 
 func TestDefaultWorkspaceNameEdgeCases(t *testing.T) {
+	t.Parallel()
 	if got := defaultWorkspaceName("/tmp/repo"); got != "repo" {
 		t.Fatalf("expected basename repo, got %q", got)
 	}

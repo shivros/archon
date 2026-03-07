@@ -5,6 +5,7 @@ import (
 )
 
 func TestParseTurnIDFromEventParams(t *testing.T) {
+	t.Parallel()
 	got := parseTurnIDFromEventParams([]byte(`{"turn":{"id":"turn-nested"}}`))
 	if got != "turn-nested" {
 		t.Fatalf("expected nested turn id, got %q", got)
@@ -16,6 +17,7 @@ func TestParseTurnIDFromEventParams(t *testing.T) {
 }
 
 func TestParseTurnEventFromParamsAndTurnErrorMessageVariants(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		raw        string
@@ -77,6 +79,7 @@ func TestParseTurnEventFromParamsAndTurnErrorMessageVariants(t *testing.T) {
 }
 
 func TestTurnErrorMessageFallbacks(t *testing.T) {
+	t.Parallel()
 	if got := turnErrorMessage(nil); got != "" {
 		t.Fatalf("expected empty message for nil, got %q", got)
 	}

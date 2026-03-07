@@ -132,6 +132,7 @@ func TestProviderSessionFlow(t *testing.T) {
 	waitStrategy := newProviderAgentReplyWaitStrategyRegistry(defaultProviderCapabilitiesResolver{})
 	for _, tc := range allProviderTestCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tc.require(t)
 
 			repoDir, runtimeOpts := tc.setup(t)
@@ -204,6 +205,7 @@ func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *
 func TestProviderMissingModelFailsFast(t *testing.T) {
 	for _, provider := range integrationOpenCodeProviders() {
 		t.Run(provider, func(t *testing.T) {
+			t.Parallel()
 			requireOpenCodeIntegration(t, provider)
 
 			repoDir := createOpenCodeWorkspace(t, provider)
@@ -389,6 +391,7 @@ func TestProviderItemsStream(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tc.require(t)
 
 			repoDir, runtimeOpts := tc.setup(t)
@@ -468,6 +471,7 @@ func TestProviderEventsStream(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			tc.require(t)
 
 			repoDir, runtimeOpts := tc.setup(t)
