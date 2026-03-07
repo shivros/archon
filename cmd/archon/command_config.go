@@ -86,6 +86,7 @@ type effectiveDaemonConfig struct {
 
 type effectiveCloudConfig struct {
 	BaseURL        string `json:"base_url,omitempty" toml:"base_url,omitempty"`
+	BrowserBaseURL string `json:"browser_base_url,omitempty" toml:"browser_base_url,omitempty"`
 	ClientID       string `json:"client_id" toml:"client_id"`
 	TimeoutSeconds int    `json:"timeout_seconds" toml:"timeout_seconds"`
 }
@@ -283,6 +284,7 @@ func (c *ConfigCommand) buildOutput(defaults bool, scopes map[string]struct{}) (
 		}
 		out.Cloud = &effectiveCloudConfig{
 			BaseURL:        coreCfg.CloudBaseURL(),
+			BrowserBaseURL: coreCfg.CloudBrowserBaseURL(),
 			ClientID:       coreCfg.CloudClientID(),
 			TimeoutSeconds: coreCfg.CloudTimeoutSeconds(),
 		}

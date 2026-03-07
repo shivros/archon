@@ -138,11 +138,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	api := &API{
-		Version:   d.version,
-		Manager:   d.manager,
-		Stores:    d.stores,
-		CloudAuth: cloudAuth,
-		Logger:    d.logger,
+		Version:         d.version,
+		ConfigSignature: coreCfg.Signature(),
+		Manager:         d.manager,
+		Stores:          d.stores,
+		CloudAuth:       cloudAuth,
+		Logger:          d.logger,
 	}
 	notifier := NewNotificationService(
 		NewNotificationPolicyResolver(notificationDefaultsFromCoreConfig(coreCfg), d.stores, d.logger),

@@ -13,5 +13,7 @@ func newCloudAuthRuntime(coreCfg config.CoreConfig, version string) (CloudAuthSe
 	}
 	store := newFileCloudAuthStore(cloudAuthPath)
 	remote := newCloudOAuthRemoteClient(coreCfg.CloudBaseURL(), coreCfg.CloudClientID(), time.Duration(coreCfg.CloudTimeoutSeconds())*time.Second)
-	return newCloudAuthService(store, remote, coreCfg.CloudBaseURL(), coreCfg.CloudClientID(), version), nil
+	svc := newCloudAuthService(store, remote, coreCfg.CloudBaseURL(), coreCfg.CloudClientID(), version)
+	svc.browserBaseURL = coreCfg.CloudBrowserBaseURL()
+	return svc, nil
 }

@@ -38,3 +38,5 @@ func StartBackgroundDaemon() error {
 	}
 	return err
 }
+
+var startBackgroundDaemonFn = StartBackgroundDaemon

@@ -726,7 +726,8 @@ func (c *Client) ensureDaemon(ctx context.Context, expectedVersion string, resta
 	resp, err := c.Health(ctx)
 	if err == nil && resp.OK {
 		versionMatches := expectedVersion == "" || resp.Version == expectedVersion
-		if versionMatches && !restart {
+		configMatches := daemonConfigMatches(resp.ConfigSignature)
+		if versionMatches && configMatches && !restart {
 			return nil
 		}
 		if !versionMatches && !restart {
@@ -753,7 +754,7 @@ func (c *Client) ensureDaemon(ctx context.Context, expectedVersion string, resta
 		}
 	}
 
-	if err := StartBackgroundDaemon(); err != nil {
+	if err := startBackgroundDaemonFn(); err != nil {
 		return err
 	}
 
@@ -776,6 +777,22 @@ func (c *Client) ensureDaemon(ctx context.Context, expectedVersion string, resta
 		lastErr = errors.New("daemon not healthy after start")
 	}
 	return lastErr
+}
+
+var currentConfigSignatureFn = func() string {
+	coreCfg, err := config.LoadCoreConfig()
+	if err != nil {
+		return ""
+	}
+	return coreCfg.Signature()
+}
+
+func daemonConfigMatches(daemonSignature string) bool {
+	currentSignature := strings.TrimSpace(currentConfigSignatureFn())
+	if currentSignature == "" {
+		return true
+	}
+	return strings.TrimSpace(daemonSignature) == currentSignature
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, requireAuth bool, out any) error {

@@ -78,6 +78,7 @@ address = "127.0.0.1:7777"
 
 [cloud]
 base_url = "https://app.archon.ai"
+browser_base_url = "https://app.archon.ai" # optional: activation/browser host if different from the API host
 client_id = "archon-cli"
 timeout_seconds = 10
 

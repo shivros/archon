@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -65,6 +68,7 @@ type CoreDaemonConfig struct {
 
 type CoreCloudConfig struct {
 	BaseURL        string `toml:"base_url"`
+	BrowserBaseURL string `toml:"browser_base_url"`
 	ClientID       string `toml:"client_id"`
 	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
@@ -302,6 +306,14 @@ func (c CoreConfig) CloudBaseURL() string {
 	return strings.TrimRight(strings.TrimSpace(c.Cloud.BaseURL), "/")
 }
 
+func (c CoreConfig) CloudBrowserBaseURL() string {
+	value := strings.TrimRight(strings.TrimSpace(c.Cloud.BrowserBaseURL), "/")
+	if value != "" {
+		return value
+	}
+	return c.CloudBaseURL()
+}
+
 func (c CoreConfig) CloudClientID() string {
 	clientID := strings.TrimSpace(c.Cloud.ClientID)
 	if clientID == "" {
@@ -315,6 +327,15 @@ func (c CoreConfig) CloudTimeoutSeconds() int {
 		return c.Cloud.TimeoutSeconds
 	}
 	return 10
+}
+
+func (c CoreConfig) Signature() string {
+	payload, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 func (c CoreConfig) LogLevel() string {

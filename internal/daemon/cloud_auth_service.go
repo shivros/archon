@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -11,24 +12,26 @@ import (
 )
 
 type cloudAuthService struct {
-	store    CloudAuthStore
-	remote   CloudAuthRemoteClient
-	now      func() time.Time
-	hostname func() (string, error)
-	version  string
-	clientID string
-	baseURL  string
+	store          CloudAuthStore
+	remote         CloudAuthRemoteClient
+	now            func() time.Time
+	hostname       func() (string, error)
+	version        string
+	clientID       string
+	baseURL        string
+	browserBaseURL string
 }
 
 func newCloudAuthService(store CloudAuthStore, remote CloudAuthRemoteClient, baseURL, clientID, version string) *cloudAuthService {
 	return &cloudAuthService{
-		store:    store,
-		remote:   remote,
-		now:      time.Now,
-		hostname: os.Hostname,
-		version:  strings.TrimSpace(version),
-		clientID: strings.TrimSpace(clientID),
-		baseURL:  strings.TrimSpace(baseURL),
+		store:          store,
+		remote:         remote,
+		now:            time.Now,
+		hostname:       os.Hostname,
+		version:        strings.TrimSpace(version),
+		clientID:       strings.TrimSpace(clientID),
+		baseURL:        strings.TrimSpace(baseURL),
+		browserBaseURL: strings.TrimSpace(baseURL),
 	}
 }
 
@@ -72,6 +75,7 @@ func (s *cloudAuthService) StartDeviceAuthorization(ctx context.Context) (*types
 	if resp == nil || strings.TrimSpace(resp.DeviceCode) == "" || strings.TrimSpace(resp.UserCode) == "" || strings.TrimSpace(resp.VerificationURI) == "" {
 		return nil, unavailableError("cloud login start returned incomplete payload", nil)
 	}
+	normalizeCloudDeviceAuthorizationURLs(s.browserBaseURL, resp)
 	if resp.Interval <= 0 {
 		resp.Interval = 5
 	}
@@ -235,4 +239,38 @@ func fallbackTokenType(raw string) string {
 		return "Bearer"
 	}
 	return value
+}
+
+func normalizeCloudDeviceAuthorizationURLs(baseURL string, resp *types.CloudDeviceAuthorization) {
+	if resp == nil {
+		return
+	}
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return
+	}
+	resp.VerificationURI = normalizeCloudVerificationURL(base, resp.VerificationURI)
+	resp.VerificationURIComplete = normalizeCloudVerificationURL(base, resp.VerificationURIComplete)
+}
+
+func normalizeCloudVerificationURL(base *url.URL, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if base != nil && strings.TrimSpace(base.Host) != "" {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			parsed.Scheme = base.Scheme
+			parsed.Host = base.Host
+		}
+	}
+	for strings.HasPrefix(parsed.Path, "//") {
+		parsed.Path = parsed.Path[1:]
+	}
+	return parsed.String()
 }

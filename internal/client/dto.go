@@ -116,9 +116,10 @@ type ApprovalsResponse struct {
 }
 
 type HealthResponse struct {
-	OK      bool   `json:"ok"`
-	Version string `json:"version"`
-	PID     int    `json:"pid"`
+	OK              bool   `json:"ok"`
+	Version         string `json:"version"`
+	PID             int    `json:"pid"`
+	ConfigSignature string `json:"config_signature,omitempty"`
 }
 
 type CloudDeviceAuthorizationResponse = types.CloudDeviceAuthorization

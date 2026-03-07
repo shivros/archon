@@ -124,6 +124,42 @@ func TestCloudAuthServiceHappyPath(t *testing.T) {
 	}
 }
 
+func TestCloudAuthServiceNormalizesLoopbackVerificationURLs(t *testing.T) {
+	store := &stubCloudAuthStore{}
+	remote := &stubCloudAuthRemote{
+		startResp: &types.CloudDeviceAuthorization{
+			DeviceCode:              "dev-1",
+			UserCode:                "ABCD-EFGH",
+			VerificationURI:         "http://localhost:8375//activate",
+			VerificationURIComplete: "http://localhost:8375//activate?code=ABCD-EFGH",
+			ExpiresIn:               600,
+			Interval:                5,
+		},
+	}
+	svc := newCloudAuthService(store, remote, "https://hapi.dev.archon.ing", "archon-cli", "v-test")
+	svc.browserBaseURL = "https://dev.archon.ing"
+
+	started, err := svc.StartDeviceAuthorization(context.Background())
+	if err != nil {
+		t.Fatalf("StartDeviceAuthorization error: %v", err)
+	}
+	if started.VerificationURI != "https://dev.archon.ing/activate" {
+		t.Fatalf("unexpected verification uri: %#v", started)
+	}
+	if started.VerificationURIComplete != "https://dev.archon.ing/activate?code=ABCD-EFGH" {
+		t.Fatalf("unexpected verification uri complete: %#v", started)
+	}
+	if store.state == nil || store.state.Pending == nil {
+		t.Fatalf("expected pending state to be stored")
+	}
+	if store.state.Pending.VerificationURI != "https://dev.archon.ing/activate" {
+		t.Fatalf("unexpected stored verification uri: %#v", store.state.Pending)
+	}
+	if store.state.Pending.VerificationURIComplete != "https://dev.archon.ing/activate?code=ABCD-EFGH" {
+		t.Fatalf("unexpected stored verification uri complete: %#v", store.state.Pending)
+	}
+}
+
 func TestCloudAuthServiceLogoutReturnsLocalOnlyResultWhenRevokeFails(t *testing.T) {
 	store := &stubCloudAuthStore{
 		state: &CloudAuthState{

@@ -13,6 +13,7 @@ import (
 
 type API struct {
 	Version                   string
+	ConfigSignature           string
 	Manager                   *SessionManager
 	Stores                    *Stores
 	CloudAuth                 CloudAuthService

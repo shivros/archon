@@ -21,6 +21,9 @@ func TestLoadCoreConfigDefaults(t *testing.T) {
 	if cfg.CloudBaseURL() != "" {
 		t.Fatalf("unexpected default cloud base url: %q", cfg.CloudBaseURL())
 	}
+	if cfg.CloudBrowserBaseURL() != "" {
+		t.Fatalf("unexpected default cloud browser base url: %q", cfg.CloudBrowserBaseURL())
+	}
 	if cfg.CloudClientID() != "archon-cli" {
 		t.Fatalf("unexpected default cloud client id: %q", cfg.CloudClientID())
 	}
@@ -43,6 +46,7 @@ address = "http://127.0.0.1:9999/"
 
 [cloud]
 base_url = " https://app.archon.ai/ "
+browser_base_url = " https://login.archon.ai/ "
 client_id = " archon-desktop "
 timeout_seconds = 17
 
@@ -149,6 +153,9 @@ command = "/usr/local/bin/gemini"
 	}
 	if got := cfg.CloudBaseURL(); got != "https://app.archon.ai" {
 		t.Fatalf("unexpected cloud base url: %q", got)
+	}
+	if got := cfg.CloudBrowserBaseURL(); got != "https://login.archon.ai" {
+		t.Fatalf("unexpected cloud browser base url: %q", got)
 	}
 	if got := cfg.CloudClientID(); got != "archon-desktop" {
 		t.Fatalf("unexpected cloud client id: %q", got)

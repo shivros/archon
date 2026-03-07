@@ -7,8 +7,9 @@ import (
 
 func (a *API) Health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"version": a.Version,
-		"pid":     os.Getpid(),
+		"ok":               true,
+		"version":          a.Version,
+		"pid":              os.Getpid(),
+		"config_signature": a.ConfigSignature,
 	})
 }
