@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	rendererMu       sync.Mutex
-	renderersByStyle = map[markdownRendererKey]*glamour.TermRenderer{}
-	markdownDarkMode = true
+	rendererMu            sync.Mutex
+	markdownDarkMode                              = true
+	markdownRendererMaker markdownRendererFactory = glamourMarkdownRendererFactory{}
 )
 
 func renderMarkdown(input string, width int) string {
@@ -24,11 +24,11 @@ func renderMarkdown(input string, width int) string {
 	if width <= 0 {
 		width = 80
 	}
-	r := getRenderer(width, markdownBackgroundDark())
-	if r == nil {
+	renderer, err := markdownRendererFactoryOrDefault().New(width, markdownBackgroundDark())
+	if err != nil || renderer == nil {
 		return input
 	}
-	out, err := r.Render(input)
+	out, err := renderer.Render(input)
 	if err != nil {
 		return input
 	}
@@ -37,9 +37,39 @@ func renderMarkdown(input string, width int) string {
 	return strings.TrimRight(out, "\n")
 }
 
-type markdownRendererKey struct {
-	width int
-	dark  bool
+type markdownRenderer interface {
+	Render(input string) (string, error)
+}
+
+type markdownRendererFactory interface {
+	New(width int, dark bool) (markdownRenderer, error)
+}
+
+type glamourMarkdownRenderer struct {
+	renderer *glamour.TermRenderer
+}
+
+func (r glamourMarkdownRenderer) Render(input string) (string, error) {
+	if r.renderer == nil {
+		return "", nil
+	}
+	return r.renderer.Render(input)
+}
+
+type glamourMarkdownRendererFactory struct{}
+
+func (glamourMarkdownRendererFactory) New(width int, dark bool) (markdownRenderer, error) {
+	if width <= 0 {
+		width = 80
+	}
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(buildStyleConfig(dark)),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return glamourMarkdownRenderer{renderer: renderer}, nil
 }
 
 func markdownBackgroundDark() bool {
@@ -56,23 +86,13 @@ func setMarkdownBackgroundDark(dark bool) bool {
 	return changed
 }
 
-func getRenderer(width int, dark bool) *glamour.TermRenderer {
+func markdownRendererFactoryOrDefault() markdownRendererFactory {
 	rendererMu.Lock()
 	defer rendererMu.Unlock()
-	key := markdownRendererKey{width: width, dark: dark}
-	if renderer, ok := renderersByStyle[key]; ok && renderer != nil {
-		return renderer
+	if markdownRendererMaker == nil {
+		markdownRendererMaker = glamourMarkdownRendererFactory{}
 	}
-	style := buildStyleConfig(dark)
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStyles(style),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return nil
-	}
-	renderersByStyle[key] = r
-	return r
+	return markdownRendererMaker
 }
 
 func buildStyleConfig(dark bool) glamouransi.StyleConfig {
