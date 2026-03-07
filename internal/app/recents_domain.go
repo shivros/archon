@@ -360,10 +360,7 @@ func (s *RecentsStateMachine) applyRunStarted(event RecentsEvent) RecentsTransit
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
-	changed := false
-	if s.removeReady(sessionID) {
-		changed = true
-	}
+	changed := s.removeReady(sessionID)
 	if _, dismissed := s.dismissedTurn[sessionID]; dismissed {
 		delete(s.dismissedTurn, sessionID)
 		changed = true

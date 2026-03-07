@@ -745,13 +745,11 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 		metaBySessionID[strings.TrimSpace(item.SessionID)] = item
 	}
 	if explicitSessionID != "" {
-		explicitFound := false
 		for _, session := range sessions {
 			if session == nil {
 				continue
 			}
 			if strings.TrimSpace(session.ID) == explicitSessionID {
-				explicitFound = true
 				provider := strings.TrimSpace(session.Provider)
 				model := sessionModel(metaBySessionID[explicitSessionID])
 				if guidedWorkflowProviderSupportsPromptDispatch(provider) &&
@@ -773,14 +771,12 @@ func (d *guidedWorkflowPromptDispatcher) resolveSession(
 				)
 			}
 		}
-		if !explicitFound {
-			recoveredSessionID, recoveredProvider, recoveredModel := d.resolveOwnedWorkflowSession(req, selectedProvider, sessions, metaBySessionID)
-			if strings.TrimSpace(recoveredSessionID) != "" {
-				return strings.TrimSpace(recoveredSessionID), strings.TrimSpace(recoveredProvider), strings.TrimSpace(recoveredModel), nil
-			}
-			if strings.TrimSpace(selectedProvider) == "" {
-				return "", "", "", fmt.Errorf("%w: explicit session %q not found", guidedworkflows.ErrStepDispatch, explicitSessionID)
-			}
+		recoveredSessionID, recoveredProvider, recoveredModel := d.resolveOwnedWorkflowSession(req, selectedProvider, sessions, metaBySessionID)
+		if strings.TrimSpace(recoveredSessionID) != "" {
+			return strings.TrimSpace(recoveredSessionID), strings.TrimSpace(recoveredProvider), strings.TrimSpace(recoveredModel), nil
+		}
+		if strings.TrimSpace(selectedProvider) == "" {
+			return "", "", "", fmt.Errorf("%w: explicit session %q not found", guidedworkflows.ErrStepDispatch, explicitSessionID)
 		}
 		return d.startWorkflowSession(ctx, req, sessions, metaBySessionID)
 	}

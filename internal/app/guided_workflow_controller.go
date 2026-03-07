@@ -1525,30 +1525,6 @@ func (c *GuidedWorkflowUIController) decisionExplanation() string {
 	}
 }
 
-func (c guidedWorkflowLaunchContext) workspaceDisplay() string {
-	return guidedContextDisplay(c.workspaceName, c.workspaceID)
-}
-
-func (c guidedWorkflowLaunchContext) worktreeDisplay() string {
-	return guidedContextDisplay(c.worktreeName, c.worktreeID)
-}
-
-func (c guidedWorkflowLaunchContext) sessionDisplay() string {
-	return guidedContextDisplay(c.sessionName, c.sessionID)
-}
-
-func guidedContextDisplay(name, id string) string {
-	name = strings.TrimSpace(name)
-	if name != "" {
-		return name
-	}
-	id = strings.TrimSpace(id)
-	if id != "" {
-		return id
-	}
-	return "(not set)"
-}
-
 func runStatusText(status guidedworkflows.WorkflowRunStatus) string {
 	switch status {
 	case guidedworkflows.WorkflowRunStatusCreated:

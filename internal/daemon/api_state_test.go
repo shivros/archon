@@ -32,7 +32,7 @@ func TestStateEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch state: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -43,7 +43,7 @@ func TestStateEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get state: %v", err)
 	}
-	defer getResp.Body.Close()
+	defer closeTestCloser(t, getResp.Body)
 	if getResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", getResp.StatusCode)
 	}

@@ -29,19 +29,6 @@ func openCodeSessionLogFields(session *types.Session, meta *types.SessionMeta) [
 	return fields
 }
 
-func openCodeRuntimeLogFields(runtimeOptions *types.SessionRuntimeOptions) []logging.Field {
-	if runtimeOptions == nil {
-		return []logging.Field{
-			logging.F("runtime_model", ""),
-			logging.F("runtime_access", ""),
-		}
-	}
-	return []logging.Field{
-		logging.F("runtime_model", strings.TrimSpace(runtimeOptions.Model)),
-		logging.F("runtime_access", strings.TrimSpace(string(runtimeOptions.Access))),
-	}
-}
-
 func openCodeErrorLogFields(err error) []logging.Field {
 	if err == nil {
 		return nil
@@ -63,7 +50,6 @@ func openCodeErrorLogFields(err error) []logging.Field {
 		timeout = timeout || netErr.Timeout()
 		fields = append(fields,
 			logging.F("network_timeout", netErr.Timeout()),
-			logging.F("network_temporary", netErr.Temporary()),
 		)
 		if netErr.Timeout() {
 			errorKind = "network_timeout"

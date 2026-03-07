@@ -24,11 +24,6 @@ type workspaceGroupsMsg struct {
 	err    error
 }
 
-type appStateMsg struct {
-	state *types.AppState
-	err   error
-}
-
 type appStateInitialLoadMsg struct {
 	state *types.AppState
 	err   error

@@ -1029,7 +1029,8 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	contentHeight := layout.contentHeight
 	contentWidth := layout.contentWidth
 	mainViewportWidth := layout.panelMain
-	if panelMode == sidePanelModeDebug {
+	switch panelMode {
+	case sidePanelModeDebug:
 		m.debugPanelVisible = layout.panelVisible
 		m.debugPanelWidth = layout.panelWidth
 		m.debugPanelMainWidth = layout.panelMain
@@ -1039,7 +1040,7 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		m.contextPanelVisible = false
 		m.contextPanelWidth = 0
 		m.contextPanelMainWidth = layout.panelMain
-	} else if panelMode == sidePanelModeContext {
+	case sidePanelModeContext:
 		m.contextPanelVisible = layout.panelVisible
 		m.contextPanelWidth = layout.panelWidth
 		m.contextPanelMainWidth = layout.panelMain
@@ -1049,7 +1050,7 @@ func (m *Model) resizeWithoutRender(width, height int) {
 		m.debugPanelVisible = false
 		m.debugPanelWidth = 0
 		m.debugPanelMainWidth = layout.panelMain
-	} else {
+	default:
 		m.notesPanelVisible = layout.panelVisible
 		m.notesPanelWidth = layout.panelWidth
 		m.notesPanelMainWidth = layout.panelMain
@@ -2902,30 +2903,11 @@ func (m *Model) worktreeRefreshWorkspaceIDs() []string {
 	return dedup
 }
 
-func (m *Model) advanceToNextSession() bool {
-	if m.sidebar == nil {
-		return false
-	}
-	return m.sidebar.AdvanceToNextSession()
-}
-
-func (m *Model) setSnapshot(lines []string, escape bool) {
-	if m.stream != nil {
-		m.stream.SetSnapshot(lines)
-	}
-	m.applyLines(lines, escape)
-}
-
 func (m *Model) setSnapshotBlocks(blocks []ChatBlock) {
 	if m.stream != nil {
 		m.stream.SetSnapshot(nil)
 	}
 	m.applyBlocks(blocks)
-}
-
-func (m *Model) applyLines(lines []string, escape bool) {
-	m.applyLinesNoRender(lines, escape)
-	m.renderViewport()
 }
 
 func (m *Model) applyLinesNoRender(lines []string, escape bool) {
@@ -3560,22 +3542,6 @@ func (m *Model) toggleVisibleReasoning() bool {
 		return false
 	}
 	return m.toggleReasoningByIndex(target)
-}
-
-func (m *Model) toggleReasoningByViewportLine(line int) bool {
-	if line < 0 || len(m.contentBlocks) == 0 || len(m.contentBlockSpans) == 0 {
-		return false
-	}
-	absolute := m.viewport.YOffset() + line
-	for _, span := range m.contentBlockSpans {
-		if span.Role != ChatRoleReasoning {
-			continue
-		}
-		if absolute >= span.StartLine && absolute <= span.EndLine {
-			return m.toggleReasoningByIndex(span.BlockIndex)
-		}
-	}
-	return false
 }
 
 func (m *Model) toggleReasoningByIndex(index int) bool {
@@ -4885,10 +4851,6 @@ func (m *Model) approvePending(decision string) tea.Cmd {
 	return m.approveRequestForSession(m.pendingApproval.SessionID, decision, m.pendingApproval.RequestID)
 }
 
-func (m *Model) approveRequest(decision string, requestID int) tea.Cmd {
-	return m.approveRequestForSession("", decision, requestID)
-}
-
 func (m *Model) approveRequestForSession(sessionID string, decision string, requestID int) tea.Cmd {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -5146,10 +5108,6 @@ func (m *Model) providerForSessionID(sessionID string) string {
 		}
 	}
 	return m.selectedSessionProvider()
-}
-
-func shouldStreamItems(provider string) bool {
-	return providers.CapabilitiesFor(provider).UsesItems
 }
 
 func providerSupportsApprovals(provider string) bool {
@@ -5484,18 +5442,6 @@ func renderInputDivider(width int, scrollable bool) string {
 		line = strings.Repeat("─", width)
 	}
 	return dividerStyle.Render(line)
-}
-
-func hasAgentReplyBlocks(blocks []ChatBlock) bool {
-	if len(blocks) == 0 {
-		return false
-	}
-	for _, block := range blocks {
-		if block.Role == ChatRoleAgent {
-			return true
-		}
-	}
-	return false
 }
 
 func countAgentRepliesBlocks(blocks []ChatBlock) int {

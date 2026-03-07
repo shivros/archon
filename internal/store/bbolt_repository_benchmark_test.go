@@ -15,7 +15,7 @@ func BenchmarkBboltSessionIndexListLarge(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewBboltRepository: %v", err)
 	}
-	defer repo.Close()
+	defer closeTestCloser(b, repo)
 	ctx := context.Background()
 	for i := 0; i < 5000; i++ {
 		_, err := repo.SessionIndex().UpsertRecord(ctx, &types.SessionRecord{
@@ -49,7 +49,7 @@ func BenchmarkBboltNotesListLarge(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewBboltRepository: %v", err)
 	}
-	defer repo.Close()
+	defer closeTestCloser(b, repo)
 	ctx := context.Background()
 	for i := 0; i < 10000; i++ {
 		_, err := repo.Notes().Upsert(ctx, &types.Note{

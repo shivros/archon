@@ -484,10 +484,6 @@ func reasoningText(item map[string]any) string {
 	return ""
 }
 
-func (t *ChatTranscript) appendBlock(role ChatRole, text string) {
-	t.appendBlockAt(role, text, time.Now().UTC())
-}
-
 func (t *ChatTranscript) appendBlockAt(role ChatRole, text string, createdAt time.Time) {
 	t.appendBlockWithMetaAt(role, text, createdAt, "", "")
 }

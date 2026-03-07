@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -15,14 +14,6 @@ import (
 )
 
 const claudeIntegrationEnv = "ARCHON_CLAUDE_INTEGRATION"
-
-func sendClaudeMessage(t *testing.T, server *httptest.Server, sessionID, text string) {
-	t.Helper()
-	status, body, _ := sendMessageOnce(server, sessionID, text)
-	if status != http.StatusOK {
-		t.Fatalf("send failed status=%d body=%s", status, body)
-	}
-}
 
 func requireClaudeIntegration(t *testing.T) {
 	t.Helper()
@@ -64,22 +55,6 @@ func createClaudeWorkspace(t *testing.T) string {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 	return repoDir
-}
-
-func waitForHistoryItemsClaude(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
-			t.Fatalf("session entered terminal failure state before history items: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
-		}
-		history := historySession(t, server, sessionID)
-		if len(history.Items) > 0 {
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("timeout waiting for history items\n%s", sessionDiagnostics(manager, sessionID))
 }
 
 func waitForAgentReply(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {

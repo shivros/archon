@@ -137,7 +137,7 @@ func TestReloadPolicyHardeningSkipReloadResetsCoalescerState(t *testing.T) {
 		t.Fatalf("expected notes mode to skip reload command")
 	}
 	m.mode = uiModeNormal
-	handled, cmd = m.reduceStateMessages(noop)
+	_, _ = m.reduceStateMessages(noop)
 	postSkip := m.sessions[0]
 	stableNoop := sessionsWithMetaMsg{
 		sessions: []*types.Session{

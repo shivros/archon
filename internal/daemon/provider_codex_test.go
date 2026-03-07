@@ -24,8 +24,8 @@ func TestCodexControllerFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stderr file: %v", err)
 	}
-	defer stdoutFile.Close()
-	defer stderrFile.Close()
+	defer closeTestCloser(t, stdoutFile)
+	defer closeTestCloser(t, stderrFile)
 
 	sink := newLogSink(stdoutFile, stderrFile, newLogBuffer(logBufferMaxBytes), newLogBuffer(logBufferMaxBytes), nil)
 	controller := newCodexController(stdinWriter, stdoutReader, sink)

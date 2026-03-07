@@ -968,22 +968,6 @@ func (m *Model) recentsSectionEmptyText(title string) string {
 	}
 }
 
-func recentsEntryDetail(entry recentsEntry) string {
-	switch entry.Status {
-	case recentsEntryReady:
-		if !entry.CompletedAt.IsZero() {
-			completedAt := entry.CompletedAt
-			return "completed " + formatSince(&completedAt)
-		}
-		return "awaiting reply"
-	default:
-		if lastActive := sessionLastActive(entry.Session, entry.Meta); lastActive != nil {
-			return "updated " + formatSince(lastActive)
-		}
-		return "running"
-	}
-}
-
 func (m *Model) switchRecentsFilter(filter sidebarRecentsFilter) tea.Cmd {
 	if m == nil || m.sidebar == nil {
 		return nil

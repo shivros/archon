@@ -43,10 +43,6 @@ func (a openCodeTranscriptAdapter) MapEvent(ctx MappingContext, event types.Code
 	return []transcriptdomain.TranscriptEvent{mapped}
 }
 
-func mapOpenCodeEvent(providerName string, ctx MappingContext, event types.CodexEvent) (transcriptdomain.TranscriptEvent, bool) {
-	return mapOpenCodeEventWithClassifier(providerName, NewOpenCodeEventClassifier(providerName), ctx, event)
-}
-
 func mapOpenCodeEventWithClassifier(
 	providerName string,
 	classifier ProviderEventClassifier,

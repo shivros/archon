@@ -24,7 +24,7 @@ func TestAPIProviderOptionsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get provider options: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -62,7 +62,7 @@ func TestAPIProviderOptionsEndpointClaude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get provider options: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -124,7 +124,7 @@ func TestAPIProviderOptionsEndpointOpenCodeDynamic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get provider options: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -199,7 +199,7 @@ default_model = "opencode/minimax-m2.5-free"
 	if err != nil {
 		t.Fatalf("get provider options: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}

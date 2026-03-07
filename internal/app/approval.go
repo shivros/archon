@@ -38,11 +38,6 @@ type approvalPresentation struct {
 	Context []string
 }
 
-func approvalSummary(method string, params map[string]any) (string, string) {
-	presentation := approvalPresentationFromParams(method, params)
-	return presentation.Summary, presentation.Detail
-}
-
 func approvalPresentationFromParams(method string, params map[string]any) approvalPresentation {
 	raw := approvalAsMap(params["raw"])
 	metadata := approvalMergedMap(approvalAsMap(params["metadata"]), approvalAsMap(raw["metadata"]))

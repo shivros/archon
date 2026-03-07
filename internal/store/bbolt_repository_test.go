@@ -15,7 +15,7 @@ func TestBboltRepositoryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBboltRepository: %v", err)
 	}
-	defer repo.Close()
+	defer closeTestCloser(t, repo)
 	ctx := context.Background()
 
 	state := &types.AppState{
@@ -210,7 +210,7 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 		DBPath:                filepath.Join(base, "storage.db"),
 	}
 	src := NewFileRepository(paths)
-	defer src.Close()
+	defer closeTestCloser(t, src)
 
 	if err := src.AppState().Save(ctx, &types.AppState{ActiveWorkspaceID: "seed-ws"}); err != nil {
 		t.Fatalf("seed state: %v", err)
@@ -279,7 +279,7 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open bbolt repo: %v", err)
 	}
-	defer dst.Close()
+	defer closeTestCloser(t, dst)
 
 	if err := SeedRepositoryFromFiles(ctx, dst, paths); err != nil {
 		t.Fatalf("seed repository: %v", err)

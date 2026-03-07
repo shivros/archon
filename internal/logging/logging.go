@@ -110,9 +110,9 @@ func formatValue(value any) string {
 		return quoteIfNeeded(v)
 	case []byte:
 		return quoteIfNeeded(string(v))
-	case fmt.Stringer:
-		return quoteIfNeeded(v.String())
 	case time.Duration:
+		return quoteIfNeeded(v.String())
+	case fmt.Stringer:
 		return quoteIfNeeded(v.String())
 	case bool:
 		return strconv.FormatBool(v)

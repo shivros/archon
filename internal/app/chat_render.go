@@ -634,7 +634,7 @@ func renderChatBlock(block ChatBlock, width int, selected bool, ctx chatRenderCo
 		align = lipgloss.Left
 	}
 	if selected {
-		bubbleStyle = bubbleStyle.Copy().BorderForeground(lipgloss.Color("117"))
+		bubbleStyle = bubbleStyle.BorderForeground(lipgloss.Color("117"))
 	}
 	roleLabel := chatRoleLabel(block.Role)
 	copyLabel := "[Copy]"

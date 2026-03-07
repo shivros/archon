@@ -349,22 +349,6 @@ func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) 
 	}
 }
 
-type stubTurnCompletionStrategy struct {
-	shouldPublish bool
-	source        string
-}
-
-func (s stubTurnCompletionStrategy) ShouldPublishCompletion(int, []map[string]any) bool {
-	return s.shouldPublish
-}
-
-func (s stubTurnCompletionStrategy) Source() string {
-	if strings.TrimSpace(s.source) == "" {
-		return "stub_source"
-	}
-	return s.source
-}
-
 type stubClaudeCompletionIO struct {
 	items    []map[string]any
 	readErr  error
@@ -501,15 +485,6 @@ func TestClaudeCompletionItemSignalsTurnCompletion(t *testing.T) {
 			}
 		})
 	}
-}
-
-type stubClaudeCompletionDecisionPolicy struct {
-	publish bool
-	source  string
-}
-
-func (s stubClaudeCompletionDecisionPolicy) Decide(int, []map[string]any, error) (bool, string) {
-	return s.publish, s.source
 }
 
 func TestLiveManagerConversationSenderRequiresLiveManager(t *testing.T) {

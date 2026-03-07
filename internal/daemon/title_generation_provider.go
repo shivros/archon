@@ -190,7 +190,7 @@ func (g *openRouterTitleGenerator) GenerateTitle(ctx context.Context, prompt str
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rawBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", &titleProviderError{

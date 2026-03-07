@@ -29,7 +29,7 @@ func TestWorkspaceGroupCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create group: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
 	}
@@ -44,7 +44,7 @@ func TestWorkspaceGroupCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list groups: %v", err)
 	}
-	defer listResp.Body.Close()
+	defer closeTestCloser(t, listResp.Body)
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", listResp.StatusCode)
 	}
@@ -65,7 +65,7 @@ func TestWorkspaceGroupCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update group: %v", err)
 	}
-	defer updateResp.Body.Close()
+	defer closeTestCloser(t, updateResp.Body)
 	if updateResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", updateResp.StatusCode)
 	}
@@ -76,7 +76,7 @@ func TestWorkspaceGroupCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete group: %v", err)
 	}
-	defer deleteResp.Body.Close()
+	defer closeTestCloser(t, deleteResp.Body)
 	if deleteResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", deleteResp.StatusCode)
 	}

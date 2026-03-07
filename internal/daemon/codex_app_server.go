@@ -487,24 +487,6 @@ func (c *codexAppServer) respond(id int, result any) error {
 	return c.send(payload)
 }
 
-func (c *codexAppServer) respondError(id int, code int, message string) error {
-	if c.logger != nil {
-		c.logger.Warn("codex_respond_error",
-			logging.F("request_id", id),
-			logging.F("code", code),
-			logging.F("message", message),
-		)
-	}
-	payload := map[string]any{
-		"id": id,
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
-	}
-	return c.send(payload)
-}
-
 func (c *codexAppServer) send(payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {

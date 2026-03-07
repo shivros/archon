@@ -71,10 +71,7 @@ func TestSessionServiceStartOpenCodeDoesNotBlockOnInitialPrompt(t *testing.T) {
 
 			// Wait for the async goroutine to dispatch via LiveManager.StartTurn
 			deadline := time.After(2 * time.Second)
-			for {
-				if lm.calls() > 0 {
-					break
-				}
+			for lm.calls() == 0 {
 				select {
 				case <-deadline:
 					t.Fatalf("expected async initial send via LiveManager.StartTurn")

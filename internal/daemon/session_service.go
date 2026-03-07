@@ -387,55 +387,6 @@ func (s *SessionService) migrateCodexDualEntries(ctx context.Context) {
 
 // migrateLegacyDismissedSessions migrates older "dismissed as orphaned status"
 // records to metadata-driven dismissal so runtime status can remain independent.
-func (s *SessionService) migrateLegacyDismissedSessions(ctx context.Context) {
-	if s.stores == nil || s.stores.Sessions == nil || s.stores.SessionMeta == nil {
-		return
-	}
-	records, err := s.stores.Sessions.ListRecords(ctx)
-	if err != nil {
-		return
-	}
-	for _, record := range records {
-		if record == nil || record.Session == nil {
-			continue
-		}
-		if record.Session.Status != types.SessionStatusOrphaned {
-			continue
-		}
-		sessionID := strings.TrimSpace(record.Session.ID)
-		if sessionID == "" {
-			continue
-		}
-		meta, ok, err := s.stores.SessionMeta.Get(ctx, sessionID)
-		if err == nil && ok && meta != nil && meta.DismissedAt == nil {
-			dismissedAt := time.Now().UTC()
-			if record.Session.ExitedAt != nil && !record.Session.ExitedAt.IsZero() {
-				dismissedAt = record.Session.ExitedAt.UTC()
-			}
-			_, _ = s.stores.SessionMeta.Upsert(ctx, &types.SessionMeta{
-				SessionID:   sessionID,
-				DismissedAt: &dismissedAt,
-			})
-		}
-
-		next := *record.Session
-		next.PID = 0
-		next.ExitCode = nil
-		if next.ExitedAt != nil && !next.ExitedAt.IsZero() {
-			next.Status = types.SessionStatusExited
-		} else {
-			next.Status = types.SessionStatusInactive
-			next.ExitedAt = nil
-		}
-		if _, err := s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
-			Session: &next,
-			Source:  record.Source,
-		}); err != nil {
-			continue
-		}
-	}
-}
-
 func dedupeSessionsForList(
 	sessionMap map[string]*types.Session,
 	sourceByID map[string]string,
@@ -1516,19 +1467,6 @@ func (s *SessionService) getSessionRecord(ctx context.Context, id string) (*type
 		}
 	}
 	return nil, "", notFoundError("session not found", ErrSessionNotFound)
-}
-
-func (s *SessionService) resolveWorkspacePath(ctx context.Context, meta *types.SessionMeta) string {
-	if meta == nil || strings.TrimSpace(meta.WorkspaceID) == "" {
-		return ""
-	}
-	if s.stores == nil || s.stores.Workspaces == nil {
-		return ""
-	}
-	if ws, ok, err := s.stores.Workspaces.Get(ctx, meta.WorkspaceID); err == nil && ok && ws != nil {
-		return ws.RepoPath
-	}
-	return ""
 }
 
 func (s *SessionService) resolveAdditionalDirectoriesForWorkspace(cwd string, workspace *types.Workspace) ([]string, error) {

@@ -978,7 +978,7 @@ func TestWorkflowRunEndpointsDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create run request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusInternalServerError {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1005,7 +1005,7 @@ func TestWorkflowRunCreateRejectsUnsupportedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create run request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusBadRequest {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 400, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1030,7 +1030,7 @@ func TestWorkflowTemplateEndpointMethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workflow template request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 405, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1048,7 +1048,7 @@ func TestWorkflowTemplateEndpointServiceUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workflow template request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusInternalServerError {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1069,7 +1069,7 @@ func TestWorkflowTemplateEndpointReturnsMappedServiceError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workflow template request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusInternalServerError {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1131,7 +1131,7 @@ func TestWorkflowRunEndpointsMaxActiveRunsGuardrail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create run request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusConflict {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 409 conflict when max active runs exceeded, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1355,7 +1355,7 @@ func TestWorkflowRunEndpointsStartWrapsSessionResolutionErrors(t *testing.T) {
 		WorktreeID:  "wt-1",
 	})
 	resp := postWorkflowRunActionRaw(t, server, created.ID, "start", nil, http.StatusInternalServerError)
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	payload, _ := io.ReadAll(resp.Body)
 	body := strings.ToLower(strings.TrimSpace(string(payload)))
 	if !strings.Contains(body, "workflow step prompt dispatch unavailable") {
@@ -1508,7 +1508,7 @@ func createWorkflowRunViaAPI(t *testing.T, server *httptest.Server, reqBody Crea
 	if err != nil {
 		t.Fatalf("create run request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
@@ -1523,7 +1523,7 @@ func createWorkflowRunViaAPI(t *testing.T, server *httptest.Server, reqBody Crea
 func postWorkflowRunAction(t *testing.T, server *httptest.Server, runID, action string, wantStatus int) *guidedworkflows.WorkflowRun {
 	t.Helper()
 	resp := postWorkflowRunActionRaw(t, server, runID, action, nil, wantStatus)
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	var run guidedworkflows.WorkflowRun
 	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
 		t.Fatalf("decode action run response: %v", err)
@@ -1534,7 +1534,7 @@ func postWorkflowRunAction(t *testing.T, server *httptest.Server, runID, action 
 func postWorkflowRunActionWithBody(t *testing.T, server *httptest.Server, runID, action string, body any, wantStatus int) *guidedworkflows.WorkflowRun {
 	t.Helper()
 	resp := postWorkflowRunActionRaw(t, server, runID, action, body, wantStatus)
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	var run guidedworkflows.WorkflowRun
 	if err := json.NewDecoder(resp.Body).Decode(&run); err != nil {
 		t.Fatalf("decode action run response: %v", err)
@@ -1563,7 +1563,7 @@ func postWorkflowRunActionRaw(t *testing.T, server *httptest.Server, runID, acti
 	}
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("unexpected status for %s: got=%d want=%d payload=%s", action, resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
 	}
 	return resp
@@ -1579,7 +1579,7 @@ func postWorkflowRunDecision(t *testing.T, server *httptest.Server, runID string
 	if err != nil {
 		t.Fatalf("workflow decision request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected status for decision: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
@@ -1599,7 +1599,7 @@ func getWorkflowRun(t *testing.T, server *httptest.Server, runID string, wantSta
 	if err != nil {
 		t.Fatalf("get workflow run request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected get status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
@@ -1619,7 +1619,7 @@ func getWorkflowRunTimeline(t *testing.T, server *httptest.Server, runID string,
 	if err != nil {
 		t.Fatalf("get timeline request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected timeline status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
@@ -1645,7 +1645,7 @@ func getWorkflowRunsWithPath(t *testing.T, server *httptest.Server, path string,
 	if err != nil {
 		t.Fatalf("get workflow runs request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected list status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
@@ -1667,7 +1667,7 @@ func getWorkflowTemplates(t *testing.T, server *httptest.Server, wantStatus int)
 	if err != nil {
 		t.Fatalf("get workflow templates request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected template list status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
@@ -1689,7 +1689,7 @@ func getWorkflowRunMetrics(t *testing.T, server *httptest.Server, wantStatus int
 	if err != nil {
 		t.Fatalf("get metrics request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected metrics status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))
@@ -1709,7 +1709,7 @@ func postWorkflowRunMetricsReset(t *testing.T, server *httptest.Server, wantStat
 	if err != nil {
 		t.Fatalf("post metrics reset request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != wantStatus {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("unexpected metrics reset status: got=%d want=%d payload=%s", resp.StatusCode, wantStatus, strings.TrimSpace(string(payload)))

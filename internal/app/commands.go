@@ -97,10 +97,6 @@ func fetchWorkspaceGroupsCmd(api WorkspaceGroupListAPI) tea.Cmd {
 	}
 }
 
-func fetchWorktreesCmd(api WorktreeListAPI, workspaceID string) tea.Cmd {
-	return fetchWorktreesCmdWithContext(api, workspaceID, nil)
-}
-
 func fetchWorktreesCmdWithContext(api WorktreeListAPI, workspaceID string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := commandWithTimeout(parent, 4*time.Second)
@@ -556,22 +552,6 @@ func deleteWorktreeCmd(api WorktreeDeleteAPI, workspaceID, worktreeID string) te
 	}
 }
 
-func fetchTailCmd(api SessionTailAPI, id, key string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		resp, err := api.TailItems(ctx, id, defaultTailLines)
-		if err != nil {
-			return tailMsg{id: id, err: err, key: key, requestedLines: defaultTailLines}
-		}
-		return tailMsg{id: id, items: resp.Items, key: key, requestedLines: defaultTailLines}
-	}
-}
-
-func fetchHistoryCmd(api SessionHistoryAPI, id, key string, lines int) tea.Cmd {
-	return fetchHistoryCmdWithContext(api, id, key, lines, nil)
-}
-
 func fetchHistoryCmdWithContext(api SessionHistoryAPI, id, key string, lines int, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := commandWithTimeout(parent, 8*time.Second)
@@ -582,10 +562,6 @@ func fetchHistoryCmdWithContext(api SessionHistoryAPI, id, key string, lines int
 		}
 		return historyMsg{id: id, items: resp.Items, key: key, requestedLines: lines}
 	}
-}
-
-func fetchTranscriptSnapshotCmd(api SessionTranscriptSnapshotAPI, id, key string, lines int) tea.Cmd {
-	return fetchTranscriptSnapshotCmdWithContext(api, id, key, lines, nil)
 }
 
 func fetchTranscriptSnapshotCmdWithContext(api SessionTranscriptSnapshotAPI, id, key string, lines int, parent context.Context) tea.Cmd {
@@ -613,13 +589,6 @@ func fetchRecentsPreviewCmd(api SessionHistoryAPI, id, revision string, lines in
 			text = latestAssistantBlockText(itemsToBlocks(resp.Items))
 		}
 		return recentsPreviewMsg{id: id, revision: revision, text: text}
-	}
-}
-
-func openStreamCmd(api SessionTailStreamAPI, id string) tea.Cmd {
-	return func() tea.Msg {
-		ch, cancel, err := api.TailStream(context.Background(), id, "combined")
-		return streamMsg{id: id, ch: ch, cancel: cancel, err: err}
 	}
 }
 
@@ -705,10 +674,6 @@ func reconnectMetadataStreamCmd(delay time.Duration) tea.Cmd {
 	})
 }
 
-func fetchApprovalsCmd(api SessionApprovalsAPI, id string) tea.Cmd {
-	return fetchApprovalsCmdWithContext(api, id, nil)
-}
-
 func fetchApprovalsCmdWithContext(api SessionApprovalsAPI, id string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := commandWithTimeout(parent, 4*time.Second)
@@ -724,31 +689,6 @@ func killSessionCmd(api SessionKillAPI, id string) tea.Cmd {
 		defer cancel()
 		err := api.KillSession(ctx, id)
 		return killMsg{id: id, err: err}
-	}
-}
-
-func markExitedCmd(api SessionMarkExitedAPI, id string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		err := api.MarkSessionExited(ctx, id)
-		return exitMsg{id: id, err: err}
-	}
-}
-
-func markExitedManyCmd(api SessionMarkExitedAPI, ids []string) tea.Cmd {
-	return func() tea.Msg {
-		if len(ids) == 0 {
-			return bulkExitMsg{ids: ids}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		for _, id := range ids {
-			if err := api.MarkSessionExited(ctx, id); err != nil {
-				return bulkExitMsg{ids: ids, err: err}
-			}
-		}
-		return bulkExitMsg{ids: ids}
 	}
 }
 
@@ -783,22 +723,6 @@ func undismissSessionCmd(api SessionUndismissAPI, id string) tea.Cmd {
 		defer cancel()
 		err := api.UndismissSession(ctx, id)
 		return undismissMsg{id: id, err: err}
-	}
-}
-
-func undismissManySessionsCmd(api SessionUndismissAPI, ids []string) tea.Cmd {
-	return func() tea.Msg {
-		if len(ids) == 0 {
-			return bulkUndismissMsg{ids: ids}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		for _, id := range ids {
-			if err := api.UndismissSession(ctx, id); err != nil {
-				return bulkUndismissMsg{ids: ids, err: err}
-			}
-		}
-		return bulkUndismissMsg{ids: ids}
 	}
 }
 

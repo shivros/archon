@@ -40,7 +40,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createResp.StatusCode)
 	}
@@ -55,7 +55,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	defer listResp.Body.Close()
+	defer closeTestCloser(t, listResp.Body)
 	if listResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(listResp.Body)
 		t.Fatalf("expected 200, got %d: %s", listResp.StatusCode, string(body))
@@ -78,7 +78,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	defer updateResp.Body.Close()
+	defer closeTestCloser(t, updateResp.Body)
 	if updateResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", updateResp.StatusCode)
 	}
@@ -89,7 +89,7 @@ func TestWorkspaceEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	defer deleteResp.Body.Close()
+	defer closeTestCloser(t, deleteResp.Body)
 	if deleteResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", deleteResp.StatusCode)
 	}
@@ -117,7 +117,7 @@ func TestWorktreeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	var created types.Workspace
 	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -136,7 +136,7 @@ func TestWorktreeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add worktree: %v", err)
 	}
-	defer wtResp.Body.Close()
+	defer closeTestCloser(t, wtResp.Body)
 	if wtResp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", wtResp.StatusCode)
 	}
@@ -152,7 +152,7 @@ func TestWorktreeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rename worktree: %v", err)
 	}
-	defer renameResp.Body.Close()
+	defer closeTestCloser(t, renameResp.Body)
 	if renameResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(renameResp.Body)
 		t.Fatalf("expected 200, got %d: %s", renameResp.StatusCode, string(body))
@@ -171,7 +171,7 @@ func TestWorktreeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list worktrees: %v", err)
 	}
-	defer listResp.Body.Close()
+	defer closeTestCloser(t, listResp.Body)
 	if listResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(listResp.Body)
 		t.Fatalf("expected 200, got %d: %s", listResp.StatusCode, string(body))
@@ -183,7 +183,7 @@ func TestWorktreeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete worktree: %v", err)
 	}
-	defer deleteResp.Body.Close()
+	defer closeTestCloser(t, deleteResp.Body)
 	if deleteResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", deleteResp.StatusCode)
 	}
@@ -213,7 +213,7 @@ func TestWorkspaceSessionsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	var created types.Workspace
 	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -233,7 +233,7 @@ func TestWorkspaceSessionsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(data))
@@ -273,7 +273,7 @@ func TestWorkspaceSessionSubpathRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(createResp.Body)
 		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
@@ -313,7 +313,7 @@ func TestWorkspaceSessionSubpathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	var created types.Workspace
 	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode workspace: %v", err)
@@ -327,7 +327,7 @@ func TestWorkspaceSessionSubpathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace name: %v", err)
 	}
-	defer renamePatchResp.Body.Close()
+	defer closeTestCloser(t, renamePatchResp.Body)
 	if renamePatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(renamePatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", renamePatchResp.StatusCode, string(data))
@@ -352,7 +352,7 @@ func TestWorkspaceSessionSubpathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace set subpath: %v", err)
 	}
-	defer setPatchResp.Body.Close()
+	defer closeTestCloser(t, setPatchResp.Body)
 	if setPatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(setPatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", setPatchResp.StatusCode, string(data))
@@ -373,7 +373,7 @@ func TestWorkspaceSessionSubpathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace clear subpath: %v", err)
 	}
-	defer clearPatchResp.Body.Close()
+	defer closeTestCloser(t, clearPatchResp.Body)
 	if clearPatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(clearPatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", clearPatchResp.StatusCode, string(data))
@@ -394,7 +394,7 @@ func TestWorkspaceSessionSubpathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace invalid subpath: %v", err)
 	}
-	defer invalidPatchResp.Body.Close()
+	defer closeTestCloser(t, invalidPatchResp.Body)
 	if invalidPatchResp.StatusCode != http.StatusBadRequest {
 		data, _ := io.ReadAll(invalidPatchResp.Body)
 		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
@@ -437,7 +437,7 @@ func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(createResp.Body)
 		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
@@ -458,7 +458,7 @@ func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace name: %v", err)
 	}
-	defer renamePatchResp.Body.Close()
+	defer closeTestCloser(t, renamePatchResp.Body)
 	if renamePatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(renamePatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", renamePatchResp.StatusCode, string(data))
@@ -479,7 +479,7 @@ func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace additional directories: %v", err)
 	}
-	defer setPatchResp.Body.Close()
+	defer closeTestCloser(t, setPatchResp.Body)
 	if setPatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(setPatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", setPatchResp.StatusCode, string(data))
@@ -500,7 +500,7 @@ func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace clear additional directories: %v", err)
 	}
-	defer clearPatchResp.Body.Close()
+	defer closeTestCloser(t, clearPatchResp.Body)
 	if clearPatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(clearPatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", clearPatchResp.StatusCode, string(data))
@@ -521,7 +521,7 @@ func TestWorkspaceAdditionalDirectoriesPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace invalid additional directories: %v", err)
 	}
-	defer invalidPatchResp.Body.Close()
+	defer closeTestCloser(t, invalidPatchResp.Body)
 	if invalidPatchResp.StatusCode != http.StatusBadRequest {
 		data, _ := io.ReadAll(invalidPatchResp.Body)
 		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
@@ -558,7 +558,7 @@ func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(createResp.Body)
 		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
@@ -576,7 +576,7 @@ func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace repo path: %v", err)
 	}
-	defer patchResp.Body.Close()
+	defer closeTestCloser(t, patchResp.Body)
 	if patchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(patchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", patchResp.StatusCode, string(data))
@@ -603,7 +603,7 @@ func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace clear name: %v", err)
 	}
-	defer clearNamePatchResp.Body.Close()
+	defer closeTestCloser(t, clearNamePatchResp.Body)
 	if clearNamePatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(clearNamePatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", clearNamePatchResp.StatusCode, string(data))
@@ -624,7 +624,7 @@ func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace whitespace name: %v", err)
 	}
-	defer whitespaceNamePatchResp.Body.Close()
+	defer closeTestCloser(t, whitespaceNamePatchResp.Body)
 	if whitespaceNamePatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(whitespaceNamePatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", whitespaceNamePatchResp.StatusCode, string(data))
@@ -645,7 +645,7 @@ func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace empty repo path: %v", err)
 	}
-	defer emptyPathPatchResp.Body.Close()
+	defer closeTestCloser(t, emptyPathPatchResp.Body)
 	if emptyPathPatchResp.StatusCode != http.StatusBadRequest {
 		data, _ := io.ReadAll(emptyPathPatchResp.Body)
 		t.Fatalf("expected 400, got %d: %s", emptyPathPatchResp.StatusCode, string(data))
@@ -660,7 +660,7 @@ func TestWorkspaceRepoPathPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace invalid repo path: %v", err)
 	}
-	defer invalidPatchResp.Body.Close()
+	defer closeTestCloser(t, invalidPatchResp.Body)
 	if invalidPatchResp.StatusCode != http.StatusBadRequest {
 		data, _ := io.ReadAll(invalidPatchResp.Body)
 		t.Fatalf("expected 400, got %d: %s", invalidPatchResp.StatusCode, string(data))
@@ -691,7 +691,7 @@ func TestWorkspaceGroupIDsPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(createResp.Body)
 		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
@@ -711,7 +711,7 @@ func TestWorkspaceGroupIDsPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace groups: %v", err)
 	}
-	defer setPatchResp.Body.Close()
+	defer closeTestCloser(t, setPatchResp.Body)
 	if setPatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(setPatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", setPatchResp.StatusCode, string(data))
@@ -732,7 +732,7 @@ func TestWorkspaceGroupIDsPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace name: %v", err)
 	}
-	defer renamePatchResp.Body.Close()
+	defer closeTestCloser(t, renamePatchResp.Body)
 	if renamePatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(renamePatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", renamePatchResp.StatusCode, string(data))
@@ -753,7 +753,7 @@ func TestWorkspaceGroupIDsPatchSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch workspace clear groups: %v", err)
 	}
-	defer clearPatchResp.Body.Close()
+	defer closeTestCloser(t, clearPatchResp.Body)
 	if clearPatchResp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(clearPatchResp.Body)
 		t.Fatalf("expected 200, got %d: %s", clearPatchResp.StatusCode, string(data))
@@ -822,7 +822,7 @@ echo ok
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(createResp.Body)
 		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, string(data))
@@ -845,7 +845,7 @@ echo ok
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(data))
@@ -906,7 +906,7 @@ func TestWorkspaceSessionsEndpointUsesSessionSubpath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	var created types.Workspace
 	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode workspace: %v", err)
@@ -926,7 +926,7 @@ func TestWorkspaceSessionsEndpointUsesSessionSubpath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(data))
@@ -968,7 +968,7 @@ func TestWorktreeSessionsEndpointUsesSessionSubpath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	var created types.Workspace
 	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode workspace: %v", err)
@@ -987,7 +987,7 @@ func TestWorktreeSessionsEndpointUsesSessionSubpath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
-	defer worktreeResp.Body.Close()
+	defer closeTestCloser(t, worktreeResp.Body)
 	var worktree types.Worktree
 	if err := json.NewDecoder(worktreeResp.Body).Decode(&worktree); err != nil {
 		t.Fatalf("decode worktree: %v", err)
@@ -1007,7 +1007,7 @@ func TestWorktreeSessionsEndpointUsesSessionSubpath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start worktree session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(data))

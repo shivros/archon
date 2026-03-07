@@ -35,7 +35,7 @@ func TestSSETailStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request sse: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status: %d", resp.StatusCode)

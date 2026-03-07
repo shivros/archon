@@ -531,11 +531,11 @@ func (p defaultSelectionConfirmationPresenter) ConfirmSpec(plan SelectionOperati
 				b.WriteString(labels[i])
 			}
 			if len(labels) > previewLimit {
-				b.WriteString(fmt.Sprintf("\n- ...and %d more", len(labels)-previewLimit))
+				_, _ = fmt.Fprintf(&b, "\n- ...and %d more", len(labels)-previewLimit)
 			}
 		}
 		if plan.SkippedCount > 0 {
-			b.WriteString(fmt.Sprintf("\n\nSkipped %d selected item(s) that are not applicable.", plan.SkippedCount))
+			_, _ = fmt.Fprintf(&b, "\n\nSkipped %d selected item(s) that are not applicable.", plan.SkippedCount)
 		}
 		message = b.String()
 	}

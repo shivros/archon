@@ -80,10 +80,6 @@ func (m *Model) setBackgroundError(message string) {
 	m.setStatusByEvent(statusEventBackgroundError, message)
 }
 
-func (m *Model) setApprovalStatus(message string) {
-	m.setStatusByEvent(statusEventApprovalWarning, message)
-}
-
 func (m *Model) setStatusInfo(message string) {
 	m.setStatusByEvent(statusEventActionInfo, message)
 }

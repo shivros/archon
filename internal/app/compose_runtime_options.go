@@ -22,6 +22,11 @@ func (m *Model) composeProvider() string {
 	return strings.TrimSpace(m.selectedSessionProvider())
 }
 
+func (m *Model) canShowComposeControls() bool {
+	return m != nil && (m.mode == uiModeCompose ||
+		(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup))
+}
+
 func (m *Model) providerOptionCatalog(provider string) *types.ProviderOptionCatalog {
 	name := strings.ToLower(strings.TrimSpace(provider))
 	if name == "" {
@@ -200,11 +205,11 @@ func (m *Model) normalizeComposeRuntimeOptionsForProvider(provider string, optio
 }
 
 func (m *Model) composeControlsRow() int {
-	start := m.viewport.Height() + 2
 	if m == nil {
-		return start
+		return 2
 	}
-	if m.mode != uiModeCompose && !(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup) {
+	start := m.viewport.Height() + 2
+	if !m.canShowComposeControls() {
 		return start
 	}
 	layout, ok := m.activeInputPanelLayout()

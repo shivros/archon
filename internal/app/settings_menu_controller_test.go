@@ -26,7 +26,7 @@ func TestSettingsMenuControllerRootActions(t *testing.T) {
 	if action != SettingsMenuActionNone {
 		t.Fatalf("expected no action when returning from help, got %v", action)
 	}
-	handled, action = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	handled, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	if !handled {
 		t.Fatalf("expected down to be handled")
 	}

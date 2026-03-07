@@ -522,7 +522,7 @@ func createWorkspace(t *testing.T, server *httptest.Server, repoDir string) *typ
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create workspace status: %d", resp.StatusCode)
 	}
@@ -531,19 +531,6 @@ func createWorkspace(t *testing.T, server *httptest.Server, repoDir string) *typ
 		t.Fatalf("decode workspace: %v", err)
 	}
 	return &ws
-}
-
-func waitForHistoryItems(t *testing.T, server *httptest.Server, sessionID string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		history := historySession(t, server, sessionID)
-		if len(history.Items) > 0 {
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("timeout waiting for history items")
 }
 
 func sendMessageWithRetry(t *testing.T, server *httptest.Server, sessionID, text string, timeout time.Duration) string {
@@ -586,7 +573,7 @@ func sendMessageOnce(server *httptest.Server, sessionID, text string) (int, stri
 	if err != nil {
 		return 0, err.Error(), ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, string(data), ""
@@ -675,7 +662,7 @@ func interruptSession(server *httptest.Server, sessionID string) (int, string) {
 	if err != nil {
 		return 0, err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body)
 }
@@ -688,7 +675,7 @@ func listApprovals(t *testing.T, server *httptest.Server, sessionID string) []*t
 	if err != nil {
 		t.Fatalf("list approvals: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("list approvals status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -714,7 +701,7 @@ func approveSession(server *httptest.Server, sessionID string, requestID int, de
 	if err != nil {
 		return 0, err.Error()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(data)
 }

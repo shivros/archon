@@ -43,7 +43,7 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
 	}
@@ -63,7 +63,7 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch session: %v", err)
 	}
-	defer patchResp.Body.Close()
+	defer closeTestCloser(t, patchResp.Body)
 	if patchResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", patchResp.StatusCode)
 	}
@@ -94,7 +94,7 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch runtime options: %v", err)
 	}
-	defer runtimeResp.Body.Close()
+	defer closeTestCloser(t, runtimeResp.Body)
 	if runtimeResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", runtimeResp.StatusCode)
 	}
@@ -132,7 +132,7 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("patch notification overrides: %v", err)
 	}
-	defer notificationResp.Body.Close()
+	defer closeTestCloser(t, notificationResp.Body)
 	if notificationResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", notificationResp.StatusCode)
 	}

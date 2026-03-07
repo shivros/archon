@@ -520,13 +520,6 @@ func (s *syncSnapshot) upsertMeta(meta *types.SessionMeta) {
 	delete(s.dismissedSessionID, meta.SessionID)
 }
 
-func (s *syncSnapshot) upsertRecord(record *types.SessionRecord) {
-	if s == nil || record == nil || record.Session == nil || strings.TrimSpace(record.Session.ID) == "" {
-		return
-	}
-	s.recordsBySessionID[record.Session.ID] = record
-}
-
 func (s *syncSnapshot) delete(sessionID string) {
 	if s == nil {
 		return

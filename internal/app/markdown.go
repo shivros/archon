@@ -84,14 +84,14 @@ func buildStyleConfig(dark bool) glamouransi.StyleConfig {
 	}
 	// Keep bubble spacing controlled by lipgloss padding instead of Glamour's
 	// document-level prefix/suffix newlines and side margins.
-	base.Document.StylePrimitive.BlockPrefix = ""
-	base.Document.StylePrimitive.BlockSuffix = ""
+	base.Document.BlockPrefix = ""
+	base.Document.BlockSuffix = ""
 	zero := uint(0)
 	base.Document.Margin = &zero
 	faint := true
 	color := "245"
-	base.BlockQuote.StylePrimitive.Faint = &faint
-	base.BlockQuote.StylePrimitive.Color = &color
+	base.BlockQuote.Faint = &faint
+	base.BlockQuote.Color = &color
 	return base
 }
 

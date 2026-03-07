@@ -82,25 +82,6 @@ func (m *Model) cancelRequestScope(name string) {
 	delete(m.requestScopes, name)
 }
 
-func (m *Model) cancelRequestScopesWithPrefix(prefix string) {
-	if m == nil {
-		return
-	}
-	prefix = strings.TrimSpace(prefix)
-	if prefix == "" || len(m.requestScopes) == 0 {
-		return
-	}
-	for key, scope := range m.requestScopes {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-		if scope.cancel != nil {
-			scope.cancel()
-		}
-		delete(m.requestScopes, key)
-	}
-}
-
 func recentsRequestScopeName(sessionID string) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {

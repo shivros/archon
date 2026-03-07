@@ -33,8 +33,11 @@ func NewNotificationPolicyResolver(defaults types.NotificationSettings, stores *
 }
 
 func (r *defaultNotificationPolicyResolver) Resolve(ctx context.Context, event types.NotificationEvent) types.NotificationSettings {
+	if r == nil {
+		return types.NotificationSettings{}
+	}
 	settings := types.CloneNotificationSettings(r.defaults)
-	if r == nil || r.stores == nil {
+	if r.stores == nil {
 		return settings
 	}
 	lookupCtx, cancel := r.lookupContext(ctx)

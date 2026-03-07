@@ -20,10 +20,6 @@ type queuedToast struct {
 	message string
 }
 
-func (m *Model) showInfoToast(message string) {
-	m.showToast(toastLevelInfo, message)
-}
-
 func (m *Model) showWarningToast(message string) {
 	m.showToast(toastLevelWarning, message)
 }

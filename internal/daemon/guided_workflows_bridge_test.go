@@ -17,10 +17,6 @@ import (
 	"control/internal/types"
 )
 
-type stubWorkflowTemplateStore struct {
-	templates []guidedworkflows.WorkflowTemplate
-}
-
 type stubGuidedWorkflowSessionGateway struct {
 	sessions  []*types.Session
 	meta      []*types.SessionMeta
@@ -151,12 +147,6 @@ func setStableWorkflowTemplatesHome(t *testing.T) string {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	return home
-}
-
-func (s *stubWorkflowTemplateStore) ListWorkflowTemplates(context.Context) ([]guidedworkflows.WorkflowTemplate, error) {
-	out := make([]guidedworkflows.WorkflowTemplate, len(s.templates))
-	copy(out, s.templates)
-	return out, nil
 }
 
 func (s *stubGuidedWorkflowSessionGateway) ListWithMeta(context.Context) ([]*types.Session, []*types.SessionMeta, error) {
@@ -808,7 +798,7 @@ func TestGuidedWorkflowMissingRunContextResolverAllowsNilContext(t *testing.T) {
 	}
 	resolver := newGuidedWorkflowMissingRunContextResolver(lister)
 
-	ctx, ok, err := resolver.ResolveMissingRunContext(nil, "gwf-ctx")
+	ctx, ok, err := resolver.ResolveMissingRunContext(context.TODO(), "gwf-ctx")
 	if err != nil {
 		t.Fatalf("ResolveMissingRunContext: %v", err)
 	}

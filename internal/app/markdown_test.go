@@ -4,11 +4,11 @@ import "testing"
 
 func TestBuildStyleConfigDisablesDocumentOuterMargins(t *testing.T) {
 	cfg := buildStyleConfig(true)
-	if cfg.Document.StylePrimitive.BlockPrefix != "" {
-		t.Fatalf("expected empty document block prefix, got %q", cfg.Document.StylePrimitive.BlockPrefix)
+	if cfg.Document.BlockPrefix != "" {
+		t.Fatalf("expected empty document block prefix, got %q", cfg.Document.BlockPrefix)
 	}
-	if cfg.Document.StylePrimitive.BlockSuffix != "" {
-		t.Fatalf("expected empty document block suffix, got %q", cfg.Document.StylePrimitive.BlockSuffix)
+	if cfg.Document.BlockSuffix != "" {
+		t.Fatalf("expected empty document block suffix, got %q", cfg.Document.BlockSuffix)
 	}
 	if cfg.Document.Margin == nil {
 		t.Fatalf("expected document margin pointer")

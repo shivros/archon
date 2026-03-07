@@ -406,7 +406,7 @@ func probeOpenCodeServerImpl(baseURL string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusUnauthorized, http.StatusForbidden:
 		return nil

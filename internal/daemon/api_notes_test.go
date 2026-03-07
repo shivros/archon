@@ -36,7 +36,7 @@ func TestNotesEndpointsCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	defer createResp.Body.Close()
+	defer closeTestCloser(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createResp.StatusCode)
 	}
@@ -54,7 +54,7 @@ func TestNotesEndpointsCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list notes: %v", err)
 	}
-	defer listResp.Body.Close()
+	defer closeTestCloser(t, listResp.Body)
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", listResp.StatusCode)
 	}
@@ -76,7 +76,7 @@ func TestNotesEndpointsCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update note: %v", err)
 	}
-	defer updateResp.Body.Close()
+	defer closeTestCloser(t, updateResp.Body)
 	if updateResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", updateResp.StatusCode)
 	}
@@ -94,7 +94,7 @@ func TestNotesEndpointsCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete note: %v", err)
 	}
-	defer deleteResp.Body.Close()
+	defer closeTestCloser(t, deleteResp.Body)
 	if deleteResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", deleteResp.StatusCode)
 	}
@@ -121,7 +121,7 @@ func TestSessionPinsEndpointCreatesPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create pin: %v", err)
 	}
-	defer pinResp.Body.Close()
+	defer closeTestCloser(t, pinResp.Body)
 	if pinResp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", pinResp.StatusCode)
 	}
@@ -145,7 +145,7 @@ func TestSessionPinsEndpointCreatesPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list notes: %v", err)
 	}
-	defer listResp.Body.Close()
+	defer closeTestCloser(t, listResp.Body)
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", listResp.StatusCode)
 	}

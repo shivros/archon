@@ -204,10 +204,6 @@ func (s *sidebarItem) isSession() bool {
 	return s.kind == sidebarSession && s.session != nil
 }
 
-func (s *sidebarItem) isWorkflow() bool {
-	return s.kind == sidebarWorkflow && strings.TrimSpace(s.workflowRunID()) != ""
-}
-
 func (s *sidebarItem) workflowRunID() string {
 	if s == nil {
 		return ""
@@ -322,13 +318,13 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 	case sidebarRecentsRunning:
 		_, _ = fmt.Fprint(w, d.renderRecentsRunningRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarWorkspace:
-		fmt.Fprint(w, d.renderWorkspaceRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
+		_, _ = fmt.Fprint(w, d.renderWorkspaceRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarWorktree:
-		fmt.Fprint(w, d.renderWorktreeRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
+		_, _ = fmt.Fprint(w, d.renderWorktreeRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarWorkflow:
-		fmt.Fprint(w, d.renderWorkflowRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
+		_, _ = fmt.Fprint(w, d.renderWorkflowRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	case sidebarSession:
-		fmt.Fprint(w, d.renderSessionRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
+		_, _ = fmt.Fprint(w, d.renderSessionRow(entry, maxWidth, isSelected, isMarked, isHighlighted))
 	}
 }
 
@@ -447,7 +443,7 @@ func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isS
 
 	rendered := baseStyle.Render(viewModel.Prefix)
 	if viewModel.BadgeText != "" {
-		badgeStyle := baseStyle.Copy().Foreground(lipgloss.Color(strings.TrimSpace(viewModel.BadgeColor)))
+		badgeStyle := baseStyle.Foreground(lipgloss.Color(strings.TrimSpace(viewModel.BadgeColor)))
 		rendered += badgeStyle.Render(viewModel.BadgeText)
 		rendered += baseStyle.Render(" ")
 	}

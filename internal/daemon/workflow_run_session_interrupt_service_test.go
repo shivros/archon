@@ -263,7 +263,7 @@ func TestWorkflowRunSessionInterruptServiceSkipsExecutorWhenNoTargets(t *testing
 		resolver: &stubWorkflowRunSessionTargetResolver{ids: nil},
 		executor: executor,
 	}
-	err := service.InterruptWorkflowRunSessions(nil, &guidedworkflows.WorkflowRun{ID: "gwf-1"})
+	err := service.InterruptWorkflowRunSessions(context.TODO(), &guidedworkflows.WorkflowRun{ID: "gwf-1"})
 	if err != nil {
 		t.Fatalf("expected no-target interrupt to be successful, got %v", err)
 	}

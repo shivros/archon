@@ -29,7 +29,7 @@ func TestShutdownEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shutdown request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)

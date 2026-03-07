@@ -11,11 +11,6 @@ import (
 	"control/internal/types"
 )
 
-const (
-	notesPanelMinWidth = 28
-	notesPanelMaxWidth = 56
-)
-
 func (m *Model) toggleNotesPanel() tea.Cmd {
 	m.startUILatencyAction(uiLatencyActionToggleNotesSidebar, "")
 	defer m.finishUILatencyAction(uiLatencyActionToggleNotesSidebar, "", uiLatencyOutcomeOK)

@@ -121,7 +121,7 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 		return false
 	}
 	mouse := msg.Mouse()
-	if (m.mode != uiModeCompose && !(m.mode == uiModeGuidedWorkflow && m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup)) || mouse.X < layout.rightStart || !m.mouseOverComposeControls(mouse.Y) {
+	if !m.canShowComposeControls() || mouse.X < layout.rightStart || !m.mouseOverComposeControls(mouse.Y) {
 		return false
 	}
 	col := mouse.X - layout.rightStart

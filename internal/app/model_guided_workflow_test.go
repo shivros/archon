@@ -50,9 +50,7 @@ func (m *guidedWorkflowAPIMock) ListWorkflowTemplates(_ context.Context) ([]guid
 		return nil, m.listTemplatesErr
 	}
 	out := make([]guidedworkflows.WorkflowTemplate, 0, len(m.listTemplates))
-	for _, tpl := range m.listTemplates {
-		out = append(out, tpl)
-	}
+	out = append(out, m.listTemplates...)
 	return out, nil
 }
 

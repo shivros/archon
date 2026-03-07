@@ -348,14 +348,6 @@ func (a *API) syncWorkflowSessionVisibility(run *guidedworkflows.WorkflowRun, di
 	visibility.SyncWorkflowRunSessionVisibility(run, dismissed)
 }
 
-func (a *API) syncWorkflowRunPrimarySessionVisibility(ctx context.Context, run *guidedworkflows.WorkflowRun, dismissed bool) error {
-	syncer := a.workflowRunSessionVisibilitySyncer()
-	if syncer == nil {
-		return nil
-	}
-	return syncer.syncWorkflowRunPrimarySessionVisibility(ctx, run, dismissed)
-}
-
 func (a *API) syncWorkflowLinkedSessionDismissal(ctx context.Context, run *guidedworkflows.WorkflowRun, dismissed bool) error {
 	syncer := a.workflowRunSessionVisibilitySyncer()
 	if syncer == nil {

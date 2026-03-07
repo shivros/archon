@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -328,12 +326,4 @@ func createOpenCodeWorkspace(t *testing.T, provider string) string {
 		t.Fatalf("mkdir repo: %v", err)
 	}
 	return repoDir
-}
-
-func sendOpenCodeMessage(t *testing.T, server *httptest.Server, sessionID, text string) {
-	t.Helper()
-	status, body, _ := sendMessageOnce(server, sessionID, text)
-	if status != http.StatusOK {
-		t.Fatalf("send failed status=%d body=%s", status, body)
-	}
 }

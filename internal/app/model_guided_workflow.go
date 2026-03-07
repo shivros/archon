@@ -1057,20 +1057,6 @@ func (m *Model) guidedWorkflowSetupInputLineCount() int {
 	return BuildInputPanelLayout(panel).LineCount()
 }
 
-func (m *Model) openGuidedWorkflowLauncherFromSetup() {
-	if m == nil || m.guidedWorkflow == nil {
-		return
-	}
-	m.guidedWorkflow.OpenLauncher()
-	m.closeComposeOptionPicker()
-	m.newSession = nil
-	if m.guidedWorkflowPromptInput != nil {
-		m.guidedWorkflowPromptInput.Blur()
-	}
-	m.setStatusMessage("guided workflow launcher")
-	m.reflowGuidedWorkflowLayout()
-}
-
 func (m *Model) openGuidedWorkflowLauncherFromProvider() {
 	if m == nil || m.guidedWorkflow == nil {
 		return

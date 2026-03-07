@@ -749,7 +749,7 @@ func TestHelperProcess(t *testing.T) {
 		case strings.HasPrefix(arg, "sleep_ms="):
 			_, _ = fmt.Sscanf(strings.TrimPrefix(arg, "sleep_ms="), "%d", &sleepMs)
 		case strings.HasPrefix(arg, "exit="):
-			fmt.Sscanf(strings.TrimPrefix(arg, "exit="), "%d", &exitCode)
+			_, _ = fmt.Sscanf(strings.TrimPrefix(arg, "exit="), "%d", &exitCode)
 		case strings.HasPrefix(arg, "args_file="):
 			argsFile = strings.TrimPrefix(arg, "args_file=")
 		}

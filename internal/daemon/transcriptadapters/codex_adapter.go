@@ -56,10 +56,6 @@ func (a codexTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any)
 	return []transcriptdomain.TranscriptEvent{event}
 }
 
-func mapCodexEvent(providerName string, ctx MappingContext, event types.CodexEvent) (transcriptdomain.TranscriptEvent, bool) {
-	return mapCodexEventWithClassifier(providerName, NewCodexEventClassifier(providerName), ctx, event)
-}
-
 func mapCodexEventWithClassifier(
 	providerName string,
 	classifier ProviderEventClassifier,

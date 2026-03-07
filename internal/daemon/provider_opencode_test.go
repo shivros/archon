@@ -222,7 +222,7 @@ username = "archon"
 	if createIdx < 0 || permissionIdx < 0 || promptIdx < 0 {
 		t.Fatalf("expected create, permission, and prompt requests, got %v", pathsSnapshot)
 	}
-	if !(createIdx < permissionIdx && permissionIdx < promptIdx) {
+	if createIdx >= permissionIdx || permissionIdx >= promptIdx {
 		t.Fatalf("expected request order create -> permission -> prompt, got %v", pathsSnapshot)
 	}
 	if got := strings.TrimSpace(asString(permissionSnapshot["permission"])); got != "external_directory" {

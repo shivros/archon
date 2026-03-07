@@ -354,7 +354,7 @@ func TestAPISessionsRefreshSyncError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	if resp.StatusCode != http.StatusInternalServerError {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 500, got %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -534,7 +534,7 @@ func startSession(t *testing.T, server *httptest.Server, req StartSessionRequest
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -562,7 +562,7 @@ func listSessionsPath(t *testing.T, server *httptest.Server, path string) sessio
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -585,7 +585,7 @@ func getSession(t *testing.T, server *httptest.Server, id string) *types.Session
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -612,7 +612,7 @@ func tailSession(t *testing.T, server *httptest.Server, id string) tailResponse 
 	if err != nil {
 		t.Fatalf("tail session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -635,7 +635,7 @@ func historySession(t *testing.T, server *httptest.Server, id string) itemsRespo
 	if err != nil {
 		t.Fatalf("history session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -660,7 +660,7 @@ func sendMessageStatus(t *testing.T, server *httptest.Server, id, text string) i
 	if err != nil {
 		t.Fatalf("send session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 	return resp.StatusCode
 }
 
@@ -673,7 +673,7 @@ func killSession(t *testing.T, server *httptest.Server, id string) {
 	if err != nil {
 		t.Fatalf("kill session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status: %d", resp.StatusCode)
@@ -689,7 +689,7 @@ func markExited(t *testing.T, server *httptest.Server, id string) {
 	if err != nil {
 		t.Fatalf("exit session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status: %d", resp.StatusCode)
@@ -705,7 +705,7 @@ func dismissSession(t *testing.T, server *httptest.Server, id string) {
 	if err != nil {
 		t.Fatalf("dismiss session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status: %d", resp.StatusCode)
@@ -721,7 +721,7 @@ func undismissSession(t *testing.T, server *httptest.Server, id string) {
 	if err != nil {
 		t.Fatalf("undismiss session: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeTestCloser(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status: %d", resp.StatusCode)
