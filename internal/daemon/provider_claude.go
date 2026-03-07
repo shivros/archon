@@ -31,6 +31,11 @@ type claudeRunner struct {
 	onSession func(string)
 }
 
+var claudeRecursiveSessionEnv = []string{
+	"CLAUDECODE",
+	"CLAUDE_CODE_ENTRYPOINT",
+}
+
 func newClaudeProvider(cmdName string) (Provider, error) {
 	if strings.TrimSpace(cmdName) == "" {
 		return nil, errors.New("command name is required")
@@ -147,9 +152,7 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 	if r.cwd != "" {
 		cmd.Dir = r.cwd
 	}
-	if len(r.env) > 0 {
-		cmd.Env = append(os.Environ(), r.env...)
-	}
+	cmd.Env = claudeCommandEnv(r.env)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -252,6 +255,15 @@ func readClaudeStream(r io.Reader, rawStream string, sink ProviderSink, items Pr
 		return err
 	}
 	return nil
+}
+
+func claudeCommandEnv(extra []string) []string {
+	env := append([]string{}, os.Environ()...)
+	env = append(env, extra...)
+	for _, key := range claudeRecursiveSessionEnv {
+		env = append(env, key+"=")
+	}
+	return env
 }
 
 func buildClaudeUserPayload(text string) []byte {

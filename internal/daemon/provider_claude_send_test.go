@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -202,6 +203,22 @@ func TestClaudeRunnerRunMissingCommand(t *testing.T) {
 	runner := &claudeRunner{cmdName: "definitely-missing-claude-command-12345"}
 	if err := runner.run("hello", nil); err == nil {
 		t.Fatalf("expected command start error")
+	}
+}
+
+func TestClaudeCommandEnvClearsRecursiveSessionVars(t *testing.T) {
+	t.Setenv("CLAUDECODE", "nested")
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "entrypoint")
+
+	env := claudeCommandEnv([]string{"GO_WANT_HELPER_PROCESS=1"})
+	if !slices.Contains(env, "GO_WANT_HELPER_PROCESS=1") {
+		t.Fatalf("expected extra env to be preserved")
+	}
+	if !slices.Contains(env, "CLAUDECODE=") {
+		t.Fatalf("expected CLAUDECODE to be cleared")
+	}
+	if !slices.Contains(env, "CLAUDE_CODE_ENTRYPOINT=") {
+		t.Fatalf("expected CLAUDE_CODE_ENTRYPOINT to be cleared")
 	}
 }
 

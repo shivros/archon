@@ -40,17 +40,12 @@ func claudeIntegrationTimeout() time.Duration {
 
 func claudeIntegrationSetup(t *testing.T) (string, *types.SessionRuntimeOptions) {
 	t.Helper()
-	// Clear env vars that prevent the claude CLI from running inside a
-	// Claude Code session. The nested invocation is a separate process
-	// managed by the daemon, not a true recursive session.
-	t.Setenv("CLAUDECODE", "")
-	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "")
 	return createClaudeWorkspace(t), nil
 }
 
 func createClaudeWorkspace(t *testing.T) string {
 	t.Helper()
-	repoDir := filepath.Join(t.TempDir(), "repo")
+	repoDir := filepath.Join(newDaemonIntegrationTempDir(t, "claude-workspace-*"), "repo")
 	if err := os.MkdirAll(repoDir, 0o700); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
