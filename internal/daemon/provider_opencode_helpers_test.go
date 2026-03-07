@@ -264,6 +264,119 @@ func TestMapOpenCodeEventToCodexSessionErrorEmitsTurnCompleted(t *testing.T) {
 	}
 }
 
+func TestMapOpenCodeEventToCodexTurnCompletedEvent(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"type": "turn.completed",
+		"properties": map[string]any{
+			"sessionID": "ses_test",
+			"turn": map[string]any{
+				"id":     "provider-turn-1",
+				"status": "completed",
+				"output": "done",
+			},
+		},
+	})
+	events := mapOpenCodeEventToCodex(string(raw), "ses_test", nil)
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %d", len(events))
+	}
+	if got := events[0].Method; got != "turn/completed" {
+		t.Fatalf("expected turn/completed, got %q", got)
+	}
+	parsed := parseTurnEventFromParams(events[0].Params)
+	if parsed.TurnID != "provider-turn-1" {
+		t.Fatalf("expected turn id provider-turn-1, got %q", parsed.TurnID)
+	}
+	if parsed.Status != "completed" {
+		t.Fatalf("expected completed status, got %q", parsed.Status)
+	}
+	if parsed.Output != "done" {
+		t.Fatalf("expected output done, got %q", parsed.Output)
+	}
+}
+
+func TestMapOpenCodeEventToCodexTurnErrorEvent(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"type": "turn.error",
+		"properties": map[string]any{
+			"sessionID": "ses_test",
+			"turnID":    "provider-turn-2",
+			"error": map[string]any{
+				"message": "upstream timeout",
+			},
+		},
+	})
+	events := mapOpenCodeEventToCodex(string(raw), "ses_test", nil)
+	if len(events) != 2 {
+		t.Fatalf("expected error + turn/completed events, got %d", len(events))
+	}
+	if events[0].Method != "error" || events[1].Method != "turn/completed" {
+		t.Fatalf("unexpected method ordering: %#v", events)
+	}
+	parsed := parseTurnEventFromParams(events[1].Params)
+	if parsed.TurnID != "provider-turn-2" {
+		t.Fatalf("expected provider turn id, got %q", parsed.TurnID)
+	}
+	if parsed.Status != "failed" {
+		t.Fatalf("expected failed status, got %q", parsed.Status)
+	}
+	if parsed.Error != "upstream timeout" {
+		t.Fatalf("expected upstream timeout error, got %q", parsed.Error)
+	}
+}
+
+func TestMapOpenCodeEventToCodexMessageUpdatedMapsAssistantDelta(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"type": "message.updated",
+		"properties": map[string]any{
+			"info": map[string]any{
+				"sessionID": "ses_test",
+			},
+			"message": map[string]any{
+				"role": "assistant",
+				"parts": []map[string]any{
+					{"type": "text", "text": "streamed text"},
+				},
+			},
+		},
+	})
+	events := mapOpenCodeEventToCodex(string(raw), "ses_test", nil)
+	if len(events) != 1 {
+		t.Fatalf("expected one delta event, got %d", len(events))
+	}
+	if events[0].Method != "item/agentMessage/delta" {
+		t.Fatalf("expected item/agentMessage/delta, got %q", events[0].Method)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(events[0].Params, &payload); err != nil {
+		t.Fatalf("unmarshal params: %v", err)
+	}
+	if got := asString(payload["delta"]); got != "streamed text" {
+		t.Fatalf("expected streamed text delta, got %#v", payload)
+	}
+}
+
+func TestMapOpenCodeEventToCodexMessageUpdatedIgnoresUserRole(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"type": "message.updated",
+		"properties": map[string]any{
+			"info": map[string]any{
+				"sessionID": "ses_test",
+			},
+			"message": map[string]any{
+				"role": "user",
+				"parts": []map[string]any{
+					{"type": "text", "text": "user echo"},
+				},
+			},
+		},
+	})
+	events := mapOpenCodeEventToCodex(string(raw), "ses_test", nil)
+	if len(events) != 0 {
+		t.Fatalf("expected no events for user role message updates, got %#v", events)
+	}
+}
+
 func TestNormalizeOpenCodeSessionMessagesFromMapDataKey(t *testing.T) {
 	payload := map[string]any{
 		"data": []any{

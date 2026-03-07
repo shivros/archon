@@ -19,10 +19,14 @@ type openCodeLiveSession struct {
 	providerID    string
 	directory     string
 	client        *openCodeClient
+	connector     openCodeEventStreamConnector
+	reconnect     openCodeEventReconnectPolicy
 	logger        logging.Logger
 	repository    TurnArtifactRepository
 	events        <-chan types.CodexEvent
 	cancelEvents  func()
+	streamCtx     context.Context
+	cancelStream  context.CancelFunc
 	hub           *codexSubscriberHub
 	turnNotifier  TurnCompletionNotifier
 	approvalStore ApprovalStorage
@@ -32,6 +36,7 @@ type openCodeLiveSession struct {
 	finalizer     openCodeTurnFinalizer
 	activeTurn    string
 	lifecycle     *openCodeTurnLifecycleEngine
+	retryAttempt  int
 	closed        bool
 }
 
@@ -153,13 +158,23 @@ func (s *openCodeLiveSession) Close() {
 		return
 	}
 	s.closed = true
+	cancelEvents := s.cancelEvents
+	s.cancelEvents = nil
+	s.events = nil
+	cancelStream := s.cancelStream
+	s.cancelStream = nil
+	s.streamCtx = nil
+	lifecycle := s.lifecycle
 	s.mu.Unlock()
 
-	if s.cancelEvents != nil {
-		s.cancelEvents()
+	if cancelEvents != nil {
+		cancelEvents()
 	}
-	if s.lifecycle != nil {
-		s.lifecycle.Close()
+	if cancelStream != nil {
+		cancelStream()
+	}
+	if lifecycle != nil {
+		lifecycle.Close()
 	}
 }
 
@@ -182,35 +197,180 @@ func (s *openCodeLiveSession) start() {
 		s.lifecycle.Start()
 	}
 	go func() {
-		defer s.Close()
-		for event := range s.events {
-			s.hub.Broadcast(event)
-			s.persistEventItems(event)
-
-			if s.lifecycle != nil {
-				s.lifecycle.ObserveEvent(event)
-			} else if event.Method == "turn/completed" || event.Method == "session.idle" || event.Method == "error" {
-				turn := parseTurnEventFromParams(event.Params)
-				turnID := turn.TurnID
-				if turnID == "" {
-					s.mu.Lock()
-					turnID = s.activeTurn
-					s.activeTurn = ""
-					s.mu.Unlock()
-					turn.TurnID = turnID
-				} else {
-					s.mu.Lock()
-					s.activeTurn = ""
-					s.mu.Unlock()
+		for {
+			if s.isClosed() {
+				return
+			}
+			events := s.currentEvents()
+			if events == nil {
+				if !s.reconnectEventStream() && !s.waitForEventReconnectRetry() {
+					return
 				}
-				s.publishTurnCompleted(turn)
+				continue
 			}
-
-			if isApprovalMethod(event.Method) && event.ID != nil {
-				s.storeApproval(event)
+			event, ok := <-events
+			if !ok {
+				if s.isClosed() {
+					return
+				}
+				if !s.reconnectEventStream() && !s.waitForEventReconnectRetry() {
+					return
+				}
+				continue
 			}
+			s.handleProviderEvent(event)
 		}
 	}()
+}
+
+func (s *openCodeLiveSession) currentEvents() <-chan types.CodexEvent {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.events
+}
+
+func (s *openCodeLiveSession) handleProviderEvent(event types.CodexEvent) {
+	if s == nil {
+		return
+	}
+	s.hub.Broadcast(event)
+	s.persistEventItems(event)
+
+	if s.lifecycle != nil {
+		s.lifecycle.ObserveEvent(event)
+	} else if event.Method == "turn/completed" || event.Method == "session.idle" || event.Method == "error" {
+		turn := parseTurnEventFromParams(event.Params)
+		turnID := turn.TurnID
+		if turnID == "" {
+			s.mu.Lock()
+			turnID = s.activeTurn
+			s.activeTurn = ""
+			s.mu.Unlock()
+			turn.TurnID = turnID
+		} else {
+			s.mu.Lock()
+			s.activeTurn = ""
+			s.mu.Unlock()
+		}
+		s.publishTurnCompleted(turn)
+	}
+
+	if isApprovalMethod(event.Method) && event.ID != nil {
+		s.storeApproval(event)
+	}
+}
+
+func (s *openCodeLiveSession) reconnectEventStream() bool {
+	if s == nil {
+		return false
+	}
+	connector := s.connectorOrDefault()
+	if connector == nil {
+		return false
+	}
+	providerID := strings.TrimSpace(s.providerID)
+	if providerID == "" {
+		return false
+	}
+	streamCtx := s.streamContext()
+	if streamCtx == nil || s.isClosed() {
+		return false
+	}
+	events, cancel, err := connector.SubscribeSessionEvents(streamCtx, providerID, s.directory)
+	if err != nil && strings.TrimSpace(s.directory) != "" {
+		events, cancel, err = connector.SubscribeSessionEvents(streamCtx, providerID, "")
+	}
+	if err != nil {
+		attempt := s.markReconnectFailure()
+		if s.logger != nil && s.reconnectPolicyOrDefault().ShouldLogFailure(attempt) {
+			s.logger.Warn("opencode_event_stream_resubscribe_failed",
+				logging.F("session_id", strings.TrimSpace(s.sessionID)),
+				logging.F("provider", strings.TrimSpace(s.providerName)),
+				logging.F("provider_session_id", providerID),
+				logging.F("attempt", attempt),
+				logging.F("error", err),
+			)
+		}
+		return false
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return false
+	}
+	previousCancel := s.cancelEvents
+	s.events = events
+	s.cancelEvents = cancel
+	s.retryAttempt = 0
+	s.mu.Unlock()
+	if previousCancel != nil {
+		previousCancel()
+	}
+	if s.logger != nil {
+		s.logger.Info("opencode_event_stream_resubscribed",
+			logging.F("session_id", strings.TrimSpace(s.sessionID)),
+			logging.F("provider", strings.TrimSpace(s.providerName)),
+			logging.F("provider_session_id", providerID),
+		)
+	}
+	return true
+}
+
+func (s *openCodeLiveSession) waitForEventReconnectRetry() bool {
+	attempt := s.currentReconnectAttempt()
+	delay := s.reconnectPolicyOrDefault().RetryDelay(attempt)
+	if delay <= 0 {
+		delay = 300 * time.Millisecond
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	<-timer.C
+	return !s.isClosed() && s.streamContext() != nil
+}
+
+func (s *openCodeLiveSession) streamContext() context.Context {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.streamCtx
+}
+
+func (s *openCodeLiveSession) connectorOrDefault() openCodeEventStreamConnector {
+	if s == nil {
+		return nil
+	}
+	if s.connector != nil {
+		return s.connector
+	}
+	return s.client
+}
+
+func (s *openCodeLiveSession) reconnectPolicyOrDefault() openCodeEventReconnectPolicy {
+	if s == nil || s.reconnect == nil {
+		return defaultOpenCodeEventReconnectPolicy{}
+	}
+	return s.reconnect
+}
+
+func (s *openCodeLiveSession) markReconnectFailure() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retryAttempt++
+	return s.retryAttempt
+}
+
+func (s *openCodeLiveSession) currentReconnectAttempt() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retryAttempt
 }
 
 func (s *openCodeLiveSession) persistEventItems(event types.CodexEvent) {
@@ -353,7 +513,19 @@ type openCodeLiveSessionFactory struct {
 	repository    TurnArtifactRepository
 	payloads      TurnCompletionPayloadBuilder
 	freshness     TurnEvidenceFreshnessTracker
+	reconnect     openCodeEventReconnectPolicy
 	logger        logging.Logger
+}
+
+type openCodeLiveSessionFactoryOption func(*openCodeLiveSessionFactory)
+
+func withOpenCodeEventReconnectPolicy(policy openCodeEventReconnectPolicy) openCodeLiveSessionFactoryOption {
+	return func(factory *openCodeLiveSessionFactory) {
+		if factory == nil || policy == nil {
+			return
+		}
+		factory.reconnect = policy
+	}
 }
 
 func (f *openCodeLiveSessionFactory) ValidateLifecycleWiring() error {
@@ -383,6 +555,7 @@ func newOpenCodeLiveSessionFactory(
 	payloads TurnCompletionPayloadBuilder,
 	freshness TurnEvidenceFreshnessTracker,
 	logger logging.Logger,
+	opts ...openCodeLiveSessionFactoryOption,
 ) *openCodeLiveSessionFactory {
 	if logger == nil {
 		logger = logging.Nop()
@@ -402,15 +575,22 @@ func newOpenCodeLiveSessionFactory(
 	if freshness == nil {
 		freshness = NewTurnEvidenceFreshnessTracker()
 	}
-	return &openCodeLiveSessionFactory{
+	factory := &openCodeLiveSessionFactory{
 		providerName:  providerName,
 		turnNotifier:  turnNotifier,
 		approvalStore: approvalStore,
 		repository:    repository,
 		payloads:      payloads,
 		freshness:     freshness,
+		reconnect:     defaultOpenCodeEventReconnectPolicy{},
 		logger:        logger,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(factory)
+		}
+	}
+	return factory
 }
 
 func (f *openCodeLiveSessionFactory) ProviderName() string {
@@ -435,11 +615,13 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 		return nil, err
 	}
 
-	events, cancel, err := client.SubscribeSessionEvents(ctx, providerID, session.Cwd)
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	events, cancel, err := client.SubscribeSessionEvents(streamCtx, providerID, session.Cwd)
 	if err != nil && session.Cwd != "" {
-		events, cancel, err = client.SubscribeSessionEvents(ctx, providerID, "")
+		events, cancel, err = client.SubscribeSessionEvents(streamCtx, providerID, "")
 	}
 	if err != nil {
+		cancelStream()
 		return nil, err
 	}
 
@@ -449,10 +631,14 @@ func (f *openCodeLiveSessionFactory) CreateTurnCapable(ctx context.Context, sess
 		providerID:    providerID,
 		directory:     session.Cwd,
 		client:        client,
+		connector:     client,
+		reconnect:     f.reconnect,
 		logger:        f.logger,
 		repository:    f.repository,
 		events:        events,
 		cancelEvents:  cancel,
+		streamCtx:     streamCtx,
+		cancelStream:  cancelStream,
 		hub:           newCodexSubscriberHub(),
 		turnNotifier:  f.turnNotifier,
 		approvalStore: f.approvalStore,

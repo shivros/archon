@@ -22,6 +22,7 @@ import (
 var errOpenCodePromptPending = errors.New("opencode prompt pending")
 
 const defaultOpenCodePromptSendTimeout = 12 * time.Second
+const defaultOpenCodeEventConnectTimeout = 10 * time.Second
 
 type openCodeJSONRequester interface {
 	doJSON(ctx context.Context, method, path string, body any, out any) error
@@ -60,6 +61,7 @@ type openCodeEventService struct {
 	username  string
 	token     string
 	transport http.RoundTripper
+	timeout   time.Duration
 }
 
 func newOpenCodeSessionService(requester openCodeJSONRequester) *openCodeSessionService {
@@ -83,12 +85,16 @@ func newOpenCodePermissionService(requester openCodeJSONRequester) *openCodePerm
 	return &openCodePermissionService{requester: requester}
 }
 
-func newOpenCodeEventService(baseURL, username, token string, transport http.RoundTripper) *openCodeEventService {
+func newOpenCodeEventService(baseURL, username, token string, transport http.RoundTripper, timeout time.Duration) *openCodeEventService {
+	if timeout <= 0 {
+		timeout = defaultOpenCodeEventConnectTimeout
+	}
 	return &openCodeEventService{
 		baseURL:   strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		username:  strings.TrimSpace(username),
 		token:     strings.TrimSpace(token),
 		transport: transport,
+		timeout:   timeout,
 	}
 }
 
@@ -578,6 +584,10 @@ func (s *openCodeEventService) SubscribeSessionEvents(ctx context.Context, sessi
 
 	query := url.Values{}
 	query.Set("parentID", sessionID)
+	// Some OpenCode/KiloCode builds key the stream on sessionID while older
+	// builds use parentID. Sending both keeps subscription compatible across
+	// protocol variants.
+	query.Set("sessionID", sessionID)
 	path := "/event?" + query.Encode()
 	pathWithDirectory := appendOpenCodeDirectoryQuery(path, directory)
 	endpoint := s.baseURL + pathWithDirectory
@@ -594,7 +604,7 @@ func (s *openCodeEventService) SubscribeSessionEvents(ctx context.Context, sessi
 	}
 
 	streamClient := &http.Client{Transport: s.transport}
-	resp, err := streamClient.Do(req)
+	resp, err := openCodeDoEventStreamRequest(streamClient, req, streamCtx, s.timeout)
 	if err != nil {
 		cancel()
 		return nil, nil, err
@@ -699,4 +709,42 @@ func (s *openCodeEventService) SubscribeSessionEvents(ctx context.Context, sessi
 	}()
 
 	return events, closeFn, nil
+}
+
+func openCodeDoEventStreamRequest(
+	client *http.Client,
+	req *http.Request,
+	ctx context.Context,
+	timeout time.Duration,
+) (*http.Response, error) {
+	if client == nil {
+		return nil, errors.New("http client is required")
+	}
+	if req == nil {
+		return nil, errors.New("request is required")
+	}
+	resultCh := make(chan struct {
+		resp *http.Response
+		err  error
+	}, 1)
+	go func() {
+		resp, err := client.Do(req)
+		resultCh <- struct {
+			resp *http.Response
+			err  error
+		}{resp: resp, err: err}
+	}()
+	if timeout <= 0 {
+		timeout = defaultOpenCodeEventConnectTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result := <-resultCh:
+		return result.resp, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, fmt.Errorf("opencode event stream connect timed out after %s", timeout)
+	}
 }

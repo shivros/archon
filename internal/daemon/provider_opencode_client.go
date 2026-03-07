@@ -146,7 +146,7 @@ func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 	client.modelResolver = openCodeDefaultRuntimeModelResolver{catalog: client.catalogService}
 	client.promptService = newOpenCodePromptService(client, client.sessionService, client)
 	client.permissionSvc = newOpenCodePermissionService(client)
-	client.eventSvc = newOpenCodeEventService(client.baseURL, client.username, client.token, client.httpClient.Transport)
+	client.eventSvc = newOpenCodeEventService(client.baseURL, client.username, client.token, client.httpClient.Transport, defaultOpenCodeEventConnectTimeout)
 	return client, nil
 }
 

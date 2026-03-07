@@ -43,10 +43,71 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 	if sid := openCodeEventSessionID(eventType, props); sid != "" && sid != sessionID {
 		return nil
 	}
+	mapper := defaultOpenCodeEventMappers.Resolve(eventType)
+	if mapper == nil {
+		return nil
+	}
+	return mapper.Map(eventType, props, build, usedPermissionIDs)
+}
 
+type openCodeCodexEventBuilder func(method string, id *int, payload map[string]any) types.CodexEvent
+
+type openCodeEventMapper interface {
+	Handles(eventType string) bool
+	Map(eventType string, properties map[string]any, build openCodeCodexEventBuilder, usedPermissionIDs map[int]string) []types.CodexEvent
+}
+
+type openCodeEventMapperRegistry interface {
+	Resolve(eventType string) openCodeEventMapper
+}
+
+type orderedOpenCodeEventMapperRegistry struct {
+	mappers []openCodeEventMapper
+}
+
+var defaultOpenCodeEventMappers openCodeEventMapperRegistry = newDefaultOpenCodeEventMapperRegistry()
+
+func newDefaultOpenCodeEventMapperRegistry() openCodeEventMapperRegistry {
+	return orderedOpenCodeEventMapperRegistry{
+		mappers: []openCodeEventMapper{
+			openCodeSessionEventMapper{},
+			openCodeTurnEventMapper{},
+			openCodeMessageEventMapper{},
+			openCodePermissionEventMapper{},
+		},
+	}
+}
+
+func (r orderedOpenCodeEventMapperRegistry) Resolve(eventType string) openCodeEventMapper {
+	for _, mapper := range r.mappers {
+		if mapper == nil || !mapper.Handles(eventType) {
+			continue
+		}
+		return mapper
+	}
+	return nil
+}
+
+type openCodeSessionEventMapper struct{}
+
+func (openCodeSessionEventMapper) Handles(eventType string) bool {
+	switch eventType {
+	case "session.status", "session.idle", "session.error":
+		return true
+	default:
+		return false
+	}
+}
+
+func (openCodeSessionEventMapper) Map(
+	eventType string,
+	properties map[string]any,
+	build openCodeCodexEventBuilder,
+	_ map[int]string,
+) []types.CodexEvent {
 	switch eventType {
 	case "session.status":
-		status, _ := props["status"].(map[string]any)
+		status, _ := properties["status"].(map[string]any)
 		statusType := strings.ToLower(strings.TrimSpace(asString(status["type"])))
 		switch statusType {
 		case "busy":
@@ -66,7 +127,7 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 		})}
 	case "session.error":
 		errData := map[string]any{}
-		if rawErr, ok := props["error"].(map[string]any); ok && rawErr != nil {
+		if rawErr, ok := properties["error"].(map[string]any); ok && rawErr != nil {
 			errData = rawErr
 		}
 		msg := openCodeEventErrorMessage(errData)
@@ -85,8 +146,69 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 			"turn": map[string]any{"status": completionStatus, "error": msg},
 		}))
 		return events
+	default:
+		return nil
+	}
+}
+
+type openCodeTurnEventMapper struct{}
+
+func (openCodeTurnEventMapper) Handles(eventType string) bool {
+	switch eventType {
+	case "turn.completed", "turn.failed", "turn.error", "turn.aborted", "turn.cancelled", "turn.canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func (openCodeTurnEventMapper) Map(
+	eventType string,
+	properties map[string]any,
+	build openCodeCodexEventBuilder,
+	_ map[int]string,
+) []types.CodexEvent {
+	payload := openCodeTurnCompletedPayload(eventType, properties)
+	if payload == nil {
+		return nil
+	}
+	if eventType == "turn.error" {
+		if errMsg := strings.TrimSpace(turnErrorMessage(properties["error"])); errMsg != "" {
+			return []types.CodexEvent{
+				build("error", nil, map[string]any{"error": map[string]any{"message": errMsg}}),
+				build("turn/completed", nil, payload),
+			}
+		}
+	}
+	return []types.CodexEvent{build("turn/completed", nil, payload)}
+}
+
+type openCodeMessageEventMapper struct{}
+
+func (openCodeMessageEventMapper) Handles(eventType string) bool {
+	switch eventType {
+	case "message.updated", "message.part.updated":
+		return true
+	default:
+		return false
+	}
+}
+
+func (openCodeMessageEventMapper) Map(
+	eventType string,
+	properties map[string]any,
+	build openCodeCodexEventBuilder,
+	_ map[int]string,
+) []types.CodexEvent {
+	switch eventType {
+	case "message.updated":
+		delta := openCodeEventMessageDelta(properties)
+		if delta == "" {
+			return nil
+		}
+		return []types.CodexEvent{build("item/agentMessage/delta", nil, map[string]any{"delta": delta})}
 	case "message.part.updated":
-		part, _ := props["part"].(map[string]any)
+		part, _ := properties["part"].(map[string]any)
 		if part == nil {
 			return nil
 		}
@@ -105,7 +227,7 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 			}
 			return []types.CodexEvent{build("item/completed", nil, map[string]any{"item": item})}
 		case "text":
-			delta := strings.TrimSpace(asString(props["delta"]))
+			delta := strings.TrimSpace(asString(properties["delta"]))
 			if delta == "" {
 				delta = strings.TrimSpace(asString(part["text"]))
 			}
@@ -127,20 +249,43 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 		default:
 			return nil
 		}
+	default:
+		return nil
+	}
+}
+
+type openCodePermissionEventMapper struct{}
+
+func (openCodePermissionEventMapper) Handles(eventType string) bool {
+	switch eventType {
+	case "permission.updated", "permission.replied":
+		return true
+	default:
+		return false
+	}
+}
+
+func (openCodePermissionEventMapper) Map(
+	eventType string,
+	properties map[string]any,
+	build openCodeCodexEventBuilder,
+	usedPermissionIDs map[int]string,
+) []types.CodexEvent {
+	switch eventType {
 	case "permission.updated":
-		permission, ok := parseOpenCodePermission(props)
+		permission, ok := parseOpenCodePermission(properties)
 		if !ok {
 			return nil
 		}
 		if permission.CreatedAt.IsZero() {
-			permission.CreatedAt = openCodePermissionCreatedAt(props)
+			permission.CreatedAt = openCodePermissionCreatedAt(properties)
 		}
 		method := openCodePermissionMethod(permission)
 		requestID := openCodePermissionRequestID(permission.PermissionID, usedPermissionIDs)
 		params := openCodeApprovalParams(permission, method)
 		return []types.CodexEvent{build(method, &requestID, params)}
 	case "permission.replied":
-		permissionID := strings.TrimSpace(asString(props["permissionID"]))
+		permissionID := strings.TrimSpace(asString(properties["permissionID"]))
 		if permissionID == "" {
 			return nil
 		}
@@ -148,7 +293,7 @@ func mapOpenCodeEventToCodex(raw string, sessionID string, usedPermissionIDs map
 		return []types.CodexEvent{build("permission/replied", &requestID, map[string]any{
 			"permission_id": permissionID,
 			"request_id":    requestID,
-			"response":      strings.TrimSpace(asString(props["response"])),
+			"response":      strings.TrimSpace(asString(properties["response"])),
 		})}
 	default:
 		return nil
@@ -162,6 +307,12 @@ func openCodeEventSessionID(eventType string, properties map[string]any) string 
 	switch eventType {
 	case "session.status", "session.idle", "session.compacted", "session.error":
 		return strings.TrimSpace(asString(properties["sessionID"]))
+	case "turn.completed", "turn.failed", "turn.error", "turn.aborted", "turn.cancelled", "turn.canceled":
+		if sid := strings.TrimSpace(asString(properties["sessionID"])); sid != "" {
+			return sid
+		}
+		turn, _ := properties["turn"].(map[string]any)
+		return strings.TrimSpace(asString(turn["sessionID"]))
 	case "message.updated":
 		info, _ := properties["info"].(map[string]any)
 		return strings.TrimSpace(asString(info["sessionID"]))
@@ -189,6 +340,109 @@ func openCodeEventErrorMessage(raw map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func openCodeTurnCompletedPayload(eventType string, properties map[string]any) map[string]any {
+	if properties == nil {
+		return nil
+	}
+	turn, _ := properties["turn"].(map[string]any)
+
+	status := strings.TrimSpace(asString(properties["status"]))
+	if status == "" {
+		status = strings.TrimSpace(asString(turn["status"]))
+	}
+	if status == "" {
+		switch eventType {
+		case "turn.failed", "turn.error":
+			status = "failed"
+		case "turn.aborted":
+			status = "aborted"
+		case "turn.cancelled", "turn.canceled":
+			status = "cancelled"
+		default:
+			status = "completed"
+		}
+	}
+
+	turnID := strings.TrimSpace(asString(properties["turnID"]))
+	if turnID == "" {
+		turnID = strings.TrimSpace(asString(properties["id"]))
+	}
+	if turnID == "" {
+		turnID = strings.TrimSpace(asString(turn["id"]))
+	}
+
+	errMsg := strings.TrimSpace(turnErrorMessage(turn["error"]))
+	if errMsg == "" {
+		errMsg = strings.TrimSpace(turnErrorMessage(properties["error"]))
+	}
+	if errMsg == "" && strings.EqualFold(eventType, "turn.error") {
+		errMsg = strings.TrimSpace(asString(properties["message"]))
+	}
+
+	output := ""
+	if turn != nil {
+		output = strings.TrimSpace(turnOutputText(turn))
+	}
+	if output == "" {
+		output = strings.TrimSpace(turnOutputText(properties))
+	}
+
+	turnPayload := map[string]any{
+		"status": status,
+	}
+	if turnID != "" {
+		turnPayload["id"] = turnID
+	}
+	if errMsg != "" {
+		turnPayload["error"] = map[string]any{"message": errMsg}
+	}
+	if output != "" {
+		turnPayload["output"] = output
+	}
+
+	payload := map[string]any{
+		"turn":   turnPayload,
+		"status": status,
+	}
+	if errMsg != "" {
+		payload["error"] = map[string]any{"message": errMsg}
+	}
+	if output != "" {
+		payload["output"] = output
+	}
+	return payload
+}
+
+func openCodeEventMessageDelta(properties map[string]any) string {
+	if properties == nil {
+		return ""
+	}
+	if delta := strings.TrimSpace(asString(properties["delta"])); delta != "" {
+		return delta
+	}
+	if text := strings.TrimSpace(asString(properties["text"])); text != "" {
+		return text
+	}
+	if part, ok := properties["part"].(map[string]any); ok {
+		if text := strings.TrimSpace(asString(part["text"])); text != "" {
+			return text
+		}
+	}
+	message, _ := properties["message"].(map[string]any)
+	if message == nil {
+		return ""
+	}
+	parsed, ok := parseOpenCodeSessionMessage(message)
+	if !ok {
+		return ""
+	}
+	role := strings.ToLower(strings.TrimSpace(openCodeSessionMessageRole(parsed)))
+	if role != "" && role != "assistant" && role != "model" {
+		return ""
+	}
+	return strings.TrimSpace(extractOpenCodeSessionMessageText(parsed))
 }
 
 func openCodePermissionCreatedAt(raw map[string]any) time.Time {

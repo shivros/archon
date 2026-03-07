@@ -1536,6 +1536,14 @@ func TestOpenCodeClientSubscribeSessionEvents(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if got := strings.TrimSpace(r.URL.Query().Get("parentID")); got != "sess_1" {
+			http.Error(w, "missing parentID", http.StatusBadRequest)
+			return
+		}
+		if got := strings.TrimSpace(r.URL.Query().Get("sessionID")); got != "sess_1" {
+			http.Error(w, "missing sessionID", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, ok := w.(http.Flusher)
 		if !ok {

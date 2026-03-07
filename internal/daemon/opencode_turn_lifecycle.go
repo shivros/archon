@@ -43,6 +43,16 @@ type TurnPublisher interface {
 	PublishTurnTerminal(result openCodeTerminalResult)
 }
 
+type TurnIDReconciler interface {
+	ResolveTurnID(requestedTurnID string, pendingTurnIDs []string) TurnIDReconciliationDecision
+}
+
+type TurnIDReconciliationDecision struct {
+	TurnID  string
+	Matched bool
+	Reason  string
+}
+
 type openCodeTerminalResolution struct {
 	TurnID string
 	Status turnTerminalState
@@ -220,6 +230,7 @@ type openCodeTurnLifecycleConfig struct {
 	reconcileInterval time.Duration
 	historyTimeout    time.Duration
 	abandonTimeout    time.Duration
+	turnIDReconciler  TurnIDReconciler
 }
 
 type openCodeTurnLifecycleEngine struct {
@@ -231,6 +242,7 @@ type openCodeTurnLifecycleEngine struct {
 	historyFetcher HistoryFetcher
 	resolver       TurnStateResolver
 	publisher      TurnPublisher
+	reconciler     TurnIDReconciler
 
 	cfg     openCodeTurnLifecycleConfig
 	pending map[string]openCodePendingTurn
@@ -263,6 +275,10 @@ func newOpenCodeTurnLifecycleEngine(
 	if resolver == nil {
 		resolver = openCodeDefaultTurnStateResolver{abandonTimeout: cfg.abandonTimeout}
 	}
+	reconciler := cfg.turnIDReconciler
+	if reconciler == nil {
+		reconciler = defaultTurnIDReconciler{}
+	}
 	return &openCodeTurnLifecycleEngine{
 		session:        strings.TrimSpace(sessionID),
 		provider:       strings.TrimSpace(provider),
@@ -270,9 +286,52 @@ func newOpenCodeTurnLifecycleEngine(
 		historyFetcher: historyFetcher,
 		resolver:       resolver,
 		publisher:      publisher,
+		reconciler:     reconciler,
 		cfg:            cfg,
 		pending:        map[string]openCodePendingTurn{},
 		done:           make(chan struct{}),
+	}
+}
+
+type defaultTurnIDReconciler struct{}
+
+func (defaultTurnIDReconciler) ResolveTurnID(
+	requestedTurnID string,
+	pendingTurnIDs []string,
+) TurnIDReconciliationDecision {
+	requestedTurnID = strings.TrimSpace(requestedTurnID)
+	if len(pendingTurnIDs) == 0 {
+		return TurnIDReconciliationDecision{
+			Matched: false,
+			Reason:  "no_pending_turns",
+		}
+	}
+	if requestedTurnID != "" {
+		for _, pendingTurnID := range pendingTurnIDs {
+			if pendingTurnID == requestedTurnID {
+				return TurnIDReconciliationDecision{
+					TurnID:  requestedTurnID,
+					Matched: true,
+					Reason:  "exact_match",
+				}
+			}
+		}
+		if len(pendingTurnIDs) == 1 {
+			return TurnIDReconciliationDecision{
+				TurnID:  strings.TrimSpace(pendingTurnIDs[0]),
+				Matched: true,
+				Reason:  "single_pending_fallback",
+			}
+		}
+		return TurnIDReconciliationDecision{
+			Matched: false,
+			Reason:  "turn_id_not_found_with_multiple_pending",
+		}
+	}
+	return TurnIDReconciliationDecision{
+		TurnID:  strings.TrimSpace(pendingTurnIDs[0]),
+		Matched: true,
+		Reason:  "missing_turn_id_fallback_first_pending",
 	}
 }
 
@@ -450,11 +509,26 @@ func (e *openCodeTurnLifecycleEngine) markAttempt(turnID string, now time.Time) 
 }
 
 func (e *openCodeTurnLifecycleEngine) resolveTerminal(resolution openCodeTerminalResolution, source string) *openCodeTerminalResult {
-	turnID := strings.TrimSpace(resolution.TurnID)
-	if turnID == "" {
+	e.mu.Lock()
+	requestedTurnID := strings.TrimSpace(resolution.TurnID)
+	pendingTurnIDs := e.pendingTurnIDsLocked()
+	reconciler := e.reconciler
+	if reconciler == nil {
+		reconciler = defaultTurnIDReconciler{}
+	}
+	decision := reconciler.ResolveTurnID(requestedTurnID, pendingTurnIDs)
+	turnID := strings.TrimSpace(decision.TurnID)
+	if !decision.Matched || turnID == "" {
+		e.mu.Unlock()
+		e.logDebug("opencode_turn_terminal_dropped",
+			logging.F("session_id", e.session),
+			logging.F("provider", e.provider),
+			logging.F("requested_turn_id", requestedTurnID),
+			logging.F("source", source),
+			logging.F("reconcile_reason", strings.TrimSpace(decision.Reason)),
+		)
 		return nil
 	}
-	e.mu.Lock()
 	entry, ok := e.pending[turnID]
 	if !ok {
 		e.mu.Unlock()
@@ -478,7 +552,36 @@ func (e *openCodeTurnLifecycleEngine) resolveTerminal(resolution openCodeTermina
 		AttemptCount:   entry.AttemptCount,
 	}
 	e.mu.Unlock()
+	if strings.TrimSpace(decision.Reason) != "" {
+		e.logDebug("opencode_turn_terminal_reconciled",
+			logging.F("session_id", e.session),
+			logging.F("provider", e.provider),
+			logging.F("requested_turn_id", requestedTurnID),
+			logging.F("resolved_turn_id", turnID),
+			logging.F("reconcile_reason", strings.TrimSpace(decision.Reason)),
+			logging.F("source", source),
+		)
+	}
 	return &result
+}
+
+func (e *openCodeTurnLifecycleEngine) pendingTurnIDsLocked() []string {
+	if e == nil || len(e.pending) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(e.pending))
+	for _, pendingTurnID := range e.order {
+		if _, ok := e.pending[pendingTurnID]; ok {
+			out = append(out, pendingTurnID)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for pendingTurnID := range e.pending {
+		out = append(out, pendingTurnID)
+	}
+	return out
 }
 
 func (e *openCodeTurnLifecycleEngine) publish(result openCodeTerminalResult) {

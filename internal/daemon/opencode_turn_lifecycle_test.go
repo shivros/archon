@@ -209,6 +209,77 @@ func TestOpenCodeTurnLifecycleEventTerminalizesImmediately(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTurnLifecycleMapsForeignProviderTurnIDWhenSinglePending(t *testing.T) {
+	fetcher := &stubTurnHistoryFetcher{}
+	publisher := &captureTurnPublisher{}
+	engine := newOpenCodeTurnLifecycleEngine(
+		"sess-foreign-id",
+		"opencode",
+		fetcher,
+		openCodeDefaultTurnStateResolver{abandonTimeout: 2 * time.Second},
+		publisher,
+		logging.Nop(),
+		openCodeTurnLifecycleConfig{
+			reconcileInterval: 100 * time.Millisecond,
+			historyTimeout:    50 * time.Millisecond,
+			abandonTimeout:    2 * time.Second,
+		},
+	)
+	engine.RegisterTurn("turn-local-1", openCodeAssistantSnapshot{}, time.Now().UTC())
+	engine.ObserveEvent(types.CodexEvent{
+		Method: "turn/completed",
+		Params: []byte(`{"turn":{"id":"provider-turn-999","status":"completed","output":"ok"}}`),
+	})
+	results := publisher.waitCount(1, 250*time.Millisecond)
+	if len(results) != 1 {
+		t.Fatalf("expected one terminal result, got %d", len(results))
+	}
+	if got := results[0].TurnID; got != "turn-local-1" {
+		t.Fatalf("expected remapped local turn id, got %q", got)
+	}
+	if got := results[0].Status; got != turnTerminalCompleted {
+		t.Fatalf("expected completed status, got %s", got)
+	}
+}
+
+func TestOpenCodeTurnLifecycleSupportsPluggableTurnIDReconciler(t *testing.T) {
+	fetcher := &stubTurnHistoryFetcher{}
+	publisher := &captureTurnPublisher{}
+	engine := newOpenCodeTurnLifecycleEngine(
+		"sess-custom-reconciler",
+		"opencode",
+		fetcher,
+		openCodeDefaultTurnStateResolver{abandonTimeout: 2 * time.Second},
+		publisher,
+		logging.Nop(),
+		openCodeTurnLifecycleConfig{
+			turnIDReconciler: turnIDReconcilerFunc(func(_ string, pending []string) TurnIDReconciliationDecision {
+				if len(pending) == 0 {
+					return TurnIDReconciliationDecision{Matched: false}
+				}
+				return TurnIDReconciliationDecision{
+					TurnID:  pending[len(pending)-1],
+					Matched: true,
+					Reason:  "custom_choose_latest",
+				}
+			}),
+		},
+	)
+	engine.RegisterTurn("turn-first", openCodeAssistantSnapshot{}, time.Now().UTC())
+	engine.RegisterTurn("turn-second", openCodeAssistantSnapshot{}, time.Now().UTC())
+	engine.ObserveEvent(types.CodexEvent{
+		Method: "turn/completed",
+		Params: []byte(`{"turn":{"id":"provider-foreign","status":"completed"}}`),
+	})
+	results := publisher.waitCount(1, 250*time.Millisecond)
+	if len(results) != 1 {
+		t.Fatalf("expected one terminal result, got %d", len(results))
+	}
+	if got := results[0].TurnID; got != "turn-second" {
+		t.Fatalf("expected reconciler-selected turn-second, got %q", got)
+	}
+}
+
 func TestOpenCodeTurnStateResolverSupportsPluggableEventRule(t *testing.T) {
 	resolver := openCodeDefaultTurnStateResolver{
 		eventRules: []EventTerminalRule{
@@ -360,6 +431,79 @@ func TestOpenCodeTurnLifecycleEngineLogsDebugOnReconcileError(t *testing.T) {
 	}
 }
 
+func TestDefaultTurnIDReconcilerResolveTurnID(t *testing.T) {
+	reconciler := defaultTurnIDReconciler{}
+	tests := []struct {
+		name      string
+		requested string
+		pending   []string
+		want      TurnIDReconciliationDecision
+	}{
+		{
+			name:      "no pending turns",
+			requested: "turn-1",
+			pending:   nil,
+			want: TurnIDReconciliationDecision{
+				Matched: false,
+				Reason:  "no_pending_turns",
+			},
+		},
+		{
+			name:      "exact match",
+			requested: "turn-2",
+			pending:   []string{"turn-1", "turn-2"},
+			want: TurnIDReconciliationDecision{
+				TurnID:  "turn-2",
+				Matched: true,
+				Reason:  "exact_match",
+			},
+		},
+		{
+			name:      "single pending fallback",
+			requested: "provider-foreign",
+			pending:   []string{"turn-1"},
+			want: TurnIDReconciliationDecision{
+				TurnID:  "turn-1",
+				Matched: true,
+				Reason:  "single_pending_fallback",
+			},
+		},
+		{
+			name:      "requested turn not found with multiple pending",
+			requested: "provider-foreign",
+			pending:   []string{"turn-1", "turn-2"},
+			want: TurnIDReconciliationDecision{
+				Matched: false,
+				Reason:  "turn_id_not_found_with_multiple_pending",
+			},
+		},
+		{
+			name:      "missing requested turn id falls back to first pending",
+			requested: "",
+			pending:   []string{"turn-1", "turn-2"},
+			want: TurnIDReconciliationDecision{
+				TurnID:  "turn-1",
+				Matched: true,
+				Reason:  "missing_turn_id_fallback_first_pending",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := reconciler.ResolveTurnID(tc.requested, tc.pending)
+			if got != tc.want {
+				t.Fatalf("unexpected reconciliation decision: want=%#v got=%#v", tc.want, got)
+			}
+		})
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && (haystack == needle || bytes.Contains([]byte(haystack), []byte(needle)))
+}
+
+type turnIDReconcilerFunc func(requestedTurnID string, pendingTurnIDs []string) TurnIDReconciliationDecision
+
+func (f turnIDReconcilerFunc) ResolveTurnID(requestedTurnID string, pendingTurnIDs []string) TurnIDReconciliationDecision {
+	return f(requestedTurnID, pendingTurnIDs)
 }

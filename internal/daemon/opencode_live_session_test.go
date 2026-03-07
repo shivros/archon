@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -139,6 +140,51 @@ func TestOpenCodeLiveSessionLifecycleSynthesizesTurnCompletedEvent(t *testing.T)
 	}
 	if got := strings.TrimSpace(asString(payload["terminalization_source"])); got != "history_reconcile" {
 		t.Fatalf("expected history reconcile source, got %q", got)
+	}
+}
+
+func TestOpenCodeLiveSessionClosedEventStreamDoesNotCloseSession(t *testing.T) {
+	eventStream := make(chan types.CodexEvent)
+	close(eventStream)
+	notifier := &captureOpenCodeNotificationPublisher{}
+	fetcher := &stubTurnHistoryFetcher{
+		snapshots: []openCodeAssistantSnapshot{
+			{MessageID: "msg-recovered-1", Text: "done after reconnect gap"},
+		},
+	}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-stream-drop",
+		providerName: "opencode",
+		events:       eventStream,
+		hub:          newCodexSubscriberHub(),
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+	}
+	ls.lifecycle = newOpenCodeTurnLifecycleEngine(
+		ls.sessionID,
+		ls.providerName,
+		fetcher,
+		openCodeDefaultTurnStateResolver{abandonTimeout: 2 * time.Second},
+		openCodeLiveTurnPublisher{session: ls},
+		logging.Nop(),
+		openCodeTurnLifecycleConfig{
+			reconcileInterval: 20 * time.Millisecond,
+			historyTimeout:    80 * time.Millisecond,
+			abandonTimeout:    2 * time.Second,
+		},
+	)
+	ls.start()
+	defer ls.Close()
+	ls.lifecycle.RegisterTurn("turn-stream-drop", openCodeAssistantSnapshot{}, time.Now().UTC())
+
+	deadline := time.Now().Add(650 * time.Millisecond)
+	for notifier.Len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if notifier.Len() == 0 {
+		t.Fatalf("expected lifecycle to complete turn despite stream closure")
+	}
+	if ls.isClosed() {
+		t.Fatalf("expected live session to remain open after stream closure")
 	}
 }
 
@@ -912,6 +958,142 @@ func TestOpenCodeLiveSessionFactoryCreateTurnCapableFallsBackToEmptyDirectory(t 
 	}
 }
 
+func TestOpenCodeLiveSessionReconnectEventStreamFailureIncrementsRetryAttempt(t *testing.T) {
+	connector := &stubOpenCodeEventStreamConnector{
+		errForDirectory: map[string]error{
+			"/tmp/worktree": errors.New("directory stream unavailable"),
+			"":              errors.New("stream unavailable"),
+		},
+	}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-reconnect-fail",
+		providerID:   "provider-session",
+		directory:    "/tmp/worktree",
+		connector:    connector,
+		streamCtx:    context.Background(),
+		reconnect:    stubOpenCodeReconnectPolicy{retryDelay: time.Millisecond},
+		cancelEvents: nil,
+	}
+
+	if ok := ls.reconnectEventStream(); ok {
+		t.Fatalf("expected reconnect to fail")
+	}
+	if got := ls.currentReconnectAttempt(); got != 1 {
+		t.Fatalf("expected reconnect attempt to increment to 1, got %d", got)
+	}
+	if got := connector.directories(); len(got) != 2 || got[0] != "/tmp/worktree" || got[1] != "" {
+		t.Fatalf("expected directory fallback attempts, got %#v", got)
+	}
+}
+
+func TestOpenCodeLiveSessionReconnectEventStreamFailureLogsWhenPolicyAllows(t *testing.T) {
+	connector := &stubOpenCodeEventStreamConnector{
+		errForDirectory: map[string]error{
+			"": errors.New("stream unavailable"),
+		},
+	}
+	var logs bytes.Buffer
+	ls := &openCodeLiveSession{
+		sessionID:  "sess-reconnect-log",
+		providerID: "provider-session",
+		connector:  connector,
+		streamCtx:  context.Background(),
+		reconnect:  stubOpenCodeReconnectPolicy{retryDelay: time.Millisecond, logFailure: true},
+		logger:     logging.New(&logs, logging.Debug),
+	}
+
+	if ok := ls.reconnectEventStream(); ok {
+		t.Fatalf("expected reconnect to fail")
+	}
+	if !strings.Contains(logs.String(), "opencode_event_stream_resubscribe_failed") {
+		t.Fatalf("expected reconnect failure log, got %q", logs.String())
+	}
+}
+
+func TestOpenCodeLiveSessionReconnectEventStreamSuccessResetsRetryAndCancelsPreviousStream(t *testing.T) {
+	events := make(chan types.CodexEvent)
+	var newCancelCalls int
+	connector := &stubOpenCodeEventStreamConnector{
+		events: events,
+		cancel: func() {
+			newCancelCalls++
+		},
+	}
+	var previousCancelCalls int
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-reconnect-success",
+		providerID:   "provider-session",
+		directory:    "/tmp/worktree",
+		connector:    connector,
+		streamCtx:    context.Background(),
+		retryAttempt: 4,
+		cancelEvents: func() {
+			previousCancelCalls++
+		},
+	}
+
+	if ok := ls.reconnectEventStream(); !ok {
+		t.Fatalf("expected reconnect to succeed")
+	}
+	if got := ls.currentReconnectAttempt(); got != 0 {
+		t.Fatalf("expected reconnect attempt reset to 0, got %d", got)
+	}
+	if previousCancelCalls != 1 {
+		t.Fatalf("expected previous cancel to be called once, got %d", previousCancelCalls)
+	}
+	if got := ls.currentEvents(); got != events {
+		t.Fatalf("expected session events channel to be replaced")
+	}
+	if ls.cancelEvents == nil {
+		t.Fatalf("expected new cancel function to be set")
+	}
+	ls.cancelEvents()
+	if newCancelCalls != 1 {
+		t.Fatalf("expected new cancel function to be callable, got %d calls", newCancelCalls)
+	}
+}
+
+func TestWithOpenCodeEventReconnectPolicyOption(t *testing.T) {
+	customPolicy := &stubOpenCodeReconnectPolicy{retryDelay: 2 * time.Millisecond}
+	factory := newOpenCodeLiveSessionFactory(
+		"opencode",
+		NopTurnCompletionNotifier{},
+		NopApprovalStorage{},
+		&stubTurnArtifactRepository{},
+		defaultTurnCompletionPayloadBuilder{},
+		NewTurnEvidenceFreshnessTracker(),
+		nil,
+		withOpenCodeEventReconnectPolicy(customPolicy),
+	)
+	if factory.reconnect != customPolicy {
+		t.Fatalf("expected custom reconnect policy to be applied")
+	}
+	withOpenCodeEventReconnectPolicy(customPolicy)(nil)
+	withOpenCodeEventReconnectPolicy(nil)(factory)
+	if factory.reconnect != customPolicy {
+		t.Fatalf("expected nil option application to preserve existing reconnect policy")
+	}
+}
+
+func TestOpenCodeLiveSessionWaitForEventReconnectRetryRespectsState(t *testing.T) {
+	ls := &openCodeLiveSession{
+		reconnect: stubOpenCodeReconnectPolicy{retryDelay: time.Millisecond},
+	}
+	if ok := ls.waitForEventReconnectRetry(); ok {
+		t.Fatalf("expected reconnect wait to fail without stream context")
+	}
+	ls.streamCtx = context.Background()
+	if ok := ls.waitForEventReconnectRetry(); !ok {
+		t.Fatalf("expected reconnect wait to proceed with active stream context")
+	}
+	ls.mu.Lock()
+	ls.closed = true
+	ls.mu.Unlock()
+	if ok := ls.waitForEventReconnectRetry(); ok {
+		t.Fatalf("expected reconnect wait to stop when session is closed")
+	}
+}
+
 type captureFreshnessTracker struct {
 	mu    sync.Mutex
 	calls []freshnessCall
@@ -944,4 +1126,69 @@ func (c *captureFreshnessTracker) MarkFresh(sessionID, evidenceKey, output strin
 		output:    output,
 	})
 	return true
+}
+
+type stubOpenCodeReconnectPolicy struct {
+	retryDelay time.Duration
+	logFailure bool
+}
+
+func (s stubOpenCodeReconnectPolicy) RetryDelay(int) time.Duration {
+	if s.retryDelay <= 0 {
+		return time.Millisecond
+	}
+	return s.retryDelay
+}
+
+func (s stubOpenCodeReconnectPolicy) ShouldLogFailure(int) bool {
+	return s.logFailure
+}
+
+type openCodeStreamSubscribeCall struct {
+	sessionID string
+	directory string
+}
+
+type stubOpenCodeEventStreamConnector struct {
+	mu              sync.Mutex
+	calls           []openCodeStreamSubscribeCall
+	events          <-chan types.CodexEvent
+	cancel          func()
+	errForDirectory map[string]error
+}
+
+func (s *stubOpenCodeEventStreamConnector) SubscribeSessionEvents(_ context.Context, sessionID, directory string) (<-chan types.CodexEvent, func(), error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, openCodeStreamSubscribeCall{
+		sessionID: sessionID,
+		directory: directory,
+	})
+	cancel := s.cancel
+	events := s.events
+	err := s.errForDirectory[directory]
+	s.mu.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+	if cancel == nil {
+		cancel = func() {}
+	}
+	if events == nil {
+		ch := make(chan types.CodexEvent)
+		events = ch
+	}
+	return events, cancel, nil
+}
+
+func (s *stubOpenCodeEventStreamConnector) directories() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.calls))
+	for _, call := range s.calls {
+		out = append(out, call.directory)
+	}
+	return out
 }
