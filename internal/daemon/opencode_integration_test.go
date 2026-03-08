@@ -143,6 +143,9 @@ func (s openCodeIntegrationModelSelector) SelectModel(t *testing.T, provider str
 	if preferred != "" && strings.EqualFold(strings.TrimSpace(catalog.DefaultModel), preferred) {
 		return preferred
 	}
+	if preferred != "" {
+		return preferred
+	}
 	if model := strings.TrimSpace(catalog.DefaultModel); model != "" {
 		return model
 	}
@@ -177,30 +180,30 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 
 	t.Run("returns configured when reader factory missing", func(t *testing.T) {
 		selector := openCodeIntegrationModelSelector{
-			configuredModel: func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			configuredModel: func(string) string { return openCodeIntegrationDefaultModel },
 		}
 		got := selector.SelectModel(t, "opencode")
-		if got != "openrouter/google/gemini-2.5-flash" {
+		if got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected configured model, got %q", got)
 		}
 	})
 
 	t.Run("uses deterministic provider fallback when env/config are empty", func(t *testing.T) {
-		if got := openCodeConfiguredIntegrationModel("opencode"); got != "openrouter/google/gemini-2.5-flash" {
+		if got := openCodeConfiguredIntegrationModel("opencode"); got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected opencode fallback model, got %q", got)
 		}
-		if got := openCodeConfiguredIntegrationModel("kilocode"); got != "moonshotai/kimi-k2.5" {
+		if got := openCodeConfiguredIntegrationModel("kilocode"); got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected kilocode fallback model, got %q", got)
 		}
 	})
 
 	t.Run("returns configured when factory errors", func(t *testing.T) {
 		selector := openCodeIntegrationModelSelector{
-			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			configuredModel:  func(string) string { return openCodeIntegrationDefaultModel },
 			catalogReaderFor: makeFactory(nil, context.DeadlineExceeded),
 		}
 		got := selector.SelectModel(t, "opencode")
-		if got != "openrouter/google/gemini-2.5-flash" {
+		if got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected configured model, got %q", got)
 		}
 	})
@@ -208,14 +211,14 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 	t.Run("returns configured when catalog lookup fails", func(t *testing.T) {
 		reader := &stubOpenCodeModelCatalogReader{err: context.DeadlineExceeded}
 		selector := openCodeIntegrationModelSelector{
-			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			configuredModel:  func(string) string { return openCodeIntegrationDefaultModel },
 			catalogReaderFor: makeFactory(reader, nil),
 		}
 		got := selector.SelectModel(t, "opencode")
 		if !reader.called {
 			t.Fatalf("expected catalog reader to be called")
 		}
-		if got != "openrouter/google/gemini-2.5-flash" {
+		if got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected configured model, got %q", got)
 		}
 	})
@@ -224,23 +227,23 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 		reader := &stubOpenCodeModelCatalogReader{
 			catalog: &openCodeModelCatalog{
 				Models: []string{
-					"openrouter/google/gemini-2.5-flash",
+					openCodeIntegrationDefaultModel,
 					"openrouter/anthropic/claude-sonnet-4",
 				},
 				DefaultModel: "openrouter/anthropic/claude-sonnet-4",
 			},
 		}
 		selector := openCodeIntegrationModelSelector{
-			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			configuredModel:  func(string) string { return openCodeIntegrationDefaultModel },
 			catalogReaderFor: makeFactory(reader, nil),
 		}
 		got := selector.SelectModel(t, "opencode")
-		if got != "openrouter/google/gemini-2.5-flash" {
+		if got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected configured model, got %q", got)
 		}
 	})
 
-	t.Run("uses catalog default when configured missing from catalog", func(t *testing.T) {
+	t.Run("keeps configured when catalog default differs", func(t *testing.T) {
 		reader := &stubOpenCodeModelCatalogReader{
 			catalog: &openCodeModelCatalog{
 				Models:       []string{"openrouter/anthropic/claude-sonnet-4"},
@@ -248,12 +251,12 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 			},
 		}
 		selector := openCodeIntegrationModelSelector{
-			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			configuredModel:  func(string) string { return openCodeIntegrationDefaultModel },
 			catalogReaderFor: makeFactory(reader, nil),
 		}
 		got := selector.SelectModel(t, "opencode")
-		if got != "openrouter/anthropic/claude-sonnet-4" {
-			t.Fatalf("expected catalog default model, got %q", got)
+		if got != openCodeIntegrationDefaultModel {
+			t.Fatalf("expected configured model, got %q", got)
 		}
 	})
 
@@ -279,11 +282,11 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 			catalog: &openCodeModelCatalog{},
 		}
 		selector := openCodeIntegrationModelSelector{
-			configuredModel:  func(string) string { return "openrouter/google/gemini-2.5-flash" },
+			configuredModel:  func(string) string { return openCodeIntegrationDefaultModel },
 			catalogReaderFor: makeFactory(reader, nil),
 		}
 		got := selector.SelectModel(t, "opencode")
-		if got != "openrouter/google/gemini-2.5-flash" {
+		if got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected configured model, got %q", got)
 		}
 	})
