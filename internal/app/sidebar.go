@@ -25,34 +25,15 @@ const (
 	activeDot              = "●"
 	dismissedDot           = "x"
 	inactiveDot            = " "
-	defaultBadgeColor      = "245"
 )
 
-var defaultProviderBadges = map[string]types.ProviderBadgeConfig{
-	"codex": {
-		Prefix: "[CDX]",
-		Color:  "15",
-	},
-	"claude": {
-		Prefix: "[CLD]",
-		Color:  "208",
-	},
-	"opencode": {
-		Prefix: "[OPN]",
-		Color:  "39",
-	},
-	"kilocode": {
-		Prefix: "[KLO]",
-		Color:  "226",
-	},
-	"gemini": {
-		Prefix: "[GEM]",
-		Color:  "45",
-	},
-	"custom": {
-		Prefix: "[CST]",
-		Color:  "250",
-	},
+var defaultProviderBadgePrefixes = map[string]string{
+	"codex":    "[CDX]",
+	"claude":   "[CLD]",
+	"opencode": "[OPN]",
+	"kilocode": "[KLO]",
+	"gemini":   "[GEM]",
+	"custom":   "[CST]",
 }
 
 type sidebarItemKind int
@@ -549,12 +530,17 @@ func resolveProviderBadge(provider string, overrides map[string]*types.ProviderB
 }
 
 func defaultProviderBadge(provider string) types.ProviderBadgeConfig {
-	if badge, ok := defaultProviderBadges[provider]; ok {
-		return badge
+	prefix := fallbackProviderBadgePrefix(provider)
+	if configured, ok := defaultProviderBadgePrefixes[provider]; ok {
+		prefix = configured
+	}
+	color := strings.TrimSpace(providerBadgeColors[provider])
+	if color == "" {
+		color = defaultBadgeColor
 	}
 	return types.ProviderBadgeConfig{
-		Prefix: fallbackProviderBadgePrefix(provider),
-		Color:  defaultBadgeColor,
+		Prefix: prefix,
+		Color:  color,
 	}
 }
 

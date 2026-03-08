@@ -965,6 +965,15 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, m.requestAppStateSaveCmd()
 		}
 		return true, nil
+	case themePreferenceSavedMsg:
+		if normalizeThemeID(msg.themeID) != normalizeThemeID(m.themeID) {
+			return true, nil
+		}
+		if msg.err != nil {
+			m.setStatusError("theme save error: " + msg.err.Error())
+			return true, nil
+		}
+		return true, nil
 	case clipboardResultMsg:
 		if msg.err != nil {
 			m.setCopyStatusError("copy failed: " + msg.err.Error())

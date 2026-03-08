@@ -1,11 +1,16 @@
 package app
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 type SettingsMenuAction int
 
 const (
 	SettingsMenuActionNone SettingsMenuAction = iota
+	SettingsMenuActionApplyTheme
 	SettingsMenuActionQuit
 )
 
@@ -14,6 +19,7 @@ type settingsMenuScreen int
 const (
 	settingsMenuScreenRoot settingsMenuScreen = iota
 	settingsMenuScreenHelp
+	settingsMenuScreenTheme
 )
 
 type SettingsMenuItem struct {
@@ -23,12 +29,22 @@ type SettingsMenuItem struct {
 	Action SettingsMenuAction
 }
 
+type SettingsThemeItem struct {
+	ID    string
+	Title string
+}
+
+const settingsMenuDefaultThemeID = "default"
+
 type SettingsMenuController struct {
-	open       bool
-	screen     settingsMenuScreen
-	selected   int
-	helpOffset int
-	items      []SettingsMenuItem
+	open          bool
+	screen        settingsMenuScreen
+	selected      int
+	helpOffset    int
+	items         []SettingsMenuItem
+	themeItems    []SettingsThemeItem
+	themeSelected int
+	activeThemeID string
 }
 
 type SettingsHotkeyMapping struct {
@@ -41,6 +57,7 @@ type SettingsHotkeyMapping struct {
 func DefaultSettingsMenuItems() []SettingsMenuItem {
 	return []SettingsMenuItem{
 		{ID: "help", Title: "HELP", Screen: settingsMenuScreenHelp, Action: SettingsMenuActionNone},
+		{ID: "theme", Title: "THEME", Screen: settingsMenuScreenTheme, Action: SettingsMenuActionNone},
 		{ID: "quit", Title: "QUIT", Screen: settingsMenuScreenRoot, Action: SettingsMenuActionQuit},
 	}
 }
@@ -60,7 +77,12 @@ func NewSettingsMenuController(items ...SettingsMenuItem) *SettingsMenuControlle
 	if len(out) == 0 {
 		out = DefaultSettingsMenuItems()
 	}
-	return &SettingsMenuController{items: out}
+	c := &SettingsMenuController{
+		items:         out,
+		activeThemeID: settingsMenuDefaultThemeID,
+	}
+	c.SetSelectedThemeID(c.activeThemeID)
+	return c
 }
 
 func (c *SettingsMenuController) IsOpen() bool {
@@ -75,6 +97,7 @@ func (c *SettingsMenuController) Open() {
 	c.screen = settingsMenuScreenRoot
 	c.selected = 0
 	c.helpOffset = 0
+	c.SetSelectedThemeID(c.activeThemeID)
 }
 
 func (c *SettingsMenuController) Close() {
@@ -85,6 +108,7 @@ func (c *SettingsMenuController) Close() {
 	c.screen = settingsMenuScreenRoot
 	c.selected = 0
 	c.helpOffset = 0
+	c.SetSelectedThemeID(c.activeThemeID)
 }
 
 func (c *SettingsMenuController) HandleKey(msg tea.KeyMsg) (bool, SettingsMenuAction) {
@@ -120,6 +144,30 @@ func (c *SettingsMenuController) HandleKey(msg tea.KeyMsg) (bool, SettingsMenuAc
 			return true, SettingsMenuActionNone
 		}
 		return true, SettingsMenuActionNone
+	case settingsMenuScreenTheme:
+		switch msg.String() {
+		case "esc":
+			c.screen = settingsMenuScreenRoot
+			return true, SettingsMenuActionNone
+		case "up", "k":
+			if c.themeSelected > 0 {
+				c.themeSelected--
+			}
+			return true, SettingsMenuActionNone
+		case "down", "j":
+			if c.themeSelected < len(c.themeItems)-1 {
+				c.themeSelected++
+			}
+			return true, SettingsMenuActionNone
+		case "enter":
+			if c.selectedThemeID() == "" {
+				return true, SettingsMenuActionNone
+			}
+			return true, SettingsMenuActionApplyTheme
+		case "q":
+			return true, SettingsMenuActionQuit
+		}
+		return true, SettingsMenuActionNone
 	default:
 		switch msg.String() {
 		case "esc":
@@ -147,10 +195,113 @@ func (c *SettingsMenuController) HandleKey(msg tea.KeyMsg) (bool, SettingsMenuAc
 				c.screen = settingsMenuScreenHelp
 				c.helpOffset = 0
 			}
+			if item.Screen == settingsMenuScreenTheme {
+				c.screen = settingsMenuScreenTheme
+				c.SetSelectedThemeID(c.activeThemeID)
+			}
 			return true, SettingsMenuActionNone
 		case "q":
 			return true, SettingsMenuActionQuit
 		}
 		return true, SettingsMenuActionNone
 	}
+}
+
+func (c *SettingsMenuController) SetThemeItems(items []SettingsThemeItem) {
+	if c == nil {
+		return
+	}
+	next := make([]SettingsThemeItem, 0, len(items))
+	for _, item := range items {
+		id := canonicalSettingsThemeID(item.ID)
+		if id == "" {
+			continue
+		}
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = strings.ToUpper(id)
+		}
+		next = append(next, SettingsThemeItem{ID: id, Title: title})
+	}
+	c.themeItems = next
+	c.SetSelectedThemeID(c.activeThemeID)
+}
+
+func (c *SettingsMenuController) ThemeItems() []SettingsThemeItem {
+	if c == nil {
+		return nil
+	}
+	out := make([]SettingsThemeItem, 0, len(c.themeItems))
+	out = append(out, c.themeItems...)
+	return out
+}
+
+func (c *SettingsMenuController) ActiveThemeID() string {
+	if c == nil {
+		return settingsMenuDefaultThemeID
+	}
+	id := normalizeSettingsThemeID(c.activeThemeID)
+	if id == "" {
+		return settingsMenuDefaultThemeID
+	}
+	return id
+}
+
+func (c *SettingsMenuController) SetActiveThemeID(themeID string) {
+	if c == nil {
+		return
+	}
+	c.activeThemeID = normalizeSettingsThemeID(themeID)
+	if c.activeThemeID == "" {
+		c.activeThemeID = settingsMenuDefaultThemeID
+	}
+}
+
+func (c *SettingsMenuController) SelectedThemeID() string {
+	if c == nil {
+		return ""
+	}
+	return c.selectedThemeID()
+}
+
+func (c *SettingsMenuController) SetSelectedThemeID(themeID string) {
+	if c == nil || len(c.themeItems) == 0 {
+		return
+	}
+	want := normalizeSettingsThemeID(themeID)
+	for idx, item := range c.themeItems {
+		if normalizeSettingsThemeID(item.ID) == want {
+			c.themeSelected = idx
+			return
+		}
+	}
+	c.themeSelected = 0
+}
+
+func (c *SettingsMenuController) selectedThemeID() string {
+	if c == nil || len(c.themeItems) == 0 {
+		return ""
+	}
+	if c.themeSelected < 0 {
+		c.themeSelected = 0
+	}
+	if c.themeSelected >= len(c.themeItems) {
+		c.themeSelected = len(c.themeItems) - 1
+	}
+	return normalizeSettingsThemeID(c.themeItems[c.themeSelected].ID)
+}
+
+func normalizeSettingsThemeID(raw string) string {
+	value := canonicalSettingsThemeID(raw)
+	if value == "" {
+		return settingsMenuDefaultThemeID
+	}
+	return value
+}
+
+func canonicalSettingsThemeID(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	return value
 }

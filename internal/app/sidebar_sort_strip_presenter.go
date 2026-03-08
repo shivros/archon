@@ -134,7 +134,7 @@ func (p *SidebarSortStripPresenter) renderLine(line string, row sidebarSortStrip
 	if strings.TrimSpace(line) == "" {
 		return line
 	}
-	base := worktreeStyle.Foreground(lipgloss.Color("243"))
+	base := worktreeStyle.Foreground(lipgloss.Color(sidebarSortStripMutedColor))
 	out := line
 	for _, span := range row.spans {
 		if span.start < 0 || span.end < span.start {
@@ -148,7 +148,7 @@ func (p *SidebarSortStripPresenter) renderLine(line string, row sidebarSortStrip
 		switch span.action {
 		case sidebarSortStripActionFilter:
 			if vm.FilterActive {
-				style = selectedStyle.Background(lipgloss.Color("60"))
+				style = selectedStyle.Background(lipgloss.Color(sidebarSortStripActiveBgColor))
 			} else if vm.SidebarFocused && vm.FocusedSegment == sidebarSortStripSegmentFilter {
 				style = selectedStyle
 			}

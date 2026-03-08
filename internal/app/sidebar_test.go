@@ -151,6 +151,7 @@ func TestBuildSidebarItemsShowDismissedToggle(t *testing.T) {
 }
 
 func TestResolveProviderBadgeUsesDefaults(t *testing.T) {
+	_ = ApplyTheme("default")
 	codex := resolveProviderBadge("codex", nil)
 	if codex.Prefix != "[CDX]" {
 		t.Fatalf("expected codex prefix [CDX], got %q", codex.Prefix)

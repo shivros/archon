@@ -109,7 +109,7 @@ func buildStyleConfig(dark bool) glamouransi.StyleConfig {
 	zero := uint(0)
 	base.Document.Margin = &zero
 	faint := true
-	color := "245"
+	color := markdownBlockQuoteColor
 	base.BlockQuote.Faint = &faint
 	base.BlockQuote.Color = &color
 	return base

@@ -21,6 +21,9 @@ func (defaultSettingsMenuPresenter) View(controller *SettingsMenuController, max
 	if controller.screen == settingsMenuScreenHelp {
 		return settingsMenuHelpView(controller, maxWidth, maxHeight, mappings)
 	}
+	if controller.screen == settingsMenuScreenTheme {
+		return settingsMenuThemeView(controller, maxWidth, maxHeight)
+	}
 	return settingsMenuRootView(controller, maxWidth, maxHeight)
 }
 
@@ -85,6 +88,27 @@ func settingsMenuHelpView(controller *SettingsMenuController, maxWidth, maxHeigh
 	return centerOverlayBlock(block, maxWidth, maxHeight)
 }
 
+func settingsMenuThemeView(controller *SettingsMenuController, maxWidth, maxHeight int) (string, int) {
+	lines := []string{settingsMenuTitleStyle.Render(" THEME "), ""}
+	items := controller.ThemeItems()
+	active := controller.ActiveThemeID()
+	for idx, item := range items {
+		prefix := "  "
+		if normalizeThemeID(item.ID) == active {
+			prefix = "* "
+		}
+		line := prefix + item.Title
+		if idx == controller.themeSelected {
+			lines = append(lines, settingsMenuOptionSelectedStyle.Render(line))
+		} else {
+			lines = append(lines, settingsMenuOptionStyle.Render(line))
+		}
+	}
+	lines = append(lines, "", settingsMenuHintStyle.Render("enter apply  j/k move  esc back"))
+	block := settingsMenuBorderStyle.Render(strings.Join(lines, "\n"))
+	return centerOverlayBlock(block, maxWidth, maxHeight)
+}
+
 func settingsMenuWordArt(word string) string {
 	switch strings.ToUpper(strings.TrimSpace(word)) {
 	case "HELP":
@@ -102,6 +126,14 @@ func settingsMenuWordArt(word string) string {
 			"| | | | | | || |  | |  ",
 			"| |_| | |_| || |  | |  ",
 			" \\__\\_\\___/|___| |_|  ",
+		}, "\n")
+	case "THEME":
+		return strings.Join([]string{
+			" _____ _   _ _____ __  __ _____ ",
+			"|_   _| | | | ____|  \\/  | ____|",
+			"  | | | |_| |  _| | |\\/| |  _|  ",
+			"  | | |  _  | |___| |  | | |___ ",
+			"  |_| |_| |_|_____|_|  |_|_____|",
 		}, "\n")
 	default:
 		return strings.ToUpper(word)

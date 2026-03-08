@@ -193,6 +193,7 @@ type UIConfig struct {
 	Input       UIInputConfig       `toml:"input"`
 	Chat        UIChatConfig        `toml:"chat"`
 	Sidebar     UISidebarConfig     `toml:"sidebar"`
+	Theme       UIThemeConfig       `toml:"theme"`
 }
 
 type UIKeybindingsConfig struct {
@@ -211,6 +212,10 @@ type UIChatConfig struct {
 type UISidebarConfig struct {
 	ExpandByDefault *bool `toml:"expand_by_default"`
 	ShowRecents     *bool `toml:"show_recents"`
+}
+
+type UIThemeConfig struct {
+	Name string `toml:"name"`
 }
 
 func DefaultCoreConfig() CoreConfig {
@@ -761,8 +766,13 @@ func DefaultUIConfig() UIConfig {
 			ExpandByDefault: boolPtr(true),
 			ShowRecents:     boolPtr(true),
 		},
+		Theme: UIThemeConfig{
+			Name: defaultUIThemeName,
+		},
 	}
 }
+
+const defaultUIThemeName = "default"
 
 func (c UIConfig) SharedMultilineInputHeights() (minHeight, maxHeight int) {
 	minHeight = c.Input.MultilineMinHeight
@@ -803,12 +813,32 @@ func (c UIConfig) SidebarShowRecents() bool {
 	return *c.Sidebar.ShowRecents
 }
 
+func (c UIConfig) ThemeName() string {
+	return normalizeUIThemeName(c.Theme.Name)
+}
+
 func LoadUIConfig() (UIConfig, error) {
 	path, err := UIConfigPath()
 	if err != nil {
 		return UIConfig{}, err
 	}
 	return loadUIConfigFromPath(path)
+}
+
+func SaveUIConfig(cfg UIConfig) error {
+	path, err := UIConfigPath()
+	if err != nil {
+		return err
+	}
+	return saveUIConfigToPath(path, cfg)
+}
+
+func UpdateUITheme(themeName string) error {
+	path, err := UIConfigPath()
+	if err != nil {
+		return err
+	}
+	return updateUIThemeAtPath(path, themeName)
 }
 
 func (c UIConfig) ResolveKeybindingsPath() (string, error) {
@@ -841,6 +871,31 @@ func loadUIConfigFromPath(path string) (UIConfig, error) {
 		return UIConfig{}, err
 	}
 	return cfg, nil
+}
+
+func saveUIConfigToPath(path string, cfg UIConfig) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("path is required")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	cfg.Theme.Name = normalizeUIThemeName(cfg.Theme.Name)
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func readTOML(path string, out any) error {
@@ -901,6 +956,16 @@ func normalizedList(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func normalizeUIThemeName(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	if value == "" {
+		return defaultUIThemeName
+	}
+	return value
 }
 
 func normalizeGuidedWorkflowsValue(raw string) string {

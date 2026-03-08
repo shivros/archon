@@ -30,6 +30,10 @@ func TestSettingsMenuControllerRootActions(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected down to be handled")
 	}
+	handled, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !handled {
+		t.Fatalf("expected second down to be handled")
+	}
 	handled, action = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected enter to be handled")
@@ -55,6 +59,42 @@ func TestSettingsMenuControllerDataDrivenMenuSupportsAdditionalItems(t *testing.
 	}
 	if action != SettingsMenuActionQuit {
 		t.Fatalf("expected quit action from third item, got %v", action)
+	}
+}
+
+func TestDefaultSettingsMenuItemsOrder(t *testing.T) {
+	items := DefaultSettingsMenuItems()
+	if len(items) != 3 {
+		t.Fatalf("expected 3 default settings menu items, got %d", len(items))
+	}
+	if items[0].Title != "HELP" || items[1].Title != "THEME" || items[2].Title != "QUIT" {
+		t.Fatalf("unexpected default item order: %#v", items)
+	}
+}
+
+func TestSettingsMenuControllerThemeSelectionReturnsApplyAction(t *testing.T) {
+	c := NewSettingsMenuController()
+	c.SetThemeItems(defaultSettingsThemeItemsFromCatalog())
+	c.SetActiveThemeID("default")
+	c.SetSelectedThemeID("default")
+	c.Open()
+	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	handled, action := c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled")
+	}
+	if action != SettingsMenuActionNone {
+		t.Fatalf("expected theme entry to open screen, got %v", action)
+	}
+	handled, action = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled in theme screen")
+	}
+	if action != SettingsMenuActionApplyTheme {
+		t.Fatalf("expected apply theme action, got %v", action)
+	}
+	if got := c.SelectedThemeID(); got == "" {
+		t.Fatalf("expected selected theme id")
 	}
 }
 
@@ -89,6 +129,7 @@ func TestNewSettingsMenuControllerFallsBackWhenItemsInvalid(t *testing.T) {
 func TestSettingsMenuReducerQuitReturnsQuitCommand(t *testing.T) {
 	m := NewModel(nil)
 	m.settingsMenu.Open()
+	_, _ = m.settingsMenu.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	_, _ = m.settingsMenu.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	handled, cmd := m.reduceSettingsMenu(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
@@ -125,6 +166,104 @@ func TestSettingsHotkeyCatalogUsesSourceAndOverrides(t *testing.T) {
 	}
 	if mappings[0].Label != "quit" || mappings[0].Key != "ctrl+q" {
 		t.Fatalf("expected quit mapping with override key, got %#v", mappings[0])
+	}
+}
+
+func TestSettingsMenuControllerHandleKeyReturnsFalseWhenClosed(t *testing.T) {
+	c := NewSettingsMenuController()
+	handled, action := c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if handled {
+		t.Fatalf("expected closed menu to ignore key")
+	}
+	if action != SettingsMenuActionNone {
+		t.Fatalf("expected no action for closed menu, got %v", action)
+	}
+}
+
+func TestSettingsMenuControllerThemeScreenHandlesEmptySelectionAndQuit(t *testing.T) {
+	c := NewSettingsMenuController()
+	c.Open()
+	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})  // THEME
+	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter}) // open THEME screen
+
+	handled, action := c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !handled {
+		t.Fatalf("expected enter to be handled in empty theme screen")
+	}
+	if action != SettingsMenuActionNone {
+		t.Fatalf("expected no action when no theme items exist, got %v", action)
+	}
+
+	handled, action = c.HandleKey(tea.KeyPressMsg{Text: "q", Code: 'q'})
+	if !handled {
+		t.Fatalf("expected q to be handled in theme screen")
+	}
+	if action != SettingsMenuActionQuit {
+		t.Fatalf("expected quit action from theme screen, got %v", action)
+	}
+}
+
+func TestSettingsMenuControllerSelectedThemeIDClampsIndex(t *testing.T) {
+	c := NewSettingsMenuController()
+	c.SetThemeItems(defaultSettingsThemeItemsFromCatalog())
+
+	c.themeSelected = -10
+	first := normalizeSettingsThemeID(c.themeItems[0].ID)
+	if got := c.SelectedThemeID(); got != first {
+		t.Fatalf("expected clamped first id %q, got %q", first, got)
+	}
+	if c.themeSelected != 0 {
+		t.Fatalf("expected themeSelected to clamp to 0, got %d", c.themeSelected)
+	}
+
+	c.themeSelected = len(c.themeItems) + 10
+	last := normalizeSettingsThemeID(c.themeItems[len(c.themeItems)-1].ID)
+	if got := c.SelectedThemeID(); got != last {
+		t.Fatalf("expected clamped last id %q, got %q", last, got)
+	}
+	if c.themeSelected != len(c.themeItems)-1 {
+		t.Fatalf("expected themeSelected to clamp to last index, got %d", c.themeSelected)
+	}
+}
+
+func TestSettingsMenuControllerSetActiveThemeIDNormalizesAndDefaults(t *testing.T) {
+	c := NewSettingsMenuController()
+
+	c.SetActiveThemeID(" Gruvbox Dark ")
+	if got := c.ActiveThemeID(); got != "gruvbox_dark" {
+		t.Fatalf("expected normalized active theme id gruvbox_dark, got %q", got)
+	}
+
+	c.SetActiveThemeID("   ")
+	if got := c.ActiveThemeID(); got != settingsMenuDefaultThemeID {
+		t.Fatalf("expected default active theme id for blank input, got %q", got)
+	}
+}
+
+func TestSettingsMenuControllerNilReceiverSafety(t *testing.T) {
+	var c *SettingsMenuController
+
+	c.Open()
+	c.Close()
+	c.SetThemeItems([]SettingsThemeItem{{ID: "default", Title: "Default"}})
+	c.SetActiveThemeID("monokai")
+	c.SetSelectedThemeID("monokai")
+
+	if c.IsOpen() {
+		t.Fatalf("expected nil receiver to report closed")
+	}
+	if got := c.ActiveThemeID(); got != settingsMenuDefaultThemeID {
+		t.Fatalf("expected default active theme id for nil receiver, got %q", got)
+	}
+	if got := c.SelectedThemeID(); got != "" {
+		t.Fatalf("expected empty selected theme id for nil receiver, got %q", got)
+	}
+	if items := c.ThemeItems(); items != nil {
+		t.Fatalf("expected nil theme items for nil receiver, got %#v", items)
+	}
+	handled, action := c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if handled || action != SettingsMenuActionNone {
+		t.Fatalf("expected nil receiver HandleKey to be ignored, got handled=%t action=%v", handled, action)
 	}
 }
 

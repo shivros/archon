@@ -185,6 +185,9 @@ func (m *Model) openSettingsMenu() {
 	if m.settingsMenu == nil {
 		m.settingsMenu = NewSettingsMenuController()
 	}
+	m.settingsMenu.SetThemeItems(defaultSettingsThemeItemsFromCatalog())
+	m.settingsMenu.SetActiveThemeID(m.themeID)
+	m.settingsMenu.SetSelectedThemeID(m.themeID)
 	if m.menu != nil {
 		m.menu.CloseAll()
 	}

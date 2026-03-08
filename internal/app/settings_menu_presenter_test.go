@@ -57,9 +57,31 @@ func TestSettingsMenuPresenterHelpViewRendersMappingsAndClampsOffset(t *testing.
 	}
 }
 
+func TestSettingsMenuPresenterThemeViewShowsThemeChoices(t *testing.T) {
+	p := defaultSettingsMenuPresenter{}
+	c := NewSettingsMenuController()
+	c.SetThemeItems(defaultSettingsThemeItemsFromCatalog())
+	c.SetActiveThemeID("default")
+	c.SetSelectedThemeID("default")
+	c.Open()
+	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	block, _ := p.View(c, 80, 20, nil)
+	plain := xansi.Strip(block)
+	if !strings.Contains(plain, "THEME") {
+		t.Fatalf("expected theme title in theme view, got %q", plain)
+	}
+	if !strings.Contains(plain, "Default") {
+		t.Fatalf("expected default theme option in theme view, got %q", plain)
+	}
+}
+
 func TestSettingsMenuWordArtAndLayoutHelpers(t *testing.T) {
 	if got := settingsMenuWordArt("help"); !strings.Contains(got, "_____") {
 		t.Fatalf("expected HELP ascii art, got %q", got)
+	}
+	if got := settingsMenuWordArt("theme"); !strings.Contains(got, "_____") {
+		t.Fatalf("expected THEME ascii art, got %q", got)
 	}
 	if got := settingsMenuWordArt("custom"); got != "CUSTOM" {
 		t.Fatalf("expected uppercase fallback, got %q", got)

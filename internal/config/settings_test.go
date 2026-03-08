@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -491,6 +492,9 @@ func TestLoadUIConfigDefaults(t *testing.T) {
 	if !cfg.SidebarShowRecents() {
 		t.Fatalf("expected sidebar show_recents=true by default")
 	}
+	if got := cfg.ThemeName(); got != "default" {
+		t.Fatalf("expected default theme name, got %q", got)
+	}
 	path, err := cfg.ResolveKeybindingsPath()
 	if err != nil {
 		t.Fatalf("ResolveKeybindingsPath: %v", err)
@@ -507,7 +511,7 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n\n[input]\nmultiline_min_height = 4\nmultiline_max_height = 10\n\n[chat]\ntimestamp_mode = \"iso\"\n")
+	content := []byte("[keybindings]\npath = \"~/custom-keys.json\"\n\n[input]\nmultiline_min_height = 4\nmultiline_max_height = 10\n\n[chat]\ntimestamp_mode = \"iso\"\n\n[theme]\nname = \"Gruvbox Dark\"\n")
 	if err := os.WriteFile(filepath.Join(dataDir, "ui.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -535,6 +539,9 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 	}
 	if !cfg.SidebarShowRecents() {
 		t.Fatalf("expected sidebar show_recents to remain true when omitted")
+	}
+	if got := cfg.ThemeName(); got != "gruvbox_dark" {
+		t.Fatalf("expected normalized theme name gruvbox_dark, got %q", got)
 	}
 }
 
@@ -592,6 +599,145 @@ func TestLoadUIConfigInvalidTOML(t *testing.T) {
 	}
 	if _, err := LoadUIConfig(); err == nil {
 		t.Fatalf("expected invalid TOML error")
+	}
+}
+
+func TestUpdateUIThemeAtPathPersistsThemeAndRetainsOtherValues(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	dataDir := filepath.Join(home, ".archon")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	path := filepath.Join(dataDir, "ui.toml")
+	content := []byte("[chat]\ntimestamp_mode = \"iso\"\n\n[sidebar]\nexpand_by_default = false\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := updateUIThemeAtPath(path, "Solarized Light"); err != nil {
+		t.Fatalf("updateUIThemeAtPath: %v", err)
+	}
+
+	cfg, err := loadUIConfigFromPath(path)
+	if err != nil {
+		t.Fatalf("loadUIConfigFromPath: %v", err)
+	}
+	if got := cfg.ThemeName(); got != "solarized_light" {
+		t.Fatalf("expected persisted theme solarized_light, got %q", got)
+	}
+	if got := cfg.ChatTimestampMode(); got != "iso" {
+		t.Fatalf("expected chat timestamp mode to be preserved as iso, got %q", got)
+	}
+	if cfg.SidebarExpandByDefault() {
+		t.Fatalf("expected sidebar expand_by_default=false to be preserved")
+	}
+}
+
+func TestUpdateUIThemeAtPathPreservesUnknownSectionsAndComments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ui.toml")
+	content := []byte(
+		"# top comment\n" +
+			"[chat]\n" +
+			"timestamp_mode = \"iso\"\n" +
+			"\n" +
+			"[experimental]\n" +
+			"new_hotness = true # keep this\n" +
+			"\n" +
+			"[theme]\n" +
+			"# theme comment\n" +
+			"name = \"default\" # trailing\n",
+	)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := updateUIThemeAtPath(path, "Adwaita Dark"); err != nil {
+		t.Fatalf("updateUIThemeAtPath: %v", err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, "# top comment") {
+		t.Fatalf("expected top comment to be preserved, got %q", text)
+	}
+	if !strings.Contains(text, "[experimental]") || !strings.Contains(text, "new_hotness = true # keep this") {
+		t.Fatalf("expected unknown section/keys to be preserved, got %q", text)
+	}
+	if !strings.Contains(text, `name = "adwaita_dark" # trailing`) {
+		t.Fatalf("expected theme name line to update and preserve trailing comment, got %q", text)
+	}
+}
+
+func TestUpdateUIThemeAtPathCreatesThemeSectionWhenMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ui.toml")
+	content := []byte("[chat]\ntimestamp_mode = \"iso\"\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := updateUIThemeAtPath(path, "Nordic"); err != nil {
+		t.Fatalf("updateUIThemeAtPath: %v", err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, "[chat]") || !strings.Contains(text, "timestamp_mode = \"iso\"") {
+		t.Fatalf("expected existing content to be preserved, got %q", text)
+	}
+	if !strings.Contains(text, "[theme]") || !strings.Contains(text, `name = "nordic"`) {
+		t.Fatalf("expected theme section to be appended, got %q", text)
+	}
+}
+
+func TestUpdateUIThemeAtPathCreatesFileWhenMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ui.toml")
+	if err := updateUIThemeAtPath(path, "Monokai"); err != nil {
+		t.Fatalf("updateUIThemeAtPath: %v", err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	text := string(updated)
+	if strings.TrimSpace(text) != "[theme]\nname = \"monokai\"" {
+		t.Fatalf("unexpected created file content: %q", text)
+	}
+}
+
+func TestUpdateUIThemePersistsUsingResolvedUIPath(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+
+	if err := UpdateUITheme("Gruvbox Light"); err != nil {
+		t.Fatalf("UpdateUITheme: %v", err)
+	}
+
+	cfg, err := LoadUIConfig()
+	if err != nil {
+		t.Fatalf("LoadUIConfig: %v", err)
+	}
+	if got := cfg.ThemeName(); got != "gruvbox_light" {
+		t.Fatalf("expected persisted theme gruvbox_light, got %q", got)
+	}
+}
+
+func TestSaveUIConfigNormalizesThemeName(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	cfg := DefaultUIConfig()
+	cfg.Theme.Name = "  Monokai  "
+	if err := SaveUIConfig(cfg); err != nil {
+		t.Fatalf("SaveUIConfig: %v", err)
+	}
+	loaded, err := LoadUIConfig()
+	if err != nil {
+		t.Fatalf("LoadUIConfig: %v", err)
+	}
+	if got := loaded.ThemeName(); got != "monokai" {
+		t.Fatalf("expected normalized theme monokai, got %q", got)
 	}
 }
 

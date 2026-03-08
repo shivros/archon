@@ -39,6 +39,11 @@ type appStateSaveFlushMsg struct {
 	requestSeq int
 }
 
+type themePreferenceSavedMsg struct {
+	themeID string
+	err     error
+}
+
 type providerOptionsMsg struct {
 	provider string
 	options  *types.ProviderOptionCatalog

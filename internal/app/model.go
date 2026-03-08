@@ -367,6 +367,8 @@ type Model struct {
 	selectionOperationPlanner           SelectionOperationPlanner
 	selectionConfirmationPresenter      SelectionConfirmationPresenter
 	selectionOperationExecutor          SelectionOperationExecutor
+	themeID                             string
+	themePreferenceStore                ThemePreferenceStore
 	settingsMenu                        *SettingsMenuController
 	settingsMenuPresenter               SettingsMenuPresenter
 	settingsMenuEscPolicy               SettingsMenuEscPolicy
@@ -664,6 +666,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		selectionOperationPlanner:           NewDefaultSelectionOperationPlanner(),
 		selectionConfirmationPresenter:      NewDefaultSelectionConfirmationPresenter(),
 		selectionOperationExecutor:          NewDefaultSelectionOperationExecutor(),
+		themeID:                             defaultThemeID,
+		themePreferenceStore:                fileThemePreferenceStore{},
 		settingsMenu:                        NewSettingsMenuController(),
 		settingsMenuPresenter:               defaultSettingsMenuPresenter{},
 		settingsMenuEscPolicy:               defaultSettingsMenuEscPolicy{},
@@ -687,6 +691,11 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 			NewMainNotesHighlightSurface(adapter),
 			NewNotesPanelHighlightSurface(adapter),
 		)
+	}
+	if model.settingsMenu != nil {
+		model.settingsMenu.SetThemeItems(defaultSettingsThemeItemsFromCatalog())
+		model.settingsMenu.SetActiveThemeID(model.themeID)
+		model.settingsMenu.SetSelectedThemeID(model.themeID)
 	}
 	model.updateDelegate()
 	return model
@@ -958,6 +967,15 @@ func resolveMouseMode(sidebarDragging, splitDragging bool) tea.MouseMode {
 }
 
 func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
+	previousThemeID := m.themeID
+	appliedTheme := ApplyTheme(uiConfig.ThemeName())
+	m.themeID = appliedTheme.ID
+	if m.settingsMenu != nil {
+		m.settingsMenu.SetThemeItems(defaultSettingsThemeItemsFromCatalog())
+		m.settingsMenu.SetActiveThemeID(m.themeID)
+		m.settingsMenu.SetSelectedThemeID(m.themeID)
+	}
+	themeChanged := previousThemeID != m.themeID
 	minHeight, maxHeight := uiConfig.SharedMultilineInputHeights()
 	nextTimestampMode := parseChatTimestampMode(uiConfig.ChatTimestampMode())
 	sidebarExpandByDefault := uiConfig.SidebarExpandByDefault()
@@ -997,6 +1015,10 @@ func (m *Model) applyUIConfig(uiConfig config.UIConfig) {
 		return
 	}
 	if timestampModeChanged && m.width > 0 && m.height > 0 {
+		m.renderViewport()
+		m.renderNotesPanel()
+	}
+	if themeChanged && m.width > 0 && m.height > 0 {
 		m.renderViewport()
 		m.renderNotesPanel()
 	}

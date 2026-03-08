@@ -33,6 +33,7 @@ func TestReduceSettingsMenuQuitClosesDebugStream(t *testing.T) {
 	m.debugStream = stream
 	m.settingsMenu.Open()
 	_, _ = m.reduceSettingsMenu(tea.KeyPressMsg{Code: tea.KeyDown})
+	_, _ = m.reduceSettingsMenu(tea.KeyPressMsg{Code: tea.KeyDown})
 	handled, cmd := m.reduceSettingsMenu(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled {
 		t.Fatalf("expected enter to be handled")

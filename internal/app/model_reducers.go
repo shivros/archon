@@ -17,6 +17,12 @@ func (m *Model) reduceSettingsMenu(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		switch action {
+		case SettingsMenuActionApplyTheme:
+			themeID := m.settingsMenu.SelectedThemeID()
+			if strings.TrimSpace(themeID) == "" {
+				return true, nil
+			}
+			return true, m.applyThemeSelection(themeID)
 		case SettingsMenuActionQuit:
 			if m.debugStream != nil {
 				m.debugStream.Close()

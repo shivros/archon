@@ -20,6 +20,9 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 		Sidebar: config.UISidebarConfig{
 			ExpandByDefault: &expandByDefault,
 		},
+		Theme: config.UIThemeConfig{
+			Name: "monokai",
+		},
 	})
 
 	if m.chatInput == nil || m.noteInput == nil || m.recentsReplyInput == nil {
@@ -62,5 +65,8 @@ func TestApplyUIConfigSetsSharedAutoGrowInputBounds(t *testing.T) {
 	}
 	if !m.showRecents {
 		t.Fatalf("expected recents to be shown by default when not overridden")
+	}
+	if m.themeID != "monokai" {
+		t.Fatalf("expected theme id monokai from UI config, got %q", m.themeID)
 	}
 }
