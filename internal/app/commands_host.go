@@ -38,7 +38,7 @@ func (m *Model) addWorktreeCmd(workspaceID string, worktree *types.Worktree) tea
 func (m *Model) sendMessageCmd(sessionID, text string) tea.Cmd {
 	token := m.nextSendToken()
 	provider := m.providerForSessionID(sessionID)
-	m.registerPendingSend(token, sessionID, provider)
+	m.registerPendingSend(token, sessionID, provider, text)
 	return sendSessionCmd(m.sessionAPI, sessionID, text, token)
 }
 

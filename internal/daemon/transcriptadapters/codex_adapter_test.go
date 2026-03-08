@@ -8,6 +8,18 @@ import (
 	"control/internal/types"
 )
 
+type stubProviderEventClassifier struct {
+	classified ClassifiedProviderEvent
+}
+
+func (s stubProviderEventClassifier) Provider() string {
+	return "codex"
+}
+
+func (s stubProviderEventClassifier) ClassifyEvent(types.CodexEvent) ClassifiedProviderEvent {
+	return s.classified
+}
+
 func TestCapabilityEnvelopeFromProvider(t *testing.T) {
 	caps := CapabilityEnvelopeFromProvider("opencode")
 	if !caps.SupportsEvents || !caps.SupportsApprovals || !caps.UsesItems {
@@ -118,6 +130,20 @@ func TestTranscriptEventFromCodexEventAgentMessageDelta(t *testing.T) {
 	}
 	if got.Delta[0].Role != "assistant" || got.Delta[0].Text != "hello" || got.Delta[0].ID != "msg_1" {
 		t.Fatalf("unexpected delta payload: %#v", got.Delta[0])
+	}
+}
+
+func TestTranscriptEventFromCodexEventAgentMessageDeltaPreservesWhitespace(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"itemId":"msg_1","delta":"hello "}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != transcriptdomain.TranscriptEventDelta || len(got.Delta) != 1 {
+		t.Fatalf("expected delta event, got %#v", got)
+	}
+	if got.Delta[0].Text != "hello " {
+		t.Fatalf("expected whitespace-preserving delta payload, got %#v", got.Delta[0])
 	}
 }
 
@@ -254,6 +280,20 @@ func TestBlockFromItem(t *testing.T) {
 	}
 }
 
+func TestBlockFromItemPreservesWhitespace(t *testing.T) {
+	block, ok := BlockFromItem(map[string]any{
+		"id":   "m1",
+		"type": "assistant_message",
+		"text": "hello ",
+	})
+	if !ok {
+		t.Fatal("expected block conversion")
+	}
+	if block.Text != "hello " {
+		t.Fatalf("expected trailing space preserved, got %#v", block)
+	}
+}
+
 func TestBlockFromItemFallsBackRoleAndVariant(t *testing.T) {
 	block, ok := BlockFromItem(map[string]any{
 		"item_id": "m2",
@@ -272,6 +312,46 @@ func TestBlockFromItemFallsBackRoleAndVariant(t *testing.T) {
 func TestBlockFromItemRejectsMissingText(t *testing.T) {
 	if _, ok := BlockFromItem(map[string]any{"type": "assistant"}); ok {
 		t.Fatal("expected block conversion failure for empty text")
+	}
+}
+
+func TestBlockFromItemParsesUserMessageContentArray(t *testing.T) {
+	block, ok := BlockFromItem(map[string]any{
+		"type": "userMessage",
+		"content": []any{
+			map[string]any{"type": "text", "text": "hello"},
+			map[string]any{"type": "text", "text": "from user"},
+		},
+	})
+	if !ok {
+		t.Fatal("expected block conversion from content array")
+	}
+	if block.Role != "user" {
+		t.Fatalf("expected user role, got %#v", block)
+	}
+	if block.Text != "hello from user" {
+		t.Fatalf("expected joined content text, got %#v", block)
+	}
+}
+
+func TestBlockFromItemParsesNestedMessageContentArray(t *testing.T) {
+	block, ok := BlockFromItem(map[string]any{
+		"type": "assistant",
+		"message": map[string]any{
+			"content": []any{
+				map[string]any{"type": "text", "text": "nested"},
+				map[string]any{"type": "text", "text": "reply"},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("expected block conversion from nested message content")
+	}
+	if block.Role != "assistant" {
+		t.Fatalf("expected assistant role, got %#v", block)
+	}
+	if block.Text != "nested reply" {
+		t.Fatalf("expected nested content text, got %#v", block)
 	}
 }
 
@@ -426,5 +506,75 @@ func TestCodexAdapterMapItem(t *testing.T) {
 	}
 	if events[0].Kind != transcriptdomain.TranscriptEventDelta {
 		t.Fatalf("expected delta event, got %q", events[0].Kind)
+	}
+}
+
+func TestCodexAdapterMapEventFallbackClassifierWhenNil(t *testing.T) {
+	adapter := codexTranscriptAdapter{providerName: "codex", classifier: nil}
+	events := adapter.MapEvent(
+		MappingContext{SessionID: "s1", Revision: transcriptdomain.MustParseRevisionToken("1")},
+		types.CodexEvent{Method: "turn/completed", Params: json.RawMessage(`{"turn_id":"t1","status":"completed"}`)},
+	)
+	if len(events) != 1 {
+		t.Fatalf("expected one mapped event from fallback classifier, got %#v", events)
+	}
+}
+
+func TestCodexAdapterMapEventRejectsInvalidMappedEvent(t *testing.T) {
+	adapter := codexTranscriptAdapter{
+		providerName: "codex",
+		classifier: stubProviderEventClassifier{
+			classified: ClassifiedProviderEvent{Intent: EventIntentTurnStarted, Method: "turn/started"},
+		},
+	}
+	events := adapter.MapEvent(
+		MappingContext{SessionID: "s1", Revision: transcriptdomain.MustParseRevisionToken("1")},
+		types.CodexEvent{Method: "turn/started", Params: json.RawMessage(`{}`)},
+	)
+	if len(events) != 0 {
+		t.Fatalf("expected invalid mapped turn event to be rejected by validation, got %#v", events)
+	}
+}
+
+func TestCodexAdapterMapItemRejectsInvalidPayloadAndValidation(t *testing.T) {
+	adapter := NewCodexTranscriptAdapter("codex")
+	if events := adapter.MapItem(MappingContext{SessionID: "s1", Revision: transcriptdomain.MustParseRevisionToken("1")}, map[string]any{"type": "assistant"}); len(events) != 0 {
+		t.Fatalf("expected invalid item payload to be dropped, got %#v", events)
+	}
+	invalidValidated := codexTranscriptAdapter{providerName: "", classifier: NewCodexEventClassifier("codex")}
+	if events := invalidValidated.MapItem(MappingContext{SessionID: "", Revision: transcriptdomain.MustParseRevisionToken("1")}, map[string]any{"type": "assistant", "text": "hello"}); len(events) != 0 {
+		t.Fatalf("expected item event with empty provider/session to fail validation, got %#v", events)
+	}
+}
+
+func TestItemKindFromMethodFallbacks(t *testing.T) {
+	if kind := itemKindFromMethod("turn/completed"); kind != "message" {
+		t.Fatalf("expected non-item methods to map to message kind, got %q", kind)
+	}
+	if kind := itemKindFromMethod("item//delta"); kind != "message" {
+		t.Fatalf("expected malformed item method to map to message kind, got %q", kind)
+	}
+}
+
+func TestBlockFromItemNilInput(t *testing.T) {
+	if _, ok := BlockFromItem(nil); ok {
+		t.Fatalf("expected nil item to fail conversion")
+	}
+}
+
+func TestItemTextFromContentAndMapFallbacks(t *testing.T) {
+	if got := itemTextFromContent("hello"); got != "hello" {
+		t.Fatalf("expected string content passthrough, got %q", got)
+	}
+	got := itemTextFromContent([]any{
+		"",
+		map[string]any{"type": "text", "text": "nested"},
+		map[string]any{"type": "text", "text": "value"},
+	})
+	if got != "nested value" {
+		t.Fatalf("expected mixed array content to skip empties, got %q", got)
+	}
+	if got := itemTextFromMap(nil); got != "" {
+		t.Fatalf("expected nil map content to resolve empty text, got %q", got)
 	}
 }

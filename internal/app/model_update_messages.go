@@ -456,9 +456,13 @@ func (m *Model) applyLiveSessionItemsSnapshot(ctx sessionItemsMessageContext) bo
 	if !m.shouldKeepLiveTranscriptSnapshot(ctx.id) {
 		return false
 	}
+	visibleBlocks := m.applyOptimisticOverlay(ctx.id, m.activeTranscriptBlocks())
 	if ctx.key != "" {
-		m.cacheTranscriptBlocks(ctx.key, m.activeTranscriptBlocks())
+		m.cacheTranscriptBlocks(ctx.key, visibleBlocks)
 		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeOK)
+	}
+	if m.transcriptViewportVisible() {
+		m.setSnapshotBlocks(visibleBlocks)
 	}
 	m.setBackgroundStatus(string(ctx.source) + " refreshed")
 	return true
@@ -477,6 +481,7 @@ func (m *Model) projectAndApplySessionItems(ctx sessionItemsMessageContext, item
 }
 
 func (m *Model) applySessionProjection(source sessionProjectionSource, id, key string, blocks []ChatBlock) {
+	blocks = m.applyOptimisticOverlay(id, blocks)
 	if m.transcriptViewportVisible() {
 		m.setSnapshotBlocks(blocks)
 		m.noteRequestVisibleUpdate(id)
@@ -1027,7 +1032,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.startRequestActivity(msg.id, m.providerForSessionID(msg.id))
 		m.setStatusInfo("message sent")
-		m.clearPendingSend(msg.token)
+		m.clearPendingSend(msg.token, msg.turnID)
 		m.sessionMetaRefreshPending = true
 		m.lastSessionMetaRefreshAt = now
 		provider := m.providerForSessionID(msg.id)

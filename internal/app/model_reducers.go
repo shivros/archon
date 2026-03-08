@@ -715,7 +715,7 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 	m.enableFollow(false)
 	m.startRequestActivity(sessionID, provider)
 	token := m.nextSendToken()
-	m.registerPendingSend(token, sessionID, provider)
+	m.registerPendingSend(token, sessionID, provider, text)
 	headerIndex := m.appendUserMessageLocal(provider, text)
 	m.setStatusMessage("sending message")
 	if m.chatInput != nil {

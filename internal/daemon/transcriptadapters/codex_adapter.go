@@ -164,12 +164,12 @@ func TranscriptEventFromCodexEvent(
 
 func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage) (transcriptdomain.Block, bool) {
 	params := decodeMap(raw)
-	text := strings.TrimSpace(firstNonEmpty(
+	text := firstNonEmpty(
 		asString(params["delta"]),
 		asString(params["text"]),
 		asString(params["content"]),
-	))
-	if text == "" {
+	)
+	if strings.TrimSpace(text) == "" {
 		return transcriptdomain.Block{}, false
 	}
 	lowerMethod := strings.ToLower(strings.TrimSpace(method))
@@ -246,12 +246,19 @@ func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {
 	}
 	kind := strings.TrimSpace(asString(item["type"]))
 	role := strings.TrimSpace(asString(item["role"]))
-	text := strings.TrimSpace(firstNonEmpty(
+	text := firstNonEmpty(
 		asString(item["text"]),
 		asString(item["delta"]),
 		asString(item["content"]),
-	))
-	if text == "" {
+	)
+	if strings.TrimSpace(text) == "" {
+		text = firstNonEmpty(
+			itemTextFromContent(item["content"]),
+			itemTextFromContent(item["message"]),
+			itemTextFromContent(item["result"]),
+		)
+	}
+	if strings.TrimSpace(text) == "" {
 		return transcriptdomain.Block{}, false
 	}
 	if kind == "" {
@@ -276,6 +283,47 @@ func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {
 		asString(item["subtype"]),
 	))
 	return transcriptdomain.Block{ID: id, Kind: kind, Role: role, Text: text, Variant: variant}, true
+}
+
+func itemTextFromContent(raw any) string {
+	switch typed := raw.(type) {
+	case string:
+		return firstNonEmpty(typed)
+	case map[string]any:
+		return itemTextFromMap(typed)
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, entry := range typed {
+			part := itemTextFromContent(entry)
+			if strings.TrimSpace(part) == "" {
+				continue
+			}
+			parts = append(parts, strings.TrimSpace(part))
+		}
+		return strings.Join(parts, " ")
+	default:
+		return ""
+	}
+}
+
+func itemTextFromMap(raw map[string]any) string {
+	if raw == nil {
+		return ""
+	}
+	direct := firstNonEmpty(
+		asString(raw["text"]),
+		asString(raw["delta"]),
+		asString(raw["content"]),
+		asString(raw["thinking"]),
+	)
+	if strings.TrimSpace(direct) != "" {
+		return direct
+	}
+	return firstNonEmpty(
+		itemTextFromContent(raw["content"]),
+		itemTextFromContent(raw["message"]),
+		itemTextFromContent(raw["result"]),
+	)
 }
 
 func DeltaEventFromItem(

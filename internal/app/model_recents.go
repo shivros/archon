@@ -670,7 +670,7 @@ func (m *Model) submitRecentsReplyInput(text string) tea.Cmd {
 	}
 	provider := m.providerForSessionID(sessionID)
 	token := m.nextSendToken()
-	m.registerPendingSend(token, sessionID, provider)
+	m.registerPendingSend(token, sessionID, provider, text)
 	m.cancelRecentsReply()
 	m.setStatusMessage("sending reply")
 	return sendSessionCmd(m.sessionAPI, sessionID, text, token)

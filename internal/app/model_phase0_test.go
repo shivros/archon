@@ -86,9 +86,16 @@ func TestPhase0SendErrorMarksOptimisticMessageFailed(t *testing.T) {
 func TestPhase0MarkPendingSendFailedUpdatesCachedTranscriptWhenNotSelected(t *testing.T) {
 	m := NewModel(nil)
 	m.pendingSends[7] = pendingSend{
+		key:       "sess:s2",
+		sessionID: "s2",
+		state:     pendingSendStateSending,
+	}
+	m.optimisticSends[7] = optimisticSendEntry{
+		token:      7,
 		key:        "sess:s2",
 		sessionID:  "s2",
 		headerLine: 0,
+		status:     ChatStatusSending,
 	}
 	m.transcriptCache["sess:s2"] = []ChatBlock{
 		{Role: ChatRoleUser, Text: "hello", Status: ChatStatusSending},
@@ -104,12 +111,27 @@ func TestPhase0MarkPendingSendFailedUpdatesCachedTranscriptWhenNotSelected(t *te
 
 func TestPhase0MarkPendingSendFailedNoopWhenPendingEntryKeyMissing(t *testing.T) {
 	m := NewModel(nil)
-	m.pendingSends[5] = pendingSend{key: "", sessionID: "s1", headerLine: 0}
+	m.pendingSends[5] = pendingSend{key: "", sessionID: "s1", state: pendingSendStateSending}
+	m.optimisticSends[5] = optimisticSendEntry{
+		token:      5,
+		key:        "",
+		sessionID:  "s1",
+		headerLine: 0,
+		status:     ChatStatusSending,
+	}
 
 	m.markPendingSendFailed(5, errors.New("boom"))
 
-	if _, ok := m.pendingSends[5]; ok {
-		t.Fatalf("expected pending send entry to be cleared")
+	entry, ok := m.pendingSends[5]
+	if !ok {
+		t.Fatalf("expected pending send entry to remain for optimistic overlay recovery")
+	}
+	if entry.state != pendingSendStateFailed {
+		t.Fatalf("expected pending send to transition to failed status, got %#v", entry)
+	}
+	view := m.optimisticSends[5]
+	if view.status != ChatStatusFailed {
+		t.Fatalf("expected optimistic entry to transition to failed status, got %#v", view)
 	}
 }
 

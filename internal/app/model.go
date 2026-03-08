@@ -261,6 +261,7 @@ type Model struct {
 	selectSeq                           int
 	sendSeq                             int
 	pendingSends                        map[int]pendingSend
+	optimisticSends                     map[int]optimisticSendEntry
 	composeHistory                      map[string]*composeHistoryState
 	composeDrafts                       map[string]string
 	noteDrafts                          map[string]string
@@ -337,6 +338,9 @@ type Model struct {
 	sessionProjectionPostProcessor      SessionProjectionPostProcessor
 	approvalStateService                ApprovalStateService
 	transcriptComposer                  TranscriptComposer
+	optimisticOverlayService            OptimisticOverlayService
+	optimisticReconcilePolicy           OptimisticReconcilePolicy
+	failedOptimisticRetentionPolicy     FailedOptimisticRetentionPolicy
 	transcriptSignalClassifier          TranscriptSignalClassifier
 	streamHealthPolicy                  StreamHealthPolicy
 	transcriptRecoveryScheduler         TranscriptRecoveryScheduler
@@ -412,10 +416,30 @@ type composeControlSpan struct {
 }
 
 type pendingSend struct {
+	key       string
+	sessionID string
+	provider  string
+	turnID    string
+	state     pendingSendState
+}
+
+type pendingSendState string
+
+const (
+	pendingSendStateSending      pendingSendState = "sending"
+	pendingSendStateAcknowledged pendingSendState = "acknowledged"
+	pendingSendStateFailed       pendingSendState = "failed"
+)
+
+type optimisticSendEntry struct {
+	token      int
 	key        string
 	sessionID  string
 	headerLine int
-	provider   string
+	text       string
+	createdAt  time.Time
+	status     ChatStatus
+	turnID     string
 }
 
 type workflowTurnFocusRequest struct {
@@ -569,6 +593,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		hotkeys:                             hotkeyRenderer,
 		keybindings:                         keybindings,
 		pendingSends:                        map[int]pendingSend{},
+		optimisticSends:                     map[int]optimisticSendEntry{},
 		composeHistory:                      map[string]*composeHistoryState{},
 		composeDrafts:                       map[string]string{},
 		noteDrafts:                          map[string]string{},
@@ -2657,6 +2682,7 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 				m.sessionApprovalResolutions[sessionID],
 				nil,
 			)
+			blocks = m.applyOptimisticOverlay(sessionID, blocks)
 		}
 		if m.transcriptViewportVisible() {
 			m.applyBlocksNoRender(blocks)
@@ -3286,13 +3312,25 @@ func (m *Model) nextSendToken() int {
 	return m.sendSeq
 }
 
-func (m *Model) registerPendingSend(token int, sessionID, provider string) {
+func (m *Model) registerPendingSend(token int, sessionID, provider, text string) {
 	key := m.selectedKey()
 	m.pendingSends[token] = pendingSend{
+		key:       key,
+		sessionID: sessionID,
+		provider:  provider,
+		state:     pendingSendStateSending,
+	}
+	if m.optimisticSends == nil {
+		m.optimisticSends = map[int]optimisticSendEntry{}
+	}
+	m.optimisticSends[token] = optimisticSendEntry{
+		token:      token,
 		key:        key,
 		sessionID:  sessionID,
 		headerLine: -1,
-		provider:   provider,
+		text:       text,
+		createdAt:  time.Now().UTC(),
+		status:     ChatStatusSending,
 	}
 }
 
@@ -3303,32 +3341,60 @@ func (m *Model) registerPendingSendHeader(token int, sessionID, provider string,
 	}
 	entry.sessionID = sessionID
 	entry.key = m.selectedKey()
-	entry.headerLine = headerIndex
 	if provider != "" {
 		entry.provider = provider
 	}
 	m.pendingSends[token] = entry
+	view, ok := m.optimisticSends[token]
+	if !ok {
+		return
+	}
+	view.sessionID = sessionID
+	view.key = entry.key
+	view.headerLine = headerIndex
+	m.optimisticSends[token] = view
 }
 
-func (m *Model) clearPendingSend(token int) {
+func (m *Model) clearPendingSend(token int, turnID string) {
 	entry, ok := m.pendingSends[token]
-	if ok {
-		delete(m.pendingSends, token)
-		if entry.key == "" {
+	if !ok {
+		return
+	}
+	if turnID = strings.TrimSpace(turnID); turnID != "" {
+		entry.turnID = turnID
+	}
+	entry.state = pendingSendStateAcknowledged
+	m.pendingSends[token] = entry
+	view, hasView := m.optimisticSends[token]
+	if hasView {
+		if entry.turnID != "" {
+			view.turnID = entry.turnID
+		}
+		view.status = ChatStatusNone
+		m.optimisticSends[token] = view
+	}
+	if entry.key == "" {
+		return
+	}
+	if entry.key == m.selectedKey() {
+		headerLine := -1
+		if hasView {
+			headerLine = view.headerLine
+		}
+		if blocks, changed := m.transcriptComposerOrDefault().MarkUserStatus(m.currentBlocks(), headerLine, ChatStatusNone); changed {
+			m.applyBlocks(blocks)
+			m.transcriptCache[entry.key] = blocks
 			return
 		}
-		if entry.key == m.selectedKey() {
-			if blocks, changed := m.transcriptComposerOrDefault().MarkUserStatus(m.currentBlocks(), entry.headerLine, ChatStatusNone); changed {
-				m.applyBlocks(blocks)
-				m.transcriptCache[entry.key] = blocks
-				return
-			}
+	}
+	if cached, ok := m.transcriptCache[entry.key]; ok {
+		headerLine := -1
+		if hasView {
+			headerLine = view.headerLine
 		}
-		if cached, ok := m.transcriptCache[entry.key]; ok {
-			if entry.headerLine >= 0 && entry.headerLine < len(cached) {
-				cached[entry.headerLine].Status = ChatStatusNone
-				m.transcriptCache[entry.key] = cached
-			}
+		if headerLine >= 0 && headerLine < len(cached) {
+			cached[headerLine].Status = ChatStatusNone
+			m.transcriptCache[entry.key] = cached
 		}
 	}
 }
@@ -3338,20 +3404,34 @@ func (m *Model) markPendingSendFailed(token int, err error) {
 	if !ok {
 		return
 	}
-	delete(m.pendingSends, token)
+	entry.state = pendingSendStateFailed
+	m.pendingSends[token] = entry
+	view, hasView := m.optimisticSends[token]
+	if hasView {
+		view.status = ChatStatusFailed
+		m.optimisticSends[token] = view
+	}
 	if entry.key == "" {
 		return
 	}
 	if entry.key == m.selectedKey() {
-		if blocks, changed := m.transcriptComposerOrDefault().MarkUserStatus(m.currentBlocks(), entry.headerLine, ChatStatusFailed); changed {
+		headerLine := -1
+		if hasView {
+			headerLine = view.headerLine
+		}
+		if blocks, changed := m.transcriptComposerOrDefault().MarkUserStatus(m.currentBlocks(), headerLine, ChatStatusFailed); changed {
 			m.applyBlocks(blocks)
 			m.transcriptCache[entry.key] = blocks
 			return
 		}
 	}
 	if cached, ok := m.transcriptCache[entry.key]; ok {
-		if entry.headerLine >= 0 && entry.headerLine < len(cached) {
-			cached[entry.headerLine].Status = ChatStatusFailed
+		headerLine := -1
+		if hasView {
+			headerLine = view.headerLine
+		}
+		if headerLine >= 0 && headerLine < len(cached) {
+			cached[headerLine].Status = ChatStatusFailed
 			m.transcriptCache[entry.key] = cached
 		}
 	}
@@ -3908,6 +3988,7 @@ func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
 		return
 	}
 	blocks := m.transcriptComposerOrDefault().MergeApprovals(base, requests, m.sessionApprovalResolutions[sessionID], nil)
+	blocks = m.applyOptimisticOverlay(sessionID, blocks)
 	if m.transcriptViewportVisible() {
 		m.applyBlocks(blocks)
 	}
