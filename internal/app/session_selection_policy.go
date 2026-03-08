@@ -99,12 +99,6 @@ func sessionRevision(session *types.Session, meta *types.SessionMeta) string {
 	if meta != nil {
 		metaRuntime = runtimeOptionsRevision(meta.RuntimeOptions)
 	}
-	metaThreadID := ""
-	metaProviderSessionID := ""
-	if meta != nil {
-		metaThreadID = strings.TrimSpace(meta.ThreadID)
-		metaProviderSessionID = strings.TrimSpace(meta.ProviderSessionID)
-	}
 	return strings.Join([]string{
 		strings.TrimSpace(session.ID),
 		strings.TrimSpace(session.Provider),
@@ -112,8 +106,6 @@ func sessionRevision(session *types.Session, meta *types.SessionMeta) string {
 		startedAt,
 		exitedAt,
 		exitCode,
-		metaThreadID,
-		metaProviderSessionID,
 		metaDismissed,
 		metaRuntime,
 	}, "|")

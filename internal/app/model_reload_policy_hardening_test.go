@@ -43,7 +43,14 @@ func TestReloadPolicyHardeningClaudeDoesNotRequireReselectForMetaRefresh(t *test
 			{ID: current.ID, Provider: current.Provider, Status: current.Status, CreatedAt: current.CreatedAt, Title: current.Title},
 		},
 		meta: []*types.SessionMeta{
-			{SessionID: "s1", WorkspaceID: "ws1", LastTurnID: "turn-2", LastActiveAt: &now},
+			{
+				SessionID:         "s1",
+				WorkspaceID:       "ws1",
+				LastTurnID:        "turn-2",
+				LastActiveAt:      &now,
+				ThreadID:          "thread-123",
+				ProviderSessionID: "provider-session-123",
+			},
 		},
 	})
 	if !handled {

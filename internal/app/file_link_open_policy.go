@@ -11,8 +11,8 @@ func newDefaultFileLinkOpenPolicy() FileLinkOpenPolicy {
 }
 
 func (defaultFileLinkOpenPolicy) BuildCommand(target ResolvedFileLink) (FileLinkOpenCommand, error) {
-	path := strings.TrimSpace(target.Path)
-	if path == "" {
+	openTarget := strings.TrimSpace(target.OpenTarget())
+	if openTarget == "" {
 		return FileLinkOpenCommand{}, errFileLinkEmptyTarget
 	}
 	policy := currentPlatformFileLinkOpenPolicy()

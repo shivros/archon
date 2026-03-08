@@ -497,13 +497,18 @@ func (m *Model) reduceNotesPanelLeftPressMouse(msg tea.MouseMsg, layout mouseLay
 	}
 	col := mouse.X - layout.panelStart
 	line := mouse.Y - 1
-	if handled, cmd := m.toggleNotesFilterByPanelViewportPosition(col, line); handled {
+	if m.mouseGesturePolicyOrDefault().IsLinkOpenGesture(msg) {
+		handled, cmd := m.openNotesPanelFileLinkByViewportPosition(col, line)
 		if cmd != nil {
 			m.pendingMouseCmd = cmd
 		}
+		if handled {
+			return true
+		}
+		// Ctrl+click in notes panel is reserved for link-open behavior.
 		return true
 	}
-	if handled, cmd := m.openNotesPanelFileLinkByViewportPosition(col, line); handled {
+	if handled, cmd := m.toggleNotesFilterByPanelViewportPosition(col, line); handled {
 		if cmd != nil {
 			m.pendingMouseCmd = cmd
 		}

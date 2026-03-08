@@ -7,6 +7,19 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+func TestStatusLinePartsOmitHotkeyHelp(t *testing.T) {
+	m := NewModel(nil)
+	m.status = "ready"
+
+	help, status := m.statusLineParts()
+	if help != "" {
+		t.Fatalf("expected hotkey help to be hidden, got %q", help)
+	}
+	if status != statusStyle.Render("ready") {
+		t.Fatalf("expected rendered status %q, got %q", statusStyle.Render("ready"), status)
+	}
+}
+
 func TestRenderStatusLinePrioritizesStatusOverHelp(t *testing.T) {
 	width := 12
 	help := strings.Repeat("h", 64)

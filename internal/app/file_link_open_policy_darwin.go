@@ -9,9 +9,9 @@ func currentPlatformFileLinkOpenPolicy() FileLinkOpenPolicy {
 }
 
 func (darwinFileLinkOpenPolicy) BuildCommand(target ResolvedFileLink) (FileLinkOpenCommand, error) {
-	path := strings.TrimSpace(target.Path)
-	if path == "" {
+	openTarget := strings.TrimSpace(target.OpenTarget())
+	if openTarget == "" {
 		return FileLinkOpenCommand{}, errFileLinkEmptyTarget
 	}
-	return FileLinkOpenCommand{Name: "open", Args: []string{path}}, nil
+	return FileLinkOpenCommand{Name: "open", Args: []string{openTarget}}, nil
 }

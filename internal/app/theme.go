@@ -9,7 +9,6 @@ const (
 
 var (
 	headerStyle                     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
-	helpStyle                       = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	statusStyle                     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	statusHistorySelectedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Bold(true)
 	activityStyle                   = lipgloss.NewStyle().Foreground(lipgloss.Color("110")).Bold(true)

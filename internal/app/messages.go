@@ -332,8 +332,8 @@ type clipboardResultMsg struct {
 }
 
 type fileLinkOpenResultMsg struct {
-	path string
-	err  error
+	target string
+	err    error
 }
 
 type workflowRunCreatedMsg struct {

@@ -461,7 +461,7 @@ func (m *Model) applyLiveSessionItemsSnapshot(ctx sessionItemsMessageContext) bo
 		m.cacheTranscriptBlocks(ctx.key, visibleBlocks)
 		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeOK)
 	}
-	if m.transcriptViewportVisible() {
+	if m.shouldApplySessionProjectionToVisible(ctx.id, ctx.key) {
 		m.setSnapshotBlocks(visibleBlocks)
 	}
 	m.setBackgroundStatus(string(ctx.source) + " refreshed")
@@ -482,7 +482,7 @@ func (m *Model) projectAndApplySessionItems(ctx sessionItemsMessageContext, item
 
 func (m *Model) applySessionProjection(source sessionProjectionSource, id, key string, blocks []ChatBlock) {
 	blocks = m.applyOptimisticOverlay(id, blocks)
-	if m.transcriptViewportVisible() {
+	if m.shouldApplySessionProjectionToVisible(id, key) {
 		m.setSnapshotBlocks(blocks)
 		m.noteRequestVisibleUpdate(id)
 	}
@@ -498,6 +498,32 @@ func (m *Model) applySessionProjection(source sessionProjectionSource, id, key s
 		m.cacheTranscriptBlocks(m.selectedKey(), blocks)
 	}
 	m.setBackgroundStatus(string(source) + " updated")
+}
+
+func (m *Model) shouldApplySessionProjectionToVisible(id, key string) bool {
+	if m == nil || !m.transcriptViewportVisible() {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	activeSessionID := strings.TrimSpace(m.activeContentSessionID())
+	selectedKey := strings.TrimSpace(m.selectedKey())
+	if key != "" {
+		if selectedKey != "" && key == selectedKey {
+			return true
+		}
+		if activeSessionID != "" && sessionIDFromSidebarKey(key) == activeSessionID {
+			return true
+		}
+		return false
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	if activeSessionID == "" {
+		return true
+	}
+	return id == activeSessionID
 }
 
 func (m *Model) asyncSessionProjectionCmd(
@@ -568,6 +594,18 @@ func (m *Model) isCurrentSessionProjection(key, id string, seq int) bool {
 		return false
 	}
 	return seq == latest
+}
+
+func (m *Model) hasPendingSessionProjection(key, id string) bool {
+	if m == nil || m.sessionProjectionLatest == nil {
+		return false
+	}
+	token := sessionProjectionToken(key, id)
+	if token == "" {
+		return false
+	}
+	_, ok := m.sessionProjectionLatest[token]
+	return ok
 }
 
 func (m *Model) consumeSessionProjectionToken(key, id string, seq int) {
@@ -939,11 +977,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			m.setStatusError("open link failed: " + msg.err.Error())
 			return true, nil
 		}
-		if strings.TrimSpace(msg.path) == "" {
+		if strings.TrimSpace(msg.target) == "" {
 			m.setStatusInfo("link opened")
 			return true, nil
 		}
-		m.setStatusInfo("opened " + msg.path)
+		m.setStatusInfo("opened " + msg.target)
 		return true, nil
 	case providerOptionsMsg:
 		return true, m.handleProviderOptionsMsg(msg)
@@ -994,6 +1032,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			}
 		} else if currentAgents > 0 {
 			return true, nil
+		}
+		if m.hasPendingSessionProjection(msg.key, msg.id) {
+			return true, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents)
 		}
 		provider := m.providerForSessionID(msg.id)
 		ctx := m.requestScopeContext(requestScopeSessionLoad)
@@ -1398,6 +1439,8 @@ func projectSessionBlocksFromItems(
 		blocks = coalesceAdjacentReasoningBlocks(blocks)
 	}
 	if providerSupportsApprovals(provider) {
+		approvals = filterApprovalRequestsForProvider(provider, approvals)
+		resolutions = filterApprovalResolutionsForProvider(provider, resolutions)
 		blocks = mergeApprovalBlocks(blocks, approvals, resolutions)
 		blocks = preserveApprovalPositions(previous, blocks)
 	}
@@ -1495,8 +1538,8 @@ func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
 	m.setSessionTranscriptCapabilities(msg.id, msg.snapshot.Capabilities)
 	blocks = m.transcriptComposerOrDefault().MergeApprovals(
 		blocks,
-		m.sessionApprovals[msg.id],
-		m.sessionApprovalResolutions[msg.id],
+		filterApprovalRequestsForProvider(m.providerForSessionID(msg.id), m.sessionApprovals[msg.id]),
+		filterApprovalResolutionsForProvider(m.providerForSessionID(msg.id), m.sessionApprovalResolutions[msg.id]),
 		nil,
 	)
 	m.applySessionProjection(sessionProjectionSourceHistory, msg.id, msg.key, blocks)

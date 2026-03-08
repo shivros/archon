@@ -95,6 +95,23 @@ func approvalPresentationFromParams(method string, params map[string]any) approv
 			approvalAppendContextLine(&p.Context, "Options: "+strings.Join(options, " | "))
 		}
 		return p
+	case types.ApprovalMethodClaudeExitPlanMode:
+		p := approvalPresentation{
+			Summary: "plan",
+			Context: approvalSharedContextLines(params, metadata),
+		}
+		if title := approvalFirstNonEmptyString(params, metadata, "title"); title != "" {
+			p.Detail = title
+		} else {
+			p.Detail = "Claude is waiting for plan approval."
+		}
+		if message := approvalFirstNonEmptyString(params, metadata, "message", "description"); message != "" && !strings.EqualFold(message, p.Detail) {
+			approvalAppendContextLine(&p.Context, message)
+		}
+		if options := approvalExtractOptions(params, metadata); len(options) > 0 {
+			approvalAppendContextLine(&p.Context, "Allowed prompts: "+strings.Join(options, " | "))
+		}
+		return p
 	default:
 		if permissionPresentation, ok := approvalPermissionPresentation(params, raw, metadata); ok {
 			return permissionPresentation
@@ -275,6 +292,31 @@ func normalizeApprovalRequests(requests []*ApprovalRequest) []*ApprovalRequest {
 	return normalized
 }
 
+func filterApprovalRequestsForProvider(provider string, requests []*ApprovalRequest) []*ApprovalRequest {
+	requests = normalizeApprovalRequests(requests)
+	if len(requests) == 0 {
+		return nil
+	}
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if provider == "" || provider == "codex" || provider == "opencode" || provider == "gemini-cli" || provider == "kilocode" {
+		return requests
+	}
+	filtered := make([]*ApprovalRequest, 0, len(requests))
+	for _, req := range requests {
+		if req == nil {
+			continue
+		}
+		switch provider {
+		case "claude":
+			if req.Method != types.ApprovalMethodClaudeExitPlanMode {
+				continue
+			}
+		}
+		filtered = append(filtered, cloneApprovalRequest(req))
+	}
+	return normalizeApprovalRequests(filtered)
+}
+
 func latestApprovalRequest(requests []*ApprovalRequest) *ApprovalRequest {
 	if len(requests) == 0 {
 		return nil
@@ -382,6 +424,31 @@ func normalizeApprovalResolutions(resolutions []*ApprovalResolution) []*Approval
 		return left.ResolvedAt.Before(right.ResolvedAt)
 	})
 	return normalized
+}
+
+func filterApprovalResolutionsForProvider(provider string, resolutions []*ApprovalResolution) []*ApprovalResolution {
+	resolutions = normalizeApprovalResolutions(resolutions)
+	if len(resolutions) == 0 {
+		return nil
+	}
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if provider == "" || provider == "codex" || provider == "opencode" || provider == "gemini-cli" || provider == "kilocode" {
+		return resolutions
+	}
+	filtered := make([]*ApprovalResolution, 0, len(resolutions))
+	for _, resolution := range resolutions {
+		if resolution == nil {
+			continue
+		}
+		switch provider {
+		case "claude":
+			if resolution.Method != types.ApprovalMethodClaudeExitPlanMode {
+				continue
+			}
+		}
+		filtered = append(filtered, cloneApprovalResolution(resolution))
+	}
+	return normalizeApprovalResolutions(filtered)
 }
 
 func upsertApprovalResolution(resolutions []*ApprovalResolution, resolution *ApprovalResolution) ([]*ApprovalResolution, bool) {
@@ -784,7 +851,7 @@ func approvalExtractOptions(primary map[string]any, secondary map[string]any) []
 		if container == nil {
 			continue
 		}
-		for _, key := range []string{"options", "choices"} {
+		for _, key := range []string{"options", "choices", "allowed_prompts"} {
 			entries, ok := container[key].([]any)
 			if !ok {
 				continue

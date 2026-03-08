@@ -47,7 +47,7 @@ func resolveResizeLayout(
 	usesViewport bool,
 ) resizeLayout {
 	layout := resizeLayout{
-		contentHeight: max(minContentHeight, height-2),
+		contentHeight: max(minContentHeight, height-1),
 		sidebarWidth:  computeSidebarWidth(width, sidebarCollapsed, sidebarSplit),
 		viewportWidth: width,
 	}

@@ -102,6 +102,7 @@ type Model struct {
 	clipboard                           ClipboardService
 	fileLinkResolver                    FileLinkResolver
 	fileLinkOpener                      FileLinkOpener
+	mouseGesturePolicy                  MouseGesturePolicy
 	pickerPasteNormalizer               PickerPasteNormalizer
 	sidebar                             *SidebarController
 	viewport                            viewport.Model
@@ -331,6 +332,7 @@ type Model struct {
 	sidebarSelectionRangeAnchorPolicy   SidebarSelectionRangeAnchorPolicy
 	sidebarSelectionIntentPolicy        SidebarSelectionIntentPolicy
 	sidebarSelectionService             SidebarSelectionService
+	sidebarThreadClassificationPolicy   SidebarThreadClassificationPolicy
 	sidebarExpansionIntentPolicy        SidebarExpansionIntentPolicy
 	sidebarExpansionService             SidebarExpansionService
 	sidebarUpdatePolicy                 SidebarUpdatePolicy
@@ -516,6 +518,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		clipboard:                           defaultClipboardService{},
 		fileLinkResolver:                    defaultFileLinkResolver{},
 		fileLinkOpener:                      newDefaultFileLinkOpener(),
+		mouseGesturePolicy:                  defaultMouseGesturePolicy{},
 		pickerPasteNormalizer:               defaultPickerPasteNormalizer{},
 		sidebar:                             NewSidebarController(),
 		viewport:                            vp,
@@ -628,6 +631,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sidebarSelectionRangeAnchorPolicy:   singleSelectedSidebarRangeAnchorPolicy{},
 		sidebarSelectionIntentPolicy:        newDefaultSidebarSelectionIntentPolicy(singleSelectedSidebarRangeAnchorPolicy{}),
 		sidebarSelectionService:             defaultSidebarSelectionService{},
+		sidebarThreadClassificationPolicy:   defaultSidebarThreadClassificationPolicy{},
 		sidebarExpansionIntentPolicy:        defaultSidebarExpansionIntentPolicy{},
 		sidebarExpansionService:             defaultSidebarExpansionService{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
@@ -939,6 +943,7 @@ func (m *Model) View() tea.View {
 		body = m.overlayTransientViews(body)
 		content = lipgloss.JoinVertical(lipgloss.Left, body, statusLine)
 	}
+	content = strings.TrimRight(content, "\n")
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = resolveMouseMode(m.sidebarDragging, m.splitDraggingTarget != splitDragTargetNone)
@@ -2676,10 +2681,12 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 	if changed {
 		blocks := m.transcriptStream.Blocks()
 		if sessionID != "" {
+			providerApprovals := filterApprovalRequestsForProvider(provider, m.sessionApprovals[sessionID])
+			providerResolutions := filterApprovalResolutionsForProvider(provider, m.sessionApprovalResolutions[sessionID])
 			blocks = m.transcriptComposerOrDefault().MergeApprovals(
 				blocks,
-				m.sessionApprovals[sessionID],
-				m.sessionApprovalResolutions[sessionID],
+				providerApprovals,
+				providerResolutions,
 				nil,
 			)
 			blocks = m.applyOptimisticOverlay(sessionID, blocks)
@@ -3987,7 +3994,13 @@ func (m *Model) refreshVisibleApprovalBlocks(sessionID string) {
 	if len(base) == 0 && len(requests) == 0 {
 		return
 	}
-	blocks := m.transcriptComposerOrDefault().MergeApprovals(base, requests, m.sessionApprovalResolutions[sessionID], nil)
+	provider := m.providerForSessionID(sessionID)
+	blocks := m.transcriptComposerOrDefault().MergeApprovals(
+		base,
+		filterApprovalRequestsForProvider(provider, requests),
+		filterApprovalResolutionsForProvider(provider, m.sessionApprovalResolutions[sessionID]),
+		nil,
+	)
 	blocks = m.applyOptimisticOverlay(sessionID, blocks)
 	if m.transcriptViewportVisible() {
 		m.applyBlocks(blocks)

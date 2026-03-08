@@ -11,22 +11,25 @@ import (
 func TestDefaultFileLinkResolverResolve(t *testing.T) {
 	resolver := defaultFileLinkResolver{}
 	tests := []struct {
-		name    string
-		target  string
-		path    string
-		line    int
-		column  int
-		wantErr bool
+		name       string
+		target     string
+		kind       FileLinkTargetKind
+		openTarget string
+		line       int
+		column     int
+		wantErr    bool
 	}{
-		{name: "absolute path", target: "/tmp/main.go", path: "/tmp/main.go"},
-		{name: "path with line and col", target: "/tmp/main.go:12:3", path: "/tmp/main.go", line: 12, column: 3},
-		{name: "file url with fragment", target: "file:///tmp/main.go#L9C2", path: "/tmp/main.go", line: 9, column: 2},
-		{name: "file url with query and fragment", target: "file:///tmp/main.go?x=1#L5", path: "/tmp/main.go", line: 5, column: 0},
-		{name: "path query removed", target: "/tmp/main.go?foo=bar", path: "/tmp/main.go"},
-		{name: "path fragment removed", target: "/tmp/main.go#L10", path: "/tmp/main.go", line: 10, column: 0},
-		{name: "zero fragment ignored", target: "file:///tmp/main.go#L0", path: "/tmp/main.go", line: 0, column: 0},
+		{name: "absolute path", target: "/tmp/main.go", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go"},
+		{name: "path with line and col", target: "/tmp/main.go:12:3", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 12, column: 3},
+		{name: "file url with fragment", target: "file:///tmp/main.go#L9C2", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 9, column: 2},
+		{name: "file url with query and fragment", target: "file:///tmp/main.go?x=1#L5", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 5, column: 0},
+		{name: "path query removed", target: "/tmp/main.go?foo=bar", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go"},
+		{name: "path fragment removed", target: "/tmp/main.go#L10", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 10, column: 0},
+		{name: "zero fragment ignored", target: "file:///tmp/main.go#L0", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 0, column: 0},
+		{name: "https url accepted", target: "https://example.com/docs?q=1#intro", kind: FileLinkTargetKindURL, openTarget: "https://example.com/docs?q=1#intro"},
+		{name: "http url accepted", target: "http://example.com", kind: FileLinkTargetKindURL, openTarget: "http://example.com"},
 		{name: "relative path rejected", target: "main.go", wantErr: true},
-		{name: "http rejected", target: "https://example.com", wantErr: true},
+		{name: "unsupported scheme rejected", target: "ftp://example.com/file.txt", wantErr: true},
 		{name: "malformed url rejected", target: "file://%", wantErr: true},
 	}
 	for _, tt := range tests {
@@ -41,7 +44,7 @@ func TestDefaultFileLinkResolverResolve(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected resolve error: %v", err)
 			}
-			if resolved.Path != tt.path || resolved.Line != tt.line || resolved.Column != tt.column {
+			if resolved.Kind != tt.kind || resolved.OpenTarget() != tt.openTarget || resolved.Line != tt.line || resolved.Column != tt.column {
 				t.Fatalf("unexpected resolved target: %#v", resolved)
 			}
 		})
@@ -53,7 +56,7 @@ func TestDefaultFileLinkOpenerUsesResolvedCommand(t *testing.T) {
 	runner := &observedFileLinkCommandRunner{}
 	opener := defaultFileLinkOpener{policy: policy, runner: runner}
 
-	err := opener.Open(context.Background(), ResolvedFileLink{Path: "/tmp/main.go"})
+	err := opener.Open(context.Background(), ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: "/tmp/main.go"})
 	if err != nil {
 		t.Fatalf("unexpected open error: %v", err)
 	}
@@ -67,7 +70,7 @@ func TestDefaultFileLinkOpenerUsesResolvedCommand(t *testing.T) {
 
 func TestDefaultFileLinkOpenerEmptyPathRejected(t *testing.T) {
 	opener := defaultFileLinkOpener{}
-	err := opener.Open(context.Background(), ResolvedFileLink{Path: " "})
+	err := opener.Open(context.Background(), ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: " "})
 	if err == nil || !strings.Contains(err.Error(), "link target is empty") {
 		t.Fatalf("expected empty target error, got %v", err)
 	}
@@ -79,7 +82,7 @@ func TestDefaultFileLinkOpenerPropagatesRunnerError(t *testing.T) {
 		runner: &observedFileLinkCommandRunner{err: errors.New("boom")},
 	}
 
-	err := opener.Open(context.Background(), ResolvedFileLink{Path: "/tmp/main.go"})
+	err := opener.Open(context.Background(), ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: "/tmp/main.go"})
 	if err == nil {
 		t.Fatalf("expected open error")
 	}
@@ -90,7 +93,7 @@ func TestDefaultFileLinkOpenerPropagatesPolicyError(t *testing.T) {
 		policy: stubFileLinkOpenPolicy{err: errors.New("policy boom")},
 		runner: &observedFileLinkCommandRunner{},
 	}
-	err := opener.Open(context.Background(), ResolvedFileLink{Path: "/tmp/main.go"})
+	err := opener.Open(context.Background(), ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: "/tmp/main.go"})
 	if err == nil || !strings.Contains(err.Error(), "policy boom") {
 		t.Fatalf("expected policy error, got %v", err)
 	}
@@ -101,7 +104,7 @@ func TestDefaultFileLinkOpenerFallsBackWhenPolicyOrRunnerNil(t *testing.T) {
 		policy: nil,
 		runner: &observedFileLinkCommandRunner{},
 	}
-	if err := withNilPolicy.Open(context.Background(), ResolvedFileLink{Path: "/tmp/main.go"}); err != nil {
+	if err := withNilPolicy.Open(context.Background(), ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: "/tmp/main.go"}); err != nil {
 		t.Fatalf("expected nil policy fallback, got %v", err)
 	}
 
@@ -109,7 +112,7 @@ func TestDefaultFileLinkOpenerFallsBackWhenPolicyOrRunnerNil(t *testing.T) {
 		policy: stubFileLinkOpenPolicy{command: FileLinkOpenCommand{Name: "definitely-not-a-real-opener", Args: []string{"/tmp/main.go"}}},
 		runner: nil,
 	}
-	err := withNilRunner.Open(context.Background(), ResolvedFileLink{Path: "/tmp/main.go"})
+	err := withNilRunner.Open(context.Background(), ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: "/tmp/main.go"})
 	if err == nil {
 		t.Fatalf("expected nil runner fallback to attempt execution and fail")
 	}
@@ -117,7 +120,7 @@ func TestDefaultFileLinkOpenerFallsBackWhenPolicyOrRunnerNil(t *testing.T) {
 
 func TestDefaultFileLinkOpenPolicyBuildCommand(t *testing.T) {
 	policy := newDefaultFileLinkOpenPolicy()
-	command, err := policy.BuildCommand(ResolvedFileLink{Path: "/tmp/main.go"})
+	command, err := policy.BuildCommand(ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: "/tmp/main.go"})
 	if err != nil {
 		t.Fatalf("unexpected policy error: %v", err)
 	}
@@ -142,9 +145,21 @@ func TestDefaultFileLinkOpenPolicyBuildCommand(t *testing.T) {
 	}
 }
 
+func TestDefaultFileLinkOpenPolicyBuildCommandForURL(t *testing.T) {
+	policy := newDefaultFileLinkOpenPolicy()
+	target := "https://example.com/docs"
+	command, err := policy.BuildCommand(ResolvedFileLink{Kind: FileLinkTargetKindURL, URL: target})
+	if err != nil {
+		t.Fatalf("unexpected policy error: %v", err)
+	}
+	if len(command.Args) == 0 || command.Args[len(command.Args)-1] != target {
+		t.Fatalf("expected URL target in command args, got %#v", command)
+	}
+}
+
 func TestDefaultFileLinkOpenPolicyRejectsEmptyPath(t *testing.T) {
 	policy := newDefaultFileLinkOpenPolicy()
-	_, err := policy.BuildCommand(ResolvedFileLink{Path: " "})
+	_, err := policy.BuildCommand(ResolvedFileLink{Kind: FileLinkTargetKindFile, FilePath: " "})
 	if err == nil || !strings.Contains(err.Error(), "link target is empty") {
 		t.Fatalf("expected empty path error, got %v", err)
 	}

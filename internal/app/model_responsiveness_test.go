@@ -440,16 +440,41 @@ func TestApplySessionProjectionSkipsCacheWhenNoKeyAndNonSelectedSession(t *testi
 		t.Fatalf("expected session selection to be available")
 	}
 	m.transcriptCache = map[string][]ChatBlock{}
+	m.applyBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "visible-session"}})
 
 	m.applySessionProjection(sessionProjectionSourceHistory, "other-session", "", []ChatBlock{
 		{Role: ChatRoleAgent, Text: "ignored cache"},
 	})
 
+	visible := m.currentBlocks()
+	if len(visible) != 1 || visible[0].Text != "visible-session" {
+		t.Fatalf("expected visible transcript to remain unchanged for non-active session projection, got %#v", visible)
+	}
 	if got := len(m.transcriptCache); got != 0 {
 		t.Fatalf("expected no cache writes for non-selected session without key, got %d", got)
 	}
 	if got := m.status; got != "history updated" {
 		t.Fatalf("expected background status update, got %q", got)
+	}
+}
+
+func TestShouldApplySessionProjectionToVisibleUsesActiveContext(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected session selection to be available")
+	}
+	selectedKey := m.selectedKey()
+	if !m.shouldApplySessionProjectionToVisible("s1", selectedKey) {
+		t.Fatalf("expected matching selected key to apply to visible transcript")
+	}
+	if !m.shouldApplySessionProjectionToVisible("s1", "") {
+		t.Fatalf("expected matching active session id to apply to visible transcript")
+	}
+	if m.shouldApplySessionProjectionToVisible("s2", "") {
+		t.Fatalf("expected non-active session id to be ignored for visible projection")
+	}
+	if m.shouldApplySessionProjectionToVisible("s2", "sess:s2") {
+		t.Fatalf("expected non-selected key to be ignored for visible projection")
 	}
 }
 

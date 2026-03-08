@@ -720,6 +720,11 @@ func (m *Model) reduceTranscriptSelectLeftPressMouse(msg tea.MouseMsg, layout mo
 	if mouse.Y < 1 || mouse.Y > m.viewport.Height() || m.mouseOverInput(mouse.Y) {
 		return false
 	}
+	if m.mouseGesturePolicyOrDefault().PreservesSelection(msg) {
+		// Ctrl+click is reserved for link-open behavior and must not alter
+		// transcript message selection state.
+		return true
+	}
 	return m.selectMessageByViewportPoint(mouse.X-layout.rightStart, mouse.Y-1)
 }
 
@@ -959,6 +964,10 @@ func (m *Model) reduceSidebarSelectionLeftPressMouse(msg tea.MouseMsg, layout mo
 				return false
 			}
 			caretClick := sidebarToggleHitboxClicked(entry, mouse.X)
+			if m.mouseGesturePolicyOrDefault().PreservesSelection(msg) && !caretClick && m.sidebarThreadClassificationPolicyOrDefault().IsThreadTarget(entry) {
+				// Ctrl+click must not select/deselect chat threads.
+				return true
+			}
 			if !caretClick {
 				intent := m.sidebarSelectionIntentPolicyOrDefault().ResolveIntent(m.sidebar, entry.key(), mouse)
 				_ = m.sidebarSelectionServiceOrDefault().ApplyIntent(m.sidebar, intent)

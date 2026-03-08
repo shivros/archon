@@ -13,6 +13,17 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
+type testMouseReducersThreadClassificationPolicy struct {
+	threadKinds map[sidebarItemKind]bool
+}
+
+func (p testMouseReducersThreadClassificationPolicy) IsThreadTarget(entry *sidebarItem) bool {
+	if entry == nil {
+		return false
+	}
+	return p.threadKinds[entry.kind]
+}
+
 func TestMouseReducerLeftPressOutsideContextMenuCloses(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
@@ -672,7 +683,7 @@ func TestMouseReducerSidebarClickKeepsMultiSelectionWhenTargetAlreadySelected(t 
 	}
 }
 
-func TestMouseReducerSidebarCtrlClickTogglesSelectionMembership(t *testing.T) {
+func TestMouseReducerSidebarCtrlClickSessionDoesNotChangeSelectionMembership(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
@@ -704,28 +715,87 @@ func TestMouseReducerSidebarCtrlClickTogglesSelectionMembership(t *testing.T) {
 		t.Fatalf("expected visible session rows, got s1=%d s2=%d", rowS1, rowS2)
 	}
 
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to focus s1 before ctrl+click checks")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.IsKeySelected("sess:s1") || m.sidebar.IsKeySelected("sess:s2") {
+		t.Fatalf("expected baseline single selection on s1 before ctrl+click")
+	}
+
 	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: rowS1}, layout)
 	if !handled {
 		t.Fatalf("expected ctrl+click to be handled")
 	}
-	if !m.sidebar.IsKeySelected("sess:s1") {
-		t.Fatalf("expected s1 selected after ctrl+click")
+	if !m.sidebar.IsKeySelected("sess:s1") || m.sidebar.IsKeySelected("sess:s2") {
+		t.Fatalf("expected ctrl+click on selected session to preserve selection")
 	}
 
 	handled = m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: rowS2}, layout)
 	if !handled {
 		t.Fatalf("expected second ctrl+click to be handled")
 	}
-	if !m.sidebar.IsKeySelected("sess:s1") || !m.sidebar.IsKeySelected("sess:s2") {
-		t.Fatalf("expected s1 and s2 selected after second ctrl+click")
+	if !m.sidebar.IsKeySelected("sess:s1") || m.sidebar.IsKeySelected("sess:s2") {
+		t.Fatalf("expected ctrl+click on another session to keep selection unchanged")
+	}
+}
+
+func TestMouseReducerSidebarCtrlClickUsesCustomThreadClassificationPolicy(t *testing.T) {
+	m := NewModel(nil, WithSidebarThreadClassificationPolicy(testMouseReducersThreadClassificationPolicy{
+		threadKinds: map[sidebarItemKind]bool{sidebarWorkflow: true},
+	}))
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", WorkflowRunID: "gwf-2"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	rowForWorkflow := func(id string) int {
+		for y := 0; y < 30; y++ {
+			entry := m.sidebar.ItemAtRow(y)
+			if entry != nil && entry.kind == sidebarWorkflow && entry.workflowRunID() == id {
+				return y
+			}
+		}
+		return -1
+	}
+	row1 := rowForWorkflow("gwf-1")
+	row2 := rowForWorkflow("gwf-2")
+	if row1 < 0 || row2 < 0 {
+		t.Fatalf("expected visible workflow rows, got gwf-1=%d gwf-2=%d", row1, row2)
 	}
 
-	handled = m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: rowS1}, layout)
-	if !handled {
-		t.Fatalf("expected third ctrl+click to be handled")
+	if !m.sidebar.SelectByKey("gwf:gwf-1") {
+		t.Fatalf("expected to focus gwf-1 before ctrl+click checks")
 	}
-	if m.sidebar.IsKeySelected("sess:s1") || !m.sidebar.IsKeySelected("sess:s2") {
-		t.Fatalf("expected third ctrl+click to toggle s1 off and keep s2 selected")
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.IsKeySelected("gwf:gwf-1") || m.sidebar.IsKeySelected("gwf:gwf-2") {
+		t.Fatalf("expected baseline single selection on gwf-1 before ctrl+click")
+	}
+
+	handled := m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row2}, layout)
+	if !handled {
+		t.Fatalf("expected ctrl+click on classified workflow thread to be handled")
+	}
+	if !m.sidebar.IsKeySelected("gwf:gwf-1") || m.sidebar.IsKeySelected("gwf:gwf-2") {
+		t.Fatalf("expected ctrl+click on classified workflow thread to preserve selection")
+	}
+
+	handled = m.reduceSidebarSelectionLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: 6, Y: row1}, layout)
+	if !handled {
+		t.Fatalf("expected second ctrl+click on classified workflow thread to be handled")
+	}
+	if !m.sidebar.IsKeySelected("gwf:gwf-1") || m.sidebar.IsKeySelected("gwf:gwf-2") {
+		t.Fatalf("expected second ctrl+click on classified workflow thread to preserve selection")
 	}
 }
 
@@ -2063,6 +2133,28 @@ func TestMouseReducerTranscriptClickSelectsMessage(t *testing.T) {
 	}
 }
 
+func TestMouseReducerTranscriptCtrlClickDoesNotSelectMessage(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.applyBlocks([]ChatBlock{
+		{Role: ChatRoleAgent, Text: "first"},
+	})
+	if len(m.contentBlockSpans) != 1 {
+		t.Fatalf("expected span metadata for message")
+	}
+	span := m.contentBlockSpans[0]
+	layout := m.resolveMouseLayout()
+	y := span.CopyLine - m.viewport.YOffset() + 2
+
+	handled := m.reduceTranscriptSelectLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModCtrl, X: layout.rightStart, Y: y}, layout)
+	if !handled {
+		t.Fatalf("expected ctrl+click in transcript body to be consumed")
+	}
+	if m.messageSelectActive {
+		t.Fatalf("expected ctrl+click to keep message selection inactive")
+	}
+}
+
 func TestMouseReducerTranscriptDragHighlightsMultipleBlocks(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
@@ -2310,7 +2402,7 @@ func TestMouseReducerGlobalStatusBarClickOpensStatusHistory(t *testing.T) {
 	}
 }
 
-func TestMouseReducerGlobalStatusBarHelpClickDoesNotCopy(t *testing.T) {
+func TestMouseReducerGlobalStatusBarNonStatusClickDoesNotCopy(t *testing.T) {
 	origWriteAll := clipboardWriteAll
 	origWriteOSC52 := clipboardWriteOSC52
 	defer func() {
@@ -2337,7 +2429,7 @@ func TestMouseReducerGlobalStatusBarHelpClickDoesNotCopy(t *testing.T) {
 		t.Fatalf("expected global status hitbox")
 	}
 	if start <= 0 {
-		t.Fatalf("expected non-empty help segment before status, got status start %d", start)
+		t.Fatalf("expected non-status area before status, got status start %d", start)
 	}
 
 	handled := m.handleMouse(tea.MouseClickMsg{
@@ -2346,10 +2438,10 @@ func TestMouseReducerGlobalStatusBarHelpClickDoesNotCopy(t *testing.T) {
 		Y:      m.height,
 	})
 	if handled {
-		t.Fatalf("expected help-segment click to remain unhandled")
+		t.Fatalf("expected non-status click to remain unhandled")
 	}
 	if copied {
-		t.Fatalf("expected help-segment click not to invoke clipboard copy")
+		t.Fatalf("expected non-status click not to invoke clipboard copy")
 	}
 	if m.status != "ready" {
 		t.Fatalf("expected status to remain unchanged, got %q", m.status)

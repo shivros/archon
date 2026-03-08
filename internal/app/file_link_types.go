@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,9 +16,28 @@ var (
 
 type ResolvedFileLink struct {
 	RawTarget string
-	Path      string
+	Kind      FileLinkTargetKind
+	FilePath  string
+	URL       string
 	Line      int
 	Column    int
+}
+
+type FileLinkTargetKind string
+
+const (
+	FileLinkTargetKindUnknown FileLinkTargetKind = ""
+	FileLinkTargetKindFile    FileLinkTargetKind = "file"
+	FileLinkTargetKindURL     FileLinkTargetKind = "url"
+)
+
+func (t ResolvedFileLink) OpenTarget() string {
+	switch t.Kind {
+	case FileLinkTargetKindURL:
+		return strings.TrimSpace(t.URL)
+	default:
+		return strings.TrimSpace(t.FilePath)
+	}
 }
 
 type FileLinkResolver interface {

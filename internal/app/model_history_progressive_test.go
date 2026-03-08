@@ -207,6 +207,39 @@ func TestHistoryPollUsesInitialHistoryLines(t *testing.T) {
 	}
 }
 
+func TestHistoryPollWaitsForPendingAsyncProjection(t *testing.T) {
+	history := &historyRecorderAPI{}
+	m := newPhase0ModelWithSession("custom")
+	m.sessionHistoryAPI = history
+	m.mode = uiModeCompose
+	m.pendingSessionKey = "sess:s1"
+	if m.compose != nil {
+		m.compose.Enter("s1", "Session")
+	}
+	m.sessionProjectionLatest = map[string]int{
+		sessionProjectionToken("sess:s1", "s1"): 17,
+	}
+
+	handled, cmd := m.reduceStateMessages(historyPollMsg{
+		id:        "s1",
+		key:       "sess:s1",
+		attempt:   0,
+		minAgents: -1,
+	})
+	if !handled {
+		t.Fatalf("expected history poll message to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected history poll retry command")
+	}
+	if len(history.calls) != 0 {
+		t.Fatalf("expected history fetch to wait for pending projection, got %#v", history.calls)
+	}
+	if _, ok := cmd().(historyPollMsg); !ok {
+		t.Fatalf("expected retry historyPollMsg, got %T", cmd())
+	}
+}
+
 type historyRecorderAPI struct {
 	calls []int
 }

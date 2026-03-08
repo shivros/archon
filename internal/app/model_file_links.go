@@ -49,7 +49,7 @@ func (m *Model) openNotesPanelFileLinkByViewportPosition(col, line int) (bool, t
 }
 
 func (m *Model) reduceTranscriptLinkLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
-	if !isMouseClickMsg(msg) {
+	if !m.mouseGesturePolicyOrDefault().IsLinkOpenGesture(msg) {
 		return false
 	}
 	mouse := msg.Mouse()

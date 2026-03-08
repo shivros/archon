@@ -102,14 +102,7 @@ func (m *Model) renderStatusLineView() string {
 }
 
 func (m *Model) statusLineParts() (string, string) {
-	helpText := ""
-	if m.hotkeys != nil {
-		helpText = m.hotkeys.Render(m)
-	}
-	if helpText == "" {
-		helpText = "q quit"
-	}
-	help := helpStyle.Render(helpText)
+	help := ""
 	status := statusStyle.Render(m.status)
 	return help, status
 }

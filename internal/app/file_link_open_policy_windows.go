@@ -9,9 +9,9 @@ func currentPlatformFileLinkOpenPolicy() FileLinkOpenPolicy {
 }
 
 func (windowsFileLinkOpenPolicy) BuildCommand(target ResolvedFileLink) (FileLinkOpenCommand, error) {
-	path := strings.TrimSpace(target.Path)
-	if path == "" {
+	openTarget := strings.TrimSpace(target.OpenTarget())
+	if openTarget == "" {
 		return FileLinkOpenCommand{}, errFileLinkEmptyTarget
 	}
-	return FileLinkOpenCommand{Name: "cmd", Args: []string{"/c", "start", "", path}}, nil
+	return FileLinkOpenCommand{Name: "cmd", Args: []string{"/c", "start", "", openTarget}}, nil
 }

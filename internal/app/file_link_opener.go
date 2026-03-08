@@ -19,7 +19,8 @@ func newDefaultFileLinkOpener() FileLinkOpener {
 }
 
 func (o defaultFileLinkOpener) Open(ctx context.Context, target ResolvedFileLink) error {
-	if strings.TrimSpace(target.Path) == "" {
+	openTarget := strings.TrimSpace(target.OpenTarget())
+	if openTarget == "" {
 		return errFileLinkEmptyTarget
 	}
 	policy := o.policy
@@ -35,7 +36,7 @@ func (o defaultFileLinkOpener) Open(ctx context.Context, target ResolvedFileLink
 		return err
 	}
 	if err := runner.Run(ctx, command); err != nil {
-		return fmt.Errorf("open %q: %w", target.Path, err)
+		return fmt.Errorf("open %q: %w", openTarget, err)
 	}
 	return nil
 }

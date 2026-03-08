@@ -7,6 +7,9 @@ func (m *Model) reduceHighlightMouse(msg tea.MouseMsg, layout mouseLayout) bool 
 	if m == nil || m.highlight == nil {
 		return false
 	}
+	if !m.mouseGesturePolicyOrDefault().AllowsHighlight(msg) {
+		return false
+	}
 	mouse := msg.Mouse()
 	switch msg.(type) {
 	case tea.MouseClickMsg:

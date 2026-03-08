@@ -168,3 +168,43 @@ func TestApprovalFromRecordBuildsExternalDirectoryRequest(t *testing.T) {
 		t.Fatalf("expected hidden ids to stay out of display context: %q", contextText)
 	}
 }
+
+func TestApprovalFromRecordBuildsClaudePlanRequest(t *testing.T) {
+	params, err := json.Marshal(map[string]any{
+		"title":   "Link Start Chat Buttons to Persona-Specific Chat Sessions",
+		"message": "Claude is waiting for plan approval before implementation can continue.",
+		"allowed_prompts": []any{
+			"Bash: run tests in asabot package",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	record := &types.Approval{
+		SessionID: "s1",
+		RequestID: 314,
+		Method:    types.ApprovalMethodClaudeExitPlanMode,
+		Params:    params,
+		CreatedAt: time.Date(2026, 3, 8, 17, 19, 24, 0, time.UTC),
+	}
+
+	req := approvalFromRecord(record)
+	if req == nil {
+		t.Fatalf("expected approval request")
+	}
+	if req.Summary != "plan" {
+		t.Fatalf("unexpected summary: %q", req.Summary)
+	}
+	if req.Detail != "Link Start Chat Buttons to Persona-Specific Chat Sessions" {
+		t.Fatalf("unexpected detail: %q", req.Detail)
+	}
+	contextText := strings.Join(req.Context, "\n")
+	for _, want := range []string{
+		"Claude is waiting for plan approval before implementation can continue.",
+		"Allowed prompts: Bash: run tests in asabot package",
+	} {
+		if !strings.Contains(contextText, want) {
+			t.Fatalf("missing context line %q in %q", want, contextText)
+		}
+	}
+}

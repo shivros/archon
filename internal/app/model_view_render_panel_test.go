@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -82,5 +84,27 @@ func TestSessionByIDTrimsAndMisses(t *testing.T) {
 	}
 	if session := m.sessionByID("missing"); session != nil {
 		t.Fatalf("expected miss to return nil, got %#v", session)
+	}
+}
+
+func TestViewUsesFullHeight(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(180, 40)
+	m.setStatusMessage("ready")
+
+	totalHeight := m.renderedBodyHeight() + lipgloss.Height(m.renderStatusLineView())
+	if totalHeight != m.height {
+		t.Fatalf("expected rendered view height %d, got %d", m.height, totalHeight)
+	}
+}
+
+func TestViewDoesNotEndWithTrailingNewline(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(180, 40)
+	m.setStatusMessage("ready")
+
+	rendered := fmt.Sprint(m.View().Content)
+	if strings.HasSuffix(rendered, "\n") {
+		t.Fatalf("expected view content without trailing newline, got %q", rendered)
 	}
 }

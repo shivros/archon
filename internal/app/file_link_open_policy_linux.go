@@ -9,9 +9,9 @@ func currentPlatformFileLinkOpenPolicy() FileLinkOpenPolicy {
 }
 
 func (linuxFileLinkOpenPolicy) BuildCommand(target ResolvedFileLink) (FileLinkOpenCommand, error) {
-	path := strings.TrimSpace(target.Path)
-	if path == "" {
+	openTarget := strings.TrimSpace(target.OpenTarget())
+	if openTarget == "" {
 		return FileLinkOpenCommand{}, errFileLinkEmptyTarget
 	}
-	return FileLinkOpenCommand{Name: "xdg-open", Args: []string{path}}, nil
+	return FileLinkOpenCommand{Name: "xdg-open", Args: []string{openTarget}}, nil
 }

@@ -106,8 +106,8 @@ func TestDefaultSessionCapabilityModeResolverUsesEnvelopeWhenPresent(t *testing.
 func TestDefaultSessionCapabilityModeResolverFallsBackToProviderCaps(t *testing.T) {
 	resolver := defaultSessionCapabilityModeResolver{}
 	mode := resolver.ResolveMode("s1", "claude", nil)
-	if !mode.UsesItems || mode.SupportsApprovals {
-		t.Fatalf("expected claude fallback mode to use items without approvals, got %#v", mode)
+	if !mode.UsesItems || !mode.SupportsApprovals {
+		t.Fatalf("expected claude fallback mode to use items with approvals, got %#v", mode)
 	}
 }
 

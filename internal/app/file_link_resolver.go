@@ -31,11 +31,18 @@ func (defaultFileLinkResolver) Resolve(rawTarget string) (ResolvedFileLink, erro
 		if err != nil {
 			return ResolvedFileLink{}, fmt.Errorf("parse link: %w", err)
 		}
-		if !strings.EqualFold(strings.TrimSpace(parsed.Scheme), "file") {
+		switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+		case "file":
+			target = parsed.Path
+			fragment = parsed.Fragment
+		case "http", "https":
+			// HTTP(S) links are opened as-is by platform openers.
+			resolved.Kind = FileLinkTargetKindURL
+			resolved.URL = parsed.String()
+			return resolved, nil
+		default:
 			return ResolvedFileLink{}, fmt.Errorf("%w: %s", errFileLinkUnsupportedTarget, strings.TrimSpace(parsed.Scheme))
 		}
-		target = parsed.Path
-		fragment = parsed.Fragment
 	} else {
 		if idx := strings.IndexByte(target, '#'); idx >= 0 {
 			fragment = target[idx+1:]
@@ -67,7 +74,8 @@ func (defaultFileLinkResolver) Resolve(rawTarget string) (ResolvedFileLink, erro
 		return ResolvedFileLink{}, fmt.Errorf("%w: %s", errFileLinkUnsupportedTarget, rawTarget)
 	}
 
-	resolved.Path = filepath.Clean(target)
+	resolved.Kind = FileLinkTargetKindFile
+	resolved.FilePath = filepath.Clean(target)
 	resolved.Line = max(0, line)
 	resolved.Column = max(0, column)
 	return resolved, nil

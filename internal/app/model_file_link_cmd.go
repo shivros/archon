@@ -43,6 +43,6 @@ func (m *Model) openFileLinkCmd(rawTarget string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), fileLinkOpenTimeout)
 		defer cancel()
 		err := opener.Open(ctx, resolved)
-		return fileLinkOpenResultMsg{path: resolved.Path, err: err}
+		return fileLinkOpenResultMsg{target: resolved.OpenTarget(), err: err}
 	}
 }

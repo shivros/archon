@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"control/internal/daemon/transcriptdomain"
+	"control/internal/types"
 )
 
 func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
@@ -466,6 +467,50 @@ func TestHistoryMsgClaudeDoesNotMergeApprovals(t *testing.T) {
 	}
 	if blocks[0].Role != ChatRoleAgent {
 		t.Fatalf("expected assistant role, got %#v", blocks[0])
+	}
+}
+
+func TestHistoryMsgClaudeMergesExitPlanApproval(t *testing.T) {
+	m := newPhase0ModelWithSession("claude")
+	m.enterCompose("s1")
+	m.pendingSessionKey = "sess:s1"
+
+	m.setApprovalsForSession("s1", []*ApprovalRequest{
+		{
+			RequestID: 42,
+			SessionID: "s1",
+			Method:    types.ApprovalMethodClaudeExitPlanMode,
+			Summary:   "plan",
+			Detail:    "Review implementation plan",
+			CreatedAt: time.Date(2026, 2, 14, 12, 1, 0, 0, time.UTC),
+		},
+	})
+
+	msg := historyMsg{
+		id:  "s1",
+		key: "sess:s1",
+		items: []map[string]any{
+			{"type": "assistant", "content": []any{map[string]any{"type": "text", "text": "Claude reply."}}},
+		},
+	}
+
+	handled, cmd := m.reduceStateMessages(msg)
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no follow-up command for history message")
+	}
+
+	blocks := m.currentBlocks()
+	if len(blocks) != 2 {
+		t.Fatalf("expected assistant + approval blocks, got %#v", blocks)
+	}
+	if blocks[0].Role != ChatRoleAgent {
+		t.Fatalf("expected assistant role first, got %#v", blocks[0])
+	}
+	if blocks[1].Role != ChatRoleApproval || blocks[1].RequestID != 42 {
+		t.Fatalf("expected Claude plan approval block, got %#v", blocks[1])
 	}
 }
 
