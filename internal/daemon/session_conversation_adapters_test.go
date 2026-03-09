@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -578,9 +579,22 @@ func TestLiveManagerConversationEventSubscriberRequiresSession(t *testing.T) {
 	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
+func TestLiveManagerConversationEventSubscriberMapsNotLiveErrorToTranscriptUnavailable(t *testing.T) {
+	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
+	live := &stubLiveManager{subscribeErr: ErrSessionNotLive}
+	deps := eventDeps{liveManager: live}
+
+	session := &types.Session{ID: "s1", Provider: "test", Status: types.SessionStatusInactive}
+	_, _, err := adapter.SubscribeEvents(context.Background(), deps, session, nil)
+	expectServiceErrorKind(t, err, ServiceErrorUnavailable)
+	if !errors.Is(err, ErrTranscriptFollowUnavailable) {
+		t.Fatalf("expected transcript follow unavailable cause, got %v", err)
+	}
+}
+
 func TestLiveManagerConversationEventSubscriberError(t *testing.T) {
 	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
-	session := &types.Session{ID: "s1", Provider: "test"}
+	session := &types.Session{ID: "s1", Provider: "test", Status: types.SessionStatusRunning}
 	live := &stubLiveManager{subscribeErr: errors.New("subscribe failed")}
 	deps := eventDeps{liveManager: live}
 
@@ -593,7 +607,26 @@ func TestLiveManagerConversationEventSubscriberError(t *testing.T) {
 
 func TestLiveManagerConversationEventSubscriberDelegatesToLiveManager(t *testing.T) {
 	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
-	session := &types.Session{ID: "s1", Provider: "test"}
+	session := &types.Session{ID: "s1", Provider: "test", Status: types.SessionStatusRunning}
+	live := &stubLiveManager{}
+	deps := eventDeps{liveManager: live}
+
+	ch, cancel, err := adapter.SubscribeEvents(context.Background(), deps, session, nil)
+	if err != nil {
+		t.Fatalf("SubscribeEvents: %v", err)
+	}
+	if ch == nil {
+		t.Fatalf("expected non-nil channel")
+	}
+	if cancel == nil {
+		t.Fatalf("expected non-nil cancel func")
+	}
+	cancel()
+}
+
+func TestLiveManagerConversationEventSubscriberDelegatesForInactiveSessionWhenLiveManagerAllows(t *testing.T) {
+	adapter := liveManagerConversationEventSubscriber{providerName: "test"}
+	session := &types.Session{ID: "s1", Provider: "test", Status: types.SessionStatusInactive}
 	live := &stubLiveManager{}
 	deps := eventDeps{liveManager: live}
 
@@ -696,6 +729,71 @@ func TestLiveManagerConversationApproverRespondError(t *testing.T) {
 	if !strings.Contains(err.Error(), "respond failed") {
 		t.Fatalf("expected wrapped error message, got %v", err)
 	}
+}
+
+func TestClaudeConversationApproverStartsFollowUpTurn(t *testing.T) {
+	adapter := claudeConversationApprover{providerName: "claude"}
+	session := &types.Session{ID: "s1", Provider: "claude"}
+	live := &stubLiveManager{
+		startTurnResults: []stubLiveTurnResult{{turnID: "claude-turn-1"}},
+	}
+	approvals := &stubApprovalStore{
+		records: map[string]*types.Approval{
+			"s1:7": {
+				SessionID: "s1",
+				RequestID: 7,
+				Method:    types.ApprovalMethodClaudeExitPlanMode,
+				Params:    json.RawMessage(`{"title":"Ship Persona Chat Deep Links"}`),
+			},
+		},
+	}
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "session_meta.json"))
+	deps := approvalDeps{
+		liveManager:      live,
+		approvalStore:    approvals,
+		sessionMetaStore: metaStore,
+	}
+
+	err := adapter.Approve(context.Background(), deps, session, nil, 7, "accept", nil, nil)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if live.startTurnCalls != 1 {
+		t.Fatalf("expected 1 StartTurn call, got %d", live.startTurnCalls)
+	}
+	if len(live.lastStartTurnInput) != 1 {
+		t.Fatalf("expected single follow-up input, got %#v", live.lastStartTurnInput)
+	}
+	text := asString(live.lastStartTurnInput[0]["text"])
+	if !strings.Contains(text, "The plan is approved.") {
+		t.Fatalf("expected approval prompt, got %q", text)
+	}
+	if !strings.Contains(text, "Ship Persona Chat Deep Links") {
+		t.Fatalf("expected plan title in approval prompt, got %q", text)
+	}
+	if len(approvals.deleteCalls) != 1 {
+		t.Fatalf("expected approval delete call, got %#v", approvals.deleteCalls)
+	}
+	meta, ok, err := metaStore.Get(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("get meta: %v", err)
+	}
+	if !ok || meta == nil || meta.LastTurnID != "claude-turn-1" {
+		t.Fatalf("expected LastTurnID to be updated, got %#v ok=%v", meta, ok)
+	}
+}
+
+func TestClaudeConversationApproverRequiresStoredApproval(t *testing.T) {
+	adapter := claudeConversationApprover{providerName: "claude"}
+	session := &types.Session{ID: "s1", Provider: "claude"}
+	live := &stubLiveManager{}
+	deps := approvalDeps{
+		liveManager:   live,
+		approvalStore: &stubApprovalStore{},
+	}
+
+	err := adapter.Approve(context.Background(), deps, session, nil, 9, "accept", nil, nil)
+	expectServiceErrorKind(t, err, ServiceErrorInvalid)
 }
 
 func TestLiveManagerConversationInterrupterRequiresSession(t *testing.T) {
@@ -1397,8 +1495,9 @@ type stubLiveTurnResult struct {
 }
 
 type stubLiveManager struct {
-	startTurnResults []stubLiveTurnResult
-	startTurnCalls   int
+	startTurnResults   []stubLiveTurnResult
+	startTurnCalls     int
+	lastStartTurnInput []map[string]any
 
 	subscribeErr    error
 	respondErr      error
@@ -1408,7 +1507,8 @@ type stubLiveManager struct {
 	interruptCalls  int
 }
 
-func (s *stubLiveManager) StartTurn(_ context.Context, _ *types.Session, _ *types.SessionMeta, _ []map[string]any, _ *types.SessionRuntimeOptions) (string, error) {
+func (s *stubLiveManager) StartTurn(_ context.Context, _ *types.Session, _ *types.SessionMeta, input []map[string]any, _ *types.SessionRuntimeOptions) (string, error) {
+	s.lastStartTurnInput = input
 	if s.startTurnCalls >= len(s.startTurnResults) {
 		return "", nil
 	}
@@ -1495,6 +1595,7 @@ func (s *failingSessionMetaStore) Delete(context.Context, string) error {
 }
 
 type stubApprovalStore struct {
+	records     map[string]*types.Approval
 	deleteCalls []struct {
 		sessionID string
 		requestID int
@@ -1505,8 +1606,16 @@ func (s *stubApprovalStore) ListBySession(context.Context, string) ([]*types.App
 	return nil, nil
 }
 
-func (s *stubApprovalStore) Get(context.Context, string, int) (*types.Approval, bool, error) {
-	return nil, false, nil
+func (s *stubApprovalStore) Get(_ context.Context, sessionID string, requestID int) (*types.Approval, bool, error) {
+	if s == nil || s.records == nil {
+		return nil, false, nil
+	}
+	record := s.records[strings.TrimSpace(sessionID)+":"+strconv.Itoa(requestID)]
+	if record == nil {
+		return nil, false, nil
+	}
+	copy := *record
+	return &copy, true, nil
 }
 
 func (s *stubApprovalStore) Upsert(context.Context, *types.Approval) (*types.Approval, error) {

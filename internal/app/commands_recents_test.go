@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/client"
 	"control/internal/daemon/transcriptdomain"
 )
 
@@ -73,6 +74,9 @@ func TestWatchRecentsTurnCompletionCmdUsesSignalPolicy(t *testing.T) {
 	if msg.turnID != "turn-policy" {
 		t.Fatalf("expected policy turn id, got %q", msg.turnID)
 	}
+	if !msg.matched {
+		t.Fatalf("expected matched completion signal")
+	}
 }
 
 func TestWatchRecentsTurnCompletionCmdWrapper(t *testing.T) {
@@ -95,6 +99,9 @@ func TestWatchRecentsTurnCompletionCmdWrapper(t *testing.T) {
 	}
 	if msg.turnID != "turn-wrapper" {
 		t.Fatalf("expected wrapper to preserve policy turn id, got %q", msg.turnID)
+	}
+	if !msg.matched {
+		t.Fatalf("expected matched completion signal")
 	}
 }
 
@@ -143,7 +150,7 @@ func TestWatchRecentsTurnCompletionCmdContextCanceled(t *testing.T) {
 	}
 }
 
-func TestWatchRecentsTurnCompletionCmdDeadlineFallback(t *testing.T) {
+func TestWatchRecentsTurnCompletionCmdDeadlineDoesNotSynthesizeCompletion(t *testing.T) {
 	stream := make(chan transcriptdomain.TranscriptEvent)
 	api := transcriptStreamAPIStub{stream: stream}
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
@@ -157,9 +164,15 @@ func TestWatchRecentsTurnCompletionCmdDeadlineFallback(t *testing.T) {
 	if msg.err != nil {
 		t.Fatalf("expected deadline fallback without error, got %v", msg.err)
 	}
+	if msg.matched {
+		t.Fatalf("expected deadline timeout to avoid synthesized completion signal")
+	}
+	if msg.turnID != "" {
+		t.Fatalf("expected empty completion turn id on deadline timeout, got %q", msg.turnID)
+	}
 }
 
-func TestWatchRecentsTurnCompletionCmdChannelClosedBeforeMatch(t *testing.T) {
+func TestWatchRecentsTurnCompletionCmdChannelClosedBeforeMatchDoesNotSynthesizeCompletion(t *testing.T) {
 	stream := make(chan transcriptdomain.TranscriptEvent)
 	close(stream)
 	cmd := watchRecentsTurnCompletionCmdWithContext(
@@ -175,6 +188,12 @@ func TestWatchRecentsTurnCompletionCmdChannelClosedBeforeMatch(t *testing.T) {
 	}
 	if msg.err != nil {
 		t.Fatalf("expected graceful completion fallback on stream close, got %v", msg.err)
+	}
+	if msg.matched {
+		t.Fatalf("expected stream close to avoid synthesized completion signal")
+	}
+	if msg.turnID != "" {
+		t.Fatalf("expected empty completion turn id on stream close, got %q", msg.turnID)
 	}
 }
 
@@ -202,6 +221,9 @@ func TestWatchRecentsTurnCompletionCmdNilPolicyUsesDefault(t *testing.T) {
 	if msg.turnID != "turn-default" {
 		t.Fatalf("expected default policy turn id, got %q", msg.turnID)
 	}
+	if !msg.matched {
+		t.Fatalf("expected matched completion signal")
+	}
 }
 
 type transcriptStreamAPIStub struct {
@@ -214,6 +236,10 @@ func (s transcriptStreamAPIStub) TranscriptStream(context.Context, string, strin
 		return nil, func() {}, s.err
 	}
 	return s.stream, func() {}, nil
+}
+
+func (transcriptStreamAPIStub) GetTranscriptSnapshot(context.Context, string, int) (*client.TranscriptSnapshotResponse, error) {
+	return &client.TranscriptSnapshotResponse{}, nil
 }
 
 type staticRecentsCompletionSignalPolicy struct {

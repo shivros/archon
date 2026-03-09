@@ -32,15 +32,70 @@ func (m fixedTranscriptMapper) MapEvent(string, transcriptadapters.MappingContex
 }
 
 type fixedTranscriptTransportSelector struct {
-	transport transcriptTransport
-	err       error
+	transport       transcriptTransport
+	followAvailable bool
+	err             error
 }
 
-func (s fixedTranscriptTransportSelector) Select(context.Context, string, string) (transcriptTransport, error) {
+func (s fixedTranscriptTransportSelector) Select(context.Context, string, string) (transcriptTransportSelection, error) {
 	if s.err != nil {
-		return transcriptTransport{}, s.err
+		return transcriptTransportSelection{}, s.err
 	}
-	return s.transport, nil
+	followAvailable := s.followAvailable
+	if !followAvailable && (s.transport.eventsCh != nil || s.transport.itemsCh != nil) {
+		followAvailable = true
+	}
+	return transcriptTransportSelection{
+		transport:       s.transport,
+		followAvailable: followAvailable,
+	}, nil
+}
+
+type stubTranscriptSnapshotReader struct {
+	snapshot transcriptdomain.TranscriptSnapshot
+	err      error
+
+	calls     int
+	lastID    string
+	lastProv  string
+	lastLines int
+}
+
+func (s *stubTranscriptSnapshotReader) ReadSnapshot(_ context.Context, sessionID, provider string, lines int) (transcriptdomain.TranscriptSnapshot, error) {
+	s.calls++
+	s.lastID = sessionID
+	s.lastProv = provider
+	s.lastLines = lines
+	if s.err != nil {
+		return transcriptdomain.TranscriptSnapshot{}, s.err
+	}
+	return s.snapshot, nil
+}
+
+type stubTranscriptFollowOpener struct {
+	events []transcriptdomain.TranscriptEvent
+	err    error
+
+	calls     int
+	lastID    string
+	lastProv  string
+	lastAfter transcriptdomain.RevisionToken
+}
+
+func (s *stubTranscriptFollowOpener) OpenFollow(_ context.Context, sessionID, provider string, after transcriptdomain.RevisionToken) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	s.calls++
+	s.lastID = sessionID
+	s.lastProv = provider
+	s.lastAfter = after
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	ch := make(chan transcriptdomain.TranscriptEvent, len(s.events))
+	for _, event := range s.events {
+		ch <- event
+	}
+	close(ch)
+	return ch, func() {}, nil
 }
 
 func TestSessionServiceGetTranscriptSnapshotFromHistoryLogs(t *testing.T) {
@@ -98,6 +153,56 @@ func TestSessionServiceGetTranscriptSnapshotRequiresSessionID(t *testing.T) {
 	}
 }
 
+func TestSessionServiceGetTranscriptSnapshotUsesInjectedSnapshotReader(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-snapshot-injected",
+			Provider:  "  CoDex  ",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	reader := &stubTranscriptSnapshotReader{
+		snapshot: transcriptdomain.TranscriptSnapshot{
+			SessionID: "s-snapshot-injected",
+			Revision:  transcriptdomain.MustParseRevisionToken("rev-snapshot"),
+			Blocks: []transcriptdomain.Block{{
+				Kind: "assistant",
+				Role: "assistant",
+				Text: "snapshot from injected reader",
+			}},
+		},
+	}
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil, WithTranscriptSnapshotReader(reader))
+	snapshot, err := svc.GetTranscriptSnapshot(context.Background(), "s-snapshot-injected", 11)
+	if err != nil {
+		t.Fatalf("GetTranscriptSnapshot: %v", err)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("expected snapshot reader to be called once, got %d", reader.calls)
+	}
+	if reader.lastID != "s-snapshot-injected" {
+		t.Fatalf("expected snapshot reader session id, got %q", reader.lastID)
+	}
+	if reader.lastProv != "codex" {
+		t.Fatalf("expected normalized provider codex, got %q", reader.lastProv)
+	}
+	if reader.lastLines != 11 {
+		t.Fatalf("expected forwarded lines=11, got %d", reader.lastLines)
+	}
+	if len(snapshot.Blocks) != 1 || snapshot.Blocks[0].Text != "snapshot from injected reader" {
+		t.Fatalf("expected injected snapshot payload, got %#v", snapshot.Blocks)
+	}
+}
+
 func TestSessionServiceSubscribeTranscriptAcceptsLexicalAfterRevision(t *testing.T) {
 	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
 	now := time.Now().UTC()
@@ -136,6 +241,59 @@ func TestSessionServiceSubscribeTranscriptAcceptsLexicalAfterRevision(t *testing
 	}
 	if _, err := transcriptdomain.ParseRevisionToken(first.Revision.String()); err != nil {
 		t.Fatalf("expected valid revision token: %v", err)
+	}
+}
+
+func TestSessionServiceSubscribeTranscriptUsesInjectedFollowOpener(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-follow-injected",
+			Provider:  " CoDeX ",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	opener := &stubTranscriptFollowOpener{
+		events: []transcriptdomain.TranscriptEvent{{
+			Kind:         transcriptdomain.TranscriptEventStreamStatus,
+			StreamStatus: transcriptdomain.StreamStatusReady,
+			Revision:     transcriptdomain.MustParseRevisionToken("rev-follow-ready"),
+		}},
+	}
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil, WithTranscriptFollowOpener(opener))
+	after := transcriptdomain.MustParseRevisionToken("rev-base")
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-follow-injected", after)
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	if len(streamEvents) != 1 {
+		t.Fatalf("expected injected follow events, got %#v", streamEvents)
+	}
+	if streamEvents[0].Kind != transcriptdomain.TranscriptEventStreamStatus || streamEvents[0].StreamStatus != transcriptdomain.StreamStatusReady {
+		t.Fatalf("expected ready stream status from injected opener, got %#v", streamEvents[0])
+	}
+	if opener.calls != 1 {
+		t.Fatalf("expected follow opener to be called once, got %d", opener.calls)
+	}
+	if opener.lastID != "s-follow-injected" {
+		t.Fatalf("expected follow opener session id, got %q", opener.lastID)
+	}
+	if opener.lastProv != "codex" {
+		t.Fatalf("expected normalized provider codex, got %q", opener.lastProv)
+	}
+	if opener.lastAfter.String() != after.String() {
+		t.Fatalf("expected after revision %q, got %q", after.String(), opener.lastAfter.String())
 	}
 }
 
@@ -206,6 +364,50 @@ func TestSessionServiceSubscribeTranscriptTransportError(t *testing.T) {
 	)
 	if _, _, err := svc.SubscribeTranscript(context.Background(), "s3", ""); err == nil {
 		t.Fatalf("expected transport selection error")
+	}
+}
+
+func TestSessionServiceSubscribeTranscriptDegradesGracefullyWhenSessionIsPersistedButNotLive(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-claude-persisted",
+			Provider:  "claude",
+			Cmd:       "claude",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	manager, err := NewSessionManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("new session manager: %v", err)
+	}
+
+	svc := NewSessionService(manager, &Stores{Sessions: index}, nil)
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-claude-persisted", "")
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	if len(streamEvents) != 2 {
+		t.Fatalf("expected ready and closed events, got %#v", streamEvents)
+	}
+	if streamEvents[0].Kind != transcriptdomain.TranscriptEventStreamStatus || streamEvents[0].StreamStatus != transcriptdomain.StreamStatusReady {
+		t.Fatalf("expected initial ready status, got %#v", streamEvents[0])
+	}
+	if streamEvents[1].Kind != transcriptdomain.TranscriptEventStreamStatus || streamEvents[1].StreamStatus != transcriptdomain.StreamStatusClosed {
+		t.Fatalf("expected terminal closed status, got %#v", streamEvents[1])
+	}
+	if !streamEvents[1].Revision.IsZero() && streamEvents[0].Revision.String() == streamEvents[1].Revision.String() {
+		t.Fatalf("expected closed event to advance revision, got ready=%q closed=%q", streamEvents[0].Revision.String(), streamEvents[1].Revision.String())
 	}
 }
 

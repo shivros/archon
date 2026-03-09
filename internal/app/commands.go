@@ -599,11 +599,11 @@ func openTranscriptStreamCmd(api SessionTranscriptStreamAPI, id, afterRevision s
 	}
 }
 
-func watchRecentsTurnCompletionCmd(api SessionTranscriptStreamAPI, signalPolicy RecentsCompletionSignalPolicy, id, expectedTurn string) tea.Cmd {
+func watchRecentsTurnCompletionCmd(api SessionTranscriptAPI, signalPolicy RecentsCompletionSignalPolicy, id, expectedTurn string) tea.Cmd {
 	return watchRecentsTurnCompletionCmdWithContext(api, signalPolicy, id, expectedTurn, nil)
 }
 
-func watchRecentsTurnCompletionCmdWithContext(api SessionTranscriptStreamAPI, signalPolicy RecentsCompletionSignalPolicy, id, expectedTurn string, parent context.Context) tea.Cmd {
+func watchRecentsTurnCompletionCmdWithContext(api SessionTranscriptAPI, signalPolicy RecentsCompletionSignalPolicy, id, expectedTurn string, parent context.Context) tea.Cmd {
 	if signalPolicy == nil {
 		signalPolicy = transcriptEventRecentsCompletionSignalPolicy{}
 	}
@@ -629,8 +629,6 @@ func watchRecentsTurnCompletionCmdWithContext(api SessionTranscriptStreamAPI, si
 				return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn, err: ctx.Err()}
 			case event, ok := <-ch:
 				if !ok {
-					// Treat stream closure as a completion signal fallback to
-					// preserve legacy watcher semantics under transport churn.
 					return recentsTurnCompletedMsg{id: id, expectedTurn: expectedTurn}
 				}
 				turnID, matched := signalPolicy.CompletionFromTranscriptEvent(event)
@@ -641,6 +639,7 @@ func watchRecentsTurnCompletionCmdWithContext(api SessionTranscriptStreamAPI, si
 					id:           id,
 					expectedTurn: expectedTurn,
 					turnID:       turnID,
+					matched:      true,
 				}
 			}
 		}

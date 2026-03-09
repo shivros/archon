@@ -1481,7 +1481,14 @@ func TestGuidedWorkflowOpenSelectedStepSession(t *testing.T) {
 		{"type": "userMessage", "turn_id": "turn-99", "content": []any{map[string]any{"type": "text", "text": "step request"}}},
 		{"type": "assistant", "turn_id": "turn-99", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "agent reply"}}}},
 	}
-	blocks := projectSessionBlocksFromItems("codex", items, nil, nil, nil)
+	blocks := projectSessionBlocksFromItems(
+		"codex",
+		sessionBlockProjectionRules{CoalesceReasoning: true, SupportsApprovals: providerSupportsApprovals("codex")},
+		items,
+		nil,
+		nil,
+		nil,
+	)
 	m.applySessionProjection(sessionProjectionSourceHistory, "s1", "", blocks)
 	if m.pendingWorkflowTurnFocus != nil {
 		t.Fatalf("expected pending workflow turn focus to clear after projection")

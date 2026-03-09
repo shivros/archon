@@ -354,6 +354,115 @@ func TestRecentsTurnCompletedMessageMovesRunToReady(t *testing.T) {
 	}
 }
 
+func TestRecentsTurnCompletedMessageWithoutMatchedSignalDoesNotCompleteRun(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", LastTurnID: "turn-42"},
+	}
+	m.recents.StartRun("s1", "turn-42", now)
+	m.recentsCompletionWatching["s1"] = "turn-42"
+
+	handled, cmd := m.reduceStateMessages(recentsTurnCompletedMsg{
+		id:           "s1",
+		expectedTurn: "turn-42",
+		turnID:       "",
+		matched:      false,
+	})
+	if !handled {
+		t.Fatalf("expected recents completion message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no persistence command when completion signal is unmatched")
+	}
+	if !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to remain running without a matched completion signal")
+	}
+	if m.recents.IsReady("s1") {
+		t.Fatalf("expected s1 to remain out of ready without a matched completion signal")
+	}
+	if _, watching := m.recentsCompletionWatching["s1"]; watching {
+		t.Fatalf("expected completion watcher to clear")
+	}
+}
+
+func TestRecentsTurnCompletedMessageUsesMetaFallbackWhenPolicyAllows(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", LastTurnID: "turn-meta"},
+	}
+	m.recents.StartRun("s1", "turn-42", now)
+	m.recentsCompletionWatching["s1"] = "turn-42"
+	policy := &recentsModelCompletionPolicyStub{
+		shouldUseMetaFallback: true,
+		completionTurnID:      "turn-meta",
+	}
+	m.recentsCompletionPolicy = policy
+
+	handled, cmd := m.reduceStateMessages(recentsTurnCompletedMsg{
+		id:           "s1",
+		expectedTurn: "turn-42",
+		matched:      true,
+	})
+	if !handled {
+		t.Fatalf("expected recents completion message to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected persistence command when fallback resolves completion turn id")
+	}
+	if policy.completionCalls != 1 {
+		t.Fatalf("expected completion fallback call, got %d", policy.completionCalls)
+	}
+	if !m.recents.IsReady("s1") {
+		t.Fatalf("expected s1 to move into ready via meta fallback completion")
+	}
+}
+
+func TestRecentsTurnCompletedMessageSkipsMetaFallbackWhenPolicyDisallows(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", LastTurnID: "turn-meta"},
+	}
+	m.recents.StartRun("s1", "turn-42", now)
+	policy := &recentsModelCompletionPolicyStub{
+		shouldUseMetaFallback: false,
+		completionTurnID:      "turn-meta",
+	}
+	m.recentsCompletionPolicy = policy
+
+	handled, cmd := m.reduceStateMessages(recentsTurnCompletedMsg{
+		id:           "s1",
+		expectedTurn: "turn-42",
+		matched:      true,
+	})
+	if !handled {
+		t.Fatalf("expected recents completion message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no persistence command when fallback is disallowed")
+	}
+	if policy.completionCalls != 0 {
+		t.Fatalf("expected completion fallback to be skipped, got %d calls", policy.completionCalls)
+	}
+	if !m.recents.IsRunning("s1") {
+		t.Fatalf("expected s1 to remain running when fallback is disallowed")
+	}
+	if m.recents.IsReady("s1") {
+		t.Fatalf("expected s1 to remain out of ready when fallback is disallowed")
+	}
+}
+
 func TestBeginRecentsCompletionWatchUsesSignalPolicyFromModel(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()
@@ -464,6 +573,33 @@ func (s recentsModelSignalPolicyStub) CompletionFromTranscriptEvent(event transc
 		return s.turnID, true
 	}
 	return "", false
+}
+
+type recentsModelCompletionPolicyStub struct {
+	shouldUseMetaFallback bool
+	completionTurnID      string
+	completionCalls       int
+}
+
+func (recentsModelCompletionPolicyStub) ShouldWatchCompletion(string) bool { return true }
+
+func (s recentsModelCompletionPolicyStub) RunBaselineTurnID(sendTurnID string, _ *types.SessionMeta) string {
+	return strings.TrimSpace(sendTurnID)
+}
+
+func (s *recentsModelCompletionPolicyStub) ShouldUseMetaFallback(string) bool {
+	if s == nil {
+		return false
+	}
+	return s.shouldUseMetaFallback
+}
+
+func (s *recentsModelCompletionPolicyStub) CompletionTurnID(_ string, _ *types.SessionMeta) string {
+	if s == nil {
+		return ""
+	}
+	s.completionCalls++
+	return strings.TrimSpace(s.completionTurnID)
 }
 
 func normalizeWhitespace(value string) string {

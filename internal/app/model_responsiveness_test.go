@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -409,6 +410,67 @@ func TestBuildSessionBlocksFromItemsProjectsHydratedBlocks(t *testing.T) {
 	}
 	if got := tailBlockText(blocks); !strings.Contains(got, "reply-000") {
 		t.Fatalf("expected projected text to include history content, got %q", got)
+	}
+}
+
+func TestProjectSessionBlocksFromItemsRespectsCoalesceReasoningFlag(t *testing.T) {
+	items := []map[string]any{
+		{"type": "reasoning", "id": "r1", "summary": []any{"first"}},
+		{"type": "reasoning", "id": "r2", "summary": []any{"second"}},
+	}
+
+	notCoalesced := projectSessionBlocksFromItems(
+		"codex",
+		sessionBlockProjectionRules{CoalesceReasoning: false, SupportsApprovals: false},
+		items,
+		nil,
+		nil,
+		nil,
+	)
+	if len(notCoalesced) != 2 {
+		t.Fatalf("expected two separate reasoning blocks without coalescing, got %#v", notCoalesced)
+	}
+
+	coalesced := projectSessionBlocksFromItems(
+		"codex",
+		sessionBlockProjectionRules{CoalesceReasoning: true, SupportsApprovals: false},
+		items,
+		nil,
+		nil,
+		nil,
+	)
+	if len(coalesced) != 1 {
+		t.Fatalf("expected one merged reasoning block with coalescing, got %#v", coalesced)
+	}
+	if coalesced[0].Role != ChatRoleReasoning {
+		t.Fatalf("expected merged reasoning role, got %s", coalesced[0].Role)
+	}
+	if !strings.Contains(coalesced[0].Text, "first") || !strings.Contains(coalesced[0].Text, "second") {
+		t.Fatalf("expected merged reasoning text to include both summaries, got %q", coalesced[0].Text)
+	}
+}
+
+func TestSessionBlockProjectionRulesUseTranscriptCapabilitiesOverride(t *testing.T) {
+	m := NewModel(nil)
+
+	rules := m.sessionBlockProjectionRules("s1", "codex")
+	if !rules.SupportsApprovals {
+		t.Fatalf("expected codex provider defaults to support approvals")
+	}
+	if !rules.CoalesceReasoning {
+		t.Fatalf("expected reasoning coalescing to stay enabled by default")
+	}
+
+	m.setSessionTranscriptCapabilities("s1", transcriptdomain.CapabilityEnvelope{SupportsApprovals: false})
+	rules = m.sessionBlockProjectionRules("s1", "codex")
+	if rules.SupportsApprovals {
+		t.Fatalf("expected transcript capabilities override to disable approvals support")
+	}
+
+	m.setSessionTranscriptCapabilities("s2", transcriptdomain.CapabilityEnvelope{SupportsApprovals: true})
+	rules = m.sessionBlockProjectionRules("s2", "custom")
+	if !rules.SupportsApprovals {
+		t.Fatalf("expected transcript capabilities override to enable approvals support")
 	}
 }
 

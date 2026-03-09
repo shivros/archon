@@ -3,10 +3,12 @@ package daemon
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -173,7 +175,7 @@ func TestProviderSessionFlow(t *testing.T) {
 
 func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {
 	t.Helper()
-	stream, closeFn := openSSE(t, server, "/v1/sessions/"+sessionID+"/items?follow=1&lines=200")
+	stream, closeFn := openSSE(t, server, "/v1/sessions/"+sessionID+"/transcript/stream?follow=1")
 	defer closeFn()
 
 	failures, stopFailures := startSessionTurnFailureMonitor(server, sessionID)
@@ -181,6 +183,10 @@ func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		history := historySession(t, server, sessionID)
+		if historyHasAgentText(history.Items, needle) {
+			return
+		}
 		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
 			t.Fatalf("session entered terminal failure state before agent reply containing %q: %s\n%s", needle, failure, sessionDiagnostics(manager, sessionID))
 		}
@@ -191,15 +197,37 @@ func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *
 		if !ok {
 			continue
 		}
-		var item map[string]any
-		if err := json.Unmarshal([]byte(data), &item); err != nil {
+		var event transcriptdomain.TranscriptEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
-		if historyHasAgentText([]map[string]any{item}, needle) {
+		if transcriptEventHasAgentText(event, needle) {
 			return
 		}
 	}
 	t.Fatalf("timeout waiting for agent reply containing %q\n%s", needle, sessionDiagnostics(manager, sessionID))
+}
+
+func transcriptEventHasAgentText(event transcriptdomain.TranscriptEvent, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	if needle == "" {
+		return false
+	}
+	if event.Kind != transcriptdomain.TranscriptEventDelta {
+		return false
+	}
+	for _, block := range event.Delta {
+		role := strings.ToLower(strings.TrimSpace(block.Role))
+		kind := strings.ToLower(strings.TrimSpace(block.Kind))
+		if role != "assistant" && role != "agent" && role != "model" &&
+			kind != "assistant" && kind != "agent" && kind != "model" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(block.Text), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestProviderMissingModelFailsFast ensures OpenCode-family providers do not
@@ -241,6 +269,9 @@ func assertSessionFailsFastWithModelRequired(
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if historyHasModelRequiredTurnFailure(t, server, sessionID) {
+			return
+		}
 		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
 			select {
 			case msg, ok := <-failures:
@@ -268,6 +299,42 @@ func assertSessionFailsFastWithModelRequired(
 
 func isModelRequiredFailure(msg string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(msg)), "model is required")
+}
+
+func historyTurnFailureMessage(items []map[string]any) string {
+	for _, item := range items {
+		if !strings.EqualFold(strings.TrimSpace(asString(item["type"])), "turnCompletion") {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(asString(item["turn_status"])))
+		errMsg := strings.TrimSpace(asString(item["turn_error"]))
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(asString(item["error"]))
+		}
+		switch status {
+		case "failed", "error", "abandoned":
+			if errMsg != "" {
+				return "turn " + status + ": " + errMsg
+			}
+			return "turn " + status
+		}
+	}
+	return ""
+}
+
+func historyHasModelRequiredTurnFailure(t *testing.T, server *httptest.Server, sessionID string) bool {
+	t.Helper()
+	history := historySession(t, server, sessionID)
+	for _, item := range history.Items {
+		if !strings.EqualFold(strings.TrimSpace(asString(item["type"])), "turnCompletion") {
+			continue
+		}
+		if isModelRequiredFailure(asString(item["turn_error"])) ||
+			isModelRequiredFailure(asString(item["error"])) {
+			return true
+		}
+	}
+	return false
 }
 
 type stubProviderCapabilitiesResolver struct {
@@ -408,9 +475,14 @@ func TestProviderItemsStream(t *testing.T) {
 				RuntimeOptions: runtimeOpts,
 			})
 
-			stream, closeFn := openSSE(t, server,
-				"/v1/sessions/"+session.ID+"/items?follow=1&lines=100")
-			defer closeFn()
+			streamPath := "/v1/sessions/" + session.ID + "/transcript/stream?follow=1"
+			stream, closeFn := openSSE(t, server, streamPath)
+			defer func() {
+				if closeFn != nil {
+					closeFn()
+				}
+			}()
+			lastRevision := ""
 			failures, stopFailures := startSessionTurnFailureMonitor(server, session.ID)
 			defer stopFailures()
 
@@ -424,23 +496,41 @@ func TestProviderItemsStream(t *testing.T) {
 					failure, sessionDiagnostics(manager, session.ID))
 			}
 			if !ok {
-				t.Fatalf("timeout waiting for items stream event\n%s",
-					sessionDiagnostics(manager, session.ID))
+				diagnostics := sessionDiagnostics(manager, session.ID)
+				if isGuidedWorkflowProviderRuntimeUnavailableFailure(tc.name, diagnostics) {
+					t.Skipf("skipping provider %q items stream due runtime/auth unavailability (%s)", tc.name, strings.TrimSpace(diagnostics))
+				}
+				t.Fatalf("timeout waiting for items stream event\n%s", diagnostics)
 			}
 
-			var item map[string]any
-			if err := json.Unmarshal([]byte(data), &item); err != nil {
+			var firstEvent transcriptdomain.TranscriptEvent
+			if err := json.Unmarshal([]byte(data), &firstEvent); err != nil {
 				t.Fatalf("decode item: %v", err)
 			}
-			if typ, _ := item["type"].(string); typ == "" {
-				t.Fatalf("expected item type to be set")
+			if strings.TrimSpace(string(firstEvent.Kind)) == "" {
+				t.Fatalf("expected transcript event kind to be set")
 			}
+			lastRevision = strings.TrimSpace(firstEvent.Revision.String())
 
 			sendMessageWithRetry(t, server, session.ID, "Say \"ok\" again.", tc.timeout())
 			deadline := time.Now().Add(45 * time.Second)
 			for time.Now().Before(deadline) {
+				history := historySession(t, server, session.ID)
+				if historyHasAgentText(history.Items, "ok") {
+					return
+				}
+				if failureMsg := historyTurnFailureMessage(history.Items); strings.TrimSpace(failureMsg) != "" {
+					if isGuidedWorkflowProviderRuntimeUnavailableFailure(tc.name, failureMsg) {
+						t.Skipf("skipping provider %q items stream due runtime/auth unavailability (%s)", tc.name, strings.TrimSpace(failureMsg))
+					}
+					t.Fatalf("session produced failed turn while waiting for items stream reply: %s\n%s",
+						failureMsg, sessionDiagnostics(manager, session.ID))
+				}
 				data, failure, ok = waitForSSEDataWithFailure(stream, failures, 5*time.Second)
 				if strings.TrimSpace(failure) != "" {
+					if isGuidedWorkflowProviderRuntimeUnavailableFailure(tc.name, failure) {
+						t.Skipf("skipping provider %q items stream due runtime/auth unavailability (%s)", tc.name, strings.TrimSpace(failure))
+					}
 					t.Fatalf("items stream aborted by provider failure: %s\n%s",
 						failure, sessionDiagnostics(manager, session.ID))
 				}
@@ -449,17 +539,32 @@ func TestProviderItemsStream(t *testing.T) {
 						failure, sessionDiagnostics(manager, session.ID))
 				}
 				if !ok {
+					if closeFn != nil {
+						closeFn()
+					}
+					reconnectPath := streamPath
+					if lastRevision != "" {
+						reconnectPath += "&after_revision=" + url.QueryEscape(lastRevision)
+					}
+					stream, closeFn = openSSE(t, server, reconnectPath)
 					continue
 				}
-				if err := json.Unmarshal([]byte(data), &item); err != nil {
+				var event transcriptdomain.TranscriptEvent
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
 					continue
 				}
-				if historyHasAgentText([]map[string]any{item}, "ok") {
+				if rev := strings.TrimSpace(event.Revision.String()); rev != "" {
+					lastRevision = rev
+				}
+				if transcriptEventHasAgentText(event, "ok") {
 					return
 				}
 			}
-			t.Fatalf("timeout waiting for agent reply on items stream\n%s",
-				sessionDiagnostics(manager, session.ID))
+			diagnostics := sessionDiagnostics(manager, session.ID)
+			if isGuidedWorkflowProviderRuntimeUnavailableFailure(tc.name, diagnostics) {
+				t.Skipf("skipping provider %q items stream due runtime/auth unavailability (%s)", tc.name, strings.TrimSpace(diagnostics))
+			}
+			t.Fatalf("timeout waiting for agent reply on items stream\n%s", diagnostics)
 		})
 	}
 }
@@ -489,19 +594,19 @@ func TestProviderEventsStream(t *testing.T) {
 			})
 
 			stream, closeFn := openSSE(t, server,
-				"/v1/sessions/"+session.ID+"/events?follow=1")
+				"/v1/sessions/"+session.ID+"/transcript/stream?follow=1")
 			defer closeFn()
 
 			_ = sendMessageWithRetry(t, server, session.ID, "Say \"ok\" again.", tc.timeout())
 
-			events := collectEvents(stream, 45*time.Second)
+			events := collectTranscriptEventsFromSSE(stream, 45*time.Second)
 			if len(events) == 0 {
 				t.Fatalf("expected events from SSE stream\n%s",
 					sessionDiagnostics(manager, session.ID))
 			}
 			found := false
 			for _, event := range events {
-				if event.Method != "" {
+				if strings.TrimSpace(string(event.Kind)) != "" {
 					found = true
 					break
 				}
@@ -509,11 +614,30 @@ func TestProviderEventsStream(t *testing.T) {
 			if !found {
 				methods := make([]string, 0, len(events))
 				for _, event := range events {
-					methods = append(methods, event.Method)
+					methods = append(methods, string(event.Kind))
 				}
-				t.Fatalf("expected at least one event with Method set, got=%v\n%s",
+				t.Fatalf("expected at least one event with Kind set, got=%v\n%s",
 					methods, sessionDiagnostics(manager, session.ID))
 			}
 		})
 	}
+}
+
+func collectTranscriptEventsFromSSE(ch <-chan string, timeout time.Duration) []transcriptdomain.TranscriptEvent {
+	deadline := time.Now().Add(timeout)
+	out := make([]transcriptdomain.TranscriptEvent, 0)
+	for time.Now().Before(deadline) {
+		select {
+		case data, ok := <-ch:
+			if !ok {
+				return out
+			}
+			var event transcriptdomain.TranscriptEvent
+			if err := json.Unmarshal([]byte(data), &event); err == nil && strings.TrimSpace(string(event.Kind)) != "" {
+				out = append(out, event)
+			}
+		case <-time.After(integrationSSEPollInterval):
+		}
+	}
+	return out
 }

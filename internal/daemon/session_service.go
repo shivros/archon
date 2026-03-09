@@ -28,6 +28,8 @@ type SessionService struct {
 	guided                    guidedworkflows.Orchestrator
 	transcriptMapper          TranscriptMapper
 	transcriptTransportSelect TranscriptTransportSelector
+	transcriptSnapshotRead    TranscriptSnapshotReader
+	transcriptFollowOpen      TranscriptFollowOpener
 }
 
 type SendMessageOptions struct {
@@ -120,6 +122,24 @@ func WithTranscriptTransportSelector(selector TranscriptTransportSelector) Sessi
 	}
 }
 
+func WithTranscriptSnapshotReader(reader TranscriptSnapshotReader) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || reader == nil {
+			return
+		}
+		s.transcriptSnapshotRead = reader
+	}
+}
+
+func WithTranscriptFollowOpener(opener TranscriptFollowOpener) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || opener == nil {
+			return
+		}
+		s.transcriptFollowOpen = opener
+	}
+}
+
 func NewSessionService(manager *SessionManager, stores *Stores, logger logging.Logger, opts ...SessionServiceOption) *SessionService {
 	if logger == nil {
 		logger = logging.Nop()
@@ -143,12 +163,6 @@ func NewSessionService(manager *SessionManager, stores *Stores, logger logging.L
 	}
 	if svc.codexPool == nil {
 		svc.codexPool = NewCodexHistoryPool(logger)
-	}
-	if svc.transcriptMapper == nil {
-		svc.transcriptMapper = NewDefaultTranscriptMapper(nil)
-	}
-	if svc.transcriptTransportSelect == nil {
-		svc.transcriptTransportSelect = NewDefaultTranscriptTransportSelector(svc.SubscribeEvents, svc.SubscribeItems)
 	}
 	return svc
 }
@@ -1371,6 +1385,9 @@ func (s *SessionService) SubscribeItems(ctx context.Context, id string) (<-chan 
 	}
 	ch, cancel, err := s.manager.SubscribeItems(id)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotLive) {
+			return nil, nil, unavailableError("session is not live", ErrTranscriptFollowUnavailable)
+		}
 		if errors.Is(err, ErrSessionNotFound) {
 			return nil, nil, notFoundError("session not found", err)
 		}

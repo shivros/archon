@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"control/internal/logging"
@@ -162,7 +163,7 @@ func defaultConversationPortsFor(
 	case providers.RuntimeClaude:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
-		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, claudeConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
 	case providers.RuntimeOpenCodeServer:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
@@ -320,6 +321,9 @@ func (a liveManagerConversationEventSubscriber) SubscribeEvents(ctx context.Cont
 	}
 	ch, cancel, err := deps.liveManager.Subscribe(session, meta)
 	if err != nil {
+		if errors.Is(err, ErrSessionNotLive) {
+			return nil, nil, unavailableError("session is not live", ErrTranscriptFollowUnavailable)
+		}
 		return nil, nil, invalidError(err.Error(), err)
 	}
 	return ch, cancel, nil

@@ -472,10 +472,11 @@ func (m *Model) projectAndApplySessionItems(ctx sessionItemsMessageContext, item
 	previous := m.currentBlocks()
 	approvals := normalizeApprovalRequests(m.sessionApprovals[ctx.id])
 	resolutions := normalizeApprovalResolutions(m.sessionApprovalResolutions[ctx.id])
-	if cmd := m.asyncSessionProjectionCmd(ctx.source, ctx.id, ctx.key, ctx.provider, items, previous, approvals, resolutions); cmd != nil {
+	rules := m.sessionBlockProjectionRules(ctx.id, ctx.provider)
+	if cmd := m.asyncSessionProjectionCmd(ctx.source, ctx.id, ctx.key, ctx.provider, rules, items, previous, approvals, resolutions); cmd != nil {
 		return cmd
 	}
-	blocks := projectSessionBlocksFromItems(ctx.provider, items, previous, approvals, resolutions)
+	blocks := projectSessionBlocksFromItems(ctx.provider, rules, items, previous, approvals, resolutions)
 	m.applySessionProjection(ctx.source, ctx.id, ctx.key, blocks)
 	return nil
 }
@@ -529,6 +530,7 @@ func (m *Model) shouldApplySessionProjectionToVisible(id, key string) bool {
 func (m *Model) asyncSessionProjectionCmd(
 	source sessionProjectionSource,
 	id, key, provider string,
+	rules sessionBlockProjectionRules,
 	items []map[string]any,
 	previous []ChatBlock,
 	approvals []*ApprovalRequest,
@@ -543,7 +545,7 @@ func (m *Model) asyncSessionProjectionCmd(
 	}
 	token := sessionProjectionToken(key, id)
 	seq := m.nextSessionProjectionSeq(token, policy.MaxTrackedProjectionTokens())
-	return projectSessionBlocksCmd(source, id, key, provider, items, previous, approvals, resolutions, seq)
+	return projectSessionBlocksCmd(source, id, key, provider, rules, items, previous, approvals, resolutions, seq)
 }
 
 func (m *Model) nextSessionProjectionSeq(token string, maxTracked int) int {
@@ -638,6 +640,7 @@ func sessionProjectionToken(key, id string) string {
 func projectSessionBlocksCmd(
 	source sessionProjectionSource,
 	id, key, provider string,
+	rules sessionBlockProjectionRules,
 	items []map[string]any,
 	previous []ChatBlock,
 	approvals []*ApprovalRequest,
@@ -649,7 +652,7 @@ func projectSessionBlocksCmd(
 	approvalsCopy := normalizeApprovalRequests(approvals)
 	resolutionsCopy := normalizeApprovalResolutions(resolutions)
 	return func() tea.Msg {
-		blocks := projectSessionBlocksFromItems(provider, itemsCopy, previousCopy, approvalsCopy, resolutionsCopy)
+		blocks := projectSessionBlocksFromItems(provider, rules, itemsCopy, previousCopy, approvalsCopy, resolutionsCopy)
 		return sessionBlocksProjectedMsg{
 			source:        source,
 			id:            id,
@@ -1438,8 +1441,10 @@ func (m *Model) shouldSkipSelectionReloadOnSessionsUpdate(previous, next session
 }
 
 func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []map[string]any, previous []ChatBlock) []ChatBlock {
+	rules := m.sessionBlockProjectionRules(sessionID, provider)
 	blocks := projectSessionBlocksFromItems(
 		provider,
+		rules,
 		items,
 		previous,
 		normalizeApprovalRequests(m.sessionApprovals[sessionID]),
@@ -1448,18 +1453,35 @@ func (m *Model) buildSessionBlocksFromItems(sessionID, provider string, items []
 	return blocks
 }
 
+type sessionBlockProjectionRules struct {
+	CoalesceReasoning bool
+	SupportsApprovals bool
+}
+
+func (m *Model) sessionBlockProjectionRules(sessionID, provider string) sessionBlockProjectionRules {
+	rules := sessionBlockProjectionRules{
+		CoalesceReasoning: true,
+		SupportsApprovals: providerSupportsApprovals(provider),
+	}
+	if capabilities, ok := m.sessionTranscriptCapabilitiesForSession(sessionID); ok && capabilities != nil {
+		rules.SupportsApprovals = capabilities.SupportsApprovals
+	}
+	return rules
+}
+
 func projectSessionBlocksFromItems(
 	provider string,
+	rules sessionBlockProjectionRules,
 	items []map[string]any,
 	previous []ChatBlock,
 	approvals []*ApprovalRequest,
 	resolutions []*ApprovalResolution,
 ) []ChatBlock {
 	blocks := itemsToBlocks(items)
-	if provider == "codex" {
+	if rules.CoalesceReasoning {
 		blocks = coalesceAdjacentReasoningBlocks(blocks)
 	}
-	if providerSupportsApprovals(provider) {
+	if rules.SupportsApprovals {
 		approvals = filterApprovalRequestsForProvider(provider, approvals)
 		resolutions = filterApprovalResolutionsForProvider(provider, resolutions)
 		blocks = mergeApprovalBlocks(blocks, approvals, resolutions)

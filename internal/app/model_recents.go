@@ -816,7 +816,15 @@ func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd 
 	if msg.err != nil {
 		return nil
 	}
-	completionTurn := m.recentsCompletionPolicyOrDefault().CompletionTurnID(msg.turnID, m.sessionMeta[sessionID])
+	provider := m.providerForSessionID(sessionID)
+	policy := m.recentsCompletionPolicyOrDefault()
+	completionTurn := strings.TrimSpace(msg.turnID)
+	if completionTurn == "" && msg.matched && policy.ShouldUseMetaFallback(provider) {
+		completionTurn = policy.CompletionTurnID("", m.sessionMeta[sessionID])
+	}
+	if completionTurn == "" {
+		return nil
+	}
 	if _, ok := m.recents.CompleteRun(sessionID, expectedTurn, completionTurn, time.Now().UTC()); !ok {
 		return nil
 	}

@@ -187,6 +187,7 @@ type recentsTurnCompletedMsg struct {
 	id           string
 	expectedTurn string
 	turnID       string
+	matched      bool
 	err          error
 }
 
