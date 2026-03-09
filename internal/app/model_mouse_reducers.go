@@ -125,16 +125,12 @@ func (m *Model) reduceComposeControlsLeftPressMouse(msg tea.MouseMsg, layout mou
 		return false
 	}
 	col := mouse.X - layout.rightStart
+	dispatcher := m.composeControlActionDispatcherOrDefault()
 	for _, span := range m.composeControlSpans() {
 		if col < span.start || col > span.end {
 			continue
 		}
-		var cmd tea.Cmd
-		if m.mode == uiModeGuidedWorkflow {
-			cmd = m.requestGuidedWorkflowComposeOptionPicker(span.kind)
-		} else {
-			cmd = m.requestComposeOptionPicker(span.kind)
-		}
+		cmd := dispatcher.Execute(m, span)
 		if cmd != nil {
 			m.pendingMouseCmd = cmd
 		}

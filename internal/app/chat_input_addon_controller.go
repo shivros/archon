@@ -9,11 +9,30 @@ import (
 )
 
 type ChatInputAddonController struct {
-	addon *ChatInputAddon
+	addon           *ChatInputAddon
+	controlsBuilder ComposeControlsBuilder
 }
 
 func NewChatInputAddonController(addon *ChatInputAddon) *ChatInputAddonController {
-	return &ChatInputAddonController{addon: addon}
+	return &ChatInputAddonController{addon: addon, controlsBuilder: defaultComposeControlsBuilder{}}
+}
+
+func (c *ChatInputAddonController) setComposeControlsBuilder(builder ComposeControlsBuilder) {
+	if c == nil {
+		return
+	}
+	if builder == nil {
+		c.controlsBuilder = defaultComposeControlsBuilder{}
+		return
+	}
+	c.controlsBuilder = builder
+}
+
+func (c *ChatInputAddonController) composeControlsBuilderOrDefault() ComposeControlsBuilder {
+	if c == nil || c.controlsBuilder == nil {
+		return defaultComposeControlsBuilder{}
+	}
+	return c.controlsBuilder
 }
 
 func (c *ChatInputAddonController) setPickerSize(width, height int) {
@@ -54,48 +73,26 @@ func (c *ChatInputAddonController) composeControlsLine(m *Model) string {
 	if access == "" {
 		access = "default"
 	}
-	parts := []struct {
-		kind composeOptionKind
-		text string
-	}{
-		{kind: composeOptionModel, text: "Model: " + model},
-		{kind: composeOptionAccess, text: "Access: " + access},
+	controls := []ComposeControlDescriptor{
+		{action: composeControlActionOpenOption, kind: composeOptionModel, label: "Model: " + model, active: c.addon != nil && c.addon.OptionTarget() == composeOptionModel},
+		{action: composeControlActionOpenOption, kind: composeOptionAccess, label: "Access: " + access, active: c.addon != nil && c.addon.OptionTarget() == composeOptionAccess},
 	}
 	if catalog != nil && len(m.modelReasoningLevels(provider, options.Model)) > 0 {
-		parts = []struct {
-			kind composeOptionKind
-			text string
-		}{
-			{kind: composeOptionModel, text: "Model: " + model},
-			{kind: composeOptionReasoning, text: "Reasoning: " + reasoning},
-			{kind: composeOptionAccess, text: "Access: " + access},
+		controls = []ComposeControlDescriptor{
+			{action: composeControlActionOpenOption, kind: composeOptionModel, label: "Model: " + model, active: c.addon != nil && c.addon.OptionTarget() == composeOptionModel},
+			{action: composeControlActionOpenOption, kind: composeOptionReasoning, label: "Reasoning: " + reasoning, active: c.addon != nil && c.addon.OptionTarget() == composeOptionReasoning},
+			{action: composeControlActionOpenOption, kind: composeOptionAccess, label: "Access: " + access, active: c.addon != nil && c.addon.OptionTarget() == composeOptionAccess},
 		}
 	}
-	spans := make([]composeControlSpan, 0, len(parts))
-	var b strings.Builder
-	col := 0
-	for i, part := range parts {
-		if i > 0 {
-			b.WriteString("  |  ")
-			col += 5
-		}
-		label := part.text
-		if c.addon != nil && c.addon.OptionTarget() == part.kind {
-			label = "[" + label + "]"
-		}
-		start := col
-		b.WriteString(label)
-		col += len(label)
-		spans = append(spans, composeControlSpan{
-			kind:  part.kind,
-			start: start,
-			end:   col - 1,
-		})
+	var interrupt *ComposeInterruptDescriptor
+	if interruptLabel, _, ok := m.composeInterruptControl(); ok {
+		interrupt = &ComposeInterruptDescriptor{label: interruptLabel}
 	}
+	built := c.composeControlsBuilderOrDefault().Build(ComposeControlsBuildInput{Controls: controls, Interrupt: interrupt, Width: m.viewport.Width()})
 	if c.addon != nil {
-		c.addon.SetControlSpans(spans)
+		c.addon.SetControlSpans(built.Spans)
 	}
-	return b.String()
+	return built.Line
 }
 
 func (c *ChatInputAddonController) openComposeOptionPicker(m *Model, target composeOptionKind) bool {

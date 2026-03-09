@@ -25,6 +25,7 @@ func TestResetStreamCancelsSessionScopes(t *testing.T) {
 	m := NewModel(nil)
 	loadCtx := m.replaceRequestScope(requestScopeSessionLoad)
 	startCtx := m.replaceRequestScope(requestScopeSessionStart)
+	interruptCtx := m.replaceRequestScope(requestScopeSessionInterrupt)
 	debugCtx := m.replaceRequestScope(requestScopeDebugStream)
 
 	m.resetStream()
@@ -40,6 +41,11 @@ func TestResetStreamCancelsSessionScopes(t *testing.T) {
 		t.Fatalf("expected session start scope to be canceled")
 	}
 	select {
+	case <-interruptCtx.Done():
+	default:
+		t.Fatalf("expected session interrupt scope to be canceled")
+	}
+	select {
 	case <-debugCtx.Done():
 	default:
 		t.Fatalf("expected debug stream scope to be canceled")
@@ -49,6 +55,9 @@ func TestResetStreamCancelsSessionScopes(t *testing.T) {
 	}
 	if _, ok := m.requestScopes[requestScopeSessionStart]; ok {
 		t.Fatalf("expected session start scope entry to be removed")
+	}
+	if _, ok := m.requestScopes[requestScopeSessionInterrupt]; ok {
+		t.Fatalf("expected session interrupt scope entry to be removed")
 	}
 	if _, ok := m.requestScopes[requestScopeDebugStream]; ok {
 		t.Fatalf("expected debug stream scope entry to be removed")

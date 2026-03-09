@@ -1171,12 +1171,24 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case interruptMsg:
+		m.clearComposeInterruptRequest(msg.id)
 		if msg.err != nil {
 			m.setStatusError("interrupt error: " + msg.err.Error())
 			return true, nil
 		}
 		m.setStatusInfo("interrupt sent")
 		m.stopRequestActivityFor(msg.id)
+		if m.recents != nil {
+			m.recents.CancelRun(msg.id)
+			m.refreshRecentsSidebarState()
+			if m.mode == uiModeRecents {
+				m.refreshRecentsContent()
+			}
+		}
+		if m.recentsCompletionWatching != nil {
+			delete(m.recentsCompletionWatching, strings.TrimSpace(msg.id))
+			m.cancelRequestScope(recentsRequestScopeName(msg.id))
+		}
 		return true, nil
 	case selectDebounceMsg:
 		if msg.seq != m.selectSeq {

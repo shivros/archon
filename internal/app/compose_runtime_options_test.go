@@ -245,6 +245,62 @@ func TestComposeOptionPickerTypeAheadFiltersModelOptions(t *testing.T) {
 	}
 }
 
+func TestComposeOptionPickerBackspaceAndMove(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected model option picker to open")
+	}
+	before := m.composeOptionPickerSelectedID()
+	if strings.TrimSpace(before) == "" {
+		t.Fatalf("expected initial picker selection")
+	}
+	m.moveComposeOptionPicker(1)
+	after := m.composeOptionPickerSelectedID()
+	if strings.TrimSpace(after) == "" || after == before {
+		t.Fatalf("expected picker move to change selection, before=%q after=%q", before, after)
+	}
+	if !m.composeOptionPickerAppendQuery("53") {
+		t.Fatalf("expected picker query append")
+	}
+	if !m.composeOptionPickerBackspaceQuery() {
+		t.Fatalf("expected picker backspace to change query")
+	}
+	if got := m.composeOptionPickerQuery(); got != "5" {
+		t.Fatalf("expected query to shrink to \"5\", got %q", got)
+	}
+	if !m.composeOptionPickerBackspaceQuery() {
+		t.Fatalf("expected second picker backspace to clear query")
+	}
+	if got := m.composeOptionPickerQuery(); got != "" {
+		t.Fatalf("expected cleared query after backspace, got %q", got)
+	}
+	if m.composeOptionPickerBackspaceQuery() {
+		t.Fatalf("expected backspace on empty query to be a no-op")
+	}
+}
+
+func TestComposeControlsLineClearsSpansWhenRuntimeOptionsUnavailable(t *testing.T) {
+	m := NewModel(nil)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	if line := m.composeControlsLine(); line == "" {
+		t.Fatalf("expected compose controls with provider context")
+	}
+	if spans := m.composeControlSpans(); len(spans) == 0 {
+		t.Fatalf("expected compose control spans before context is removed")
+	}
+
+	m.newSession = nil
+	if line := m.composeControlsLine(); line != "" {
+		t.Fatalf("expected compose controls line to hide without runtime options context, got %q", line)
+	}
+	if spans := m.composeControlSpans(); len(spans) != 0 {
+		t.Fatalf("expected compose control spans to clear when controls hide, got %#v", spans)
+	}
+}
+
 func TestComposeControlsRowUsesFooterStartRowWhenFooterVisible(t *testing.T) {
 	m := NewModel(nil)
 	m.mode = uiModeCompose

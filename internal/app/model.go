@@ -246,6 +246,11 @@ type Model struct {
 	asyncViewportRenderer               *asyncViewportRenderer
 	pendingComposeOptionTarget          composeOptionKind
 	pendingComposeOptionFor             string
+	composeInterruptInFlightSessionID   string
+	composeInterruptEligibilityPolicy   ComposeInterruptEligibilityPolicy
+	composeInterruptSignalProbe         ComposeInterruptSignalProbe
+	composeInterruptCapabilityProbe     ComposeInterruptCapabilityProbe
+	composeControlActionDispatcher      ComposeControlActionDispatcher
 	menu                                *MenuController
 	hotkeys                             *HotkeyRenderer
 	keybindings                         *Keybindings
@@ -413,10 +418,19 @@ const (
 	composeOptionAccess
 )
 
+type composeControlAction int
+
+const (
+	composeControlActionNone composeControlAction = iota
+	composeControlActionOpenOption
+	composeControlActionInterruptTurn
+)
+
 type composeControlSpan struct {
-	kind  composeOptionKind
-	start int
-	end   int
+	action composeControlAction
+	kind   composeOptionKind
+	start  int
+	end    int
 }
 
 type pendingSend struct {
@@ -627,6 +641,10 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sessionReloadPolicy:                 defaultSessionReloadDecisionPolicy{},
 		sessionReloadCoalescer:              NewDefaultSessionReloadCoalescer(defaultSessionReloadNoopCoalesceWindow),
 		sessionCapabilityModeResolver:       defaultSessionCapabilityModeResolver{},
+		composeInterruptEligibilityPolicy:   defaultComposeInterruptEligibilityPolicy{},
+		composeInterruptSignalProbe:         defaultComposeInterruptSignalProbe{},
+		composeInterruptCapabilityProbe:     defaultComposeInterruptCapabilityProbe{},
+		composeControlActionDispatcher:      newDefaultComposeControlActionDispatcher(),
 		sidebarSortPolicy:                   defaultSidebarSortPolicy{},
 		sortStripHintPolicy:                 defaultSortStripHintPolicy{},
 		sortStripVisibilityPolicy:           defaultSortStripVisibilityPolicy{},
@@ -2640,6 +2658,7 @@ func (m *Model) resetStreamWithReason(reason string) {
 	m.recordTranscriptBoundaryMetric(newTranscriptResetMetric(reason, transcriptSourceModelResetStream, sessionID, provider))
 	m.cancelRequestScope(requestScopeSessionLoad)
 	m.cancelRequestScope(requestScopeSessionStart)
+	m.cancelRequestScope(requestScopeSessionInterrupt)
 	m.cancelRequestScope(requestScopeDebugStream)
 	if m.stream != nil {
 		m.stream.Reset()
@@ -2656,6 +2675,7 @@ func (m *Model) resetStreamWithReason(reason string) {
 	m.pendingSessionKey = ""
 	m.loading = false
 	m.loadingKey = ""
+	m.composeInterruptInFlightSessionID = ""
 	if m.transcriptHealthBySession != nil {
 		clear(m.transcriptHealthBySession)
 	}
@@ -4795,9 +4815,11 @@ func (m *Model) exitCompose(status string) {
 		forceReflow: true,
 		before: func() {
 			m.cancelRequestScope(requestScopeSessionStart)
+			m.cancelRequestScope(requestScopeSessionInterrupt)
 			m.saveCurrentComposeDraft()
 			m.clearPendingComposeOptionRequest()
 			m.closeComposeOptionPicker()
+			m.composeInterruptInFlightSessionID = ""
 			if m.compose != nil {
 				m.compose.Exit()
 			}

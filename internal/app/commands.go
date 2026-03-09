@@ -741,8 +741,12 @@ func sendSessionCmd(api SessionSendAPI, id, text string, token int) tea.Cmd {
 }
 
 func interruptSessionCmd(api SessionInterruptAPI, id string) tea.Cmd {
+	return interruptSessionCmdWithContext(api, id, nil)
+}
+
+func interruptSessionCmdWithContext(api SessionInterruptAPI, id string, parent context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ctx, cancel := commandWithTimeout(parent, 4*time.Second)
 		defer cancel()
 		err := api.InterruptSession(ctx, id)
 		return interruptMsg{id: id, err: err}
