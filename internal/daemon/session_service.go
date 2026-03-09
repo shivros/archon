@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"control/internal/guidedworkflows"
@@ -28,8 +29,12 @@ type SessionService struct {
 	guided                    guidedworkflows.Orchestrator
 	transcriptMapper          TranscriptMapper
 	transcriptTransportSelect TranscriptTransportSelector
+	transcriptIngressOpen     TranscriptIngressFactory
+	transcriptProjectorCreate TranscriptProjectorFactory
 	transcriptSnapshotRead    TranscriptSnapshotReader
 	transcriptFollowOpen      TranscriptFollowOpener
+	transcriptHubRegistry     CanonicalTranscriptHubRegistry
+	transcriptMu              sync.Mutex
 }
 
 type SendMessageOptions struct {
@@ -122,6 +127,24 @@ func WithTranscriptTransportSelector(selector TranscriptTransportSelector) Sessi
 	}
 }
 
+func WithTranscriptIngressFactory(factory TranscriptIngressFactory) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || factory == nil {
+			return
+		}
+		s.transcriptIngressOpen = factory
+	}
+}
+
+func WithTranscriptProjectorFactory(factory TranscriptProjectorFactory) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || factory == nil {
+			return
+		}
+		s.transcriptProjectorCreate = factory
+	}
+}
+
 func WithTranscriptSnapshotReader(reader TranscriptSnapshotReader) SessionServiceOption {
 	return func(s *SessionService) {
 		if s == nil || reader == nil {
@@ -137,6 +160,15 @@ func WithTranscriptFollowOpener(opener TranscriptFollowOpener) SessionServiceOpt
 			return
 		}
 		s.transcriptFollowOpen = opener
+	}
+}
+
+func WithCanonicalTranscriptHubRegistry(registry CanonicalTranscriptHubRegistry) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || registry == nil {
+			return
+		}
+		s.transcriptHubRegistry = registry
 	}
 }
 
