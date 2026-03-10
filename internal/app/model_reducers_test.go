@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"testing"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
@@ -377,6 +379,53 @@ func TestComposeReducerNotesNewOverrideOpensAddNote(t *testing.T) {
 	}
 }
 
+func TestComposeReducerCtrlGCopiesSelectionIDs(t *testing.T) {
+	clipboard := &recordingClipboardService{}
+	m := NewModel(nil, WithClipboardService(clipboard))
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session One", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, map[string][]*types.Worktree{}, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkspace)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	m.enterCompose("s1")
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.Focus()
+
+	handled, cmd := m.reduceComposeInputKey(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected compose reducer to handle ctrl+g")
+	}
+	if cmd == nil {
+		t.Fatalf("expected copy command from ctrl+g in compose")
+	}
+	msg := cmd()
+	result, ok := msg.(clipboardResultMsg)
+	if !ok {
+		t.Fatalf("expected clipboardResultMsg, got %T", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("expected successful clipboard copy, got %v", result.err)
+	}
+	const wantPayload = "/tmp/ws1\ngwf-1"
+	if clipboard.text != wantPayload {
+		t.Fatalf("unexpected clipboard payload\nwant:\n%s\n\ngot:\n%s", wantPayload, clipboard.text)
+	}
+	if result.success != "copied 2 id(s)" {
+		t.Fatalf("expected success text %q, got %q", "copied 2 id(s)", result.success)
+	}
+}
+
 func TestComposeReducerCtrlDTogglesDebugStreamsWithToast(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	if m.sidebar == nil || !m.sidebar.SelectBySessionID("s1") {
@@ -481,7 +530,7 @@ func TestUpdateComposeModePasteUpdatesInput(t *testing.T) {
 	}
 }
 
-func TestReduceClipboardAndSearchKeysUsesCtrlGForCopySessionID(t *testing.T) {
+func TestReduceClipboardAndSearchKeysUsesCtrlGForCopySelectionIDs(t *testing.T) {
 	m := NewModel(nil)
 
 	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
@@ -491,7 +540,7 @@ func TestReduceClipboardAndSearchKeysUsesCtrlGForCopySessionID(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected no async command for copy session id")
 	}
-	if m.status != "no session selected" {
+	if m.status != "no workspace/workflow/session selected" {
 		t.Fatalf("expected missing session status, got %q", m.status)
 	}
 }
@@ -514,6 +563,152 @@ func TestReduceClipboardAndSearchKeysCopySessionIDRemappable(t *testing.T) {
 	handled, _ := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	if !handled {
 		t.Fatalf("expected remapped copy session id command to be handled")
+	}
+}
+
+func TestReduceClipboardAndSearchKeysCopySelectionIDsMultiSelect(t *testing.T) {
+	clipboard := &recordingClipboardService{}
+	m := NewModel(nil, WithClipboardService(clipboard))
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Title: "Session One", Status: types.SessionStatusExited},
+		{ID: "s2", Title: "Session Two", Status: types.SessionStatusExited},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	workflows := []*guidedworkflows.WorkflowRun{
+		{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "SOLID", Status: guidedworkflows.WorkflowRunStatusRunning},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, workflows, m.sessionMeta, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkspace)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkflow)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarSession)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	m.sidebar.CursorDown()
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+g to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected copy command")
+	}
+	msg := cmd()
+	result, ok := msg.(clipboardResultMsg)
+	if !ok {
+		t.Fatalf("expected clipboardResultMsg, got %T", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("expected successful clipboard copy, got %v", result.err)
+	}
+	const wantPayload = "/tmp/ws1\ngwf-1\ns1\ns2"
+	if clipboard.text != wantPayload {
+		t.Fatalf("unexpected clipboard payload\nwant:\n%s\n\ngot:\n%s", wantPayload, clipboard.text)
+	}
+	if result.success != "copied 4 id(s)" {
+		t.Fatalf("expected success text %q, got %q", "copied 4 id(s)", result.success)
+	}
+}
+
+func TestReduceClipboardAndSearchKeysCopySelectionIDsPrefersSelectionSetOverFocus(t *testing.T) {
+	clipboard := &recordingClipboardService{}
+	m := NewModel(nil, WithClipboardService(clipboard))
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.sessions = []*types.Session{{ID: "s1", Title: "Session One", Status: types.SessionStatusExited}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+	}
+	m.sidebar.Apply(m.workspaces, map[string][]*types.Worktree{}, m.sessions, nil, m.sessionMeta, "", "", false)
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to focus session s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorkspace)
+
+	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+g to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected copy command")
+	}
+	msg := cmd()
+	result, ok := msg.(clipboardResultMsg)
+	if !ok {
+		t.Fatalf("expected clipboardResultMsg, got %T", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("expected successful clipboard copy, got %v", result.err)
+	}
+	if clipboard.text != "s1" {
+		t.Fatalf("expected copy to use selected items only, got %q", clipboard.text)
+	}
+}
+
+func TestReduceClipboardAndSearchKeysCopySelectionIDsWarnsWhenNothingCopyable(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree", Path: "/tmp/ws1/wt1"},
+		},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorktree)
+
+	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+g to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no copy command for unsupported selection")
+	}
+	if m.status != "no workspace/workflow/session selected" {
+		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestReduceClipboardAndSearchKeysCopySelectionIDsIncludesSkippedInSuccess(t *testing.T) {
+	clipboard := &recordingClipboardService{}
+	m := NewModel(nil, WithClipboardService(clipboard))
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{
+		"ws1": {
+			{ID: "wt1", WorkspaceID: "ws1", Name: "Worktree", Path: "/tmp/ws1/wt1"},
+		},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, nil, nil, nil, "", "", false)
+	selectSidebarItemKind(t, &m, sidebarWorkspace)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	selectSidebarItemKind(t, &m, sidebarWorktree)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	handled, cmd := m.reduceClipboardAndSearchKeys(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	if !handled {
+		t.Fatalf("expected ctrl+g to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected copy command")
+	}
+	msg := cmd()
+	result, ok := msg.(clipboardResultMsg)
+	if !ok {
+		t.Fatalf("expected clipboardResultMsg, got %T", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("expected successful clipboard copy, got %v", result.err)
+	}
+	if clipboard.text != "/tmp/ws1" {
+		t.Fatalf("unexpected clipboard payload %q", clipboard.text)
+	}
+	if result.success != "copied 1 id(s), skipped 1" {
+		t.Fatalf("expected success text %q, got %q", "copied 1 id(s), skipped 1", result.success)
 	}
 }
 
@@ -1183,6 +1378,15 @@ func TestComposeCtrlPassthroughKeepsComposeForInputCommand(t *testing.T) {
 	}
 }
 
+func TestIsComposeInputCommandTreatsLegacyAndCanonicalCopyAsInputCommands(t *testing.T) {
+	if !isComposeInputCommand(KeyCommandCopySelectionIDs) {
+		t.Fatalf("expected canonical copy-selection command to be compose input command")
+	}
+	if !isComposeInputCommand(KeyCommandCopySessionID) {
+		t.Fatalf("expected legacy copy-session command to remain compose input command")
+	}
+}
+
 func TestEditWorkspaceGroupsReducerEnterSubmitsGroups(t *testing.T) {
 	m := NewModel(nil)
 	m.groups = []*types.WorkspaceGroup{
@@ -1256,4 +1460,21 @@ func TestEditWorkspaceGroupsReducerEscCancels(t *testing.T) {
 	if m.editWorkspaceID != "" {
 		t.Fatalf("expected edit workspace id to clear, got %q", m.editWorkspaceID)
 	}
+}
+
+type recordingClipboardService struct {
+	text   string
+	method clipboardMethod
+	err    error
+	calls  int
+}
+
+func (s *recordingClipboardService) Copy(_ context.Context, text string) (clipboardMethod, error) {
+	s.calls++
+	s.text = text
+	method := s.method
+	if method == 0 {
+		method = clipboardMethodSystem
+	}
+	return method, s.err
 }

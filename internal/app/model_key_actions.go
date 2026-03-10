@@ -198,13 +198,8 @@ func (m *Model) openSettingsMenu() {
 }
 
 func (m *Model) reduceClipboardAndSearchKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
-	if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {
-		id := m.selectedSessionID()
-		if id == "" {
-			m.setCopyStatusWarning("no session selected")
-			return true, nil
-		}
-		return true, m.copyWithStatusCmd(id, "copied session id")
+	if m.keyMatchesCommand(msg, KeyCommandCopySelectionIDs, "ctrl+g") {
+		return true, m.copySidebarSelectionIDsCmd()
 	}
 	switch m.keyString(msg) {
 	case "/":

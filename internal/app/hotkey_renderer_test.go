@@ -170,3 +170,29 @@ func TestResolveHotkeysAppliesToggleContextPanelOverride(t *testing.T) {
 		t.Fatalf("expected toggle context panel hotkey to be present")
 	}
 }
+
+func TestDefaultHotkeysUseCanonicalCopySelectionIDsCommand(t *testing.T) {
+	hotkeys := DefaultHotkeys()
+	sidebarFound := false
+	chatFound := false
+	for _, hotkey := range hotkeys {
+		if hotkey.Command == KeyCommandCopySessionID {
+			t.Fatalf("did not expect legacy copy-session command in default hotkeys")
+		}
+		if hotkey.Command != KeyCommandCopySelectionIDs {
+			continue
+		}
+		if hotkey.Context == HotkeySidebar {
+			sidebarFound = true
+		}
+		if hotkey.Context == HotkeyChatInput {
+			chatFound = true
+		}
+	}
+	if !sidebarFound {
+		t.Fatalf("expected canonical copy-selection hotkey in sidebar context")
+	}
+	if !chatFound {
+		t.Fatalf("expected canonical copy-selection hotkey in chat context")
+	}
+}

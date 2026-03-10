@@ -27,7 +27,8 @@ const (
 	KeyCommandDebugPanelPageDown   = "ui.debugPanelPageDown"
 	KeyCommandDebugPanelTop        = "ui.debugPanelTop"
 	KeyCommandDebugPanelBottom     = "ui.debugPanelBottom"
-	KeyCommandCopySessionID        = "ui.copySessionID"
+	KeyCommandCopySelectionIDs     = "ui.copySelectionIDs"
+	KeyCommandCopySessionID        = "ui.copySessionID" // legacy alias; normalized to ui.copySelectionIDs
 	KeyCommandOpenSearch           = "ui.openSearch"
 	KeyCommandSidebarFilter        = "ui.sidebarFilter"
 	KeyCommandSidebarSortReverse   = "ui.sidebarSortReverse"
@@ -98,7 +99,7 @@ var defaultKeybindingByCommand = map[string]string{
 	KeyCommandDebugPanelPageDown:   "shift+pgdown",
 	KeyCommandDebugPanelTop:        "shift+home",
 	KeyCommandDebugPanelBottom:     "shift+end",
-	KeyCommandCopySessionID:        "ctrl+g",
+	KeyCommandCopySelectionIDs:     "ctrl+g",
 	KeyCommandOpenSearch:           "/",
 	KeyCommandSidebarFilter:        "ctrl+f",
 	KeyCommandSidebarSortReverse:   "alt+r",
@@ -381,6 +382,8 @@ func normalizeKeybindingCommand(command string) string {
 		return KeyCommandDismissSelection
 	case KeyCommandComposeClearInput:
 		return KeyCommandInputClear
+	case KeyCommandCopySessionID:
+		return KeyCommandCopySelectionIDs
 	default:
 		return command
 	}

@@ -83,8 +83,29 @@ func TestLoadKeybindingsMapOverride(t *testing.T) {
 	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "alt+y" {
 		t.Fatalf("unexpected copy id binding: %q", got)
 	}
+	if got := bindings.KeyFor(KeyCommandCopySelectionIDs, ""); got != "alt+y" {
+		t.Fatalf("unexpected canonical copy ids binding: %q", got)
+	}
 	if got := bindings.KeyFor(KeyCommandToggleContextPanel, ""); got != "f6" {
 		t.Fatalf("unexpected context panel binding: %q", got)
+	}
+}
+
+func TestLoadKeybindingsMapOverrideCanonicalCopySelectionIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	data := []byte(`{"ui.copySelectionIDs":"alt+y"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	bindings, err := LoadKeybindings(path)
+	if err != nil {
+		t.Fatalf("LoadKeybindings: %v", err)
+	}
+	if got := bindings.KeyFor(KeyCommandCopySelectionIDs, ""); got != "alt+y" {
+		t.Fatalf("unexpected canonical copy ids binding: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "alt+y" {
+		t.Fatalf("unexpected legacy copy alias binding: %q", got)
 	}
 }
 
@@ -144,6 +165,27 @@ func TestLoadKeybindingsLegacyComposeClearAliasMapsToInputClear(t *testing.T) {
 	}
 	if got := bindings.Remap("f7"); got != "ctrl+c" {
 		t.Fatalf("expected legacy alias remap to canonical ctrl+c, got %q", got)
+	}
+}
+
+func TestLoadKeybindingsLegacyCopyAliasMapsToCanonicalCopySelectionIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keybindings.json")
+	data := []byte(`{"ui.copySessionID":"f7"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	bindings, err := LoadKeybindings(path)
+	if err != nil {
+		t.Fatalf("LoadKeybindings: %v", err)
+	}
+	if got := bindings.KeyFor(KeyCommandCopySelectionIDs, ""); got != "f7" {
+		t.Fatalf("unexpected canonical copy ids binding: %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "f7" {
+		t.Fatalf("unexpected legacy copy alias binding: %q", got)
+	}
+	if got := bindings.Remap("f7"); got != "ctrl+g" {
+		t.Fatalf("expected legacy alias remap to canonical ctrl+g, got %q", got)
 	}
 }
 
@@ -336,6 +378,9 @@ func TestDefaultKeybindingsMenuAndRename(t *testing.T) {
 	}
 	if got := bindings.KeyFor(KeyCommandCopySessionID, ""); got != "ctrl+g" {
 		t.Fatalf("expected default copy session key ctrl+g, got %q", got)
+	}
+	if got := bindings.KeyFor(KeyCommandCopySelectionIDs, ""); got != "ctrl+g" {
+		t.Fatalf("expected default copy selection ids key ctrl+g, got %q", got)
 	}
 	if got := bindings.KeyFor(KeyCommandStartGuidedWorkflow, ""); got != "w" {
 		t.Fatalf("expected default start guided workflow key w, got %q", got)

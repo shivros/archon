@@ -579,13 +579,8 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 					return true, cmd
 				}
 			}
-			if m.keyMatchesCommand(msg, KeyCommandCopySessionID, "ctrl+g") {
-				id := m.selectedSessionID()
-				if id == "" {
-					m.setCopyStatusWarning("no session selected")
-					return true, nil
-				}
-				return true, m.copyWithStatusCmd(id, "copied session id")
+			if m.keyMatchesCommand(msg, KeyCommandCopySelectionIDs, "ctrl+g") {
+				return true, m.copySidebarSelectionIDsCmd()
 			}
 			if handled, cmd := m.reduceGlobalKey(msg, globalKeyOptions{
 				AllowToggleNotes:   true,
@@ -675,6 +670,7 @@ func isComposeInputCommand(command string) bool {
 		KeyCommandInputWordLeft, KeyCommandInputWordRight,
 		KeyCommandInputDeleteWordLeft, KeyCommandInputDeleteWordRight,
 		KeyCommandComposeModel, KeyCommandComposeReasoning, KeyCommandComposeAccess,
+		KeyCommandCopySelectionIDs,
 		KeyCommandCopySessionID,
 		KeyCommandToggleNotesPanel, KeyCommandToggleContextPanel, KeyCommandToggleDebugStreams:
 		return true

@@ -106,7 +106,7 @@ func keybindingScopesFor(command, boundKey, defaultKey string) []string {
 		return []string{keyScopeNormal, keyScopeComposeInput, keyScopeNotesMode, keyScopeAddNoteInput, keyScopeGuidedWorkflowSetupInput}
 	case KeyCommandToggleDebugStreams:
 		return []string{keyScopeNormal, keyScopeComposeInput}
-	case KeyCommandCopySessionID:
+	case KeyCommandCopySelectionIDs, KeyCommandCopySessionID:
 		return []string{keyScopeNormal, keyScopeComposeInput}
 	case KeyCommandToggleMessageSelect:
 		return []string{keyScopeNormal, keyScopeComposeInput, keyScopeMessageSelect}

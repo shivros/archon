@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -195,5 +196,15 @@ func TestEnqueueStartupKeybindingConflictToastsShowsFirstImmediately(t *testing.
 	}
 	if len(m.startupToasts) != 1 {
 		t.Fatalf("expected one remaining startup toast, got %d", len(m.startupToasts))
+	}
+}
+
+func TestKeybindingScopesForCopySelectionIDsAndLegacyAlias(t *testing.T) {
+	want := []string{keyScopeNormal, keyScopeComposeInput}
+	for _, command := range []string{KeyCommandCopySelectionIDs, KeyCommandCopySessionID} {
+		scopes := keybindingScopesFor(command, "ctrl+g", "ctrl+g")
+		if !reflect.DeepEqual(scopes, want) {
+			t.Fatalf("unexpected scopes for %q: got %#v want %#v", command, scopes, want)
+		}
 	}
 }

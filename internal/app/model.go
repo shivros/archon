@@ -372,6 +372,7 @@ type Model struct {
 	selectionOperationPlanner           SelectionOperationPlanner
 	selectionConfirmationPresenter      SelectionConfirmationPresenter
 	selectionOperationExecutor          SelectionOperationExecutor
+	selectionCopyPayloadBuilder         SelectionCopyPayloadBuilder
 	themeID                             string
 	themePreferenceStore                ThemePreferenceStore
 	settingsMenu                        *SettingsMenuController
@@ -684,6 +685,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		selectionOperationPlanner:           NewDefaultSelectionOperationPlanner(),
 		selectionConfirmationPresenter:      NewDefaultSelectionConfirmationPresenter(),
 		selectionOperationExecutor:          NewDefaultSelectionOperationExecutor(),
+		selectionCopyPayloadBuilder:         NewDefaultSelectionCopyPayloadBuilder(),
 		themeID:                             defaultThemeID,
 		themePreferenceStore:                fileThemePreferenceStore{},
 		settingsMenu:                        NewSettingsMenuController(),
