@@ -12,9 +12,46 @@ import (
 
 const (
 	defaultTranscriptHubSubscriberBuffer = 256
+	defaultTranscriptHubMaxReconnects    = 4
 )
 
 var transcriptMappingBaseRevision = transcriptdomain.MustParseRevisionToken("1")
+
+type hubRuntimeState string
+
+const (
+	hubStateStarting     hubRuntimeState = "starting"
+	hubStateReady        hubRuntimeState = "ready"
+	hubStateReconnecting hubRuntimeState = "reconnecting"
+	hubStateClosed       hubRuntimeState = "closed"
+	hubStateError        hubRuntimeState = "error"
+)
+
+type ingressTerminationKind int
+
+const (
+	ingressTerminatedContextCanceled ingressTerminationKind = iota
+	ingressTerminatedEOF
+)
+
+type defaultTranscriptReconnectPolicy struct {
+	maxReconnects int
+}
+
+func NewDefaultTranscriptReconnectPolicy(maxReconnects int) TranscriptReconnectPolicy {
+	if maxReconnects <= 0 {
+		maxReconnects = defaultTranscriptHubMaxReconnects
+	}
+	return defaultTranscriptReconnectPolicy{maxReconnects: maxReconnects}
+}
+
+func (p defaultTranscriptReconnectPolicy) NextAttempt(current int, hadTraffic bool) (int, bool) {
+	if hadTraffic {
+		return 0, true
+	}
+	next := current + 1
+	return next, next <= p.maxReconnects
+}
 
 type defaultTranscriptProjectorFactory struct{}
 
@@ -43,13 +80,20 @@ type canonicalTranscriptHub struct {
 	runCancel        context.CancelFunc
 	done             chan struct{}
 
-	stateMu  sync.RWMutex
-	snapshot transcriptdomain.TranscriptSnapshot
-	revision transcriptdomain.RevisionToken
+	stateMu      sync.RWMutex
+	snapshot     transcriptdomain.TranscriptSnapshot
+	revision     transcriptdomain.RevisionToken
+	runtimeState hubRuntimeState
 
 	fanoutMu       sync.Mutex
 	subscribers    map[int]chan transcriptdomain.TranscriptEvent
 	nextSubscriber int
+
+	reconnectPolicy TranscriptReconnectPolicy
+
+	lifecycleObserver CanonicalTranscriptHubLifecycleObserver
+	hubInstanceID     string
+	closeNotifyOnce   sync.Once
 }
 
 func newCanonicalTranscriptHub(
@@ -78,9 +122,63 @@ func newCanonicalTranscriptHub(
 		ingressFactory:   ingressFactory,
 		mapper:           mapper,
 		projectorFactory: projectorFactory,
+		runtimeState:     hubStateStarting,
 		subscribers:      map[int]chan transcriptdomain.TranscriptEvent{},
 		nextSubscriber:   1,
+		reconnectPolicy:  NewDefaultTranscriptReconnectPolicy(defaultTranscriptHubMaxReconnects),
 	}, nil
+}
+
+func (h *canonicalTranscriptHub) bindLifecycleObserver(
+	observer CanonicalTranscriptHubLifecycleObserver,
+	hubInstanceID string,
+) {
+	if h == nil {
+		return
+	}
+	h.lifecycleObserver = observer
+	h.hubInstanceID = strings.TrimSpace(hubInstanceID)
+}
+
+func (h *canonicalTranscriptHub) setReconnectPolicy(policy TranscriptReconnectPolicy) {
+	if h == nil || policy == nil {
+		return
+	}
+	h.reconnectPolicy = policy
+}
+
+func (h *canonicalTranscriptHub) reconnectPolicyOrDefault() TranscriptReconnectPolicy {
+	if h == nil || h.reconnectPolicy == nil {
+		return NewDefaultTranscriptReconnectPolicy(defaultTranscriptHubMaxReconnects)
+	}
+	return h.reconnectPolicy
+}
+
+func (h *canonicalTranscriptHub) notifySubscriberAttached() {
+	if h == nil || h.lifecycleObserver == nil {
+		return
+	}
+	h.lifecycleObserver.SubscriberAttached(h.sessionID, h.hubInstanceID)
+}
+
+func (h *canonicalTranscriptHub) notifySubscriberDetached(count int) {
+	if h == nil || h.lifecycleObserver == nil || count <= 0 {
+		return
+	}
+	for i := 0; i < count; i++ {
+		h.lifecycleObserver.SubscriberDetached(h.sessionID, h.hubInstanceID)
+	}
+}
+
+func (h *canonicalTranscriptHub) notifyHubClosed() {
+	if h == nil {
+		return
+	}
+	h.closeNotifyOnce.Do(func() {
+		if h.lifecycleObserver != nil {
+			h.lifecycleObserver.HubClosed(h.sessionID, h.hubInstanceID)
+		}
+	})
 }
 
 func (h *canonicalTranscriptHub) Subscribe(
@@ -118,6 +216,7 @@ func (h *canonicalTranscriptHub) Subscribe(
 
 	h.subscribers[subscriberID] = ch
 	h.fanoutMu.Unlock()
+	h.notifySubscriberAttached()
 	if err := h.ensureStarted(ctx); err != nil {
 		h.removeSubscriber(subscriberID)
 		return nil, nil, err
@@ -157,8 +256,11 @@ func (h *canonicalTranscriptHub) Close() error {
 	}
 	if done != nil {
 		<-done
+		return nil
 	}
 	h.closeSubscribers()
+	h.transitionRuntimeState(hubStateClosed)
+	h.notifyHubClosed()
 	return nil
 }
 
@@ -188,14 +290,13 @@ func (h *canonicalTranscriptHub) ensureStarted(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if handle.Close == nil {
-		handle.Close = func() {}
-	}
+	handle = normalizeTranscriptIngressHandle(handle)
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	h.runCancel = runCancel
 	h.done = make(chan struct{})
 	h.started = true
+	h.transitionRuntimeState(hubStateStarting)
 	base := h.currentRevision()
 	go h.runLoop(runCtx, handle, base)
 	return nil
@@ -215,12 +316,13 @@ func (h *canonicalTranscriptHub) runLoop(
 		h.done = nil
 		h.started = false
 		h.startMu.Unlock()
+		h.transitionRuntimeState(hubStateClosed)
+		h.notifyHubClosed()
 		h.closeSubscribers()
 		if done != nil {
 			close(done)
 		}
 	}()
-	defer handle.Close()
 
 	projector := h.projectorFactory.New(h.sessionID, h.provider, base)
 
@@ -243,48 +345,168 @@ func (h *canonicalTranscriptHub) runLoop(
 		return true
 	}
 
-	emitStatus := func(status transcriptdomain.StreamStatus) {
-		statusEvent := transcriptdomain.TranscriptEvent{
-			Kind:         transcriptdomain.TranscriptEventStreamStatus,
-			SessionID:    h.sessionID,
-			Provider:     h.provider,
-			Revision:     projector.NextRevision(),
-			StreamStatus: status,
-		}
-		_ = emit(statusEvent)
-	}
-
-	emitStatus(transcriptdomain.StreamStatusReady)
-	if !handle.FollowAvailable || (handle.Events == nil && handle.Items == nil) {
-		emitStatus(transcriptdomain.StreamStatusClosed)
+	currentHandle := handle
+	reconnectAttempts := 0
+	if !h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusReady) {
+		currentHandle.Close()
 		return
 	}
+	for {
+		if !currentHandle.FollowAvailable || (currentHandle.Events == nil && currentHandle.Items == nil) {
+			currentHandle.Close()
+			_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusClosed)
+			return
+		}
+		termination, hadTraffic := h.consumeIngress(runCtx, currentHandle, projector, emit)
+		currentHandle.Close()
+		switch termination {
+		case ingressTerminatedContextCanceled:
+			_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusClosed)
+			return
+		case ingressTerminatedEOF:
+			nextAttempt, shouldReconnect := h.reconnectPolicyOrDefault().NextAttempt(reconnectAttempts, hadTraffic)
+			reconnectAttempts = nextAttempt
+			if !currentHandle.Reconnectable || h.isExplicitlyClosed() {
+				_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusClosed)
+				return
+			}
+			if !shouldReconnect {
+				_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusError)
+				_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusClosed)
+				return
+			}
+			if !h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusReconnecting) {
+				_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusClosed)
+				return
+			}
+			nextHandle, err := h.ingressFactory.Open(runCtx, h.sessionID, h.provider)
+			if err != nil {
+				_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusError)
+				_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusClosed)
+				return
+			}
+			currentHandle = normalizeTranscriptIngressHandle(nextHandle)
+			_ = h.emitHubStatus(projector, emit, transcriptdomain.StreamStatusReady)
+		}
+	}
+}
 
+func (h *canonicalTranscriptHub) consumeIngress(
+	runCtx context.Context,
+	handle TranscriptIngressHandle,
+	projector TranscriptProjector,
+	emit func(transcriptdomain.TranscriptEvent) bool,
+) (ingressTerminationKind, bool) {
 	events := handle.Events
 	items := handle.Items
+	hadTraffic := false
 	for {
 		if events == nil && items == nil {
-			emitStatus(transcriptdomain.StreamStatusClosed)
-			return
+			return ingressTerminatedEOF, hadTraffic
 		}
 		select {
 		case <-runCtx.Done():
-			emitStatus(transcriptdomain.StreamStatusClosed)
-			return
+			return ingressTerminatedContextCanceled, hadTraffic
 		case native, ok := <-events:
 			if !ok {
 				events = nil
 				continue
 			}
+			hadTraffic = true
 			h.emitMappedEvent(projector, emit, native)
 		case item, ok := <-items:
 			if !ok {
 				items = nil
 				continue
 			}
+			hadTraffic = true
 			h.emitMappedItem(projector, emit, item)
 		}
 	}
+}
+
+func normalizeTranscriptIngressHandle(handle TranscriptIngressHandle) TranscriptIngressHandle {
+	if handle.Close == nil {
+		handle.Close = func() {}
+	}
+	return handle
+}
+
+func hubStateFromStreamStatus(status transcriptdomain.StreamStatus) hubRuntimeState {
+	switch status {
+	case transcriptdomain.StreamStatusReady:
+		return hubStateReady
+	case transcriptdomain.StreamStatusReconnecting:
+		return hubStateReconnecting
+	case transcriptdomain.StreamStatusError:
+		return hubStateError
+	case transcriptdomain.StreamStatusClosed:
+		return hubStateClosed
+	default:
+		return ""
+	}
+}
+
+func (h *canonicalTranscriptHub) emitHubStatus(
+	projector TranscriptProjector,
+	emit func(transcriptdomain.TranscriptEvent) bool,
+	status transcriptdomain.StreamStatus,
+) bool {
+	next := hubStateFromStreamStatus(status)
+	if next == "" {
+		return false
+	}
+	if !h.transitionRuntimeState(next) {
+		return false
+	}
+	statusEvent := transcriptdomain.TranscriptEvent{
+		Kind:         transcriptdomain.TranscriptEventStreamStatus,
+		SessionID:    h.sessionID,
+		Provider:     h.provider,
+		Revision:     projector.NextRevision(),
+		StreamStatus: status,
+	}
+	if !emit(statusEvent) {
+		if status == transcriptdomain.StreamStatusClosed {
+			h.transitionRuntimeState(hubStateClosed)
+		}
+		return false
+	}
+	return true
+}
+
+func (h *canonicalTranscriptHub) transitionRuntimeState(next hubRuntimeState) bool {
+	if h == nil {
+		return false
+	}
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	current := h.runtimeState
+	if current == "" {
+		current = hubStateStarting
+	}
+	if current == next {
+		h.runtimeState = next
+		return true
+	}
+	allowed := false
+	switch current {
+	case hubStateStarting:
+		allowed = next == hubStateReady || next == hubStateError || next == hubStateClosed
+	case hubStateReady:
+		allowed = next == hubStateReconnecting || next == hubStateError || next == hubStateClosed
+	case hubStateReconnecting:
+		allowed = next == hubStateReady || next == hubStateError || next == hubStateClosed
+	case hubStateError:
+		allowed = next == hubStateClosed
+	case hubStateClosed:
+		allowed = false
+	}
+	if !allowed {
+		return false
+	}
+	h.runtimeState = next
+	return true
 }
 
 func (h *canonicalTranscriptHub) emitMappedEvent(
@@ -344,35 +566,43 @@ func (h *canonicalTranscriptHub) currentRevision() transcriptdomain.RevisionToke
 
 func (h *canonicalTranscriptHub) broadcast(event transcriptdomain.TranscriptEvent) {
 	h.fanoutMu.Lock()
-	defer h.fanoutMu.Unlock()
+	detached := 0
 	for id, subscriber := range h.subscribers {
 		select {
 		case subscriber <- event:
 		default:
 			close(subscriber)
 			delete(h.subscribers, id)
+			detached++
 		}
 	}
+	h.fanoutMu.Unlock()
+	h.notifySubscriberDetached(detached)
 }
 
 func (h *canonicalTranscriptHub) removeSubscriber(id int) {
 	h.fanoutMu.Lock()
-	defer h.fanoutMu.Unlock()
 	subscriber, ok := h.subscribers[id]
 	if !ok {
+		h.fanoutMu.Unlock()
 		return
 	}
 	delete(h.subscribers, id)
 	close(subscriber)
+	h.fanoutMu.Unlock()
+	h.notifySubscriberDetached(1)
 }
 
 func (h *canonicalTranscriptHub) closeSubscribers() {
 	h.fanoutMu.Lock()
-	defer h.fanoutMu.Unlock()
+	detached := 0
 	for id, subscriber := range h.subscribers {
 		close(subscriber)
 		delete(h.subscribers, id)
+		detached++
 	}
+	h.fanoutMu.Unlock()
+	h.notifySubscriberDetached(detached)
 }
 
 func shouldReplaySnapshot(after, current transcriptdomain.RevisionToken) bool {

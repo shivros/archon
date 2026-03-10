@@ -57,4 +57,26 @@ func TestWithSessionBootstrapPolicyOption(t *testing.T) {
 	if _, ok := model2.sessionBootstrapPolicyOrDefault().(defaultSessionBootstrapPolicy); !ok {
 		t.Fatalf("expected default bootstrap policy fallback")
 	}
+
+	var nilModel *Model
+	WithSessionBootstrapPolicy(defaultSessionBootstrapPolicy{})(nilModel)
+}
+
+func TestSessionBootstrapPolicyPrefersSharedTranscriptFollowForSameSession(t *testing.T) {
+	if !prefersSharedTranscriptFollow("s1", "s1") {
+		t.Fatalf("expected shared follow preference for same active session")
+	}
+	if prefersSharedTranscriptFollow("s1", "s2") {
+		t.Fatalf("expected no shared follow preference for different sessions")
+	}
+	if prefersSharedTranscriptFollow("", "s1") {
+		t.Fatalf("expected no shared follow preference when active session is empty")
+	}
+}
+
+func TestSessionBootstrapPolicyOrDefaultHandlesNilModel(t *testing.T) {
+	var nilModel *Model
+	if _, ok := nilModel.sessionBootstrapPolicyOrDefault().(defaultSessionBootstrapPolicy); !ok {
+		t.Fatalf("expected nil model bootstrap policy fallback")
+	}
 }

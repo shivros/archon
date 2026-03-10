@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"testing"
@@ -51,6 +52,189 @@ func (hubTestMapper) MapEvent(_ string, _ transcriptadapters.MappingContext, eve
 			Text: text,
 		}},
 	}}
+}
+
+type scriptedIngressStep struct {
+	handle TranscriptIngressHandle
+	err    error
+}
+
+type scriptedHubIngressFactory struct {
+	mu    sync.Mutex
+	steps []scriptedIngressStep
+	opens int
+}
+
+func (f *scriptedHubIngressFactory) Open(context.Context, string, string) (TranscriptIngressHandle, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opens++
+	if len(f.steps) == 0 {
+		return TranscriptIngressHandle{}, errors.New("unexpected ingress open")
+	}
+	step := f.steps[0]
+	f.steps = f.steps[1:]
+	return step.handle, step.err
+}
+
+func (f *scriptedHubIngressFactory) OpenCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.opens
+}
+
+type neverReconnectPolicy struct{}
+
+func (neverReconnectPolicy) NextAttempt(current int, hadTraffic bool) (int, bool) {
+	_ = hadTraffic
+	return current + 1, false
+}
+
+type nonLifecycleHub struct{}
+
+func (nonLifecycleHub) Subscribe(context.Context, transcriptdomain.RevisionToken) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	ch := make(chan transcriptdomain.TranscriptEvent)
+	close(ch)
+	return ch, func() {}, nil
+}
+
+func (nonLifecycleHub) Snapshot() transcriptdomain.TranscriptSnapshot {
+	return transcriptdomain.TranscriptSnapshot{}
+}
+
+func (nonLifecycleHub) Close() error { return nil }
+
+func TestDefaultTranscriptReconnectPolicyUsesFallbackLimit(t *testing.T) {
+	policy := NewDefaultTranscriptReconnectPolicy(0)
+	attempt := 0
+	for i := 1; i <= defaultTranscriptHubMaxReconnects; i++ {
+		next, shouldReconnect := policy.NextAttempt(attempt, false)
+		if !shouldReconnect {
+			t.Fatalf("expected reconnect allowed for attempt %d", i)
+		}
+		if next != i {
+			t.Fatalf("expected next attempt %d, got %d", i, next)
+		}
+		attempt = next
+	}
+
+	next, shouldReconnect := policy.NextAttempt(attempt, false)
+	if shouldReconnect {
+		t.Fatalf("expected reconnect denied after fallback max reconnects")
+	}
+	if next != attempt+1 {
+		t.Fatalf("expected monotonic attempt counter, got %d", next)
+	}
+
+	resetAttempt, resetReconnect := policy.NextAttempt(next, true)
+	if !resetReconnect || resetAttempt != 0 {
+		t.Fatalf("expected hadTraffic=true to reset attempt counter, got attempt=%d reconnect=%v", resetAttempt, resetReconnect)
+	}
+}
+
+func TestCanonicalTranscriptHubHelpersHandleNilReceivers(t *testing.T) {
+	var hub *canonicalTranscriptHub
+	hub.bindLifecycleObserver(nil, "ignored")
+	hub.setReconnectPolicy(nil)
+	next, ok := hub.reconnectPolicyOrDefault().NextAttempt(defaultTranscriptHubMaxReconnects, false)
+	if ok || next != defaultTranscriptHubMaxReconnects+1 {
+		t.Fatalf("expected default policy behavior from nil receiver fallback, got next=%d ok=%v", next, ok)
+	}
+	if hub.transitionRuntimeState(hubStateReady) {
+		t.Fatalf("expected nil receiver transition to fail")
+	}
+}
+
+func TestCanonicalTranscriptHubTransitionRuntimeStateRejectsInvalidTransitions(t *testing.T) {
+	hub := &canonicalTranscriptHub{runtimeState: hubStateClosed}
+	if hub.transitionRuntimeState(hubStateReady) {
+		t.Fatalf("expected closed -> ready transition to be rejected")
+	}
+	if hub.runtimeState != hubStateClosed {
+		t.Fatalf("expected runtime state to remain closed, got %q", hub.runtimeState)
+	}
+
+	hub.runtimeState = ""
+	if hub.transitionRuntimeState(hubStateReconnecting) {
+		t.Fatalf("expected implicit starting -> reconnecting transition to be rejected")
+	}
+	if hub.runtimeState != "" {
+		t.Fatalf("expected runtime state unchanged on rejected transition, got %q", hub.runtimeState)
+	}
+}
+
+func TestCanonicalTranscriptHubEmitHubStatusEdgeCases(t *testing.T) {
+	hub := &canonicalTranscriptHub{
+		sessionID:        "s-status-edge",
+		provider:         "codex",
+		runtimeState:     hubStateStarting,
+		projectorFactory: NewDefaultTranscriptProjectorFactory(),
+	}
+	projector := NewTranscriptProjector("s-status-edge", "codex", "")
+
+	calls := 0
+	if hub.emitHubStatus(projector, func(transcriptdomain.TranscriptEvent) bool {
+		calls++
+		return true
+	}, transcriptdomain.StreamStatus("invalid")) {
+		t.Fatalf("expected invalid stream status to be rejected")
+	}
+	if calls != 0 {
+		t.Fatalf("expected invalid status to short-circuit before emit, got %d emits", calls)
+	}
+
+	hub.runtimeState = hubStateClosed
+	if hub.emitHubStatus(projector, func(transcriptdomain.TranscriptEvent) bool {
+		calls++
+		return true
+	}, transcriptdomain.StreamStatusReady) {
+		t.Fatalf("expected emit to fail when runtime transition is invalid")
+	}
+	if calls != 0 {
+		t.Fatalf("expected no emit attempt for invalid transition, got %d emits", calls)
+	}
+
+	hub.runtimeState = hubStateStarting
+	if hub.emitHubStatus(projector, func(transcriptdomain.TranscriptEvent) bool { return false }, transcriptdomain.StreamStatusClosed) {
+		t.Fatalf("expected emitHubStatus to report false when downstream emit fails")
+	}
+	if hub.runtimeState != hubStateClosed {
+		t.Fatalf("expected closed runtime state after failed closed emit, got %q", hub.runtimeState)
+	}
+}
+
+func TestNormalizeTranscriptIngressHandleDefaultsClose(t *testing.T) {
+	normalized := normalizeTranscriptIngressHandle(TranscriptIngressHandle{})
+	if normalized.Close == nil {
+		t.Fatalf("expected normalizeTranscriptIngressHandle to provide a no-op close")
+	}
+	normalized.Close()
+
+	closed := false
+	normalized = normalizeTranscriptIngressHandle(TranscriptIngressHandle{
+		Close: func() { closed = true },
+	})
+	normalized.Close()
+	if !closed {
+		t.Fatalf("expected normalizeTranscriptIngressHandle to preserve non-nil close callback")
+	}
+}
+
+func TestIsCanonicalTranscriptHubExplicitlyClosedSupportsInterfaceProbing(t *testing.T) {
+	if isCanonicalTranscriptHubExplicitlyClosed(nonLifecycleHub{}) {
+		t.Fatalf("expected non-canonical implementation probe to return false")
+	}
+	hub := &canonicalTranscriptHub{}
+	if isCanonicalTranscriptHubExplicitlyClosed(hub) {
+		t.Fatalf("expected fresh hub to report not explicitly closed")
+	}
+}
+
+func TestCanonicalTranscriptHubRegistryHubForSessionNilReceiver(t *testing.T) {
+	var registry *defaultCanonicalTranscriptHubRegistry
+	if _, err := registry.HubForSession(context.Background(), "s-nil-registry", "codex"); err == nil {
+		t.Fatalf("expected nil registry receiver to return error")
+	}
 }
 
 func TestCanonicalTranscriptHubRegistryReturnsSingletonPerSession(t *testing.T) {
@@ -176,6 +360,311 @@ func TestCanonicalTranscriptHubRegistryCloseSessionNoopCases(t *testing.T) {
 	}
 	if err := registry.CloseSession("missing"); err != nil {
 		t.Fatalf("expected missing CloseSession noop, got %v", err)
+	}
+}
+
+func TestCanonicalTranscriptHubRegistryEvictsIdleHubAfterLastSubscriberLeaves(t *testing.T) {
+	events := make(chan types.CodexEvent)
+	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		Events:          events,
+		FollowAvailable: true,
+		Close:           func() {},
+	}}
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(factory, hubTestMapper{}, nil, 40*time.Millisecond)
+
+	hubRaw, err := registry.HubForSession(context.Background(), "s-idle-evict", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession: %v", err)
+	}
+	hub := hubRaw.(*canonicalTranscriptHub)
+	ch, cancel, err := hub.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	_ = awaitEventKind(t, ch, transcriptdomain.TranscriptEventStreamStatus)
+	cancel()
+
+	awaitCondition(t, 2*time.Second, func() bool {
+		registry.mu.Lock()
+		defer registry.mu.Unlock()
+		_, ok := registry.hubs["s-idle-evict"]
+		return !ok
+	})
+}
+
+func TestCanonicalTranscriptHubRegistryCancelsIdleEvictionWhenSubscriberReattaches(t *testing.T) {
+	events := make(chan types.CodexEvent)
+	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		Events:          events,
+		FollowAvailable: true,
+		Close:           func() {},
+	}}
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(factory, hubTestMapper{}, nil, 120*time.Millisecond)
+
+	hubRaw, err := registry.HubForSession(context.Background(), "s-idle-cancel", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession first: %v", err)
+	}
+	hub1 := hubRaw.(*canonicalTranscriptHub)
+	ch1, cancel1, err := hub1.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe first: %v", err)
+	}
+	_ = awaitEventKind(t, ch1, transcriptdomain.TranscriptEventStreamStatus)
+	cancel1()
+
+	time.Sleep(45 * time.Millisecond)
+	hubRaw, err = registry.HubForSession(context.Background(), "s-idle-cancel", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession reattach: %v", err)
+	}
+	hub2 := hubRaw.(*canonicalTranscriptHub)
+	if hub1 != hub2 {
+		t.Fatalf("expected hub reuse before idle eviction")
+	}
+	_, cancel2, err := hub2.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe reattach: %v", err)
+	}
+	defer cancel2()
+
+	time.Sleep(160 * time.Millisecond)
+	hubRaw, err = registry.HubForSession(context.Background(), "s-idle-cancel", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession after idle window: %v", err)
+	}
+	hub3 := hubRaw.(*canonicalTranscriptHub)
+	if hub3 != hub1 {
+		t.Fatalf("expected reattached subscriber to cancel eviction and keep same hub")
+	}
+
+	cancel2()
+	awaitCondition(t, 2*time.Second, func() bool {
+		registry.mu.Lock()
+		defer registry.mu.Unlock()
+		_, ok := registry.hubs["s-idle-cancel"]
+		return !ok
+	})
+}
+
+func TestCanonicalTranscriptHubRegistryCreatesFreshHubAfterIdleEviction(t *testing.T) {
+	events := make(chan types.CodexEvent)
+	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		Events:          events,
+		FollowAvailable: true,
+		Close:           func() {},
+	}}
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(factory, hubTestMapper{}, nil, 40*time.Millisecond)
+
+	hubRaw, err := registry.HubForSession(context.Background(), "s-idle-fresh", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession first: %v", err)
+	}
+	hub1 := hubRaw.(*canonicalTranscriptHub)
+	ch, cancel, err := hub1.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe first: %v", err)
+	}
+	_ = awaitEventKind(t, ch, transcriptdomain.TranscriptEventStreamStatus)
+	cancel()
+
+	awaitCondition(t, 2*time.Second, func() bool {
+		registry.mu.Lock()
+		defer registry.mu.Unlock()
+		_, ok := registry.hubs["s-idle-fresh"]
+		return !ok
+	})
+
+	hubRaw, err = registry.HubForSession(context.Background(), "s-idle-fresh", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession second: %v", err)
+	}
+	hub2 := hubRaw.(*canonicalTranscriptHub)
+	if hub1 == hub2 {
+		t.Fatalf("expected fresh hub instance after idle eviction")
+	}
+	_ = hub2.Close()
+}
+
+func TestCanonicalTranscriptHubRegistryDetachIsSafeUnderConcurrentSubscribers(t *testing.T) {
+	events := make(chan types.CodexEvent)
+	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		Events:          events,
+		FollowAvailable: true,
+		Close:           func() {},
+	}}
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(factory, hubTestMapper{}, nil, 30*time.Millisecond)
+
+	hubRaw, err := registry.HubForSession(context.Background(), "s-concurrent-detach", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession: %v", err)
+	}
+	hub := hubRaw.(*canonicalTranscriptHub)
+	cancels := make([]func(), 0, 24)
+	for i := 0; i < 24; i++ {
+		ch, cancel, subErr := hub.Subscribe(context.Background(), "")
+		if subErr != nil {
+			t.Fatalf("Subscribe %d: %v", i, subErr)
+		}
+		cancels = append(cancels, cancel)
+		if i == 0 {
+			_ = awaitEventKind(t, ch, transcriptdomain.TranscriptEventStreamStatus)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, cancel := range cancels {
+		cancelFn := cancel
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cancelFn()
+		}()
+	}
+	wg.Wait()
+
+	awaitCondition(t, 2*time.Second, func() bool {
+		registry.mu.Lock()
+		defer registry.mu.Unlock()
+		lifecycle, ok := registry.hubs["s-concurrent-detach"]
+		if !ok || lifecycle == nil {
+			return true
+		}
+		return lifecycle.subscriberCount == 0
+	})
+}
+
+func TestCanonicalTranscriptHubRegistryIgnoresStaleHubClosedCallback(t *testing.T) {
+	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		FollowAvailable: false,
+		Close:           func() {},
+	}}
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(factory, hubTestMapper{}, nil, 250*time.Millisecond)
+
+	hub1Raw, err := registry.HubForSession(context.Background(), "s-stale-close", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession first: %v", err)
+	}
+	hub1 := hub1Raw.(*canonicalTranscriptHub)
+
+	registry.mu.Lock()
+	oldInstanceID := registry.hubs["s-stale-close"].instanceID
+	registry.mu.Unlock()
+
+	if err := registry.CloseSession("s-stale-close"); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+
+	hub2Raw, err := registry.HubForSession(context.Background(), "s-stale-close", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession second: %v", err)
+	}
+	hub2 := hub2Raw.(*canonicalTranscriptHub)
+	if hub1 == hub2 {
+		t.Fatalf("expected second hub to be a fresh instance")
+	}
+
+	registry.HubClosed("s-stale-close", oldInstanceID)
+	hub3Raw, err := registry.HubForSession(context.Background(), "s-stale-close", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession third: %v", err)
+	}
+	hub3 := hub3Raw.(*canonicalTranscriptHub)
+	if hub2 != hub3 {
+		t.Fatalf("expected stale close callback to leave active hub intact")
+	}
+}
+
+func TestCanonicalTranscriptHubRegistryIgnoresStaleSubscriberLifecycleCallbacks(t *testing.T) {
+	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		FollowAvailable: true,
+		Close:           func() {},
+	}}
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(factory, hubTestMapper{}, nil, 5*time.Second)
+
+	_, err := registry.HubForSession(context.Background(), "s-stale-subscriber-callback", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession first: %v", err)
+	}
+	registry.mu.Lock()
+	oldInstanceID := registry.hubs["s-stale-subscriber-callback"].instanceID
+	registry.mu.Unlock()
+
+	if err := registry.CloseSession("s-stale-subscriber-callback"); err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+
+	_, err = registry.HubForSession(context.Background(), "s-stale-subscriber-callback", "codex")
+	if err != nil {
+		t.Fatalf("HubForSession second: %v", err)
+	}
+
+	registry.SubscriberAttached("s-stale-subscriber-callback", oldInstanceID)
+	registry.mu.Lock()
+	lifecycle := registry.hubs["s-stale-subscriber-callback"]
+	if lifecycle == nil {
+		registry.mu.Unlock()
+		t.Fatalf("expected lifecycle entry for second hub instance")
+	}
+	if lifecycle.subscriberCount != 0 {
+		registry.mu.Unlock()
+		t.Fatalf("expected stale attach callback to be ignored, got subscriberCount=%d", lifecycle.subscriberCount)
+	}
+	currentInstanceID := lifecycle.instanceID
+	registry.mu.Unlock()
+
+	registry.SubscriberAttached("s-stale-subscriber-callback", currentInstanceID)
+	registry.SubscriberDetached("s-stale-subscriber-callback", oldInstanceID)
+	registry.mu.Lock()
+	lifecycle = registry.hubs["s-stale-subscriber-callback"]
+	if lifecycle == nil {
+		registry.mu.Unlock()
+		t.Fatalf("expected lifecycle after stale detach")
+	}
+	if lifecycle.subscriberCount != 1 {
+		registry.mu.Unlock()
+		t.Fatalf("expected stale detach callback to be ignored, got subscriberCount=%d", lifecycle.subscriberCount)
+	}
+	if lifecycle.idleTimer != nil {
+		registry.mu.Unlock()
+		t.Fatalf("expected no idle timer while active subscriber remains")
+	}
+	registry.mu.Unlock()
+
+	registry.SubscriberDetached("s-stale-subscriber-callback", currentInstanceID)
+	registry.mu.Lock()
+	lifecycle = registry.hubs["s-stale-subscriber-callback"]
+	if lifecycle == nil {
+		registry.mu.Unlock()
+		t.Fatalf("expected lifecycle to remain until idle eviction/close")
+	}
+	if lifecycle.subscriberCount != 0 {
+		registry.mu.Unlock()
+		t.Fatalf("expected subscriber count to reach zero after valid detach, got %d", lifecycle.subscriberCount)
+	}
+	if lifecycle.idleTimer == nil {
+		registry.mu.Unlock()
+		t.Fatalf("expected idle timer after valid detach")
+	}
+	registry.mu.Unlock()
+
+	if err := registry.CloseSession("s-stale-subscriber-callback"); err != nil {
+		t.Fatalf("CloseSession cleanup: %v", err)
+	}
+}
+
+func TestCanonicalTranscriptHubRegistryCloseAllHandlesNilLifecycleEntries(t *testing.T) {
+	registry := newDefaultCanonicalTranscriptHubRegistryWithIdleTTL(&hubTestIngressFactory{}, hubTestMapper{}, nil, time.Second)
+	registry.hubs["nil-entry"] = nil
+	registry.hubs["nil-hub"] = &canonicalTranscriptHubLifecycle{}
+
+	if err := registry.CloseAll(); err != nil {
+		t.Fatalf("CloseAll: %v", err)
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if len(registry.hubs) != 0 {
+		t.Fatalf("expected CloseAll to clear registry map, got %d entries", len(registry.hubs))
 	}
 }
 
@@ -481,6 +970,219 @@ func TestCanonicalTranscriptHubDegradesWhenFollowUnavailable(t *testing.T) {
 	_ = hub.Close()
 }
 
+func TestCanonicalTranscriptHubEmitsReconnectingDuringRecoverableIngressRestart(t *testing.T) {
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	events2 := make(chan types.CodexEvent, 1)
+	events2 <- types.CodexEvent{Method: "after-reconnect"}
+	close(events2)
+
+	factory := &scriptedHubIngressFactory{
+		steps: []scriptedIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events2,
+					FollowAvailable: true,
+					Reconnectable:   false,
+					Close:           func() {},
+				},
+			},
+		},
+	}
+	hub, err := newCanonicalTranscriptHub("s-reconnect", "codex", factory, hubTestMapper{}, nil)
+	if err != nil {
+		t.Fatalf("newCanonicalTranscriptHub: %v", err)
+	}
+	ch, cancel, err := hub.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	statuses := collectStreamStatusesUntilClosed(t, ch)
+	if len(statuses) < 4 {
+		t.Fatalf("expected ready/reconnecting/ready/closed status sequence, got %#v", statuses)
+	}
+	if statuses[0] != transcriptdomain.StreamStatusReady || statuses[1] != transcriptdomain.StreamStatusReconnecting {
+		t.Fatalf("expected ready then reconnecting, got %#v", statuses)
+	}
+}
+
+func TestCanonicalTranscriptHubEmitsReadyAgainAfterReconnect(t *testing.T) {
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	events2 := make(chan types.CodexEvent, 1)
+	events2 <- types.CodexEvent{Method: "second-ready"}
+	close(events2)
+
+	factory := &scriptedHubIngressFactory{
+		steps: []scriptedIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events2,
+					FollowAvailable: true,
+					Reconnectable:   false,
+					Close:           func() {},
+				},
+			},
+		},
+	}
+	hub, err := newCanonicalTranscriptHub("s-ready-again", "codex", factory, hubTestMapper{}, nil)
+	if err != nil {
+		t.Fatalf("newCanonicalTranscriptHub: %v", err)
+	}
+	ch, cancel, err := hub.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	statuses := collectStreamStatusesUntilClosed(t, ch)
+	readyCount := 0
+	for _, status := range statuses {
+		if status == transcriptdomain.StreamStatusReady {
+			readyCount++
+		}
+	}
+	if readyCount < 2 {
+		t.Fatalf("expected ready to be emitted again after reconnect, got %#v", statuses)
+	}
+}
+
+func TestCanonicalTranscriptHubEmitsErrorBeforeClosedOnTerminalIngressFailure(t *testing.T) {
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	factory := &scriptedHubIngressFactory{
+		steps: []scriptedIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{err: errors.New("terminal ingress failure")},
+		},
+	}
+	hub, err := newCanonicalTranscriptHub("s-terminal-error", "codex", factory, hubTestMapper{}, nil)
+	if err != nil {
+		t.Fatalf("newCanonicalTranscriptHub: %v", err)
+	}
+	ch, cancel, err := hub.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	statuses := collectStreamStatusesUntilClosed(t, ch)
+	errorIdx := -1
+	closedIdx := -1
+	for i, status := range statuses {
+		if status == transcriptdomain.StreamStatusError && errorIdx == -1 {
+			errorIdx = i
+		}
+		if status == transcriptdomain.StreamStatusClosed && closedIdx == -1 {
+			closedIdx = i
+		}
+	}
+	if errorIdx == -1 || closedIdx == -1 || errorIdx > closedIdx {
+		t.Fatalf("expected error before closed, got %#v", statuses)
+	}
+}
+
+func TestCanonicalTranscriptHubEmitsClosedExactlyOnce(t *testing.T) {
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	factory := &scriptedHubIngressFactory{
+		steps: []scriptedIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{err: errors.New("terminal ingress failure")},
+		},
+	}
+	hub, err := newCanonicalTranscriptHub("s-closed-once", "codex", factory, hubTestMapper{}, nil)
+	if err != nil {
+		t.Fatalf("newCanonicalTranscriptHub: %v", err)
+	}
+	ch, cancel, err := hub.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	statuses := collectStreamStatusesUntilClosed(t, ch)
+	closedCount := 0
+	for _, status := range statuses {
+		if status == transcriptdomain.StreamStatusClosed {
+			closedCount++
+		}
+	}
+	if closedCount != 1 {
+		t.Fatalf("expected closed exactly once, got %d from %#v", closedCount, statuses)
+	}
+}
+
+func TestCanonicalTranscriptHubUsesInjectedReconnectPolicy(t *testing.T) {
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	factory := &scriptedHubIngressFactory{
+		steps: []scriptedIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+		},
+	}
+	hub, err := newCanonicalTranscriptHub("s-policy-reconnect", "codex", factory, hubTestMapper{}, nil)
+	if err != nil {
+		t.Fatalf("newCanonicalTranscriptHub: %v", err)
+	}
+	hub.setReconnectPolicy(neverReconnectPolicy{})
+	ch, cancel, err := hub.Subscribe(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	statuses := collectStreamStatusesUntilClosed(t, ch)
+	if len(statuses) < 3 {
+		t.Fatalf("expected ready/error/closed statuses, got %#v", statuses)
+	}
+	if statuses[1] != transcriptdomain.StreamStatusError || statuses[len(statuses)-1] != transcriptdomain.StreamStatusClosed {
+		t.Fatalf("expected injected policy to force terminal error then close, got %#v", statuses)
+	}
+	if factory.OpenCount() != 1 {
+		t.Fatalf("expected no reconnect attach with injected policy, got %d opens", factory.OpenCount())
+	}
+}
+
 func TestCanonicalTranscriptHubSlowSubscriberDoesNotBlock(t *testing.T) {
 	events := make(chan types.CodexEvent, 1024)
 	factory := &hubTestIngressFactory{handle: TranscriptIngressHandle{
@@ -563,6 +1265,40 @@ func TestShouldReplaySnapshotRules(t *testing.T) {
 	}
 	if !shouldReplaySnapshot(transcriptdomain.RevisionToken("bad token"), transcriptdomain.MustParseRevisionToken("2")) {
 		t.Fatalf("expected replay when comparison fails")
+	}
+}
+
+func awaitCondition(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for condition")
+}
+
+func collectStreamStatusesUntilClosed(
+	t *testing.T,
+	ch <-chan transcriptdomain.TranscriptEvent,
+) []transcriptdomain.StreamStatus {
+	t.Helper()
+	statuses := make([]transcriptdomain.StreamStatus, 0, 8)
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				return statuses
+			}
+			if event.Kind == transcriptdomain.TranscriptEventStreamStatus {
+				statuses = append(statuses, event.StreamStatus)
+			}
+		case <-timeout:
+			t.Fatalf("timed out collecting stream statuses")
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ type SessionService struct {
 	transcriptTransportSelect TranscriptTransportSelector
 	transcriptIngressOpen     TranscriptIngressFactory
 	transcriptProjectorCreate TranscriptProjectorFactory
+	transcriptReconnectPolicy TranscriptReconnectPolicy
 	transcriptSnapshotRead    TranscriptSnapshotReader
 	transcriptFollowOpen      TranscriptFollowOpener
 	transcriptHubRegistry     CanonicalTranscriptHubRegistry
@@ -142,6 +143,15 @@ func WithTranscriptProjectorFactory(factory TranscriptProjectorFactory) SessionS
 			return
 		}
 		s.transcriptProjectorCreate = factory
+	}
+}
+
+func WithTranscriptReconnectPolicy(policy TranscriptReconnectPolicy) SessionServiceOption {
+	return func(s *SessionService) {
+		if s == nil || policy == nil {
+			return
+		}
+		s.transcriptReconnectPolicy = policy
 	}
 }
 

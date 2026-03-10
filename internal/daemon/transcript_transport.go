@@ -21,6 +21,7 @@ var ErrTranscriptFollowUnavailable = errors.New("transcript follow unavailable")
 type transcriptTransportSelection struct {
 	transport       transcriptTransport
 	followAvailable bool
+	reconnectable   bool
 }
 
 type TranscriptTransportSelector interface {
@@ -76,6 +77,7 @@ func (f *selectorTranscriptIngressFactory) Open(ctx context.Context, sessionID, 
 		Events:          selection.transport.eventsCh,
 		Items:           selection.transport.itemsCh,
 		FollowAvailable: selection.followAvailable,
+		Reconnectable:   selection.reconnectable,
 		Close:           closeFn,
 	}, nil
 }
@@ -91,7 +93,7 @@ func (s *defaultTranscriptTransportSelector) Select(ctx context.Context, session
 		transport.eventsCh, transport.eventsCancel, err = s.subscribeEvents(ctx, sessionID)
 		if err != nil && !caps.UsesItems {
 			if errors.Is(err, ErrTranscriptFollowUnavailable) {
-				return transcriptTransportSelection{followAvailable: false}, nil
+				return transcriptTransportSelection{followAvailable: false, reconnectable: false}, nil
 			}
 			return transcriptTransportSelection{}, err
 		}
@@ -104,7 +106,7 @@ func (s *defaultTranscriptTransportSelector) Select(ctx context.Context, session
 		transport.itemsCh, transport.itemsCancel, err = s.subscribeItems(ctx, sessionID)
 		if err != nil {
 			if errors.Is(err, ErrTranscriptFollowUnavailable) {
-				return transcriptTransportSelection{followAvailable: false}, nil
+				return transcriptTransportSelection{followAvailable: false, reconnectable: false}, nil
 			}
 			if transport.eventsCancel == nil {
 				return transcriptTransportSelection{}, err
@@ -117,5 +119,6 @@ func (s *defaultTranscriptTransportSelector) Select(ctx context.Context, session
 	return transcriptTransportSelection{
 		transport:       transport,
 		followAvailable: true,
+		reconnectable:   true,
 	}, nil
 }

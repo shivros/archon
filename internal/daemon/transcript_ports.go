@@ -40,6 +40,15 @@ type CanonicalTranscriptHubRegistry interface {
 	CloseAll() error
 }
 
+// CanonicalTranscriptHubLifecycleObserver receives internal lifecycle signals
+// from a concrete hub instance. This contract is intentionally separate from
+// consumer-facing registry APIs.
+type CanonicalTranscriptHubLifecycleObserver interface {
+	SubscriberAttached(sessionID, hubInstanceID string)
+	SubscriberDetached(sessionID, hubInstanceID string)
+	HubClosed(sessionID, hubInstanceID string)
+}
+
 // TranscriptIngressFactory opens provider-native follow transport.
 type TranscriptIngressFactory interface {
 	Open(ctx context.Context, sessionID, provider string) (TranscriptIngressHandle, error)
@@ -49,6 +58,7 @@ type TranscriptIngressHandle struct {
 	Events          <-chan types.CodexEvent
 	Items           <-chan map[string]any
 	FollowAvailable bool
+	Reconnectable   bool
 	Close           func()
 }
 
@@ -57,6 +67,10 @@ type TranscriptProjectorFactory interface {
 		sessionID, provider string,
 		base transcriptdomain.RevisionToken,
 	) TranscriptProjector
+}
+
+type TranscriptReconnectPolicy interface {
+	NextAttempt(current int, hadTraffic bool) (next int, shouldReconnect bool)
 }
 
 type transcriptHistoryReader func(ctx context.Context, sessionID string, lines int) ([]map[string]any, error)

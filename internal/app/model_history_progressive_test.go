@@ -3,11 +3,14 @@ package app
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"control/internal/client"
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -247,4 +250,111 @@ type historyRecorderAPI struct {
 func (h *historyRecorderAPI) History(_ context.Context, _ string, lines int) (*client.TailItemsResponse, error) {
 	h.calls = append(h.calls, lines)
 	return &client.TailItemsResponse{Items: []map[string]any{}}, nil
+}
+
+func TestUnifiedBootstrapSharesTranscriptFollowBetweenComposeAndRecents(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	api := newCountingTranscriptAPIStub("s1")
+	m.sessionTranscriptAPI = api
+	m.enterCompose("s1")
+
+	streamMsg := openTranscriptStreamCmd(api, "s1", "")().(transcriptStreamMsg)
+	m.applyTranscriptStreamMsg(streamMsg)
+	if api.OpenCount("s1") != 1 {
+		t.Fatalf("expected exactly one transcript attach after compose open, got %d", api.OpenCount("s1"))
+	}
+
+	now := time.Now().UTC()
+	if m.recents != nil {
+		m.recents.StartRun("s1", "turn-0", now)
+	}
+	watchCmd := m.beginRecentsCompletionWatch("s1", "turn-0")
+	if watchCmd != nil {
+		t.Fatalf("expected recents completion watch to reuse shared follow for active session")
+	}
+	if api.OpenCount("s1") != 1 {
+		t.Fatalf("expected shared follow to avoid duplicate attach, got %d", api.OpenCount("s1"))
+	}
+
+	stream := api.Stream("s1")
+	stream <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{{
+			Kind: "assistant_message",
+			Role: "assistant",
+			Text: "shared transcript preview",
+		}},
+	}
+	stream <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventTurnCompleted,
+		Revision: transcriptdomain.MustParseRevisionToken("2"),
+		Turn: &transcriptdomain.TurnState{
+			State:  transcriptdomain.TurnStateCompleted,
+			TurnID: "turn-1",
+		},
+	}
+	close(stream)
+
+	if cmd := m.consumeTranscriptTick(time.Now()); cmd != nil {
+		_ = cmd()
+	}
+	if !m.recents.IsReady("s1") {
+		t.Fatalf("expected shared transcript completion signal to move recents run to ready")
+	}
+
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
+	preview := m.previewForSession("s1", "turn-1")
+	if strings.TrimSpace(preview.Preview) == "" {
+		t.Fatalf("expected recents to observe shared transcript preview from compose stream")
+	}
+	if api.OpenCount("s1") != 1 {
+		t.Fatalf("expected one transcript attach for compose+recents shared session, got %d", api.OpenCount("s1"))
+	}
+}
+
+type countingTranscriptAPIStub struct {
+	mu       sync.Mutex
+	streams  map[string]chan transcriptdomain.TranscriptEvent
+	openByID map[string]int
+}
+
+func newCountingTranscriptAPIStub(sessionIDs ...string) *countingTranscriptAPIStub {
+	streams := make(map[string]chan transcriptdomain.TranscriptEvent, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		streams[sessionID] = make(chan transcriptdomain.TranscriptEvent, 16)
+	}
+	return &countingTranscriptAPIStub{
+		streams:  streams,
+		openByID: map[string]int{},
+	}
+}
+
+func (s *countingTranscriptAPIStub) GetTranscriptSnapshot(context.Context, string, int) (*client.TranscriptSnapshotResponse, error) {
+	return &client.TranscriptSnapshotResponse{}, nil
+}
+
+func (s *countingTranscriptAPIStub) TranscriptStream(_ context.Context, id string, _ string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id = strings.TrimSpace(id)
+	s.openByID[id]++
+	ch, ok := s.streams[id]
+	if !ok {
+		ch = make(chan transcriptdomain.TranscriptEvent, 16)
+		s.streams[id] = ch
+	}
+	return ch, func() {}, nil
+}
+
+func (s *countingTranscriptAPIStub) OpenCount(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.openByID[strings.TrimSpace(id)]
+}
+
+func (s *countingTranscriptAPIStub) Stream(id string) chan transcriptdomain.TranscriptEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.streams[strings.TrimSpace(id)]
 }

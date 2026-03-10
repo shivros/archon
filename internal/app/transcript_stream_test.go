@@ -179,3 +179,130 @@ func TestTranscriptStreamControllerCoalescesAdjacentAssistantDeltasForSameMessag
 		t.Fatalf("expected merged assistant text, got %#v", blocks[0])
 	}
 }
+
+func TestTranscriptStreamControllerNilReceiverNoops(t *testing.T) {
+	var controller *TranscriptStreamController
+	controller.Reset()
+	controller.SetStream(nil, nil)
+
+	if controller.HasStream() {
+		t.Fatalf("expected nil controller to report no stream")
+	}
+	if got := controller.Blocks(); got != nil {
+		t.Fatalf("expected nil controller blocks=nil, got %#v", got)
+	}
+	if got := controller.Revision(); got != "" {
+		t.Fatalf("expected nil controller revision empty, got %q", got)
+	}
+	if got := controller.StreamStatus(); got != "" {
+		t.Fatalf("expected nil controller status empty, got %q", got)
+	}
+	changed, applied := controller.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+	})
+	if changed || applied {
+		t.Fatalf("expected nil controller snapshot apply to noop")
+	}
+	changed, closed, signal, signals := controller.ConsumeTick()
+	if changed || closed || signal || signals.Events != 0 {
+		t.Fatalf("expected nil controller consume tick noop, got changed=%v closed=%v signal=%v signals=%#v", changed, closed, signal, signals)
+	}
+}
+
+func TestTranscriptStreamControllerTurnFailureEmitsCompletionSignal(t *testing.T) {
+	controller := NewTranscriptStreamController(8)
+	ch := make(chan transcriptdomain.TranscriptEvent, 1)
+	controller.SetStream(ch, nil)
+
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventTurnFailed,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Turn: &transcriptdomain.TurnState{
+			TurnID: "turn-failed-1",
+			State:  transcriptdomain.TurnStateFailed,
+		},
+	}
+
+	changed, closed, signal, signals := controller.ConsumeTick()
+	if changed || closed {
+		t.Fatalf("expected turn failure to be control-only event")
+	}
+	if !signal {
+		t.Fatalf("expected turn failure to emit signal")
+	}
+	if signals.ControlEvents != 1 || signals.ContentEvents != 0 {
+		t.Fatalf("expected one control event and no content events, got %#v", signals)
+	}
+	if len(signals.CompletionSignals) != 1 || signals.CompletionSignals[0].TurnID != "turn-failed-1" {
+		t.Fatalf("expected completion signal for failed turn, got %#v", signals.CompletionSignals)
+	}
+}
+
+func TestTranscriptStreamControllerIgnoresStaleTurnCompletionAndUnknownEvents(t *testing.T) {
+	controller := NewTranscriptStreamController(8)
+	ch := make(chan transcriptdomain.TranscriptEvent, 2)
+	controller.SetStream(ch, nil)
+
+	changed, applied := controller.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("5"),
+		Blocks: []transcriptdomain.Block{
+			{Kind: "assistant_message", Role: "assistant", Text: "seed"},
+		},
+	})
+	if !changed || !applied {
+		t.Fatalf("expected seed snapshot to apply")
+	}
+
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventTurnCompleted,
+		Revision: transcriptdomain.MustParseRevisionToken("4"),
+		Turn: &transcriptdomain.TurnState{
+			TurnID: "stale-turn",
+			State:  transcriptdomain.TurnStateCompleted,
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventKind("unknown"),
+		Revision: transcriptdomain.MustParseRevisionToken("6"),
+	}
+
+	changed, closed, signal, signals := controller.ConsumeTick()
+	if changed || closed || signal {
+		t.Fatalf("expected stale+unknown events to avoid content/signal changes")
+	}
+	if len(signals.CompletionSignals) != 0 {
+		t.Fatalf("expected no completion signals for stale+unknown events, got %#v", signals.CompletionSignals)
+	}
+	blocks := controller.Blocks()
+	if len(blocks) != 1 || blocks[0].Text != "seed" {
+		t.Fatalf("expected stale+unknown events not to mutate blocks, got %#v", blocks)
+	}
+}
+
+func TestTranscriptBlocksContainUserRelevantContentRules(t *testing.T) {
+	if transcriptBlocksContainUserRelevantContent([]transcriptdomain.Block{
+		{Kind: "provider_event", Role: "system", Text: "noise"},
+	}) {
+		t.Fatalf("expected provider_event blocks to be ignored")
+	}
+	if transcriptBlocksContainUserRelevantContent([]transcriptdomain.Block{
+		{Kind: "status", Role: "system", Text: "still system"},
+	}) {
+		t.Fatalf("expected system-role text to be ignored")
+	}
+	if !transcriptBlocksContainUserRelevantContent([]transcriptdomain.Block{
+		{Kind: "status", Role: "assistant", Text: ""},
+	}) {
+		t.Fatalf("expected assistant role to count as relevant")
+	}
+	if !transcriptBlocksContainUserRelevantContent([]transcriptdomain.Block{
+		{Kind: "assistant_chunk", Role: "tool", Text: ""},
+	}) {
+		t.Fatalf("expected assistant-like kind to count as relevant")
+	}
+	if !transcriptBlocksContainUserRelevantContent([]transcriptdomain.Block{
+		{Kind: "misc", Role: "observer", Text: "visible text"},
+	}) {
+		t.Fatalf("expected non-system text block to count as relevant")
+	}
+}

@@ -16,9 +16,14 @@ type TranscriptStreamController struct {
 }
 
 type TranscriptTickSignals struct {
-	Events        int
-	ContentEvents int
-	ControlEvents int
+	Events            int
+	ContentEvents     int
+	ControlEvents     int
+	CompletionSignals []TranscriptCompletionSignal
+}
+
+type TranscriptCompletionSignal struct {
+	TurnID string
 }
 
 func NewTranscriptStreamController(maxEventsPerTick int) *TranscriptStreamController {
@@ -102,12 +107,15 @@ func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, s
 				return changed, true, signal, signals
 			}
 			signals.Events++
-			eventChanged, eventSignal, eventContent := c.applyEvent(event)
+			eventChanged, eventSignal, eventContent, completion := c.applyEvent(event)
 			if eventChanged {
 				changed = true
 			}
 			if eventSignal {
 				signal = true
+			}
+			if completion != nil {
+				signals.CompletionSignals = append(signals.CompletionSignals, *completion)
 			}
 			if eventContent {
 				signals.ContentEvents++
@@ -121,54 +129,61 @@ func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, s
 	return changed, closed, signal, signals
 }
 
-func (c *TranscriptStreamController) applyEvent(event transcriptdomain.TranscriptEvent) (changed bool, signal bool, content bool) {
+func (c *TranscriptStreamController) applyEvent(event transcriptdomain.TranscriptEvent) (changed bool, signal bool, content bool, completion *TranscriptCompletionSignal) {
 	switch event.Kind {
 	case transcriptdomain.TranscriptEventHeartbeat:
-		return false, false, false
+		return false, false, false, nil
 	case transcriptdomain.TranscriptEventStreamStatus:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false
+			return false, false, false, nil
 		}
 		c.revision = event.Revision
 		c.streamStatus = event.StreamStatus
 		if event.StreamStatus == transcriptdomain.StreamStatusReady {
-			return false, true, false
+			return false, true, false, nil
 		}
-		return false, false, false
+		return false, false, false, nil
 	case transcriptdomain.TranscriptEventReplace:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false
+			return false, false, false, nil
 		}
 		c.revision = event.Revision
 		if event.Replace != nil {
 			c.blocks = transcriptBlocksToChatBlocks(event.Replace.Blocks)
-			return true, true, transcriptBlocksContainUserRelevantContent(event.Replace.Blocks)
+			return true, true, transcriptBlocksContainUserRelevantContent(event.Replace.Blocks), nil
 		}
-		return false, true, false
+		return false, true, false, nil
 	case transcriptdomain.TranscriptEventDelta:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false
+			return false, false, false, nil
 		}
 		c.revision = event.Revision
 		delta := transcriptBlocksToChatBlocks(event.Delta)
 		if len(delta) == 0 {
-			return false, true, false
+			return false, true, false, nil
 		}
 		c.blocks = append(c.blocks, delta...)
 		c.blocks = coalesceAdjacentTranscriptChatBlocks(c.blocks)
-		return true, true, transcriptBlocksContainUserRelevantContent(event.Delta)
+		return true, true, transcriptBlocksContainUserRelevantContent(event.Delta), nil
 	case transcriptdomain.TranscriptEventTurnStarted,
 		transcriptdomain.TranscriptEventTurnCompleted,
 		transcriptdomain.TranscriptEventTurnFailed,
 		transcriptdomain.TranscriptEventApprovalPending,
 		transcriptdomain.TranscriptEventApprovalResolved:
 		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false
+			return false, false, false, nil
 		}
 		c.revision = event.Revision
-		return false, true, false
+		if event.Kind == transcriptdomain.TranscriptEventTurnCompleted || event.Kind == transcriptdomain.TranscriptEventTurnFailed {
+			turnID := ""
+			if event.Turn != nil {
+				turnID = strings.TrimSpace(event.Turn.TurnID)
+			}
+			return false, true, false, &TranscriptCompletionSignal{TurnID: turnID}
+		}
+		return false, true, false, nil
 	default:
-		return false, false, false
+		return false, false, false, nil
 	}
 }
 

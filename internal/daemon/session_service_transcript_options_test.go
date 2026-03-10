@@ -33,6 +33,15 @@ func (testTranscriptProjectorFactory) New(string, string, transcriptdomain.Revis
 	return NewTranscriptProjector("s1", "codex", "")
 }
 
+type testTranscriptReconnectPolicy struct{}
+
+func (testTranscriptReconnectPolicy) NextAttempt(current int, hadTraffic bool) (int, bool) {
+	if hadTraffic {
+		return 0, true
+	}
+	return current + 1, current < 1
+}
+
 type testCanonicalTranscriptHubRegistry struct{}
 
 func (testCanonicalTranscriptHubRegistry) HubForSession(context.Context, string, string) (CanonicalTranscriptHub, error) {
@@ -112,6 +121,24 @@ func TestWithTranscriptProjectorFactoryOptionGuardsAndSets(t *testing.T) {
 
 	var nilSvc *SessionService
 	WithTranscriptProjectorFactory(factory)(nilSvc)
+}
+
+func TestWithTranscriptReconnectPolicyOptionGuardsAndSets(t *testing.T) {
+	t.Parallel()
+	svc := &SessionService{}
+	WithTranscriptReconnectPolicy(nil)(svc)
+	if svc.transcriptReconnectPolicy != nil {
+		t.Fatalf("expected nil reconnect policy to leave reconnect policy unset")
+	}
+
+	policy := testTranscriptReconnectPolicy{}
+	WithTranscriptReconnectPolicy(policy)(svc)
+	if svc.transcriptReconnectPolicy == nil {
+		t.Fatalf("expected reconnect policy option to set policy")
+	}
+
+	var nilSvc *SessionService
+	WithTranscriptReconnectPolicy(policy)(nilSvc)
 }
 
 func TestWithCanonicalTranscriptHubRegistryOptionGuardsAndSets(t *testing.T) {

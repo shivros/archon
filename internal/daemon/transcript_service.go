@@ -64,10 +64,11 @@ func (s *SessionService) transcriptFollowOpenerOrDefault() TranscriptFollowOpene
 	defer s.transcriptMu.Unlock()
 	if s.transcriptFollowOpen == nil {
 		if s.transcriptHubRegistry == nil {
-			s.transcriptHubRegistry = NewDefaultCanonicalTranscriptHubRegistry(
+			s.transcriptHubRegistry = NewDefaultCanonicalTranscriptHubRegistryWithReconnectPolicy(
 				s.transcriptIngressFactoryOrDefault(),
 				s.transcriptMapperOrDefault(),
 				s.transcriptProjectorFactoryOrDefault(),
+				s.transcriptReconnectPolicy,
 			)
 		}
 		s.transcriptFollowOpen = NewCanonicalTranscriptFollowService(s.transcriptHubRegistry)

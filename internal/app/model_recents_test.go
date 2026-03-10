@@ -494,6 +494,86 @@ func TestBeginRecentsCompletionWatchUsesSignalPolicyFromModel(t *testing.T) {
 	}
 }
 
+func TestHandleRecentsCompletionSignalGuards(t *testing.T) {
+	var nilModel *Model
+	if cmd := nilModel.handleRecentsCompletionSignal("s1", "turn-1"); cmd != nil {
+		t.Fatalf("expected nil model guard to return nil command")
+	}
+
+	m := NewModel(nil)
+	m.recents = nil
+	if cmd := m.handleRecentsCompletionSignal("s1", "turn-1"); cmd != nil {
+		t.Fatalf("expected nil recents guard to return nil command")
+	}
+
+	m = NewModel(nil)
+	if cmd := m.handleRecentsCompletionSignal(" ", "turn-1"); cmd != nil {
+		t.Fatalf("expected blank session id guard to return nil command")
+	}
+	if cmd := m.handleRecentsCompletionSignal("s1", "turn-1"); cmd != nil {
+		t.Fatalf("expected no-watcher guard to return nil command")
+	}
+}
+
+func TestHandleRecentsCompletionSignalCompletesWatchedRun(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.recents.StartRun("s1", "turn-0", now)
+	m.recentsCompletionWatching["s1"] = "turn-0"
+
+	cmd := m.handleRecentsCompletionSignal("s1", "turn-1")
+	if !m.recents.IsReady("s1") {
+		t.Fatalf("expected watched run to move to ready after completion signal")
+	}
+	if _, ok := m.recentsCompletionWatching["s1"]; ok {
+		t.Fatalf("expected watcher to be removed after completion signal")
+	}
+	if cmd == nil {
+		t.Fatalf("expected completion to request persistence command")
+	}
+}
+
+func TestRecentsAndComposeObserveSameSessionWithoutDuplicateTranscriptAttach(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	api := newCountingTranscriptAPIStub("s1")
+	m.sessionTranscriptAPI = api
+	m.enterCompose("s1")
+
+	streamMsg := openTranscriptStreamCmd(api, "s1", "")().(transcriptStreamMsg)
+	m.applyTranscriptStreamMsg(streamMsg)
+	if api.OpenCount("s1") != 1 {
+		t.Fatalf("expected one compose transcript attach, got %d", api.OpenCount("s1"))
+	}
+
+	stream := api.Stream("s1")
+	stream <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{{
+			Kind: "assistant_message",
+			Role: "assistant",
+			Text: "compose-visible output",
+		}},
+	}
+	if cmd := m.consumeTranscriptTick(time.Now()); cmd != nil {
+		_ = cmd()
+	}
+
+	m.showRecents = true
+	m.enterRecentsView(&sidebarItem{kind: sidebarRecentsAll})
+	preview := m.previewForSession("s1", "")
+	if strings.TrimSpace(preview.Preview) == "" {
+		t.Fatalf("expected recents to observe compose transcript cache for same session")
+	}
+
+	if cmd := m.beginRecentsCompletionWatch("s1", "turn-0"); cmd != nil {
+		t.Fatalf("expected recents to reuse shared transcript follow when compose stream is active")
+	}
+	if api.OpenCount("s1") != 1 {
+		t.Fatalf("expected no duplicate transcript attach for compose+recents observers, got %d", api.OpenCount("s1"))
+	}
+}
+
 func TestFormatRecentsPreviewTextRemovesANSIEscapeFragments(t *testing.T) {
 	preview, full := formatRecentsPreviewText("\x1b[38;5;117mhello\x1b[0m\nworld")
 	if strings.TrimSpace(full) == "" {

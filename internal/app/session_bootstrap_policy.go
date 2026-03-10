@@ -1,6 +1,10 @@
 package app
 
-import "control/internal/types"
+import (
+	"strings"
+
+	"control/internal/types"
+)
 
 type sessionBootstrapPlan struct {
 	FetchTranscript bool
@@ -59,4 +63,10 @@ func (m *Model) sessionBootstrapPolicyOrDefault() SessionBootstrapPolicy {
 		return defaultSessionBootstrapPolicy{}
 	}
 	return m.sessionBootstrapPolicy
+}
+
+func prefersSharedTranscriptFollow(activeSessionID, candidateSessionID string) bool {
+	active := strings.TrimSpace(activeSessionID)
+	candidate := strings.TrimSpace(candidateSessionID)
+	return active != "" && candidate != "" && active == candidate
 }

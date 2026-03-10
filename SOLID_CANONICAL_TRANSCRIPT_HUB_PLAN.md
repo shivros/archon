@@ -13,6 +13,24 @@ We are doing a direct cutover to a session-scoped canonical transcript hub.
 
 ---
 
+## Closeout Status (March 9, 2026)
+
+The closeout checklist is now fully reflected in code and tests:
+
+- one hub per session remains the canonical live runtime
+- one ingress attachment per active hub is shared across subscribers
+- registry owns subscriber-aware retention, idle eviction, and terminal hub cleanup
+- hub owns canonical lifecycle transitions (`ready`, `reconnecting`, `error`, `closed`) and revision sequencing
+- app compose + recents paths are validated against one shared transcript follow runtime for same-session observation
+
+Operationally, this ships as a direct cutover path:
+
+- no feature flags
+- no progressive rollout
+- no dual transcript follow stacks
+
+---
+
 ## What Changes From Today
 
 Current runtime in code:

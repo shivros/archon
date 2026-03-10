@@ -784,8 +784,11 @@ func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.
 	if current, ok := m.recentsCompletionWatching[sessionID]; ok && strings.TrimSpace(current) == expectedTurn {
 		return nil
 	}
-	m.cancelRequestScope(recentsRequestScopeName(sessionID))
 	m.recentsCompletionWatching[sessionID] = expectedTurn
+	if m.usesSharedTranscriptFollowForSession(sessionID) {
+		return nil
+	}
+	m.cancelRequestScope(recentsRequestScopeName(sessionID))
 	ctx := m.replaceRequestScope(recentsRequestScopeName(sessionID))
 	return watchRecentsTurnCompletionCmdWithContext(
 		m.sessionTranscriptAPI,
@@ -794,6 +797,33 @@ func (m *Model) beginRecentsCompletionWatch(sessionID, expectedTurn string) tea.
 		expectedTurn,
 		ctx,
 	)
+}
+
+func (m *Model) usesSharedTranscriptFollowForSession(sessionID string) bool {
+	if m == nil || m.transcriptStream == nil || !m.transcriptStream.HasStream() {
+		return false
+	}
+	return prefersSharedTranscriptFollow(m.activeStreamTargetID(), sessionID)
+}
+
+func (m *Model) handleRecentsCompletionSignal(sessionID, completionTurn string) tea.Cmd {
+	if m == nil || m.recents == nil {
+		return nil
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	expectedTurn, watching := m.recentsCompletionWatching[sessionID]
+	if !watching {
+		return nil
+	}
+	return m.handleRecentsTurnCompleted(recentsTurnCompletedMsg{
+		id:           sessionID,
+		expectedTurn: strings.TrimSpace(expectedTurn),
+		turnID:       strings.TrimSpace(completionTurn),
+		matched:      true,
+	})
 }
 
 func (m *Model) handleRecentsTurnCompleted(msg recentsTurnCompletedMsg) tea.Cmd {

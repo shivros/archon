@@ -2704,6 +2704,7 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 		return nil
 	}
 	changed, closed, signal, tickSignals := m.transcriptStream.ConsumeTick()
+	cmds := make([]tea.Cmd, 0, 2)
 	sessionID := m.activeStreamTargetID()
 	provider := m.providerForSessionID(sessionID)
 	if sessionID != "" && tickSignals.Events > 0 {
@@ -2744,10 +2745,18 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 			m.cacheTranscriptBlocks(key, blocks)
 		}
 	}
-	if cmd := m.maybeRecoverTranscriptFromControlOnlySignals(now, sessionID, provider, tickSignals); cmd != nil {
-		return cmd
+	for _, completion := range tickSignals.CompletionSignals {
+		if cmd := m.handleRecentsCompletionSignal(sessionID, completion.TurnID); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
-	return nil
+	if cmd := m.maybeRecoverTranscriptFromControlOnlySignals(now, sessionID, provider, tickSignals); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) consumeDebugTick(now time.Time) tea.Cmd {

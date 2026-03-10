@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +51,42 @@ func (s fixedTranscriptTransportSelector) Select(context.Context, string, string
 		transport:       s.transport,
 		followAvailable: followAvailable,
 	}, nil
+}
+
+type scriptedTranscriptIngressStep struct {
+	handle TranscriptIngressHandle
+	err    error
+}
+
+type scriptedTranscriptIngressFactory struct {
+	mu    sync.Mutex
+	steps []scriptedTranscriptIngressStep
+	opens int
+}
+
+func (f *scriptedTranscriptIngressFactory) Open(context.Context, string, string) (TranscriptIngressHandle, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opens++
+	if len(f.steps) == 0 {
+		return TranscriptIngressHandle{}, errors.New("unexpected ingress open")
+	}
+	step := f.steps[0]
+	f.steps = f.steps[1:]
+	return step.handle, step.err
+}
+
+func (f *scriptedTranscriptIngressFactory) OpenCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.opens
+}
+
+type integrationNeverReconnectPolicy struct{}
+
+func (integrationNeverReconnectPolicy) NextAttempt(current int, hadTraffic bool) (int, bool) {
+	_ = hadTraffic
+	return current + 1, false
 }
 
 type stubTranscriptSnapshotReader struct {
@@ -408,6 +446,221 @@ func TestSessionServiceSubscribeTranscriptDegradesGracefullyWhenSessionIsPersist
 	}
 	if !streamEvents[1].Revision.IsZero() && streamEvents[0].Revision.String() == streamEvents[1].Revision.String() {
 		t.Fatalf("expected closed event to advance revision, got ready=%q closed=%q", streamEvents[0].Revision.String(), streamEvents[1].Revision.String())
+	}
+}
+
+func TestSessionServiceSubscribeTranscriptPropagatesReconnectLifecycleFromHub(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-reconnect-lifecycle",
+			Provider:  "codex",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	events2 := make(chan types.CodexEvent, 1)
+	events2 <- types.CodexEvent{Method: "reconnected"}
+	close(events2)
+	ingress := &scriptedTranscriptIngressFactory{
+		steps: []scriptedTranscriptIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events2,
+					FollowAvailable: true,
+					Reconnectable:   false,
+					Close:           func() {},
+				},
+			},
+		},
+	}
+	mapper := fixedTranscriptMapper{
+		eventEvents: []transcriptdomain.TranscriptEvent{{
+			Kind: transcriptdomain.TranscriptEventDelta,
+			Delta: []transcriptdomain.Block{{
+				Kind: "assistant_message",
+				Role: "assistant",
+				Text: "mapped after reconnect",
+			}},
+		}},
+	}
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil,
+		WithTranscriptMapper(mapper),
+		WithTranscriptIngressFactory(ingress),
+	)
+
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-reconnect-lifecycle", "")
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	statuses := make([]transcriptdomain.StreamStatus, 0, 6)
+	for _, event := range streamEvents {
+		if event.Kind == transcriptdomain.TranscriptEventStreamStatus {
+			statuses = append(statuses, event.StreamStatus)
+		}
+	}
+	if len(statuses) < 4 {
+		t.Fatalf("expected ready/reconnecting/ready/closed lifecycle statuses, got %#v", statuses)
+	}
+	if statuses[0] != transcriptdomain.StreamStatusReady || statuses[1] != transcriptdomain.StreamStatusReconnecting || statuses[2] != transcriptdomain.StreamStatusReady {
+		t.Fatalf("expected ready -> reconnecting -> ready sequence, got %#v", statuses)
+	}
+}
+
+func TestSessionServiceSubscribeTranscriptPropagatesTerminalHubErrorAsCanonicalStatus(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-terminal-hub-error",
+			Provider:  "codex",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	ingress := &scriptedTranscriptIngressFactory{
+		steps: []scriptedTranscriptIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{err: errors.New("terminal ingress failure")},
+		},
+	}
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil,
+		WithTranscriptMapper(fixedTranscriptMapper{}),
+		WithTranscriptIngressFactory(ingress),
+	)
+
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-terminal-hub-error", "")
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	statuses := make([]transcriptdomain.StreamStatus, 0, 6)
+	for _, event := range streamEvents {
+		if event.Kind == transcriptdomain.TranscriptEventStreamStatus {
+			statuses = append(statuses, event.StreamStatus)
+		}
+	}
+	errorIdx := -1
+	closedIdx := -1
+	for i, status := range statuses {
+		if status == transcriptdomain.StreamStatusError && errorIdx == -1 {
+			errorIdx = i
+		}
+		if status == transcriptdomain.StreamStatusClosed && closedIdx == -1 {
+			closedIdx = i
+		}
+	}
+	if errorIdx == -1 || closedIdx == -1 || errorIdx > closedIdx {
+		t.Fatalf("expected canonical error status before closed, got %#v", statuses)
+	}
+}
+
+func TestSessionServiceSubscribeTranscriptUsesInjectedReconnectPolicyEndToEnd(t *testing.T) {
+	index := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	now := time.Now().UTC()
+	_, err := index.UpsertRecord(context.Background(), &types.SessionRecord{
+		Session: &types.Session{
+			ID:        "s-policy-injected",
+			Provider:  "codex",
+			Cmd:       "codex",
+			Status:    types.SessionStatusInactive,
+			CreatedAt: now,
+		},
+		Source: sessionSourceInternal,
+	})
+	if err != nil {
+		t.Fatalf("upsert session: %v", err)
+	}
+
+	events1 := make(chan types.CodexEvent)
+	close(events1)
+	ingress := &scriptedTranscriptIngressFactory{
+		steps: []scriptedTranscriptIngressStep{
+			{
+				handle: TranscriptIngressHandle{
+					Events:          events1,
+					FollowAvailable: true,
+					Reconnectable:   true,
+					Close:           func() {},
+				},
+			},
+			{
+				handle: TranscriptIngressHandle{
+					FollowAvailable: false,
+					Close:           func() {},
+				},
+			},
+		},
+	}
+	svc := NewSessionService(nil, &Stores{Sessions: index}, nil,
+		WithTranscriptMapper(fixedTranscriptMapper{}),
+		WithTranscriptIngressFactory(ingress),
+		WithTranscriptReconnectPolicy(integrationNeverReconnectPolicy{}),
+	)
+
+	ch, cancel, err := svc.SubscribeTranscript(context.Background(), "s-policy-injected", "")
+	if err != nil {
+		t.Fatalf("SubscribeTranscript: %v", err)
+	}
+	defer cancel()
+
+	streamEvents := collectTranscriptEvents(ch)
+	statuses := make([]transcriptdomain.StreamStatus, 0, len(streamEvents))
+	for _, event := range streamEvents {
+		if event.Kind == transcriptdomain.TranscriptEventStreamStatus {
+			statuses = append(statuses, event.StreamStatus)
+		}
+	}
+	if len(statuses) < 3 {
+		t.Fatalf("expected ready/error/closed statuses, got %#v", statuses)
+	}
+	if statuses[0] != transcriptdomain.StreamStatusReady || statuses[1] != transcriptdomain.StreamStatusError || statuses[len(statuses)-1] != transcriptdomain.StreamStatusClosed {
+		t.Fatalf("expected injected policy lifecycle ready->error->closed, got %#v", statuses)
+	}
+	for _, status := range statuses {
+		if status == transcriptdomain.StreamStatusReconnecting {
+			t.Fatalf("expected injected never-reconnect policy to suppress reconnecting status, got %#v", statuses)
+		}
+	}
+	if ingress.OpenCount() != 1 {
+		t.Fatalf("expected single ingress open when injected policy denies reconnect, got %d", ingress.OpenCount())
 	}
 }
 
