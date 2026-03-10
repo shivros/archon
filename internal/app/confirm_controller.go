@@ -140,9 +140,9 @@ func (c *ConfirmController) Contains(x, y, maxWidth, maxHeight int) bool {
 	return x >= bx && x < bx+bw && y >= by && y < by+bh
 }
 
-func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
+func (c *ConfirmController) ViewBlock(maxWidth, maxHeight int) (string, int, int) {
 	if c == nil || !c.active {
-		return "", 0
+		return "", 0, 0
 	}
 	x, y, width, _ := c.layout(maxWidth, maxHeight)
 	innerWidth := max(1, width-2)
@@ -185,10 +185,7 @@ func (c *ConfirmController) View(maxWidth, maxHeight int) (string, int) {
 	lines = append(lines, buttonLine)
 
 	block := confirmDialogBorderStyle.Render(strings.Join(lines, "\n"))
-	if x > 0 {
-		block = indentBlock(block, x)
-	}
-	return block, y
+	return block, x, y
 }
 
 func (c *ConfirmController) layout(maxWidth, maxHeight int) (int, int, int, int) {

@@ -10,13 +10,13 @@ import (
 
 func TestSettingsMenuPresenterViewHandlesNilAndClosedController(t *testing.T) {
 	p := defaultSettingsMenuPresenter{}
-	block, row := p.View(nil, 80, 20, nil)
-	if block != "" || row != 0 {
+	block, x, y := p.View(nil, 80, 20, nil)
+	if block != "" || x != 0 || y != 0 {
 		t.Fatalf("expected empty view for nil controller")
 	}
 	c := NewSettingsMenuController()
-	block, row = p.View(c, 80, 20, nil)
-	if block != "" || row != 0 {
+	block, x, y = p.View(c, 80, 20, nil)
+	if block != "" || x != 0 || y != 0 {
 		t.Fatalf("expected empty view for closed controller")
 	}
 }
@@ -25,7 +25,7 @@ func TestSettingsMenuPresenterRootViewIncludesSettingsAndItems(t *testing.T) {
 	p := defaultSettingsMenuPresenter{}
 	c := NewSettingsMenuController()
 	c.Open()
-	block, _ := p.View(c, 120, 40, nil)
+	block, _, _ := p.View(c, 120, 40, nil)
 	plain := xansi.Strip(block)
 	if !strings.Contains(plain, "SETTINGS") {
 		t.Fatalf("expected settings title in root view, got %q", plain)
@@ -44,7 +44,7 @@ func TestSettingsMenuPresenterHelpViewRendersMappingsAndClampsOffset(t *testing.
 	mappings := []SettingsHotkeyMapping{
 		{Context: "global", Key: "ctrl+q", Label: "quit", Priority: 1},
 	}
-	block, _ := p.View(c, 80, 12, mappings)
+	block, _, _ := p.View(c, 80, 12, mappings)
 	plain := xansi.Strip(block)
 	if !strings.Contains(plain, "HOTKEY HELP") {
 		t.Fatalf("expected help header, got %q", plain)
@@ -66,7 +66,7 @@ func TestSettingsMenuPresenterThemeViewShowsThemeChoices(t *testing.T) {
 	c.Open()
 	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
 	_, _ = c.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	block, _ := p.View(c, 80, 20, nil)
+	block, _, _ := p.View(c, 80, 20, nil)
 	plain := xansi.Strip(block)
 	if !strings.Contains(plain, "THEME") {
 		t.Fatalf("expected theme title in theme view, got %q", plain)
@@ -86,7 +86,7 @@ func TestSettingsMenuWordArtAndLayoutHelpers(t *testing.T) {
 	if got := settingsMenuWordArt("custom"); got != "CUSTOM" {
 		t.Fatalf("expected uppercase fallback, got %q", got)
 	}
-	if got, row := centerOverlayBlock("", 80, 20); got != "" || row != 0 {
+	if got, x, y := centerOverlayPlacement("", 80, 20); got != "" || x != 0 || y != 0 {
 		t.Fatalf("expected empty block for empty input")
 	}
 	if got := longestLine("a\nbbb\ncc"); got != "bbb" {

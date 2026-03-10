@@ -9,14 +9,14 @@ import (
 )
 
 type SettingsMenuPresenter interface {
-	View(*SettingsMenuController, int, int, []SettingsHotkeyMapping) (string, int)
+	View(*SettingsMenuController, int, int, []SettingsHotkeyMapping) (string, int, int)
 }
 
 type defaultSettingsMenuPresenter struct{}
 
-func (defaultSettingsMenuPresenter) View(controller *SettingsMenuController, maxWidth, maxHeight int, mappings []SettingsHotkeyMapping) (string, int) {
+func (defaultSettingsMenuPresenter) View(controller *SettingsMenuController, maxWidth, maxHeight int, mappings []SettingsHotkeyMapping) (string, int, int) {
 	if controller == nil || !controller.open {
-		return "", 0
+		return "", 0, 0
 	}
 	if controller.screen == settingsMenuScreenHelp {
 		return settingsMenuHelpView(controller, maxWidth, maxHeight, mappings)
@@ -27,7 +27,7 @@ func (defaultSettingsMenuPresenter) View(controller *SettingsMenuController, max
 	return settingsMenuRootView(controller, maxWidth, maxHeight)
 }
 
-func settingsMenuRootView(controller *SettingsMenuController, maxWidth, maxHeight int) (string, int) {
+func settingsMenuRootView(controller *SettingsMenuController, maxWidth, maxHeight int) (string, int, int) {
 	lines := []string{settingsMenuTitleStyle.Render(" SETTINGS "), ""}
 	for idx, item := range controller.items {
 		word := settingsMenuWordArt(item.Title)
@@ -42,10 +42,10 @@ func settingsMenuRootView(controller *SettingsMenuController, maxWidth, maxHeigh
 	}
 	lines = append(lines, "", settingsMenuHintStyle.Render("enter select  j/k move  esc close"))
 	block := settingsMenuBorderStyle.Render(strings.Join(lines, "\n"))
-	return centerOverlayBlock(block, maxWidth, maxHeight)
+	return centerOverlayPlacement(block, maxWidth, maxHeight)
 }
 
-func settingsMenuHelpView(controller *SettingsMenuController, maxWidth, maxHeight int, mappings []SettingsHotkeyMapping) (string, int) {
+func settingsMenuHelpView(controller *SettingsMenuController, maxWidth, maxHeight int, mappings []SettingsHotkeyMapping) (string, int, int) {
 	if maxWidth <= 0 {
 		maxWidth = 80
 	}
@@ -85,10 +85,10 @@ func settingsMenuHelpView(controller *SettingsMenuController, maxWidth, maxHeigh
 	footer := settingsMenuHintStyle.Render(fmt.Sprintf("rows %d-%d/%d  j/k scroll  esc back", start+1, end, len(rows)))
 	content := strings.Join(append(visible, "", footer), "\n")
 	block := settingsMenuBorderStyle.Render(content)
-	return centerOverlayBlock(block, maxWidth, maxHeight)
+	return centerOverlayPlacement(block, maxWidth, maxHeight)
 }
 
-func settingsMenuThemeView(controller *SettingsMenuController, maxWidth, maxHeight int) (string, int) {
+func settingsMenuThemeView(controller *SettingsMenuController, maxWidth, maxHeight int) (string, int, int) {
 	lines := []string{settingsMenuTitleStyle.Render(" THEME "), ""}
 	items := controller.ThemeItems()
 	active := controller.ActiveThemeID()
@@ -106,7 +106,7 @@ func settingsMenuThemeView(controller *SettingsMenuController, maxWidth, maxHeig
 	}
 	lines = append(lines, "", settingsMenuHintStyle.Render("enter apply  j/k move  esc back"))
 	block := settingsMenuBorderStyle.Render(strings.Join(lines, "\n"))
-	return centerOverlayBlock(block, maxWidth, maxHeight)
+	return centerOverlayPlacement(block, maxWidth, maxHeight)
 }
 
 func settingsMenuWordArt(word string) string {
@@ -140,10 +140,10 @@ func settingsMenuWordArt(word string) string {
 	}
 }
 
-func centerOverlayBlock(block string, maxWidth, maxHeight int) (string, int) {
+func centerOverlayPlacement(block string, maxWidth, maxHeight int) (string, int, int) {
 	block = strings.TrimRight(block, "\n")
 	if block == "" {
-		return "", 0
+		return "", 0, 0
 	}
 	width := xansi.StringWidth(longestLine(block))
 	height := lipgloss.Height(block)
@@ -164,10 +164,7 @@ func centerOverlayBlock(block string, maxWidth, maxHeight int) (string, int) {
 			y = 1
 		}
 	}
-	if x > 0 {
-		block = indentBlock(block, x)
-	}
-	return block, y
+	return block, x, y
 }
 
 func longestLine(block string) string {

@@ -51,6 +51,7 @@ func (h statusHistoryOverlayHitbox) copyContains(x, y int) bool {
 
 type statusHistoryOverlayView struct {
 	block       string
+	x           int
 	row         int
 	visibleRows int
 	entries     []string
@@ -107,6 +108,7 @@ func (p defaultStatusHistoryOverlayPresenter) Render(input statusHistoryOverlayR
 	}
 	return statusHistoryOverlayView{
 		block:       block,
+		x:           layout.panelLeft,
 		row:         layout.row,
 		visibleRows: layout.visibleRows,
 		entries:     input.entries,
@@ -250,16 +252,7 @@ func (defaultStatusHistoryOverlayRenderer) Render(layout statusHistoryOverlayLay
 		rendered = append(rendered, "  "+text+"  ")
 	}
 	panel := strings.Join(rendered, "\n")
-	panel = menuDropStyle.Width(layout.panelWidth).Render(panel)
-	if layout.panelLeft <= 0 {
-		return panel
-	}
-	prefix := strings.Repeat(" ", layout.panelLeft)
-	lines := strings.Split(panel, "\n")
-	for i := range lines {
-		lines[i] = prefix + lines[i]
-	}
-	return strings.Join(lines, "\n")
+	return menuDropStyle.Width(layout.panelWidth).Render(panel)
 }
 
 type defaultStatusHistoryOverlayHitTester struct{}
@@ -336,14 +329,14 @@ func (m *Model) statusHistoryOverlayOpen() bool {
 	return m != nil && m.statusHistoryOverlay.IsOpen()
 }
 
-func (m *Model) statusHistoryOverlayView(bodyHeight int) (string, int, bool) {
+func (m *Model) statusHistoryOverlayView(bodyHeight int) (string, int, int, bool) {
 	view, ok := m.computeStatusHistoryOverlayView(bodyHeight)
 	if !ok {
-		return "", 0, false
+		return "", 0, 0, false
 	}
 	m.statusHistoryLastView = view
 	m.statusHistoryLastViewValid = true
-	return view.block, view.row, true
+	return view.block, view.x, view.row, true
 }
 
 func (m *Model) computeStatusHistoryOverlayView(bodyHeight int) (statusHistoryOverlayView, bool) {

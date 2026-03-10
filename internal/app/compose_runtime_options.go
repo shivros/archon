@@ -322,11 +322,11 @@ func (m *Model) applyComposeOptionSelection(value string) tea.Cmd {
 	return m.chatAddonController.applyComposeOptionSelection(m, value)
 }
 
-func (m *Model) composeOptionPopupView() (string, int) {
+func (m *Model) composeOptionPopupPlacement() (string, int, int) {
 	if m == nil || m.chatAddonController == nil {
-		return "", 0
+		return "", 0, 0
 	}
-	return m.chatAddonController.composeOptionPopupView(m)
+	return m.chatAddonController.composeOptionPopupPlacement(m)
 }
 
 func (m *Model) composeOptionPickerSelectedID() string {

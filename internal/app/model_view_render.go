@@ -126,65 +126,23 @@ func (m *Model) overlayTransientViews(body string) string {
 		return body
 	}
 	m.statusHistoryLastViewValid = false
-	composer := m.layerComposer
-	if composer == nil {
-		composer = NewTextLayerComposer()
-		m.layerComposer = composer
-	}
-	overlays := make([]LayerOverlay, 0, 7)
-
-	menuBar := ""
-	if m.menu != nil {
-		menuBar = m.menu.MenuBarView(m.width)
-	}
-	if menuBar != "" {
-		overlays = append(overlays, LayerOverlay{Row: 0, Block: menuBar})
-	}
-	if m.menu != nil && m.menu.IsDropdownOpen() {
-		menuDrop := m.menu.DropdownView(m.sidebarWidth())
-		if menuDrop != "" {
-			if m.menu.HasSubmenu() {
-				submenu := m.menu.SubmenuView(0)
-				combined := composer.CombineHorizontal(menuDrop, submenu, 1)
-				overlays = append(overlays, LayerOverlay{Row: 1, Block: combined})
-			} else {
-				overlays = append(overlays, LayerOverlay{Row: 1, Block: menuDrop})
-			}
-		}
-	}
 	bodyHeight := len(strings.Split(body, "\n"))
-	if m.contextMenu != nil && m.contextMenu.IsOpen() {
-		menuBlock, row := m.contextMenu.View(m.width, bodyHeight)
-		if menuBlock != "" {
-			overlays = append(overlays, LayerOverlay{Row: row, Block: menuBlock})
+	ctx := TransientOverlayContext{
+		Body:       body,
+		BodyHeight: bodyHeight,
+	}
+	providers := m.transientOverlayProvidersOrDefault()
+	overlays := make([]LayerOverlay, 0, len(providers))
+	for _, provider := range providers {
+		if provider == nil {
+			continue
+		}
+		overlay, ok := provider.Build(m, ctx)
+		if ok {
+			overlays = append(overlays, overlay)
 		}
 	}
-	if m.confirm != nil && m.confirm.IsOpen() {
-		confirmBlock, row := m.confirm.View(m.width, bodyHeight)
-		if confirmBlock != "" {
-			overlays = append(overlays, LayerOverlay{Row: row, Block: confirmBlock})
-		}
-	}
-	if popup, row := m.composeOptionPopupView(); popup != "" {
-		overlays = append(overlays, LayerOverlay{Row: row, Block: popup})
-	}
-	if historyDrop, row, ok := m.statusHistoryOverlayView(bodyHeight); ok {
-		overlays = append(overlays, LayerOverlay{Row: row, Block: historyDrop})
-	}
-	if m.settingsMenu != nil && m.settingsMenu.IsOpen() {
-		helpMappings := m.settingsMenuHotkeyCatalogOrDefault().Mappings(m.settingsMenuHotkeySource())
-		presenter := m.settingsMenuPresenter
-		if presenter == nil {
-			presenter = defaultSettingsMenuPresenter{}
-		}
-		settingsBlock, row := presenter.View(m.settingsMenu, m.width, bodyHeight, helpMappings)
-		if settingsBlock != "" {
-			overlays = append(overlays, LayerOverlay{Row: row, Block: settingsBlock})
-		}
-	}
-	if line, row, ok := m.toastOverlay(bodyHeight); ok {
-		overlays = append(overlays, LayerOverlay{Row: row, Block: line})
-	}
+	composer := m.overlayComposerOrDefault()
 	return composer.Compose(body, overlays)
 }
 

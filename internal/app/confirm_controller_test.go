@@ -25,7 +25,7 @@ func TestConfirmDialogViewWrapsLongMessageWithinMaxWidth(t *testing.T) {
 	longName := strings.Repeat("extremely-long-workspace-name-", 6)
 	c.Open("Delete Workspace", fmt.Sprintf("Delete workspace %q?", longName), "Delete", "Cancel")
 
-	view, _ := c.View(confirmMaxWidth, 40)
+	view, _, _ := c.ViewBlock(confirmMaxWidth, 40)
 	plain := xansi.Strip(view)
 	lines := strings.Split(plain, "\n")
 	if len(lines) <= 6 {
@@ -76,5 +76,33 @@ func TestConfirmDialogMouseButtonsRespectBorderedLayout(t *testing.T) {
 	}, 120, 40)
 	if !handled || choice != confirmChoiceNone {
 		t.Fatalf("expected bordered row click to be ignored, handled=%v choice=%v", handled, choice)
+	}
+}
+
+func TestConfirmDialogViewBlockMatchesLayoutGeometry(t *testing.T) {
+	c := NewConfirmController()
+	c.Open("Delete Note", "Delete note \"hello\"?", "Delete", "Cancel")
+
+	x, y, width, height := c.layout(120, 40)
+	block, bx, by := c.ViewBlock(120, 40)
+	if block == "" {
+		t.Fatalf("expected non-empty view block")
+	}
+	if bx != x || by != y {
+		t.Fatalf("expected view block coordinates to match layout, got (%d,%d) want (%d,%d)", bx, by, x, y)
+	}
+	plain := xansi.Strip(block)
+	lines := strings.Split(plain, "\n")
+	if len(lines) != height {
+		t.Fatalf("expected view block height %d, got %d", height, len(lines))
+	}
+	maxWidth := 0
+	for _, line := range lines {
+		if w := xansi.StringWidth(line); w > maxWidth {
+			maxWidth = w
+		}
+	}
+	if maxWidth != width {
+		t.Fatalf("expected view block width %d, got %d", width, maxWidth)
 	}
 }

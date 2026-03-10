@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	xansi "github.com/charmbracelet/x/ansi"
-
 	"control/internal/types"
 )
 
@@ -115,7 +113,7 @@ func TestApplyComposeOptionSelectionModelAdjustsReasoningByModel(t *testing.T) {
 	}
 }
 
-func TestComposeOptionPopupViewOffsetsForSidebar(t *testing.T) {
+func TestComposeOptionPopupPlacementOffsetsForSidebar(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)
 	m.mode = uiModeCompose
@@ -125,7 +123,7 @@ func TestComposeOptionPopupViewOffsetsForSidebar(t *testing.T) {
 	if !m.openComposeOptionPicker(composeOptionModel) {
 		t.Fatalf("expected model option picker to open")
 	}
-	popup, _ := m.composeOptionPopupView()
+	popup, popupX, _ := m.composeOptionPopupPlacement()
 	if popup == "" {
 		t.Fatalf("expected popup content")
 	}
@@ -133,10 +131,29 @@ func TestComposeOptionPopupViewOffsetsForSidebar(t *testing.T) {
 	if layout.rightStart <= 0 {
 		t.Fatalf("expected right pane offset when sidebar is open, got %d", layout.rightStart)
 	}
-	line := xansi.Strip(strings.Split(popup, "\n")[0])
-	prefix := strings.Repeat(" ", layout.rightStart)
-	if !strings.HasPrefix(line, prefix) {
-		t.Fatalf("expected popup line to start with %d spaces for sidebar offset, got %q", layout.rightStart, line)
+	if popupX != layout.rightStart {
+		t.Fatalf("expected popup x=%d with sidebar offset, got %d", layout.rightStart, popupX)
+	}
+}
+
+func TestComposeOptionPopupPlacementClampsRowToOne(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 8)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+
+	if !m.openComposeOptionPicker(composeOptionModel) {
+		t.Fatalf("expected model option picker to open")
+	}
+	// Force a minimal compose-controls anchor so popup row would otherwise go negative.
+	m.viewport.SetHeight(0)
+	m.chatInput = nil
+	popup, _, row := m.composeOptionPopupPlacement()
+	if popup == "" {
+		t.Fatalf("expected popup content")
+	}
+	if row != 1 {
+		t.Fatalf("expected popup row clamp to 1, got %d", row)
 	}
 }
 

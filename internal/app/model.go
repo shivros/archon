@@ -356,7 +356,9 @@ type Model struct {
 	sidebarProjectionRevision           uint64
 	sidebarProjectionApplied            uint64
 	renderPipeline                      RenderPipeline
-	layerComposer                       LayerComposer
+	overlayComposer                     OverlayComposer
+	overlayBlockJoiner                  BlockJoiner
+	transientOverlayProviders           []TransientOverlayProvider
 	timestampMode                       ChatTimestampMode
 	clockNow                            time.Time
 	reasoningSnapshotHash               uint64
@@ -673,7 +675,9 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		streamRenderScheduler:               NewDefaultRenderScheduler(),
 		asyncViewportRendering:              client != nil,
 		asyncViewportRenderer:               newAsyncViewportRenderer(),
-		layerComposer:                       NewTextLayerComposer(),
+		overlayComposer:                     NewTextOverlayComposer(),
+		overlayBlockJoiner:                  NewDefaultBlockJoiner(),
+		transientOverlayProviders:           defaultTransientOverlayProviders(),
 		timestampMode:                       ChatTimestampModeRelative,
 		clockNow:                            now,
 		selectionHistory:                    NewSelectionHistory(selectionHistoryMaxEntries),

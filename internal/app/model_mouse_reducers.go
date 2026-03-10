@@ -68,21 +68,27 @@ func isMouseClickMsg(msg tea.MouseMsg) bool {
 	return ok
 }
 
-func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, layout mouseLayout) bool {
+func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, _ mouseLayout) bool {
 	if !isMouseClickMsg(msg) {
 		return false
 	}
 	if !m.composeOptionPickerOpen() {
 		return false
 	}
-	popup, row := m.composeOptionPopupView()
+	popup, popupX, row := m.composeOptionPopupPlacement()
 	if popup == "" {
 		m.closeComposeOptionPicker()
 		return false
 	}
 	height := len(strings.Split(popup, "\n"))
+	popupWidth := blockWidth(strings.Split(popup, "\n"))
+	if popupWidth <= 0 {
+		popupWidth = 1
+	}
+	popupEnd := popupX + popupWidth
 	mouse := msg.Mouse()
-	if mouse.X >= layout.rightStart {
+	inside := (mouse.X >= popupX && mouse.X < popupEnd) || (mouse.X-1 >= popupX && mouse.X-1 < popupEnd)
+	if inside {
 		if pickerRow, ok := composePickerRowForClick(mouse.Y, row, height); ok {
 			if m.composeOptionPickerHandleClick(pickerRow) {
 				cmd := m.applyComposeOptionSelection(m.composeOptionPickerSelectedID())

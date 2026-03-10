@@ -358,9 +358,9 @@ func (c *ContextMenuController) HandleMouse(msg tea.MouseMsg, maxWidth, maxHeigh
 	return true, c.items[idx].Action
 }
 
-func (c *ContextMenuController) View(maxWidth, maxHeight int) (string, int) {
+func (c *ContextMenuController) ViewBlock(maxWidth, maxHeight int) (string, int, int) {
 	if c == nil || !c.active {
-		return "", 0
+		return "", 0, 0
 	}
 	x, y, width, _ := c.layout(maxWidth, maxHeight)
 	contentWidth := max(1, width-2)
@@ -379,10 +379,7 @@ func (c *ContextMenuController) View(maxWidth, maxHeight int) (string, int) {
 		lines = append(lines, line)
 	}
 	block := strings.Join(lines, "\n")
-	if x > 0 {
-		block = indentBlock(block, x)
-	}
-	return block, y
+	return block, x, y
 }
 
 func (c *ContextMenuController) Contains(x, y, maxWidth, maxHeight int) bool {

@@ -271,26 +271,18 @@ func (c *ChatInputAddonController) applyComposeOptionSelection(m *Model, value s
 	return update
 }
 
-func (c *ChatInputAddonController) composeOptionPopupView(m *Model) (string, int) {
+func (c *ChatInputAddonController) composeOptionPopupPlacement(m *Model) (string, int, int) {
 	if c == nil || c.addon == nil || m == nil || !c.addon.OptionPickerOpen() {
-		return "", 0
+		return "", 0, 0
 	}
 	view := c.addon.OptionPickerView()
 	if strings.TrimSpace(view) == "" {
-		return "", 0
-	}
-	if leftPad := m.sidebarWidth(); leftPad > 0 {
-		prefix := strings.Repeat(" ", leftPad+1)
-		lines := strings.Split(view, "\n")
-		for i := range lines {
-			lines[i] = prefix + lines[i]
-		}
-		view = strings.Join(lines, "\n")
+		return "", 0, 0
 	}
 	height := len(strings.Split(view, "\n"))
 	row := m.composeControlsRow() - height
 	if row < 1 {
 		row = 1
 	}
-	return view, row
+	return view, m.resolveMouseLayout().rightStart, row
 }

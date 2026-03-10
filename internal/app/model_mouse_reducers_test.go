@@ -2718,13 +2718,13 @@ func TestMouseReducerComposeOptionPickerClickSelectsOption(t *testing.T) {
 	if !m.openComposeOptionPicker(composeOptionModel) {
 		t.Fatalf("expected model option picker to open")
 	}
-	popup, row := m.composeOptionPopupView()
+	popup, popupX, row := m.composeOptionPopupPlacement()
 	if popup == "" {
 		t.Fatalf("expected popup content")
 	}
 
 	handled := m.reduceComposeOptionPickerLeftPressMouse(
-		tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: row + 2},
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: popupX, Y: row + 2},
 		layout,
 	)
 	if !handled {
@@ -2750,7 +2750,7 @@ func TestMouseReducerComposeOptionPickerClickBelowPopupSelectsLastOption(t *test
 	if !m.openComposeOptionPicker(composeOptionModel) {
 		t.Fatalf("expected model option picker to open")
 	}
-	popup, row := m.composeOptionPopupView()
+	popup, popupX, row := m.composeOptionPopupPlacement()
 	if popup == "" {
 		t.Fatalf("expected popup content")
 	}
@@ -2758,7 +2758,7 @@ func TestMouseReducerComposeOptionPickerClickBelowPopupSelectsLastOption(t *test
 	y := row + height
 
 	handled := m.reduceComposeOptionPickerLeftPressMouse(
-		tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: y},
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: popupX, Y: y},
 		layout,
 	)
 	if !handled {
