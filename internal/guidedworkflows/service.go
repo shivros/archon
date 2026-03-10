@@ -105,6 +105,10 @@ type InMemoryRunService struct {
 	dispatchRetryPolicy    DispatchRetryPolicy
 	dispatchRetryScheduler DispatchRetryScheduler
 	dispatchQueue          DispatchQueue
+	dependencyValidator    dependencyValidator
+	dependencyGraph        dependencyGraphIndex
+	dependencyEvaluator    dependencyEvaluator
+	queuedRunActivator     queuedRunActivator
 
 	// Locking contract:
 	// 1. Acquire per-run lock first, then s.mu.
@@ -256,6 +260,42 @@ func WithDispatchQueue(queue DispatchQueue) RunServiceOption {
 	}
 }
 
+func WithDependencyValidator(validator dependencyValidator) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || validator == nil {
+			return
+		}
+		s.dependencyValidator = validator
+	}
+}
+
+func WithDependencyGraphIndex(index dependencyGraphIndex) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || index == nil {
+			return
+		}
+		s.dependencyGraph = index
+	}
+}
+
+func WithDependencyEvaluator(evaluator dependencyEvaluator) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || evaluator == nil {
+			return
+		}
+		s.dependencyEvaluator = evaluator
+	}
+}
+
+func WithQueuedRunActivator(activator queuedRunActivator) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || activator == nil {
+			return
+		}
+		s.queuedRunActivator = activator
+	}
+}
+
 func WithRunExecutionControls(controls ExecutionControls) RunServiceOption {
 	return func(s *InMemoryRunService) {
 		if s == nil {
@@ -395,6 +435,10 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		dispatchClassifier:     defaultDispatchErrorClassifier{},
 		dispatchRetryPolicy:    defaultDispatchRetryPolicy(),
 		dispatchProviderPolicy: registryDispatchProviderPolicy{},
+		dependencyValidator:    NewDefaultDependencyValidator(),
+		dependencyGraph:        NewReverseDependencyGraphIndex(),
+		dependencyEvaluator:    NewDefaultDependencyEvaluator(),
+		queuedRunActivator:     NewDefaultQueuedRunActivator(),
 		metrics: runServiceMetrics{
 			interventionCauses: map[string]int{},
 		},
@@ -425,6 +469,18 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	}
 	if service.dispatchProviderPolicy == nil {
 		service.dispatchProviderPolicy = registryDispatchProviderPolicy{}
+	}
+	if service.dependencyValidator == nil {
+		service.dependencyValidator = NewDefaultDependencyValidator()
+	}
+	if service.dependencyGraph == nil {
+		service.dependencyGraph = NewReverseDependencyGraphIndex()
+	}
+	if service.dependencyEvaluator == nil {
+		service.dependencyEvaluator = NewDefaultDependencyEvaluator()
+	}
+	if service.queuedRunActivator == nil {
+		service.queuedRunActivator = NewDefaultQueuedRunActivator()
 	}
 	if service.persistence == nil {
 		service.persistence = newRunPersistenceService(service.runStore)
@@ -502,6 +558,11 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		return nil, fmt.Errorf("%w: max_active_runs=%d", ErrRunLimitExceeded, s.maxActiveRuns)
 	}
 	runID := newWorkflowRunID()
+	existingRuns := s.runsByIDLocked()
+	dependencies, err := s.dependencyValidatorOrDefault().NormalizeAndValidate(runID, req.DependsOnRunIDs, existingRuns)
+	if err != nil {
+		return nil, err
+	}
 	now := s.engine.now()
 
 	run := &WorkflowRun{
@@ -527,12 +588,14 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 		CheckpointStyle:           s.cfg.CheckpointStyle,
 		Policy:                    MergeCheckpointPolicy(s.cfg.Policy, req.PolicyOverrides),
 		PolicyOverrides:           cloneCheckpointPolicyOverride(req.PolicyOverrides),
+		Dependencies:              append([]RunDependency(nil), dependencies...),
 		Status:                    WorkflowRunStatusCreated,
 		CreatedAt:                 now,
 		CurrentPhaseIndex:         0,
 		CurrentStepIndex:          0,
 		Phases:                    instantiatePhases(template),
 	}
+	run.DependencyState = s.evaluateRunDependencyStateLocked(run)
 	controls := s.engine.executionControls()
 	if controls.Enabled && controls.Commit.RequireApproval {
 		run.Policy.HardGates.PreCommitApproval = true
@@ -562,6 +625,34 @@ func (s *InMemoryRunService) dispatchProviderPolicyOrDefault() DispatchProviderP
 		return registryDispatchProviderPolicy{}
 	}
 	return s.dispatchProviderPolicy
+}
+
+func (s *InMemoryRunService) dependencyValidatorOrDefault() dependencyValidator {
+	if s == nil || s.dependencyValidator == nil {
+		return NewDefaultDependencyValidator()
+	}
+	return s.dependencyValidator
+}
+
+func (s *InMemoryRunService) dependencyGraphOrDefault() dependencyGraphIndex {
+	if s == nil || s.dependencyGraph == nil {
+		return NewReverseDependencyGraphIndex()
+	}
+	return s.dependencyGraph
+}
+
+func (s *InMemoryRunService) dependencyEvaluatorOrDefault() dependencyEvaluator {
+	if s == nil || s.dependencyEvaluator == nil {
+		return NewDefaultDependencyEvaluator()
+	}
+	return s.dependencyEvaluator
+}
+
+func (s *InMemoryRunService) queuedRunActivatorOrDefault() queuedRunActivator {
+	if s == nil || s.queuedRunActivator == nil {
+		return NewDefaultQueuedRunActivator()
+	}
+	return s.queuedRunActivator
 }
 
 func (s *InMemoryRunService) stepOutcomeEvaluatorOrDefault() StepOutcomeEvaluator {
@@ -714,7 +805,7 @@ func (s *InMemoryRunService) StopRun(ctx context.Context, runID string) (*Workfl
 		return cloneWorkflowRun(run), nil
 	}
 	switch run.Status {
-	case WorkflowRunStatusCreated, WorkflowRunStatusRunning, WorkflowRunStatusPaused:
+	case WorkflowRunStatusCreated, WorkflowRunStatusQueued, WorkflowRunStatusRunning, WorkflowRunStatusPaused:
 		// valid stop transitions
 	default:
 		s.mu.Unlock()
@@ -765,6 +856,7 @@ func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, 
 		return nil, fmt.Errorf("%w: no resumable workflow step found", ErrInvalidTransition)
 	}
 	now := s.engine.now()
+	beforeStatus := run.Status
 	phase := &run.Phases[phaseIndex]
 	step := &phase.Steps[stepIndex]
 	markStepExecutionInterrupted(step, now)
@@ -803,6 +895,7 @@ func (s *InMemoryRunService) ResumeFailedRun(ctx context.Context, runID string, 
 		StepID:  step.ID,
 		Message: message,
 	})
+	s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
 	dispatchCtx := stepDispatchContext{
 		runID:          strings.TrimSpace(run.ID),
 		phaseIndex:     phaseIndex,
@@ -1055,6 +1148,7 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 			s.turnSeen[turnReceiptKey(run.ID, signal.TurnID)] = struct{}{}
 		}
 		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+		s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
 		clone := cloneWorkflowRun(run)
 		snapshot := s.captureRunSnapshot(run.ID)
 		s.mu.Unlock()
@@ -1102,6 +1196,7 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 	}
 	if run.Status != WorkflowRunStatusRunning {
 		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+		s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
 	}
 	clone := cloneWorkflowRun(run)
 	snapshot := s.captureRunSnapshot(run.ID)
@@ -1545,28 +1640,64 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 		return nil, err
 	}
 	now := s.engine.now()
+	beforeStatus := run.Status
+	shouldAdvance := true
 	switch action {
 	case "start":
-		if run.Status != WorkflowRunStatusCreated {
+		if run.Status != WorkflowRunStatusCreated && run.Status != WorkflowRunStatusQueued {
 			s.mu.Unlock()
 			return nil, invalidTransitionError(action, run.Status)
 		}
-		run.Status = WorkflowRunStatusRunning
-		run.StartedAt = &now
+		if run.StartedAt == nil {
+			run.StartedAt = &now
+		}
 		run.PausedAt = nil
-		s.recordRunStartedLocked(run)
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "run",
-			Action:  "run_started",
-			Outcome: "running",
-			Detail:  "start requested",
-		})
-		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
-			At:    now,
-			Type:  "run_started",
-			RunID: run.ID,
-		})
+		run.DependencyState = s.evaluateRunDependencyStateLocked(run)
+		if !run.DependencyState.Ready {
+			run.Status = WorkflowRunStatusQueued
+			shouldAdvance = false
+			detail := strings.TrimSpace(run.DependencyState.Reason)
+			if detail == "" {
+				detail = "waiting for dependencies"
+			}
+			appendRunAudit(run, RunAuditEntry{
+				At:      now,
+				Scope:   "run",
+				Action:  "run_queued",
+				Outcome: "queued",
+				Detail:  detail,
+			})
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+				At:      now,
+				Type:    "run_queued",
+				RunID:   run.ID,
+				Message: detail,
+			})
+		} else {
+			run.Status = WorkflowRunStatusRunning
+			s.recordRunStartedLocked(run)
+			startAction := "run_started"
+			startDetail := "start requested"
+			startType := "run_started"
+			if beforeStatus == WorkflowRunStatusQueued {
+				startAction = "run_started_from_queue"
+				startDetail = "dependencies satisfied"
+				startType = "run_started_from_queue"
+			}
+			appendRunAudit(run, RunAuditEntry{
+				At:      now,
+				Scope:   "run",
+				Action:  startAction,
+				Outcome: "running",
+				Detail:  startDetail,
+			})
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+				At:      now,
+				Type:    startType,
+				RunID:   run.ID,
+				Message: startDetail,
+			})
+		}
 	case "resume":
 		if run.Status != WorkflowRunStatusPaused {
 			s.mu.Unlock()
@@ -1590,13 +1721,16 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: unknown action %q", ErrInvalidTransition, action)
 	}
+	s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
 
 	snapshot := s.captureRunSnapshot(run.ID)
 	s.mu.Unlock()
 	s.persistRunSnapshotAsync(ctx, snapshot)
 
-	if err := s.advanceViaQueue(ctx, runID, "transition_"+action); err != nil {
-		return nil, err
+	if shouldAdvance {
+		if err := s.advanceViaQueue(ctx, runID, "transition_"+action); err != nil {
+			return nil, err
+		}
 	}
 
 	s.mu.RLock()
@@ -1621,6 +1755,7 @@ func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *Workflo
 		outcome, handoffErr := s.dispatchWithRunLockHandoffLocked(ctx, dispatchCtx, func() {}, func() {})
 		if outcome.applied && outcome.run != nil {
 			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
+			s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
 		}
 		if handoffErr != nil {
 			return handoffErr
@@ -1657,6 +1792,69 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 		s.mu.Unlock()
 		return err
 	}
+	if run.Status == WorkflowRunStatusQueued {
+		now := s.engine.now()
+		run.DependencyState = s.evaluateRunDependencyStateLocked(run)
+		if !s.queuedRunActivatorOrDefault().ShouldActivate(run, run.DependencyState) {
+			detail := strings.TrimSpace(run.DependencyState.Reason)
+			if detail == "" {
+				detail = "waiting for dependencies"
+			}
+			appendRunAudit(run, RunAuditEntry{
+				At:      now,
+				Scope:   "run",
+				Action:  "run_dependency_rechecked",
+				Outcome: "queued",
+				Detail:  detail,
+			})
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+				At:      now,
+				Type:    "run_dependency_rechecked",
+				RunID:   run.ID,
+				Message: detail,
+			})
+			if run.DependencyState.Blocking {
+				appendRunAudit(run, RunAuditEntry{
+					At:      now,
+					Scope:   "run",
+					Action:  "run_dependency_blocked",
+					Outcome: "blocked",
+					Detail:  detail,
+				})
+				s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+					At:      now,
+					Type:    "run_dependency_blocked",
+					RunID:   run.ID,
+					Message: detail,
+				})
+			}
+			s.mu.Unlock()
+			return nil
+		}
+		run.Status = WorkflowRunStatusRunning
+		run.PausedAt = nil
+		if run.StartedAt == nil {
+			run.StartedAt = &now
+		}
+		s.recordRunStartedLocked(run)
+		appendRunAudit(run, RunAuditEntry{
+			At:      now,
+			Scope:   "run",
+			Action:  "run_started_from_queue",
+			Outcome: "running",
+			Detail:  "dependencies satisfied",
+		})
+		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+			At:      now,
+			Type:    "run_started_from_queue",
+			RunID:   run.ID,
+			Message: "dependencies satisfied",
+		})
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		s.mu.Unlock()
+		return nil
+	}
 	if isRunAwaitingTurn(run) {
 		s.mu.Unlock()
 		return nil
@@ -1679,6 +1877,7 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 		)
 		if outcome.applied && outcome.run != nil {
 			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
+			s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
 		}
 		s.mu.Unlock()
 		if handoffErr != nil {
@@ -1889,7 +2088,7 @@ func (s *InMemoryRunService) processDispatchQueueRequest(req DispatchRequest) Di
 	switch strings.TrimSpace(req.Reason) {
 	case "retry_deferred_dispatch":
 		return DispatchQueueResult{Done: s.retryDeferredDispatch(runID)}
-	case "transition_start", "transition_resume", "turn_completed":
+	case "transition_start", "transition_resume", "turn_completed", "dependency_changed":
 		return DispatchQueueResult{Done: true, Err: s.advanceOnceWithDispatch(context.Background(), runID)}
 	default:
 		return DispatchQueueResult{Done: true, Err: s.advanceOnceWithDispatch(context.Background(), runID)}
@@ -2251,6 +2450,7 @@ func (s *InMemoryRunService) advanceWithEngineUnlocked(ctx context.Context, run 
 	*current = *workingRun
 	s.setTimelineLocked(runID, workingTimeline)
 	s.recordTerminalTransitionLocked(beforeStatus, current.Status)
+	s.maybeEnqueueDependentRechecksLocked(runID, beforeStatus, current.Status)
 	return advanceErr
 }
 
@@ -2369,6 +2569,7 @@ func (s *InMemoryRunService) stopRunLocked(run *WorkflowRun, reason string) {
 		Message: reason,
 	})
 	s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+	s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
 }
 
 func (s *InMemoryRunService) appendDecisionTimelineLocked(run *WorkflowRun, eventType, decisionID, note string) {
@@ -2795,6 +2996,83 @@ func (s *InMemoryRunService) getRunByIDLocked(runID string) (*WorkflowRun, bool)
 	return run, ok
 }
 
+func (s *InMemoryRunService) runsByIDLocked() map[string]*WorkflowRun {
+	out := map[string]*WorkflowRun{}
+	for _, run := range s.listRunsIncludingDismissedLocked() {
+		if run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		out[runID] = run
+	}
+	return out
+}
+
+func (s *InMemoryRunService) evaluateRunDependencyStateLocked(run *WorkflowRun) RunDependencyState {
+	evaluator := s.dependencyEvaluatorOrDefault()
+	now := s.engine.now()
+	return evaluator.Evaluate(now, run, func(runID string) (*WorkflowRun, bool) {
+		return s.getRunByIDLocked(runID)
+	})
+}
+
+func (s *InMemoryRunService) maybeEnqueueDependentRechecksLocked(runID string, before, after WorkflowRunStatus) {
+	if s == nil {
+		return
+	}
+	if strings.TrimSpace(runID) == "" {
+		return
+	}
+	if !shouldRecheckDependentRuns(before, after) {
+		return
+	}
+	graph := s.dependencyGraph
+	if graph == nil {
+		return
+	}
+	dependents := graph.Dependents(runID)
+	s.enqueueDependencyRechecksAsync(dependents)
+}
+
+func shouldRecheckDependentRuns(before, after WorkflowRunStatus) bool {
+	if before == after {
+		return false
+	}
+	return dependencyRelevantStatus(before) || dependencyRelevantStatus(after)
+}
+
+func dependencyRelevantStatus(status WorkflowRunStatus) bool {
+	switch status {
+	case WorkflowRunStatusRunning, WorkflowRunStatusStopped, WorkflowRunStatusCompleted, WorkflowRunStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *InMemoryRunService) enqueueDependencyRechecksAsync(runIDs []string) {
+	if s == nil || len(runIDs) == 0 {
+		return
+	}
+	seen := map[string]struct{}{}
+	for _, runID := range runIDs {
+		runID = strings.TrimSpace(runID)
+		if runID == "" {
+			continue
+		}
+		if _, ok := seen[runID]; ok {
+			continue
+		}
+		seen[runID] = struct{}{}
+		go func(target string) {
+			_ = s.advanceViaQueue(context.Background(), target, "dependency_changed")
+		}(runID)
+	}
+}
+
 func (s *InMemoryRunService) setRunLocked(runID string, run *WorkflowRun) {
 	if s == nil {
 		return
@@ -2803,11 +3081,21 @@ func (s *InMemoryRunService) setRunLocked(runID string, run *WorkflowRun) {
 	if id == "" {
 		return
 	}
+	if run != nil {
+		run.Dependencies = normalizeRunDependencies(run.Dependencies)
+	}
+	graph := s.dependencyGraph
 	if s.state != nil {
 		s.state.Set(id, run)
+		if graph != nil {
+			graph.SetRun(run)
+		}
 		return
 	}
 	s.runs[id] = run
+	if graph != nil {
+		graph.SetRun(run)
+	}
 }
 
 func (s *InMemoryRunService) listRunsIncludingDismissedLocked() []*WorkflowRun {
@@ -2918,6 +3206,14 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 		return nil
 	}
 	out := *in
+	if len(in.Dependencies) > 0 {
+		out.Dependencies = append([]RunDependency{}, in.Dependencies...)
+	}
+	out.DependencyState.Unmet = append([]RunDependencySnapshot{}, in.DependencyState.Unmet...)
+	if in.DependencyState.LastEvaluatedAt != nil {
+		evaluatedAt := in.DependencyState.LastEvaluatedAt.UTC()
+		out.DependencyState.LastEvaluatedAt = &evaluatedAt
+	}
 	out.Phases = make([]PhaseRun, len(in.Phases))
 	for i, phase := range in.Phases {
 		out.Phases[i] = phase
@@ -3418,6 +3714,9 @@ func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.dependencyGraph != nil {
+		s.dependencyGraph.Reset()
+	}
 	recoveredRunIDs := make([]string, 0)
 	for _, snapshot := range snapshots {
 		if snapshot.Run == nil {
@@ -3446,9 +3745,20 @@ func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
 		s.setTimelineLocked(runID, timeline)
 		s.hydrateTurnReceiptsLocked(run)
 	}
+	queuedRunIDs := make([]string, 0)
+	for _, run := range s.listRunsIncludingDismissedLocked() {
+		if run == nil {
+			continue
+		}
+		run.DependencyState = s.evaluateRunDependencyStateLocked(run)
+		if run.Status == WorkflowRunStatusQueued {
+			queuedRunIDs = append(queuedRunIDs, strings.TrimSpace(run.ID))
+		}
+	}
 	for _, runID := range recoveredRunIDs {
 		s.persistRunSnapshotLocked(ctx, runID)
 	}
+	s.enqueueDependencyRechecksAsync(queuedRunIDs)
 }
 
 func (s *InMemoryRunService) hydrateTurnReceiptsLocked(run *WorkflowRun) {

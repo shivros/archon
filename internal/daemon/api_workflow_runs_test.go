@@ -196,6 +196,35 @@ func TestWorkflowRunCreateEnqueuesTitleGeneration(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunCreateAcceptsDependencies(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	upstream := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	dependent := createWorkflowRunViaAPI(t, server, CreateWorkflowRunRequest{
+		WorkspaceID:     "ws-1",
+		WorktreeID:      "wt-2",
+		DependsOnRunIDs: []string{upstream.ID},
+	})
+	if len(dependent.Dependencies) != 1 {
+		t.Fatalf("expected one dependency on created run, got %#v", dependent.Dependencies)
+	}
+	if strings.TrimSpace(dependent.Dependencies[0].RunID) != strings.TrimSpace(upstream.ID) {
+		t.Fatalf("expected dependency on %q, got %#v", upstream.ID, dependent.Dependencies[0])
+	}
+	started := postWorkflowRunAction(t, server, dependent.ID, "start", http.StatusOK)
+	if started.Status != guidedworkflows.WorkflowRunStatusQueued {
+		t.Fatalf("expected dependent run queued after start, got %q", started.Status)
+	}
+}
+
 func TestWorkflowRunEndpointsStopInterruptsSessionsBestEffort(t *testing.T) {
 	var logOut bytes.Buffer
 	interruptor := &recordWorkflowRunSessionInterruptService{
@@ -1469,7 +1498,11 @@ func TestToGuidedWorkflowServiceErrorMappings(t *testing.T) {
 	check(guidedworkflows.ErrRunNotFound, ServiceErrorNotFound)
 	check(guidedworkflows.ErrTemplateNotFound, ServiceErrorInvalid)
 	check(guidedworkflows.ErrMissingContext, ServiceErrorInvalid)
+	check(guidedworkflows.ErrDependencyNotFound, ServiceErrorInvalid)
+	check(guidedworkflows.ErrDependencyInvalid, ServiceErrorInvalid)
+	check(guidedworkflows.ErrDependencyCondition, ServiceErrorInvalid)
 	check(guidedworkflows.ErrUnsupportedProvider, ServiceErrorInvalid)
+	check(guidedworkflows.ErrDependencyGraph, ServiceErrorConflict)
 	check(guidedworkflows.ErrInvalidTransition, ServiceErrorConflict)
 	check(guidedworkflows.ErrRunLimitExceeded, ServiceErrorConflict)
 	check(guidedworkflows.ErrDisabled, ServiceErrorUnavailable)

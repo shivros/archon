@@ -64,6 +64,10 @@ func newGuidedWorkflowRunService(
 		guidedworkflows.WithMaxActiveRuns(coreCfg.GuidedWorkflowsRolloutMaxActiveRuns()),
 		guidedworkflows.WithTelemetryEnabled(coreCfg.GuidedWorkflowsRolloutTelemetryEnabled()),
 		guidedworkflows.WithTurnMismatchRecovery(coreCfg.GuidedWorkflowsRolloutAllowTurnIDMismatchRecovery()),
+		guidedworkflows.WithDependencyValidator(guidedworkflows.NewDefaultDependencyValidator()),
+		guidedworkflows.WithDependencyGraphIndex(guidedworkflows.NewReverseDependencyGraphIndex()),
+		guidedworkflows.WithDependencyEvaluator(guidedworkflows.NewDefaultDependencyEvaluator()),
+		guidedworkflows.WithQueuedRunActivator(guidedworkflows.NewDefaultQueuedRunActivator()),
 	}
 	workflowTemplatesPath, pathErr := config.WorkflowTemplatesPath()
 	if pathErr != nil {

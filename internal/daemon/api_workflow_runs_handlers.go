@@ -55,6 +55,7 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			SelectedProvider:          strings.TrimSpace(req.SelectedProvider),
 			SelectedPolicySensitivity: strings.TrimSpace(req.SelectedPolicySensitivity),
 			SelectedRuntimeOptions:    types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+			DependsOnRunIDs:           append([]string(nil), req.DependsOnRunIDs...),
 			PolicyOverrides:           a.workflowPolicyResolver().ResolvePolicyOverrides(req.PolicyOverrides),
 		})
 		if err != nil {
@@ -566,8 +567,14 @@ func toGuidedWorkflowServiceError(err error) error {
 		return invalidError("workflow template not found", err)
 	case errors.Is(err, guidedworkflows.ErrMissingContext):
 		return invalidError("workspace_id or worktree_id is required", err)
+	case errors.Is(err, guidedworkflows.ErrDependencyNotFound):
+		return invalidError("workflow dependency run not found", err)
+	case errors.Is(err, guidedworkflows.ErrDependencyInvalid), errors.Is(err, guidedworkflows.ErrDependencyCondition):
+		return invalidError("workflow dependency is invalid", err)
 	case errors.Is(err, guidedworkflows.ErrUnsupportedProvider):
 		return invalidError("workflow provider is not dispatchable for guided workflows", err)
+	case errors.Is(err, guidedworkflows.ErrDependencyGraph):
+		return conflictError("workflow dependency graph violation", err)
 	case errors.Is(err, guidedworkflows.ErrInvalidTransition):
 		return conflictError("invalid workflow run transition", err)
 	case errors.Is(err, guidedworkflows.ErrRunLimitExceeded):

@@ -2,6 +2,8 @@ package guidedworkflows
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"control/internal/types"
@@ -36,11 +38,18 @@ type WorkflowRunStatus string
 
 const (
 	WorkflowRunStatusCreated   WorkflowRunStatus = "created"
+	WorkflowRunStatusQueued    WorkflowRunStatus = "queued"
 	WorkflowRunStatusRunning   WorkflowRunStatus = "running"
 	WorkflowRunStatusPaused    WorkflowRunStatus = "paused"
 	WorkflowRunStatusStopped   WorkflowRunStatus = "stopped"
 	WorkflowRunStatusCompleted WorkflowRunStatus = "completed"
 	WorkflowRunStatusFailed    WorkflowRunStatus = "failed"
+)
+
+type DependencyCondition string
+
+const (
+	DependencyConditionOnCompleted DependencyCondition = "on_completed"
 )
 
 type PhaseRunStatus string
@@ -89,6 +98,8 @@ type WorkflowRun struct {
 	CurrentStepIndex          int                          `json:"current_step_index"`
 	Policy                    CheckpointPolicy             `json:"policy"`
 	PolicyOverrides           *CheckpointPolicyOverride    `json:"policy_overrides,omitempty"`
+	Dependencies              []RunDependency              `json:"dependencies,omitempty"`
+	DependencyState           RunDependencyState           `json:"dependency_state,omitempty"`
 	Phases                    []PhaseRun                   `json:"phases"`
 	LatestDecision            *CheckpointDecision          `json:"latest_decision,omitempty"`
 	CheckpointDecisions       []CheckpointDecision         `json:"checkpoint_decisions,omitempty"`
@@ -181,6 +192,28 @@ type RunAuditEntry struct {
 	Detail  string    `json:"detail,omitempty"`
 }
 
+type RunDependency struct {
+	RunID     string              `json:"run_id"`
+	Condition DependencyCondition `json:"condition,omitempty"`
+}
+
+type RunDependencySnapshot struct {
+	RunID             string              `json:"run_id"`
+	RequiredCondition DependencyCondition `json:"required_condition,omitempty"`
+	ObservedStatus    WorkflowRunStatus   `json:"observed_status,omitempty"`
+	Satisfied         bool                `json:"satisfied"`
+	Blocking          bool                `json:"blocking,omitempty"`
+	BlockingReason    string              `json:"blocking_reason,omitempty"`
+}
+
+type RunDependencyState struct {
+	Ready           bool                    `json:"ready"`
+	Blocking        bool                    `json:"blocking,omitempty"`
+	Reason          string                  `json:"reason,omitempty"`
+	Unmet           []RunDependencySnapshot `json:"unmet,omitempty"`
+	LastEvaluatedAt *time.Time              `json:"last_evaluated_at,omitempty"`
+}
+
 type CreateRunRequest struct {
 	TemplateID                string                       `json:"template_id,omitempty"`
 	WorkspaceID               string                       `json:"workspace_id,omitempty"`
@@ -191,6 +224,7 @@ type CreateRunRequest struct {
 	SelectedProvider          string                       `json:"selected_provider,omitempty"`
 	SelectedPolicySensitivity string                       `json:"selected_policy_sensitivity,omitempty"`
 	SelectedRuntimeOptions    *types.SessionRuntimeOptions `json:"selected_runtime_options,omitempty"`
+	DependsOnRunIDs           []string                     `json:"depends_on_run_ids,omitempty"`
 	PolicyOverrides           *CheckpointPolicyOverride    `json:"policy_overrides,omitempty"`
 }
 
@@ -272,6 +306,24 @@ type StepPromptDispatcher interface {
 
 func NormalizeTemplateAccessLevel(raw types.AccessLevel) (types.AccessLevel, bool) {
 	return types.NormalizeAccessLevel(raw)
+}
+
+func NormalizeDependencyCondition(raw string) (DependencyCondition, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(DependencyConditionOnCompleted):
+		return DependencyConditionOnCompleted, true
+	default:
+		return "", false
+	}
+}
+
+func ValidateDependencyCondition(condition DependencyCondition) error {
+	switch condition {
+	case DependencyConditionOnCompleted:
+		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrDependencyCondition, strings.TrimSpace(string(condition)))
+	}
 }
 
 type RunStatusSnapshot struct {

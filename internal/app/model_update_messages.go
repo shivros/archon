@@ -55,7 +55,11 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirty()
 		m.guidedWorkflow.SetRun(msg.run)
-		m.setStatusInfo("guided workflow running")
+		if msg.run != nil && msg.run.Status == guidedworkflows.WorkflowRunStatusQueued {
+			m.setStatusInfo("guided workflow queued: waiting for dependencies")
+		} else {
+			m.setStatusInfo("guided workflow running")
+		}
 		m.renderGuidedWorkflowContent()
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
 		if runID == "" {

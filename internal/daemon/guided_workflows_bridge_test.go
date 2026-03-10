@@ -445,6 +445,72 @@ func TestNewGuidedWorkflowRunServiceAppliesRolloutGuardrails(t *testing.T) {
 	}
 }
 
+func TestNewGuidedWorkflowRunServiceSupportsDependencyChaining(t *testing.T) {
+	setStableWorkflowTemplatesHome(t)
+
+	cfg := config.DefaultCoreConfig()
+	cfg.GuidedWorkflows.Enabled = boolPtr(true)
+
+	service := newGuidedWorkflowRunService(cfg, nil, nil, nil, nil)
+	upstream, err := service.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-upstream",
+	})
+	if err != nil {
+		t.Fatalf("create upstream: %v", err)
+	}
+	dependent, err := service.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		WorkspaceID:     "ws-1",
+		WorktreeID:      "wt-dependent",
+		DependsOnRunIDs: []string{upstream.ID},
+	})
+	if err != nil {
+		t.Fatalf("create dependent: %v", err)
+	}
+
+	startedDependent, err := service.StartRun(context.Background(), dependent.ID)
+	if err != nil {
+		t.Fatalf("start dependent: %v", err)
+	}
+	if startedDependent.Status != guidedworkflows.WorkflowRunStatusQueued {
+		t.Fatalf("expected dependent run to queue until upstream completes, got %q", startedDependent.Status)
+	}
+
+	if _, err := service.StartRun(context.Background(), upstream.ID); err != nil {
+		t.Fatalf("start upstream: %v", err)
+	}
+	for i := 0; i < 64; i++ {
+		current, getErr := service.GetRun(context.Background(), upstream.ID)
+		if getErr != nil {
+			t.Fatalf("get upstream: %v", getErr)
+		}
+		if current.Status == guidedworkflows.WorkflowRunStatusCompleted {
+			break
+		}
+		if current.Status != guidedworkflows.WorkflowRunStatusRunning {
+			t.Fatalf("unexpected upstream status while advancing: %q", current.Status)
+		}
+		if _, advErr := service.AdvanceRun(context.Background(), upstream.ID); advErr != nil {
+			t.Fatalf("advance upstream: %v", advErr)
+		}
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		current, getErr := service.GetRun(context.Background(), dependent.ID)
+		if getErr != nil {
+			t.Fatalf("get dependent: %v", getErr)
+		}
+		if current.Status == guidedworkflows.WorkflowRunStatusRunning || current.Status == guidedworkflows.WorkflowRunStatusCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for dependent activation; last status=%q", current.Status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestNewGuidedWorkflowRunServiceDoesNotPerformReconciliationSideEffects(t *testing.T) {
 	cfg := config.DefaultCoreConfig()
 	cfg.GuidedWorkflows.Enabled = boolPtr(true)

@@ -13,7 +13,7 @@ import (
 	"control/internal/guidedworkflows"
 )
 
-const workflowRunSchemaVersion = 1
+const workflowRunSchemaVersion = 2
 
 type WorkflowRunStore interface {
 	ListWorkflowRuns(ctx context.Context) ([]guidedworkflows.RunStatusSnapshot, error)

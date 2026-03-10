@@ -140,6 +140,7 @@ type CreateWorkflowRunRequest struct {
 	SelectedProvider          string                                    `json:"selected_provider,omitempty"`
 	SelectedPolicySensitivity string                                    `json:"selected_policy_sensitivity,omitempty"`
 	SelectedRuntimeOptions    *types.SessionRuntimeOptions              `json:"selected_runtime_options,omitempty"`
+	DependsOnRunIDs           []string                                  `json:"depends_on_run_ids,omitempty"`
 	PolicyOverrides           *guidedworkflows.CheckpointPolicyOverride `json:"policy_overrides,omitempty"`
 }
 

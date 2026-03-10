@@ -22,6 +22,10 @@ var (
 	ErrCommandFailed         = errors.New("workflow command failed")
 	ErrStepDispatch          = errors.New("workflow step prompt dispatch unavailable")
 	ErrStepDispatchDeferred  = errors.New("workflow step prompt dispatch deferred")
+	ErrDependencyNotFound    = errors.New("workflow dependency run not found")
+	ErrDependencyInvalid     = errors.New("workflow dependency is invalid")
+	ErrDependencyGraph       = errors.New("workflow dependency graph violation")
+	ErrDependencyCondition   = errors.New("workflow dependency condition invalid")
 )
 
 type StepHandler func(ctx context.Context, run *WorkflowRun, phase *PhaseRun, step *StepRun) error

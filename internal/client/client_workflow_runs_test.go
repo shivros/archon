@@ -36,6 +36,9 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 			if req.UserPrompt != "Fix workflow startup path" {
 				t.Fatalf("unexpected create request payload: %+v", req)
 			}
+			if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-upstream" {
+				t.Fatalf("unexpected dependency payload: %+v", req.DependsOnRunIDs)
+			}
 			seen["create"] = true
 			_, _ = w.Write([]byte(`{"id":"gwf-1","status":"created","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery","user_prompt":"Fix workflow startup path","display_user_prompt":"Fix workflow startup path"}`))
 			return
@@ -126,6 +129,9 @@ func TestWorkflowRunClientEndpoints(t *testing.T) {
 		WorktreeID:  "wt1",
 		SessionID:   "s1",
 		UserPrompt:  "Fix workflow startup path",
+		DependsOnRunIDs: []string{
+			"gwf-upstream",
+		},
 	})
 	if err != nil {
 		t.Fatalf("CreateWorkflowRun error: %v", err)
