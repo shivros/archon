@@ -89,6 +89,56 @@ func TestMouseReducerRightReleaseDoesNotOpenContextMenu(t *testing.T) {
 	}
 }
 
+func TestMouseReducerRightPressWorkflowOpensFollowUpActionForPausedRun(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{
+		{
+			ID:     "gwf-1",
+			Status: guidedworkflows.WorkflowRunStatusPaused,
+		},
+	}
+	m.sessions = []*types.Session{{ID: "s1", Status: types.SessionStatusRunning}}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+	}
+	m.applySidebarItems()
+	layout := m.resolveMouseLayout()
+
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarWorkflow && entry.workflowRunID() == "gwf-1" {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible workflow row")
+	}
+
+	handled := m.reduceContextMenuRightPressMouse(tea.MouseClickMsg{Button: tea.MouseRight, X: 6, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected right click to open workflow context menu")
+	}
+	if m.contextMenu == nil || !m.contextMenu.IsOpen() {
+		t.Fatalf("expected context menu to be open")
+	}
+	foundFollowUp := false
+	for _, item := range m.contextMenu.items {
+		if item.Action == ContextMenuWorkflowCreateFollowUp {
+			foundFollowUp = true
+			break
+		}
+	}
+	if !foundFollowUp {
+		t.Fatalf("expected follow-up action for paused workflow")
+	}
+}
+
 func TestMouseReducerBackwardAndForwardButtonsNavigateSelectionHistory(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

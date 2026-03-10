@@ -405,6 +405,8 @@ func (m *Model) resolveGuidedWorkflowLaunchContext(context guidedWorkflowLaunchC
 	context.worktreeName = strings.TrimSpace(context.worktreeName)
 	context.sessionID = strings.TrimSpace(context.sessionID)
 	context.sessionName = strings.TrimSpace(context.sessionName)
+	context.followUpRunID = strings.TrimSpace(context.followUpRunID)
+	context.followUpRunLabel = strings.TrimSpace(context.followUpRunLabel)
 
 	if context.worktreeID != "" {
 		if wt := m.worktreeByID(context.worktreeID); wt != nil {

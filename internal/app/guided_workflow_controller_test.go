@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"control/internal/guidedworkflows"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 func TestGuidedWorkflowControllerLauncherQueryEditing(t *testing.T) {
@@ -297,6 +299,9 @@ func TestGuidedWorkflowStatusTextHelpersIncludeStoppedStates(t *testing.T) {
 	if got := runStatusText(guidedworkflows.WorkflowRunStatusRunning); got != "running" {
 		t.Fatalf("expected running run status text, got %q", got)
 	}
+	if got := runStatusText(guidedworkflows.WorkflowRunStatusQueued); got != "queued (waiting for dependencies)" {
+		t.Fatalf("expected queued run status text, got %q", got)
+	}
 	if got := runStatusText(guidedworkflows.WorkflowRunStatusPaused); got != "paused (decision needed)" {
 		t.Fatalf("expected paused run status text, got %q", got)
 	}
@@ -336,6 +341,75 @@ func TestGuidedWorkflowControllerRenderUsesDisplayPromptFallback(t *testing.T) {
 	live := controller.renderLive()
 	if !strings.Contains(live, "Original prompt: legacy intent from session metadata") {
 		t.Fatalf("expected display prompt in live view, got %q", live)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderLiveWrapsPhaseProgressInMonospaceBlock(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:           "gwf-1",
+		Status:       guidedworkflows.WorkflowRunStatusRunning,
+		TemplateName: "SOLID",
+		Phases: []guidedworkflows.PhaseRun{
+			{
+				ID:     "phase-1",
+				Name:   "Discovery",
+				Status: guidedworkflows.PhaseRunStatusRunning,
+				Steps: []guidedworkflows.StepRun{
+					{ID: "step-1", Name: "Map current state", Status: guidedworkflows.StepRunStatusCompleted},
+					{ID: "step-2", Name: "Refine live renderer", Status: guidedworkflows.StepRunStatusRunning},
+				},
+			},
+			{
+				ID:     "phase-2",
+				Name:   "Validation",
+				Status: guidedworkflows.PhaseRunStatusPending,
+				Steps:  []guidedworkflows.StepRun{{ID: "step-3", Name: "Run focused tests", Status: guidedworkflows.StepRunStatusPending}},
+			},
+		},
+	})
+
+	live := controller.renderLive()
+	if !strings.Contains(live, "### Phase Progress  \n\n```text") {
+		t.Fatalf("expected phase progress to render in a monospace block, got %q", live)
+	}
+	if !strings.Contains(live, "[>] Phase 1  Discovery") {
+		t.Fatalf("expected first phase heading in live output, got %q", live)
+	}
+	if !strings.Contains(live, "  > [x] Step 1.1  Map current state [session:none]") {
+		t.Fatalf("expected selected step line in live output, got %q", live)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderLivePreservesPhaseProgressLineBoundaries(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:           "gwf-1",
+		Status:       guidedworkflows.WorkflowRunStatusRunning,
+		TemplateName: "SOLID",
+		Phases: []guidedworkflows.PhaseRun{
+			{
+				ID:     "phase-1",
+				Name:   "Discovery",
+				Status: guidedworkflows.PhaseRunStatusRunning,
+				Steps: []guidedworkflows.StepRun{
+					{ID: "step-1", Name: "Map current state", Status: guidedworkflows.StepRunStatusCompleted},
+					{ID: "step-2", Name: "Refine live renderer", Status: guidedworkflows.StepRunStatusRunning},
+				},
+			},
+		},
+	})
+
+	rendered := xansi.Strip(renderMarkdown(controller.renderLive(), 120))
+	lines := strings.Split(rendered, "\n")
+	phaseLine := findGuidedWorkflowLineContaining(lines, "Phase 1  Discovery")
+	stepOneLine := findGuidedWorkflowLineContaining(lines, "Step 1.1  Map current state")
+	stepTwoLine := findGuidedWorkflowLineContaining(lines, "Step 1.2  Refine live renderer")
+	if phaseLine < 0 || stepOneLine < 0 || stepTwoLine < 0 {
+		t.Fatalf("expected rendered markdown to keep phase progress lines visible, got %#v", lines)
+	}
+	if phaseLine == stepOneLine || stepOneLine == stepTwoLine || phaseLine == stepTwoLine {
+		t.Fatalf("expected phase progress entries on separate lines, got %#v", lines)
 	}
 }
 
@@ -394,4 +468,59 @@ func TestGuidedWorkflowControllerRenderSetupOmitsLegacyWorkflowPromptMetadata(t 
 	if strings.Contains(setup, "### Controls") {
 		t.Fatalf("expected controls legend removed from setup metadata, got %q", setup)
 	}
+}
+
+func TestGuidedWorkflowControllerRenderSetupShowsReadOnlyFollowUpDependency(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{
+		workspaceID:      "ws1",
+		followUpRunID:    "gwf-1",
+		followUpRunLabel: "Workflow A",
+	})
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
+	})
+	if !controller.OpenProvider() || !controller.OpenPolicy() || !controller.OpenSetup() {
+		t.Fatalf("expected launcher/provider/policy/setup flow")
+	}
+
+	setup := controller.Render()
+	if !strings.Contains(setup, "- Depends on: Workflow A (gwf-1) (read-only)") {
+		t.Fatalf("expected read-only dependency note in setup, got %q", setup)
+	}
+}
+
+func TestGuidedWorkflowControllerBuildCreateRequestIncludesFollowUpDependency(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{
+		workspaceID:      "ws1",
+		worktreeID:       "wt1",
+		sessionID:        "s1",
+		followUpRunID:    "gwf-1",
+		followUpRunLabel: "Workflow A",
+	})
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
+	})
+	if !controller.OpenProvider() || !controller.OpenPolicy() || !controller.OpenSetup() {
+		t.Fatalf("expected launcher/provider/policy/setup flow")
+	}
+
+	req := controller.BuildCreateRequest()
+	if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-1" {
+		t.Fatalf("expected create request to include follow-up dependency, got %#v", req.DependsOnRunIDs)
+	}
+}
+
+func findGuidedWorkflowLineContaining(lines []string, target string) int {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return -1
+	}
+	for i, line := range lines {
+		if strings.Contains(strings.TrimSpace(line), target) {
+			return i
+		}
+	}
+	return -1
 }

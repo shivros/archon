@@ -640,9 +640,10 @@ func TestContextMenuControllerSessionIncludesAddNoteAction(t *testing.T) {
 
 func TestContextMenuControllerWorkflowIncludesRenameAction(t *testing.T) {
 	c := NewContextMenuController()
-	c.OpenWorkflow("gwf-1", "Workflow", false, 0, 0)
+	c.OpenWorkflow("gwf-1", "Workflow", guidedworkflows.WorkflowRunStatusRunning, false, 0, 0)
 	foundRename := false
 	foundStop := false
+	foundFollowUp := false
 	for _, item := range c.items {
 		if item.Action == ContextMenuWorkflowRename {
 			foundRename = true
@@ -650,12 +651,61 @@ func TestContextMenuControllerWorkflowIncludesRenameAction(t *testing.T) {
 		if item.Action == ContextMenuWorkflowStop {
 			foundStop = true
 		}
+		if item.Action == ContextMenuWorkflowCreateFollowUp {
+			foundFollowUp = true
+		}
 	}
 	if !foundRename {
 		t.Fatalf("expected workflow context menu to include rename action")
 	}
 	if !foundStop {
 		t.Fatalf("expected workflow context menu to include stop action")
+	}
+	if !foundFollowUp {
+		t.Fatalf("expected workflow context menu to include follow-up action for running workflows")
+	}
+}
+
+func TestContextMenuControllerWorkflowExcludesFollowUpForCompletedRuns(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenWorkflow("gwf-1", "Workflow", guidedworkflows.WorkflowRunStatusCompleted, false, 0, 0)
+	for _, item := range c.items {
+		if item.Action == ContextMenuWorkflowCreateFollowUp {
+			t.Fatalf("did not expect follow-up action for completed workflow")
+		}
+	}
+}
+
+func TestContextMenuControllerWorkflowIncludesFollowUpForPausedAndQueuedRuns(t *testing.T) {
+	tests := []struct {
+		name   string
+		status guidedworkflows.WorkflowRunStatus
+	}{
+		{
+			name:   "paused",
+			status: guidedworkflows.WorkflowRunStatusPaused,
+		},
+		{
+			name:   "queued",
+			status: guidedworkflows.WorkflowRunStatusQueued,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewContextMenuController()
+			c.OpenWorkflow("gwf-1", "Workflow", tc.status, false, 0, 0)
+			foundFollowUp := false
+			for _, item := range c.items {
+				if item.Action == ContextMenuWorkflowCreateFollowUp {
+					foundFollowUp = true
+					break
+				}
+			}
+			if !foundFollowUp {
+				t.Fatalf("expected follow-up action for %s workflow status", tc.status)
+			}
+		})
 	}
 }
 
@@ -712,7 +762,7 @@ func TestHandleContextMenuActionClosesMenuAndRoutesWorkflowRename(t *testing.T) 
 	if m.contextMenu == nil {
 		t.Fatalf("expected context menu controller")
 	}
-	m.contextMenu.OpenWorkflow("gwf-1", "Workflow One", false, 1, 1)
+	m.contextMenu.OpenWorkflow("gwf-1", "Workflow One", guidedworkflows.WorkflowRunStatusRunning, false, 1, 1)
 
 	cmd := m.handleContextMenuAction(ContextMenuWorkflowRename)
 	if cmd != nil {
@@ -726,6 +776,64 @@ func TestHandleContextMenuActionClosesMenuAndRoutesWorkflowRename(t *testing.T) 
 	}
 	if m.contextMenu.IsOpen() {
 		t.Fatalf("expected context menu to be closed")
+	}
+}
+
+func TestWorkflowContextActionCreateFollowUpStartsGuidedWorkflowWithDependency(t *testing.T) {
+	m := NewModel(nil)
+	run := &guidedworkflows.WorkflowRun{
+		ID:          "gwf-1",
+		Status:      guidedworkflows.WorkflowRunStatusRunning,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "s-1",
+	}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.recordWorkflowRunState(run)
+
+	handled, cmd := m.handleWorkflowContextMenuAction(ContextMenuWorkflowCreateFollowUp, contextMenuTarget{
+		workflowID:     "gwf-1",
+		workflowStatus: guidedworkflows.WorkflowRunStatusRunning,
+		targetLabel:    "Workflow A",
+	})
+	if !handled {
+		t.Fatalf("expected follow-up workflow action to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected workflow template fetch command")
+	}
+	if _, ok := cmd().(workflowTemplatesMsg); !ok {
+		t.Fatalf("expected workflowTemplatesMsg, got %T", cmd())
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	req := m.guidedWorkflow.BuildCreateRequest()
+	if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-1" {
+		t.Fatalf("expected create request dependency on gwf-1, got %#v", req.DependsOnRunIDs)
+	}
+	if m.guidedWorkflow.context.workspaceID != "ws-1" || m.guidedWorkflow.context.worktreeID != "wt-1" || m.guidedWorkflow.context.sessionID != "s-1" {
+		t.Fatalf("expected follow-up context to inherit workflow scope, got %#v", m.guidedWorkflow.context)
+	}
+}
+
+func TestWorkflowContextActionCreateFollowUpRejectsUnsupportedStatus(t *testing.T) {
+	m := NewModel(nil)
+	handled, cmd := m.handleWorkflowContextMenuAction(ContextMenuWorkflowCreateFollowUp, contextMenuTarget{
+		workflowID:     "gwf-1",
+		workflowStatus: guidedworkflows.WorkflowRunStatusCompleted,
+	})
+	if !handled {
+		t.Fatalf("expected follow-up workflow action to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command for unsupported follow-up status")
+	}
+	if m.status != "follow-up workflows are only available for running, paused, or queued workflows" {
+		t.Fatalf("unexpected validation status %q", m.status)
 	}
 }
 

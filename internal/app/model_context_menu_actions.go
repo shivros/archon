@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -15,6 +16,7 @@ type contextMenuTarget struct {
 	worktreeID        string
 	sessionID         string
 	workflowID        string
+	workflowStatus    guidedworkflows.WorkflowRunStatus
 	workflowDismissed bool
 }
 
@@ -269,6 +271,50 @@ func (m *Model) handleWorkflowContextMenuAction(action ContextMenuAction, target
 		}
 		m.enterRenameWorkflow(runID)
 		return true, nil
+	case ContextMenuWorkflowCreateFollowUp:
+		runID := strings.TrimSpace(target.workflowID)
+		if runID == "" {
+			m.setValidationStatus("select a workflow")
+			return true, nil
+		}
+		status := target.workflowStatus
+		if strings.TrimSpace(string(status)) == "" {
+			if resolved, ok := m.workflowRunStatus(runID); ok {
+				status = resolved
+			}
+		}
+		if !workflowStatusAllowsFollowUp(status) {
+			m.setValidationStatus("follow-up workflows are only available for running, paused, or queued workflows")
+			return true, nil
+		}
+		run := m.workflowRunByID(runID)
+		ctx := guidedWorkflowLaunchContext{
+			followUpRunID:    runID,
+			followUpRunLabel: strings.TrimSpace(target.targetLabel),
+		}
+		if run != nil {
+			ctx.workspaceID = strings.TrimSpace(run.WorkspaceID)
+			ctx.worktreeID = strings.TrimSpace(run.WorktreeID)
+			ctx.sessionID = strings.TrimSpace(run.SessionID)
+		}
+		if strings.TrimSpace(ctx.workspaceID) == "" || strings.TrimSpace(ctx.worktreeID) == "" || strings.TrimSpace(ctx.sessionID) == "" {
+			workspaceID, worktreeID, sessionID := m.workflowRunContextFromSessions(runID)
+			if strings.TrimSpace(ctx.workspaceID) == "" {
+				ctx.workspaceID = strings.TrimSpace(workspaceID)
+			}
+			if strings.TrimSpace(ctx.worktreeID) == "" {
+				ctx.worktreeID = strings.TrimSpace(worktreeID)
+			}
+			if strings.TrimSpace(ctx.sessionID) == "" {
+				ctx.sessionID = strings.TrimSpace(sessionID)
+			}
+		}
+		if strings.TrimSpace(ctx.workspaceID) == "" && strings.TrimSpace(ctx.worktreeID) == "" {
+			m.setValidationStatus("workflow context unavailable for follow-up")
+			return true, nil
+		}
+		m.setStatusMessage("create follow-up workflow from " + runID)
+		return true, m.startGuidedWorkflowWithContext(ctx)
 	case ContextMenuWorkflowStop:
 		runID := strings.TrimSpace(target.workflowID)
 		if runID == "" {
@@ -303,4 +349,21 @@ func (m *Model) handleWorkflowContextMenuAction(action ContextMenuAction, target
 	default:
 		return false, nil
 	}
+}
+
+func (m *Model) workflowRunByID(runID string) *guidedworkflows.WorkflowRun {
+	if m == nil {
+		return nil
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil
+	}
+	for _, run := range m.workflowRuns {
+		if run == nil || strings.TrimSpace(run.ID) != runID {
+			continue
+		}
+		return run
+	}
+	return nil
 }

@@ -30,12 +30,14 @@ const (
 )
 
 type guidedWorkflowLaunchContext struct {
-	workspaceID   string
-	workspaceName string
-	worktreeID    string
-	worktreeName  string
-	sessionID     string
-	sessionName   string
+	workspaceID      string
+	workspaceName    string
+	worktreeID       string
+	worktreeName     string
+	sessionID        string
+	sessionName      string
+	followUpRunID    string
+	followUpRunLabel string
 }
 
 type guidedWorkflowTemplateOption struct {
@@ -863,6 +865,9 @@ func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowR
 		SelectedPolicySensitivity: strings.ToLower(strings.TrimSpace(c.sensitivityLabel())),
 		SelectedRuntimeOptions:    types.CloneRuntimeOptions(c.runtimeOptions),
 	}
+	if dependsOn := strings.TrimSpace(c.context.followUpRunID); dependsOn != "" {
+		req.DependsOnRunIDs = []string{dependsOn}
+	}
 	if override := policyOverrideForSensitivity(c.sensitivity); override != nil {
 		req.PolicyOverrides = override
 	}
@@ -959,10 +964,28 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 		fmt.Sprintf("- Provider: %s", valueOrFallback(c.provider, "(not selected)")),
 		fmt.Sprintf("- Policy sensitivity: %s", sensitivity),
 	}
+	if dependsOn := c.followUpDependencySummary(); dependsOn != "" {
+		lines = append(lines, fmt.Sprintf("- Depends on: %s (read-only)", dependsOn))
+	}
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
 	}
 	return joinGuidedWorkflowLines(lines)
+}
+
+func (c *GuidedWorkflowUIController) followUpDependencySummary() string {
+	if c == nil {
+		return ""
+	}
+	runID := strings.TrimSpace(c.context.followUpRunID)
+	if runID == "" {
+		return ""
+	}
+	label := strings.TrimSpace(c.context.followUpRunLabel)
+	if label == "" || strings.EqualFold(label, runID) {
+		return runID
+	}
+	return label + " (" + runID + ")"
 }
 
 func (c *GuidedWorkflowUIController) renderLive() string {
@@ -985,7 +1008,8 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 		lines = append(lines, fmt.Sprintf("- Decision explanation: %s", explain))
 	}
 	lines = append(lines, "", "### Phase Progress")
-	lines = append(lines, c.renderPhaseProgress()...)
+	lines = append(lines, "")
+	lines = append(lines, renderGuidedWorkflowMonospaceBlock(c.renderPhaseProgress())...)
 	lines = append(lines, "", "### Execution Details")
 	lines = append(lines, c.renderExecutionDetails()...)
 	lines = append(lines, "", "### Artifacts / Timeline")
@@ -1129,22 +1153,44 @@ func joinGuidedWorkflowLines(lines []string) string {
 
 func (c *GuidedWorkflowUIController) renderPhaseProgress() []string {
 	if c == nil || c.run == nil || len(c.run.Phases) == 0 {
-		return []string{"- No phase data"}
+		return []string{"No phase data"}
 	}
-	lines := make([]string, 0, len(c.run.Phases)*2)
+	lines := make([]string, 0, len(c.run.Phases)*3)
 	for phaseIdx, phase := range c.run.Phases {
+		if phaseIdx > 0 {
+			lines = append(lines, "")
+		}
 		phasePrefix := phaseStatusPrefix(phase.Status)
-		lines = append(lines, fmt.Sprintf("%s %d. %s", phasePrefix, phaseIdx+1, valueOrFallback(phase.Name, phase.ID)))
+		lines = append(lines, fmt.Sprintf("%s Phase %d  %s", phasePrefix, phaseIdx+1, valueOrFallback(phase.Name, phase.ID)))
+		if len(phase.Steps) == 0 {
+			lines = append(lines, "    (no steps)")
+			continue
+		}
 		for stepIdx, step := range phase.Steps {
 			selected := " "
 			if phaseIdx == c.selectedPhase && stepIdx == c.selectedStep {
 				selected = ">"
 			}
 			traceChip := c.stepTraceChip(step)
-			lines = append(lines, fmt.Sprintf("  %s %s %s %s", selected, stepStatusPrefix(step.Status), valueOrFallback(step.Name, step.ID), traceChip))
+			line := fmt.Sprintf("  %s %s Step %d.%d  %s", selected, stepStatusPrefix(step.Status), phaseIdx+1, stepIdx+1, valueOrFallback(step.Name, step.ID))
+			if traceChip != "" {
+				line += " " + traceChip
+			}
+			lines = append(lines, line)
 		}
 	}
 	return lines
+}
+
+func renderGuidedWorkflowMonospaceBlock(lines []string) []string {
+	if len(lines) == 0 {
+		return []string{"```text", "```"}
+	}
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, "```text")
+	out = append(out, lines...)
+	out = append(out, "```")
+	return out
 }
 
 func (c *GuidedWorkflowUIController) renderExecutionDetails() []string {
@@ -1529,6 +1575,8 @@ func runStatusText(status guidedworkflows.WorkflowRunStatus) string {
 	switch status {
 	case guidedworkflows.WorkflowRunStatusCreated:
 		return "created"
+	case guidedworkflows.WorkflowRunStatusQueued:
+		return "queued (waiting for dependencies)"
 	case guidedworkflows.WorkflowRunStatusRunning:
 		return "running"
 	case guidedworkflows.WorkflowRunStatusPaused:

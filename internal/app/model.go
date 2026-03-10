@@ -2289,6 +2289,7 @@ func (m *Model) handleContextMenuAction(action ContextMenuAction) tea.Cmd {
 		worktreeID:        m.contextMenu.WorktreeID(),
 		sessionID:         m.contextMenu.SessionID(),
 		workflowID:        m.contextMenu.WorkflowID(),
+		workflowStatus:    m.contextMenu.WorkflowStatus(),
 		workflowDismissed: m.contextMenu.WorkflowDismissed(),
 	}
 	m.contextMenu.Close()

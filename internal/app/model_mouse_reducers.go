@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 
+	"control/internal/guidedworkflows"
+
 	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -213,7 +215,11 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 					runID := entry.workflowRunID()
 					if runID != "" {
 						dismissed := entry.workflow != nil && entry.workflow.DismissedAt != nil
-						m.contextMenu.OpenWorkflow(runID, entry.Title(), dismissed, mouse.X, mouse.Y)
+						status := guidedworkflows.WorkflowRunStatus("")
+						if entry.workflow != nil {
+							status = entry.workflow.Status
+						}
+						m.contextMenu.OpenWorkflow(runID, entry.Title(), status, dismissed, mouse.X, mouse.Y)
 						return true
 					}
 				}

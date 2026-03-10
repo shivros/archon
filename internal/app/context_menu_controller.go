@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"control/internal/guidedworkflows"
+
 	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -37,6 +39,7 @@ const (
 	ContextMenuSessionInterrupt
 	ContextMenuSessionCopyID
 	ContextMenuWorkflowOpen
+	ContextMenuWorkflowCreateFollowUp
 	ContextMenuWorkflowRename
 	ContextMenuWorkflowStop
 	ContextMenuWorkflowDismiss
@@ -60,19 +63,20 @@ const (
 )
 
 type ContextMenuController struct {
-	active      bool
-	targetKind  contextMenuTargetKind
-	targetID    string
-	workspaceID string
-	worktreeID  string
-	sessionID   string
-	workflowID  string
-	dismissed   bool
-	targetLabel string
-	items       []contextMenuItem
-	selected    int
-	x           int
-	y           int
+	active         bool
+	targetKind     contextMenuTargetKind
+	targetID       string
+	workspaceID    string
+	worktreeID     string
+	sessionID      string
+	workflowID     string
+	workflowStatus guidedworkflows.WorkflowRunStatus
+	dismissed      bool
+	targetLabel    string
+	items          []contextMenuItem
+	selected       int
+	x              int
+	y              int
 }
 
 func NewContextMenuController() *ContextMenuController {
@@ -125,6 +129,13 @@ func (c *ContextMenuController) WorkflowDismissed() bool {
 	return c.dismissed
 }
 
+func (c *ContextMenuController) WorkflowStatus() guidedworkflows.WorkflowRunStatus {
+	if c == nil {
+		return ""
+	}
+	return c.workflowStatus
+}
+
 func (c *ContextMenuController) TargetLabel() string {
 	if c == nil {
 		return ""
@@ -143,6 +154,7 @@ func (c *ContextMenuController) Close() {
 	c.worktreeID = ""
 	c.sessionID = ""
 	c.workflowID = ""
+	c.workflowStatus = ""
 	c.dismissed = false
 	c.targetLabel = ""
 	c.items = nil
@@ -160,6 +172,7 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 	c.worktreeID = ""
 	c.sessionID = ""
 	c.workflowID = ""
+	c.workflowStatus = ""
 	c.dismissed = false
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
@@ -189,6 +202,7 @@ func (c *ContextMenuController) OpenWorktree(worktreeID, workspaceID, label stri
 	c.workspaceID = workspaceID
 	c.sessionID = ""
 	c.workflowID = ""
+	c.workflowStatus = ""
 	c.dismissed = false
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
@@ -215,6 +229,7 @@ func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, 
 	c.workspaceID = workspaceID
 	c.worktreeID = worktreeID
 	c.workflowID = ""
+	c.workflowStatus = ""
 	c.dismissed = false
 	c.targetLabel = strings.TrimSpace(label)
 	c.items = []contextMenuItem{
@@ -233,7 +248,13 @@ func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, 
 	c.y = y
 }
 
-func (c *ContextMenuController) OpenWorkflow(workflowID, label string, dismissed bool, x, y int) {
+func (c *ContextMenuController) OpenWorkflow(
+	workflowID,
+	label string,
+	status guidedworkflows.WorkflowRunStatus,
+	dismissed bool,
+	x, y int,
+) {
 	if c == nil {
 		return
 	}
@@ -241,6 +262,7 @@ func (c *ContextMenuController) OpenWorkflow(workflowID, label string, dismissed
 	c.targetKind = contextTargetWorkflow
 	c.targetID = workflowID
 	c.workflowID = workflowID
+	c.workflowStatus = status
 	c.dismissed = dismissed
 	c.workspaceID = ""
 	c.worktreeID = ""
@@ -252,14 +274,33 @@ func (c *ContextMenuController) OpenWorkflow(workflowID, label string, dismissed
 	}
 	c.items = []contextMenuItem{
 		{Label: "Open Workflow", Action: ContextMenuWorkflowOpen},
-		{Label: "Rename Workflow", Action: ContextMenuWorkflowRename},
-		{Label: "Stop Workflow", Action: ContextMenuWorkflowStop},
-		visibilityAction,
-		{Label: "Copy Workflow ID", Action: ContextMenuWorkflowCopyID},
 	}
+	if workflowStatusAllowsFollowUp(status) {
+		c.items = append(c.items, contextMenuItem{
+			Label:  "Create Follow-up Workflow",
+			Action: ContextMenuWorkflowCreateFollowUp,
+		})
+	}
+	c.items = append(c.items,
+		contextMenuItem{Label: "Rename Workflow", Action: ContextMenuWorkflowRename},
+		contextMenuItem{Label: "Stop Workflow", Action: ContextMenuWorkflowStop},
+		visibilityAction,
+		contextMenuItem{Label: "Copy Workflow ID", Action: ContextMenuWorkflowCopyID},
+	)
 	c.selected = 0
 	c.x = x
 	c.y = y
+}
+
+func workflowStatusAllowsFollowUp(status guidedworkflows.WorkflowRunStatus) bool {
+	switch status {
+	case guidedworkflows.WorkflowRunStatusRunning,
+		guidedworkflows.WorkflowRunStatusPaused,
+		guidedworkflows.WorkflowRunStatusQueued:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *ContextMenuController) HandleKey(msg tea.KeyMsg) (bool, ContextMenuAction) {
