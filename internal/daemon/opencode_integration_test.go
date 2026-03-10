@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/config"
 	"control/internal/providers"
 	"control/internal/types"
 )
@@ -88,6 +89,10 @@ func openCodeIntegrationTimeout(provider string) time.Duration {
 }
 
 func openCodeConfiguredIntegrationModel(provider string) string {
+	return openCodeConfiguredIntegrationModelWithCoreConfig(provider, loadCoreConfigOrDefault())
+}
+
+func openCodeConfiguredIntegrationModelWithCoreConfig(provider string, coreCfg config.CoreConfig) string {
 	normalized := providers.Normalize(provider)
 	switch normalized {
 	case "kilocode":
@@ -98,6 +103,9 @@ func openCodeConfiguredIntegrationModel(provider string) string {
 		if model := strings.TrimSpace(os.Getenv("ARCHON_OPENCODE_MODEL")); model != "" {
 			return model
 		}
+	}
+	if model := strings.TrimSpace(coreCfg.OpenCodeDefaultModel(normalized)); model != "" {
+		return model
 	}
 	if fallback := strings.TrimSpace(openCodeIntegrationFallbackModels[normalized]); fallback != "" {
 		return fallback
@@ -189,11 +197,24 @@ func TestOpenCodeIntegrationModelSelectorSelectModel(t *testing.T) {
 	})
 
 	t.Run("uses deterministic provider fallback when env/config are empty", func(t *testing.T) {
-		if got := openCodeConfiguredIntegrationModel("opencode"); got != openCodeIntegrationDefaultModel {
+		cfg := config.DefaultCoreConfig()
+		if got := openCodeConfiguredIntegrationModelWithCoreConfig("opencode", cfg); got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected opencode fallback model, got %q", got)
 		}
-		if got := openCodeConfiguredIntegrationModel("kilocode"); got != openCodeIntegrationDefaultModel {
+		if got := openCodeConfiguredIntegrationModelWithCoreConfig("kilocode", cfg); got != openCodeIntegrationDefaultModel {
 			t.Fatalf("expected kilocode fallback model, got %q", got)
+		}
+	})
+
+	t.Run("uses configured core default model when env is empty", func(t *testing.T) {
+		cfg := config.DefaultCoreConfig()
+		cfg.Providers.OpenCode.DefaultModel = "openrouter/custom/opencode"
+		cfg.Providers.KiloCode.DefaultModel = "openrouter/custom/kilo"
+		if got := openCodeConfiguredIntegrationModelWithCoreConfig("opencode", cfg); got != "openrouter/custom/opencode" {
+			t.Fatalf("expected configured opencode core default model, got %q", got)
+		}
+		if got := openCodeConfiguredIntegrationModelWithCoreConfig("kilocode", cfg); got != "openrouter/custom/kilo" {
+			t.Fatalf("expected configured kilocode core default model, got %q", got)
 		}
 	})
 

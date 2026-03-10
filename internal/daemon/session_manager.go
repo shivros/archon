@@ -20,6 +20,7 @@ import (
 )
 
 var ErrSessionNotFound = errors.New("session not found")
+var ErrSessionNotLive = errors.New("session not live")
 
 type StartSessionConfig struct {
 	Provider              string
@@ -524,7 +525,7 @@ func (m *SessionManager) SubscribeItems(id string) (<-chan map[string]any, func(
 	state, ok := m.sessions[id]
 	m.mu.Unlock()
 	if !ok || state == nil || state.itemsHub == nil {
-		return nil, nil, ErrSessionNotFound
+		return nil, nil, ErrSessionNotLive
 	}
 	ch, cancel := state.itemsHub.Add()
 	return ch, cancel, nil

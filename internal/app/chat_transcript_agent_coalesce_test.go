@@ -127,3 +127,21 @@ func TestChatTranscriptSplitsAfterExplicitEndMarkerByDefault(t *testing.T) {
 		t.Fatalf("unexpected blocks %#v", blocks)
 	}
 }
+
+func TestConcatAdjacentAgentTextAvoidsDuplicateReplaySuffix(t *testing.T) {
+	if got := concatAdjacentAgentText("shows", "shows: `an "); got != "shows: `an " {
+		t.Fatalf("expected cumulative replay to merge cleanly, got %q", got)
+	}
+}
+
+func TestConcatAdjacentAgentTextUsesSuffixPrefixOverlap(t *testing.T) {
+	if got := concatAdjacentAgentText("Upscale button ", "button is disabled"); got != "Upscale button is disabled" {
+		t.Fatalf("expected overlap-aware merge, got %q", got)
+	}
+}
+
+func TestConcatAdjacentAgentTextDropsExactReplayChunk(t *testing.T) {
+	if got := concatAdjacentAgentText("Tooltip", "Tooltip"); got != "Tooltip" {
+		t.Fatalf("expected exact replay chunk to be ignored, got %q", got)
+	}
+}

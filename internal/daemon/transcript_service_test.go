@@ -159,3 +159,49 @@ func TestTranscriptProjectionRejectsUnsupportedKind(t *testing.T) {
 		t.Fatalf("expected unsupported event kind to be rejected")
 	}
 }
+
+func TestTranscriptProjectionDedupesSemanticReplayWithinTurn(t *testing.T) {
+	projection := NewTranscriptProjector("s1", "codex", "")
+	first := transcriptdomain.TranscriptEvent{
+		Kind:      transcriptdomain.TranscriptEventDelta,
+		SessionID: "s1",
+		Provider:  "codex",
+		Revision:  transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{{
+			ID:   "msg-user",
+			Kind: "message",
+			Role: "user",
+			Text: "I want to be able to configure the test models used in my archon core config.",
+			Meta: map[string]any{
+				"turn_id":             "turn-1",
+				"provider_message_id": "msg-user",
+				"created_at":          "2026-03-09T01:37:16.299Z",
+			},
+		}},
+	}
+	duplicate := transcriptdomain.TranscriptEvent{
+		Kind:      transcriptdomain.TranscriptEventDelta,
+		SessionID: "s1",
+		Provider:  "codex",
+		Revision:  transcriptdomain.MustParseRevisionToken("2"),
+		Delta: []transcriptdomain.Block{{
+			Kind: "user_message",
+			Role: "user",
+			Text: "I want to be able to configure the test models used in my archon core config.",
+			Meta: map[string]any{
+				"turn_id":    "turn-1",
+				"created_at": "2026-03-09T01:37:16.300Z",
+			},
+		}},
+	}
+	if !projection.Apply(first) {
+		t.Fatalf("expected first event to apply")
+	}
+	if projection.Apply(duplicate) {
+		t.Fatalf("expected semantic replay duplicate to be suppressed")
+	}
+	snapshot := projection.Snapshot()
+	if len(snapshot.Blocks) != 1 {
+		t.Fatalf("expected one deduped block, got %#v", snapshot.Blocks)
+	}
+}

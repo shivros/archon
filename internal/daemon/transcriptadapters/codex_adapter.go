@@ -179,7 +179,7 @@ func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage) (transcr
 		role = "reasoning"
 		variant = "reasoning"
 	}
-	return transcriptdomain.Block{
+	block := transcriptdomain.Block{
 		ID: strings.TrimSpace(firstNonEmpty(
 			asString(params["item_id"]),
 			asString(params["itemId"]),
@@ -190,7 +190,10 @@ func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage) (transcr
 		Role:    role,
 		Text:    text,
 		Variant: variant,
-	}, true
+		Meta:    transcriptMetaFromCodexEventParams(params),
+	}
+	ensureTranscriptBlockIdentityMeta(&block)
+	return block, true
 }
 
 func blockFromCodexEventItem(method string, raw json.RawMessage) (transcriptdomain.Block, bool) {
@@ -216,6 +219,8 @@ func blockFromCodexEventItem(method string, raw json.RawMessage) (transcriptdoma
 			block.Variant = "reasoning"
 		}
 	}
+	mergeTranscriptBlockMeta(&block, transcriptMetaFromCodexEventParams(params))
+	ensureTranscriptBlockIdentityMeta(&block)
 	return block, true
 }
 
@@ -282,7 +287,135 @@ func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {
 		asString(item["variant"]),
 		asString(item["subtype"]),
 	))
-	return transcriptdomain.Block{ID: id, Kind: kind, Role: role, Text: text, Variant: variant}, true
+	block := transcriptdomain.Block{
+		ID:      id,
+		Kind:    kind,
+		Role:    role,
+		Text:    text,
+		Variant: variant,
+		Meta:    transcriptMetaFromCodexItem(item),
+	}
+	ensureTranscriptBlockIdentityMeta(&block)
+	return block, true
+}
+
+func transcriptMetaFromCodexEventParams(params map[string]any) map[string]any {
+	if len(params) == 0 {
+		return nil
+	}
+	meta := map[string]any{}
+	if turnID := strings.TrimSpace(firstNonEmpty(
+		asString(params["turn_id"]),
+		asString(params["turnId"]),
+	)); turnID != "" {
+		meta["turn_id"] = turnID
+	}
+	if providerMessageID := strings.TrimSpace(firstNonEmpty(
+		asString(params["provider_message_id"]),
+		asString(params["providerMessageID"]),
+		asString(params["message_id"]),
+		asString(params["messageId"]),
+		asString(params["item_id"]),
+		asString(params["itemId"]),
+		asString(params["itemid"]),
+		asString(params["id"]),
+	)); providerMessageID != "" {
+		meta["provider_message_id"] = providerMessageID
+	}
+	for _, key := range []string{"provider_created_at", "created_at", "createdAt", "timestamp", "ts"} {
+		if value := params[key]; value != nil && strings.TrimSpace(asString(value)) != "" {
+			meta[key] = value
+			break
+		}
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
+}
+
+func transcriptMetaFromCodexItem(item map[string]any) map[string]any {
+	if len(item) == 0 {
+		return nil
+	}
+	meta := map[string]any{}
+	if turnID := strings.TrimSpace(firstNonEmpty(
+		asString(item["turn_id"]),
+		asString(item["turnID"]),
+	)); turnID != "" {
+		meta["turn_id"] = turnID
+	} else if turnRaw, ok := item["turn"].(map[string]any); ok && turnRaw != nil {
+		if turnID := strings.TrimSpace(asString(turnRaw["id"])); turnID != "" {
+			meta["turn_id"] = turnID
+		}
+	}
+	if providerMessageID := strings.TrimSpace(firstNonEmpty(
+		asString(item["provider_message_id"]),
+		asString(item["providerMessageID"]),
+		asString(item["message_id"]),
+		asString(item["messageId"]),
+		asString(item["id"]),
+		asString(item["item_id"]),
+	)); providerMessageID != "" {
+		meta["provider_message_id"] = providerMessageID
+	} else if message, ok := item["message"].(map[string]any); ok && message != nil {
+		if providerMessageID := strings.TrimSpace(firstNonEmpty(
+			asString(message["id"]),
+			asString(message["message_id"]),
+		)); providerMessageID != "" {
+			meta["provider_message_id"] = providerMessageID
+		}
+	}
+	for _, key := range []string{"provider_created_at", "created_at", "createdAt", "timestamp", "ts"} {
+		if value := item[key]; value != nil && strings.TrimSpace(asString(value)) != "" {
+			meta[key] = value
+			break
+		}
+	}
+	if _, ok := meta["created_at"]; !ok {
+		if message, ok := item["message"].(map[string]any); ok && message != nil {
+			for _, key := range []string{"created_at", "createdAt", "timestamp", "ts"} {
+				if value := message[key]; value != nil && strings.TrimSpace(asString(value)) != "" {
+					meta["created_at"] = value
+					break
+				}
+			}
+		}
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
+}
+
+func mergeTranscriptBlockMeta(block *transcriptdomain.Block, incoming map[string]any) {
+	if block == nil || len(incoming) == 0 {
+		return
+	}
+	if block.Meta == nil {
+		block.Meta = map[string]any{}
+	}
+	for key, value := range incoming {
+		if _, exists := block.Meta[key]; exists {
+			continue
+		}
+		block.Meta[key] = value
+	}
+}
+
+func ensureTranscriptBlockIdentityMeta(block *transcriptdomain.Block) {
+	if block == nil {
+		return
+	}
+	if block.Meta == nil {
+		block.Meta = map[string]any{}
+	}
+	if strings.TrimSpace(asString(block.Meta["provider_message_id"])) == "" && strings.TrimSpace(block.ID) != "" {
+		block.Meta["provider_message_id"] = strings.TrimSpace(block.ID)
+	}
+	if len(block.Meta) == 0 {
+		block.Meta = nil
+	}
 }
 
 func itemTextFromContent(raw any) string {

@@ -14,14 +14,10 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 2. The UI `Model` in `internal/app/model.go` coordinates modes, selection, rendering, polling, and stream consumption.
 3. The UI talks to the daemon through interfaces in `internal/app/api.go`, backed by `internal/client.Client`.
    - Transcript-first UI paths depend on `SessionUnifiedTranscriptAPI`.
-   - Provider-specific legacy stream routes are isolated behind `SessionLegacyStreamAPI`.
 4. The client uses REST endpoints under `/v1/...` and SSE endpoints for live streams:
    - `/v1/sessions/:id/tail?follow=1` for log stream chunks
    - `/v1/sessions/:id/transcript` for provider-agnostic transcript snapshots
    - `/v1/sessions/:id/transcript/stream?follow=1` for provider-agnostic transcript events
-   - Legacy compatibility routes retained for external clients:
-     - `/v1/sessions/:id/events?follow=1`
-     - `/v1/sessions/:id/items?follow=1`
 5. `internal/daemon/api.go` handles HTTP transport/routing and delegates to services (`SessionService`, workspace/state services).
 6. `SessionService` and `SessionManager` orchestrate provider adapters:
    - codex provider (`provider_codex.go`)
@@ -39,15 +35,29 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 15. Guided workflow templates are sourced from `~/.archon/workflow_templates.json`; when present, that file fully replaces built-in defaults (no merge). Built-in defaults are defined in `internal/guidedworkflows/default_workflow_templates.json` and are used only when no user template file exists.
 16. Guided workflow step execution supports prompt dispatch through an injected `StepPromptDispatcher`; when dispatched, steps move to `awaiting_turn` and are only completed by turn-completed events, preserving turn-driven progression.
 17. Workflow template steps may optionally include `runtime_options` (for example model/reasoning/access). These are applied as per-turn overrides during step dispatch and, on successful send, become the session default runtime options for later turns.
+18. Guided workflow runs support dependency chaining: a run can declare `depends_on_run_ids` and transition to `queued` until upstream runs satisfy dependency conditions.
+19. Dependency handling inside `internal/guidedworkflows` is split into internal collaborators (`dependencyValidator`, `dependencyGraphIndex`, `dependencyEvaluator`, `queuedRunActivator`) while `InMemoryRunService` remains orchestration glue.
+20. Dependency rechecks are triggered asynchronously when upstream run status changes and routed through the existing dispatch queue (`reason=dependency_changed`) so queued runs can auto-start when dependencies complete.
 
 ## Streaming and Persistence
 
 - Streaming state in UI is consumed via:
   - `StreamController` (log chunks),
   - `TranscriptStreamController` (unified transcript stream).
-- `CodexStreamController` and `ItemStreamController` remain in UI internals as compatibility surfaces while legacy daemon routes exist.
 - Persistent app/session metadata is stored by daemon-backed stores in `internal/store` and retrieved by the UI through snapshot calls (`sessions`, `history`, `approvals`, app state).
 - UI keeps a transcript cache keyed by sidebar selection so switching sessions is fast while still reconciling with history snapshots.
+
+## Canonical Transcript Hub Ownership
+
+- Daemon transcript follow is session-scoped through one `CanonicalTranscriptHub` per session.
+- A live hub owns one ingress attachment and fans out canonical events to all subscribers.
+- `CanonicalTranscriptHubRegistry` owns lifecycle policy:
+  - hub creation and retention
+  - subscriber attach/detach accounting
+  - idle eviction after last subscriber leaves
+  - stale-entry cleanup when a hub closes internally
+- Hub runtime owns canonical lifecycle/status semantics (`ready`, `reconnecting`, `error`, `closed`) and revision sequencing authority.
+- App depends on transcript snapshot + transcript stream contracts and can share one session follow runtime across compose/recents observers.
 
 ## Status and Toast Policy
 

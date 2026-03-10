@@ -296,36 +296,6 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
-	case "events":
-		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
-				"error": "method not allowed",
-			})
-			return
-		}
-		if !isFollowRequest(r) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "follow=1 is required",
-			})
-			return
-		}
-		a.streamEvents(w, r, id)
-		return
-	case "items":
-		if r.Method != http.MethodGet {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
-				"error": "method not allowed",
-			})
-			return
-		}
-		if !isFollowRequest(r) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "follow=1 is required",
-			})
-			return
-		}
-		a.streamItems(w, r, id)
-		return
 	case "debug":
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{

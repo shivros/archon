@@ -50,6 +50,7 @@ var registry = []Definition{
 		Capabilities: Capabilities{
 			SupportsGuidedWorkflowDispatch: true,
 			UsesItems:                      true,
+			SupportsApprovals:              true,
 			NoProcess:                      true,
 		},
 	},

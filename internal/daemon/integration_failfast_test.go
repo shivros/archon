@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -38,7 +39,7 @@ func startSessionTurnFailureMonitor(server *httptest.Server, sessionID string) (
 	if server == nil || strings.TrimSpace(sessionID) == "" {
 		return failures, closeFn
 	}
-	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions/"+sessionID+"/events?follow=1", nil)
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions/"+sessionID+"/transcript/stream?follow=1", nil)
 	req.Header.Set("Authorization", "Bearer token")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -66,11 +67,11 @@ func startSessionTurnFailureMonitor(server *httptest.Server, sessionID string) (
 			if payload == "" {
 				continue
 			}
-			var event types.CodexEvent
+			var event transcriptdomain.TranscriptEvent
 			if err := json.Unmarshal([]byte(payload), &event); err != nil {
 				continue
 			}
-			if failure := turnFailureFromEvent(event); failure != "" {
+			if failure := turnFailureFromTranscriptEvent(event); failure != "" {
 				select {
 				case failures <- failure:
 				default:
@@ -113,6 +114,23 @@ func turnFailureFromEvent(event types.CodexEvent) string {
 		}
 		if status == "" && strings.TrimSpace(turn.Error) != "" {
 			return "turn error: " + strings.TrimSpace(turn.Error)
+		}
+	}
+	return ""
+}
+
+func turnFailureFromTranscriptEvent(event transcriptdomain.TranscriptEvent) string {
+	switch event.Kind {
+	case transcriptdomain.TranscriptEventTurnFailed:
+		if event.Turn != nil {
+			if msg := strings.TrimSpace(event.Turn.Error); msg != "" {
+				return "turn failed: " + msg
+			}
+		}
+		return "turn failed"
+	case transcriptdomain.TranscriptEventStreamStatus:
+		if event.StreamStatus == transcriptdomain.StreamStatusError {
+			return "stream error"
 		}
 	}
 	return ""

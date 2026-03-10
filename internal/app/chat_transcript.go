@@ -604,7 +604,23 @@ func concatAdjacentAgentText(current, next string) string {
 	if strings.TrimSpace(current) == "" {
 		return next
 	}
+	if strings.HasSuffix(current, next) {
+		return current
+	}
+	maxOverlap := min(len(current), len(next))
+	for overlap := maxOverlap; overlap > 0; overlap-- {
+		if current[len(current)-overlap:] == next[:overlap] {
+			return current + next[overlap:]
+		}
+	}
 	return current + next
+}
+
+func min(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func makeChatBlockID(role ChatRole, index int, text string) string {

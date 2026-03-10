@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/types"
 )
 
@@ -73,8 +74,7 @@ func collectEvents(ch <-chan string, timeout time.Duration) []types.CodexEvent {
 			if !ok {
 				return out
 			}
-			var event types.CodexEvent
-			if err := json.Unmarshal([]byte(data), &event); err == nil {
+			if event, ok := codexEventFromSSEPayload(data); ok {
 				out = append(out, event)
 			}
 		case <-time.After(integrationSSEPollInterval):
@@ -91,14 +91,92 @@ func waitForEvent(ch <-chan string, method string, timeout time.Duration) bool {
 			if !ok {
 				return false
 			}
-			var event types.CodexEvent
-			if err := json.Unmarshal([]byte(data), &event); err == nil {
-				if event.Method == method {
-					return true
-				}
+			event, parsed := codexEventFromSSEPayload(data)
+			if !parsed {
+				continue
+			}
+			if event.Method == method {
+				return true
 			}
 		case <-time.After(integrationSSEPollInterval):
 		}
 	}
 	return false
+}
+
+func codexEventFromSSEPayload(data string) (types.CodexEvent, bool) {
+	var event types.CodexEvent
+	if err := json.Unmarshal([]byte(data), &event); err == nil && strings.TrimSpace(event.Method) != "" {
+		return event, true
+	}
+
+	var transcriptEvent transcriptdomain.TranscriptEvent
+	if err := json.Unmarshal([]byte(data), &transcriptEvent); err != nil {
+		return types.CodexEvent{}, false
+	}
+	synth := types.CodexEvent{}
+	switch transcriptEvent.Kind {
+	case transcriptdomain.TranscriptEventTurnStarted:
+		synth.Method = "turn/started"
+		synth.Params = mustJSONMarshal(map[string]any{
+			"turn": map[string]any{
+				"id":     transcriptTurnID(transcriptEvent),
+				"status": "started",
+			},
+		})
+	case transcriptdomain.TranscriptEventTurnCompleted:
+		synth.Method = "turn/completed"
+		synth.Params = mustJSONMarshal(map[string]any{
+			"turn": map[string]any{
+				"id":     transcriptTurnID(transcriptEvent),
+				"status": "completed",
+			},
+		})
+	case transcriptdomain.TranscriptEventTurnFailed:
+		status := "interrupted"
+		if turnError := strings.ToLower(strings.TrimSpace(transcriptTurnError(transcriptEvent))); strings.Contains(turnError, "interrupt") {
+			status = "interrupted"
+		}
+		synth.Method = "turn/completed"
+		synth.Params = mustJSONMarshal(map[string]any{
+			"turn": map[string]any{
+				"id":     transcriptTurnID(transcriptEvent),
+				"status": status,
+				"error":  transcriptTurnError(transcriptEvent),
+			},
+		})
+	case transcriptdomain.TranscriptEventApprovalPending, transcriptdomain.TranscriptEventApprovalResolved:
+		synth.Method = "approval"
+		if transcriptEvent.Approval != nil {
+			if method := strings.TrimSpace(transcriptEvent.Approval.Method); method != "" {
+				synth.Method = method
+			}
+			if transcriptEvent.Approval.RequestID != 0 {
+				id := transcriptEvent.Approval.RequestID
+				synth.ID = &id
+			}
+		}
+	default:
+		return types.CodexEvent{}, false
+	}
+	return synth, true
+}
+
+func transcriptTurnID(event transcriptdomain.TranscriptEvent) string {
+	if event.Turn == nil {
+		return ""
+	}
+	return strings.TrimSpace(event.Turn.TurnID)
+}
+
+func transcriptTurnError(event transcriptdomain.TranscriptEvent) string {
+	if event.Turn == nil {
+		return ""
+	}
+	return strings.TrimSpace(event.Turn.Error)
+}
+
+func mustJSONMarshal(payload map[string]any) json.RawMessage {
+	data, _ := json.Marshal(payload)
+	return data
 }

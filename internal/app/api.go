@@ -140,14 +140,6 @@ type SessionTailStreamAPI interface {
 	TailStream(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
 }
 
-type SessionEventStreamAPI interface {
-	EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error)
-}
-
-type SessionItemsStreamAPI interface {
-	ItemsStream(ctx context.Context, id string) (<-chan map[string]any, func(), error)
-}
-
 type SessionDebugStreamAPI interface {
 	DebugStream(ctx context.Context, id string) (<-chan types.DebugEvent, func(), error)
 }
@@ -172,13 +164,6 @@ type SessionUnifiedTranscriptAPI interface {
 // SessionTranscriptAPI is kept as an alias for unified transcript consumers.
 type SessionTranscriptAPI interface {
 	SessionUnifiedTranscriptAPI
-}
-
-// SessionLegacyStreamAPI groups provider-specific legacy stream endpoints.
-// Keep this boundary separate from transcript-first codepaths.
-type SessionLegacyStreamAPI interface {
-	SessionEventStreamAPI
-	SessionItemsStreamAPI
 }
 
 type SessionKillAPI interface {
@@ -431,14 +416,6 @@ func (a *ClientAPI) GetTranscriptSnapshot(ctx context.Context, id string, lines 
 
 func (a *ClientAPI) TranscriptStream(ctx context.Context, id string, afterRevision string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
 	return a.client.TranscriptStream(ctx, id, afterRevision)
-}
-
-func (a *ClientAPI) EventStream(ctx context.Context, id string) (<-chan types.CodexEvent, func(), error) {
-	return a.client.EventStream(ctx, id)
-}
-
-func (a *ClientAPI) ItemsStream(ctx context.Context, id string) (<-chan map[string]any, func(), error) {
-	return a.client.ItemsStream(ctx, id)
 }
 
 func (a *ClientAPI) KillSession(ctx context.Context, id string) error {

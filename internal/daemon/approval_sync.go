@@ -40,6 +40,7 @@ func NewApprovalResyncService(stores *Stores, logger logging.Logger, extra ...Ap
 		logger:    logger,
 		providers: map[string]ApprovalSyncProvider{},
 	}
+	service.registerProvider(&claudeApprovalSyncProvider{})
 	service.registerProvider(&codexApprovalSyncProvider{stores: stores, logger: logger})
 	service.registerProvider(&openCodeApprovalSyncProvider{provider: "opencode", stores: stores, logger: logger})
 	service.registerProvider(&openCodeApprovalSyncProvider{provider: "kilocode", stores: stores, logger: logger})

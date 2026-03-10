@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -289,6 +290,98 @@ func TestOpenCodeApprovalSyncProviderSyncSessionApprovals(t *testing.T) {
 	metadata, _ := params["metadata"].(map[string]any)
 	if metadata == nil || metadata["cwd"] != "/repo/worktree" {
 		t.Fatalf("missing metadata in params: %#v", params)
+	}
+}
+
+func TestClaudeApprovalSyncProviderSyncSessionApprovalsFindsPendingExitPlanMode(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+
+	sessionID := "claude-session"
+	sessionDir := filepath.Join(base, ".archon", "sessions", sessionID)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+
+	debugLines := []string{
+		`{"type":"debug","session_id":"claude-session","provider":"claude","stream":"provider_stdout_raw","chunk":"{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_pending\",\"name\":\"ExitPlanMode\",\"input\":{\"plan\":\"# Ship Persona Chat Deep Links\",\"allowedPrompts\":[{\"tool\":\"Bash\",\"prompt\":\"run tests in asabot package\"}]}}]}}","ts":"2026-03-08T17:19:24.572210033Z","seq":1}`,
+		`{"type":"debug","session_id":"claude-session","provider":"claude","stream":"provider_stdout_raw","chunk":"{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"Exit plan mode?\",\"is_error\":true,\"tool_use_id\":\"toolu_pending\"}]}}","ts":"2026-03-08T17:19:24.640619014Z","seq":2}`,
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "debug.jsonl"), []byte(debugLines[0]+"\n"+debugLines[1]+"\n"), 0o600); err != nil {
+		t.Fatalf("write debug: %v", err)
+	}
+	items := []string{
+		`{"type":"userMessage","created_at":"2026-03-08T17:13:34.037914764Z","content":[{"type":"text","text":"Please update chat links"}]}`,
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "items.jsonl"), []byte(items[0]+"\n"), 0o600); err != nil {
+		t.Fatalf("write items: %v", err)
+	}
+
+	provider := &claudeApprovalSyncProvider{}
+	result, err := provider.SyncSessionApprovals(context.Background(), &types.Session{
+		ID:       sessionID,
+		Provider: "claude",
+	}, nil)
+	if err != nil {
+		t.Fatalf("SyncSessionApprovals: %v", err)
+	}
+	if result == nil || !result.Authoritative {
+		t.Fatalf("expected authoritative result, got %#v", result)
+	}
+	if len(result.Approvals) != 1 {
+		t.Fatalf("expected one pending approval, got %#v", result.Approvals)
+	}
+	approval := result.Approvals[0]
+	if approval.Method != types.ApprovalMethodClaudeExitPlanMode {
+		t.Fatalf("unexpected method: %q", approval.Method)
+	}
+	params := map[string]any{}
+	if err := json.Unmarshal(approval.Params, &params); err != nil {
+		t.Fatalf("decode approval params: %v", err)
+	}
+	if params["title"] != "Ship Persona Chat Deep Links" {
+		t.Fatalf("missing plan title: %#v", params)
+	}
+	prompts, _ := params["allowed_prompts"].([]any)
+	if len(prompts) != 1 || prompts[0] != "Bash: run tests in asabot package" {
+		t.Fatalf("unexpected allowed prompts: %#v", params["allowed_prompts"])
+	}
+}
+
+func TestClaudeApprovalSyncProviderIgnoresRequestsAfterLaterUserMessage(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+
+	sessionID := "claude-session"
+	sessionDir := filepath.Join(base, ".archon", "sessions", sessionID)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+
+	debugLine := `{"type":"debug","session_id":"claude-session","provider":"claude","stream":"provider_stdout_raw","chunk":"{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_pending\",\"name\":\"ExitPlanMode\",\"input\":{\"plan\":\"# Ship Persona Chat Deep Links\"}}]}}","ts":"2026-03-08T17:19:24.572210033Z","seq":1}`
+	if err := os.WriteFile(filepath.Join(sessionDir, "debug.jsonl"), []byte(debugLine+"\n"), 0o600); err != nil {
+		t.Fatalf("write debug: %v", err)
+	}
+	items := []string{
+		`{"type":"userMessage","created_at":"2026-03-08T17:20:00.000000000Z","content":[{"type":"text","text":"Proceed"}]}`,
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "items.jsonl"), []byte(items[0]+"\n"), 0o600); err != nil {
+		t.Fatalf("write items: %v", err)
+	}
+
+	provider := &claudeApprovalSyncProvider{}
+	result, err := provider.SyncSessionApprovals(context.Background(), &types.Session{
+		ID:       sessionID,
+		Provider: "claude",
+	}, nil)
+	if err != nil {
+		t.Fatalf("SyncSessionApprovals: %v", err)
+	}
+	if result == nil || !result.Authoritative {
+		t.Fatalf("expected authoritative result, got %#v", result)
+	}
+	if len(result.Approvals) != 0 {
+		t.Fatalf("expected approval to clear after later user message, got %#v", result.Approvals)
 	}
 }
 

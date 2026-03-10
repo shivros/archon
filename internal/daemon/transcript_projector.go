@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"control/internal/daemon/transcriptadapters"
 	"control/internal/daemon/transcriptdomain"
 )
+
+const transcriptDuplicateTimestampWindow = 2 * time.Second
 
 type TranscriptProjector interface {
 	Apply(event transcriptdomain.TranscriptEvent) bool
@@ -106,7 +109,11 @@ func (p *transcriptProjector) Apply(event transcriptdomain.TranscriptEvent) bool
 		if len(event.Delta) == 0 {
 			return false
 		}
-		p.blocks = append(p.blocks, event.Delta...)
+		delta := filterDuplicateTranscriptBlocks(p.blocks, event.Delta)
+		if len(delta) == 0 {
+			return false
+		}
+		p.blocks = append(p.blocks, delta...)
 	case transcriptdomain.TranscriptEventTurnStarted, transcriptdomain.TranscriptEventTurnCompleted, transcriptdomain.TranscriptEventTurnFailed:
 		if event.Turn == nil {
 			return false
@@ -141,4 +148,104 @@ func (p *transcriptProjector) Snapshot() transcriptdomain.TranscriptSnapshot {
 
 func (p *transcriptProjector) ActiveTurnID() string {
 	return strings.TrimSpace(p.activeTurn)
+}
+
+func filterDuplicateTranscriptBlocks(
+	existing []transcriptdomain.Block,
+	incoming []transcriptdomain.Block,
+) []transcriptdomain.Block {
+	if len(incoming) == 0 {
+		return nil
+	}
+	out := make([]transcriptdomain.Block, 0, len(incoming))
+	seen := append([]transcriptdomain.Block(nil), existing...)
+	for _, block := range incoming {
+		if isDuplicateTranscriptBlock(seen, block) {
+			continue
+		}
+		out = append(out, block)
+		seen = append(seen, block)
+	}
+	return out
+}
+
+func isDuplicateTranscriptBlock(existing []transcriptdomain.Block, next transcriptdomain.Block) bool {
+	role := strings.ToLower(strings.TrimSpace(next.Role))
+	if !transcriptRoleSupportsReplayDedupe(role) {
+		return false
+	}
+	text := normalizeTranscriptBlockText(next.Text)
+	if text == "" {
+		return false
+	}
+	nextMessageID := transcriptBlockMetaString(next.Meta, "provider_message_id", "providerMessageID", "message_id")
+	nextTurnID := transcriptBlockMetaString(next.Meta, "turn_id", "turnId")
+	nextCreatedAt := transcriptBlockMetaTime(next.Meta, "provider_created_at", "created_at", "createdAt", "timestamp", "ts")
+	for _, block := range existing {
+		if strings.ToLower(strings.TrimSpace(block.Role)) != role {
+			continue
+		}
+		if normalizeTranscriptBlockText(block.Text) != text {
+			continue
+		}
+		if nextMessageID != "" {
+			if currentMessageID := transcriptBlockMetaString(block.Meta, "provider_message_id", "providerMessageID", "message_id"); currentMessageID == nextMessageID {
+				return true
+			}
+		}
+		if nextTurnID != "" {
+			if currentTurnID := transcriptBlockMetaString(block.Meta, "turn_id", "turnId"); currentTurnID == nextTurnID {
+				return true
+			}
+		}
+		currentCreatedAt := transcriptBlockMetaTime(block.Meta, "provider_created_at", "created_at", "createdAt", "timestamp", "ts")
+		if !nextCreatedAt.IsZero() && !currentCreatedAt.IsZero() {
+			delta := nextCreatedAt.Sub(currentCreatedAt)
+			if delta < 0 {
+				delta = -delta
+			}
+			if delta <= transcriptDuplicateTimestampWindow {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func transcriptRoleSupportsReplayDedupe(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "assistant", "agent", "model", "user", "reasoning":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTranscriptBlockText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.TrimSpace(text)
+}
+
+func transcriptBlockMetaString(meta map[string]any, keys ...string) string {
+	if len(meta) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if value := strings.TrimSpace(asString(meta[key])); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func transcriptBlockMetaTime(meta map[string]any, keys ...string) time.Time {
+	if len(meta) == 0 {
+		return time.Time{}
+	}
+	for _, key := range keys {
+		if when := parsePersistedTimestamp(meta[key]); !when.IsZero() {
+			return when
+		}
+	}
+	return time.Time{}
 }

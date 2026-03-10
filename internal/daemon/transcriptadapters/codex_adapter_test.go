@@ -131,6 +131,9 @@ func TestTranscriptEventFromCodexEventAgentMessageDelta(t *testing.T) {
 	if got.Delta[0].Role != "assistant" || got.Delta[0].Text != "hello" || got.Delta[0].ID != "msg_1" {
 		t.Fatalf("unexpected delta payload: %#v", got.Delta[0])
 	}
+	if got.Delta[0].Meta["provider_message_id"] != "msg_1" {
+		t.Fatalf("expected provider message id metadata, got %#v", got.Delta[0].Meta)
+	}
 }
 
 func TestTranscriptEventFromCodexEventAgentMessageDeltaPreservesWhitespace(t *testing.T) {
@@ -204,6 +207,36 @@ func TestTranscriptEventFromCodexEventMalformedItemIgnored(t *testing.T) {
 	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
 	if got.Kind != "" {
 		t.Fatalf("expected malformed item to be ignored, got %#v", got)
+	}
+}
+
+func TestBlockFromItemPreservesTranscriptIdentityMeta(t *testing.T) {
+	block, ok := BlockFromItem(map[string]any{
+		"type":       "message",
+		"role":       "user",
+		"turn_id":    "turn-1",
+		"created_at": "2026-03-09T01:37:16.299Z",
+		"content": []any{
+			map[string]any{"type": "input_text", "text": "hello"},
+		},
+		"message": map[string]any{
+			"id": "msg-user-1",
+		},
+	})
+	if !ok {
+		t.Fatal("expected block")
+	}
+	if block.Meta == nil {
+		t.Fatalf("expected metadata, got %#v", block)
+	}
+	if block.Meta["turn_id"] != "turn-1" {
+		t.Fatalf("expected turn id metadata, got %#v", block.Meta)
+	}
+	if block.Meta["provider_message_id"] != "msg-user-1" {
+		t.Fatalf("expected provider message metadata, got %#v", block.Meta)
+	}
+	if block.Meta["created_at"] != "2026-03-09T01:37:16.299Z" {
+		t.Fatalf("expected created_at metadata, got %#v", block.Meta)
 	}
 }
 
