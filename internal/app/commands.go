@@ -565,14 +565,43 @@ func fetchHistoryCmdWithContext(api SessionHistoryAPI, id, key string, lines int
 }
 
 func fetchTranscriptSnapshotCmdWithContext(api SessionTranscriptSnapshotAPI, id, key string, lines int, parent context.Context) tea.Cmd {
+	return fetchTranscriptSnapshotCmdWithContextAndRequest(api, id, key, lines, parent, transcriptSnapshotRequest{})
+}
+
+type transcriptSnapshotRequest struct {
+	Source        TranscriptAttachmentSource
+	Authoritative bool
+}
+
+func fetchTranscriptSnapshotCmdWithContextAndRequest(
+	api SessionTranscriptSnapshotAPI,
+	id, key string,
+	lines int,
+	parent context.Context,
+	request transcriptSnapshotRequest,
+) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := commandWithTimeout(parent, 8*time.Second)
 		defer cancel()
 		resp, err := api.GetTranscriptSnapshot(ctx, id, lines)
 		if err != nil {
-			return transcriptSnapshotMsg{id: id, key: key, err: err, requestedLines: lines}
+			return transcriptSnapshotMsg{
+				id:             id,
+				key:            key,
+				err:            err,
+				requestedLines: lines,
+				source:         normalizeTranscriptAttachmentSource(request.Source),
+				authoritative:  request.Authoritative,
+			}
 		}
-		return transcriptSnapshotMsg{id: id, key: key, snapshot: resp, requestedLines: lines}
+		return transcriptSnapshotMsg{
+			id:             id,
+			key:            key,
+			snapshot:       resp,
+			requestedLines: lines,
+			source:         normalizeTranscriptAttachmentSource(request.Source),
+			authoritative:  request.Authoritative,
+		}
 	}
 }
 
@@ -593,9 +622,26 @@ func fetchRecentsPreviewCmd(api SessionHistoryAPI, id, revision string, lines in
 }
 
 func openTranscriptStreamCmd(api SessionTranscriptStreamAPI, id, afterRevision string) tea.Cmd {
+	return openTranscriptStreamCmdWithRequest(api, id, afterRevision, transcriptStreamOpenRequest{})
+}
+
+type transcriptStreamOpenRequest struct {
+	Source     TranscriptAttachmentSource
+	Generation uint64
+}
+
+func openTranscriptStreamCmdWithRequest(api SessionTranscriptStreamAPI, id, afterRevision string, request transcriptStreamOpenRequest) tea.Cmd {
 	return func() tea.Msg {
 		ch, cancel, err := api.TranscriptStream(context.Background(), id, afterRevision)
-		return transcriptStreamMsg{id: id, ch: ch, cancel: cancel, err: err, revision: afterRevision}
+		return transcriptStreamMsg{
+			id:         id,
+			ch:         ch,
+			cancel:     cancel,
+			err:        err,
+			revision:   afterRevision,
+			source:     normalizeTranscriptAttachmentSource(request.Source),
+			generation: request.Generation,
+		}
 	}
 }
 

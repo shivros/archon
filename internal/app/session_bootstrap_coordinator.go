@@ -18,6 +18,7 @@ type SelectionLoadBootstrapInput struct {
 	LoadContext   context.Context
 	TranscriptAPI SessionTranscriptAPI
 	SessionAPI    SessionAPI
+	OpenSource    TranscriptAttachmentSource
 }
 
 type SessionStartBootstrapInput struct {
@@ -30,6 +31,7 @@ type SessionStartBootstrapInput struct {
 	LoadContext   context.Context
 	TranscriptAPI SessionTranscriptAPI
 	SessionAPI    SessionAPI
+	OpenSource    TranscriptAttachmentSource
 }
 
 type SessionReconnectBootstrapInput struct {
@@ -38,6 +40,8 @@ type SessionReconnectBootstrapInput struct {
 	AfterRevision             string
 	TranscriptAPI             SessionTranscriptAPI
 	TranscriptStreamConnected bool
+	OpenSource                TranscriptAttachmentSource
+	OpenTranscriptCmdBuilder  func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd
 }
 
 type SessionBootstrapCoordinator interface {
@@ -65,19 +69,50 @@ func WithSessionBootstrapCoordinator(coordinator SessionBootstrapCoordinator) Mo
 
 func (c defaultSessionBootstrapCoordinator) BuildSelectionLoadCommands(input SelectionLoadBootstrapInput) []tea.Cmd {
 	plan := c.policyOrDefault().SelectionLoadPlan(input.Provider, input.Status)
-	return buildBootstrapCommands(plan, input.SessionID, input.SessionKey, input.AfterRevision, input.InitialLines, input.LoadContext, input.TranscriptAPI, input.SessionAPI)
+	return buildBootstrapCommands(
+		plan,
+		input.SessionID,
+		input.SessionKey,
+		input.AfterRevision,
+		input.InitialLines,
+		input.LoadContext,
+		input.TranscriptAPI,
+		input.SessionAPI,
+		normalizeTranscriptAttachmentSource(input.OpenSource),
+	)
 }
 
 func (c defaultSessionBootstrapCoordinator) BuildSessionStartCommands(input SessionStartBootstrapInput) []tea.Cmd {
 	plan := c.policyOrDefault().SessionStartPlan(input.Provider, input.Status)
-	return buildBootstrapCommands(plan, input.SessionID, input.SessionKey, input.AfterRevision, input.InitialLines, input.LoadContext, input.TranscriptAPI, input.SessionAPI)
+	return buildBootstrapCommands(
+		plan,
+		input.SessionID,
+		input.SessionKey,
+		input.AfterRevision,
+		input.InitialLines,
+		input.LoadContext,
+		input.TranscriptAPI,
+		input.SessionAPI,
+		normalizeTranscriptAttachmentSource(input.OpenSource),
+	)
 }
 
 func (c defaultSessionBootstrapCoordinator) BuildReconnectCommands(input SessionReconnectBootstrapInput) []tea.Cmd {
 	plan := c.policyOrDefault().SendReconnectPlan(input.Provider)
 	cmds := make([]tea.Cmd, 0, 1)
 	if plan.OpenTranscript && !input.TranscriptStreamConnected && input.TranscriptAPI != nil {
-		cmds = append(cmds, openTranscriptStreamCmd(input.TranscriptAPI, input.SessionID, input.AfterRevision))
+		if input.OpenTranscriptCmdBuilder != nil {
+			if cmd := input.OpenTranscriptCmdBuilder(input.SessionID, input.AfterRevision, input.OpenSource); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		} else {
+			cmds = append(cmds, openTranscriptStreamCmdWithRequest(
+				input.TranscriptAPI,
+				input.SessionID,
+				input.AfterRevision,
+				transcriptStreamOpenRequest{Source: input.OpenSource},
+			))
+		}
 	}
 	return cmds
 }
@@ -97,10 +132,18 @@ func buildBootstrapCommands(
 	loadCtx context.Context,
 	transcriptAPI SessionTranscriptAPI,
 	sessionAPI SessionAPI,
+	snapshotSource TranscriptAttachmentSource,
 ) []tea.Cmd {
 	cmds := make([]tea.Cmd, 0, 4)
 	if plan.FetchTranscript && transcriptAPI != nil {
-		cmds = append(cmds, fetchTranscriptSnapshotCmdWithContext(transcriptAPI, sessionID, key, lines, loadCtx))
+		cmds = append(cmds, fetchTranscriptSnapshotCmdWithContextAndRequest(
+			transcriptAPI,
+			sessionID,
+			key,
+			lines,
+			loadCtx,
+			transcriptSnapshotRequest{Source: snapshotSource},
+		))
 	}
 	if plan.FetchApprovals {
 		cmds = append(cmds, fetchApprovalsCmdWithContext(sessionAPI, sessionID, loadCtx))

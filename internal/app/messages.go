@@ -301,14 +301,18 @@ type transcriptSnapshotMsg struct {
 	snapshot       *transcriptdomain.TranscriptSnapshot
 	err            error
 	requestedLines int
+	source         TranscriptAttachmentSource
+	authoritative  bool
 }
 
 type transcriptStreamMsg struct {
-	id       string
-	ch       <-chan transcriptdomain.TranscriptEvent
-	cancel   func()
-	err      error
-	revision string
+	id         string
+	ch         <-chan transcriptdomain.TranscriptEvent
+	cancel     func()
+	err        error
+	revision   string
+	source     TranscriptAttachmentSource
+	generation uint64
 }
 
 type debugStreamMsg struct {

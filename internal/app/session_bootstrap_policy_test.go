@@ -10,17 +10,17 @@ func TestSessionBootstrapPolicySelectionPlans(t *testing.T) {
 	p := defaultSessionBootstrapPolicy{}
 
 	itemPlan := p.SelectionLoadPlan("kilocode", types.SessionStatusInactive)
-	if !itemPlan.FetchTranscript || !itemPlan.FetchApprovals || !itemPlan.OpenTranscript {
+	if !itemPlan.FetchTranscript || !itemPlan.FetchApprovals || itemPlan.OpenTranscript {
 		t.Fatalf("unexpected item selection plan: %#v", itemPlan)
 	}
 
 	codexPlan := p.SelectionLoadPlan("codex", types.SessionStatusRunning)
-	if !codexPlan.FetchTranscript || !codexPlan.FetchApprovals || !codexPlan.OpenTranscript {
+	if !codexPlan.FetchTranscript || !codexPlan.FetchApprovals || codexPlan.OpenTranscript {
 		t.Fatalf("unexpected codex selection plan: %#v", codexPlan)
 	}
 
 	customPlan := p.SelectionLoadPlan("custom", types.SessionStatusInactive)
-	if !customPlan.FetchTranscript || !customPlan.FetchApprovals || !customPlan.OpenTranscript {
+	if !customPlan.FetchTranscript || !customPlan.FetchApprovals || customPlan.OpenTranscript {
 		t.Fatalf("unexpected custom selection plan: %#v", customPlan)
 	}
 }
@@ -29,17 +29,17 @@ func TestSessionBootstrapPolicySessionStartPlans(t *testing.T) {
 	p := defaultSessionBootstrapPolicy{}
 
 	itemPlan := p.SessionStartPlan("claude", types.SessionStatusRunning)
-	if !itemPlan.FetchTranscript || !itemPlan.FetchApprovals || !itemPlan.OpenTranscript {
+	if !itemPlan.FetchTranscript || !itemPlan.FetchApprovals || itemPlan.OpenTranscript {
 		t.Fatalf("unexpected item start plan: %#v", itemPlan)
 	}
 
 	codexPlan := p.SessionStartPlan("codex", types.SessionStatusRunning)
-	if !codexPlan.FetchTranscript || !codexPlan.FetchApprovals || !codexPlan.OpenTranscript {
+	if !codexPlan.FetchTranscript || !codexPlan.FetchApprovals || codexPlan.OpenTranscript {
 		t.Fatalf("unexpected codex start plan: %#v", codexPlan)
 	}
 
 	customActive := p.SessionStartPlan("custom", types.SessionStatusRunning)
-	if !customActive.FetchTranscript || !customActive.FetchApprovals || !customActive.OpenTranscript {
+	if !customActive.FetchTranscript || !customActive.FetchApprovals || customActive.OpenTranscript {
 		t.Fatalf("unexpected custom active start plan: %#v", customActive)
 	}
 }

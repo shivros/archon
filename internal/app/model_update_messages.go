@@ -1112,10 +1112,11 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			AfterRevision:             m.activeTranscriptRevision(),
 			TranscriptAPI:             m.sessionTranscriptAPI,
 			TranscriptStreamConnected: m.transcriptStream != nil && m.transcriptStream.HasStream(),
+			OpenSource:                transcriptAttachmentSourceSendReconnect,
+			OpenTranscriptCmdBuilder: func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd {
+				return m.requestTranscriptStreamOpenCmd(sessionID, afterRevision, source, transcriptSourceSendMsg)
+			},
 		})
-		if m.transcriptStream == nil || !m.transcriptStream.HasStream() {
-			m.recordReconnectAttempt(msg.id, provider, "transcript", transcriptSourceSendMsg)
-		}
 		if len(reconnectCmds) > 0 {
 			cmds = append(cmds, reconnectCmds...)
 			if m.appState.DebugStreamsEnabled {
@@ -1282,6 +1283,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			LoadContext:   loadCtx,
 			TranscriptAPI: m.sessionTranscriptAPI,
 			SessionAPI:    m.sessionAPI,
+			OpenSource:    transcriptAttachmentSourceSessionStart,
 		})...)
 		if recentsStateSaveCmd != nil {
 			cmds = append(cmds, recentsStateSaveCmd)
@@ -1538,63 +1540,63 @@ func (m *Model) applyStreamMsg(msg streamMsg) {
 }
 
 func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
-	responseKey := strings.TrimSpace(msg.key)
-	if responseKey == "" && strings.TrimSpace(msg.id) != "" {
-		responseKey = "sess:" + strings.TrimSpace(msg.id)
-	}
-	if msg.err != nil {
-		m.recordHistoryWindowFromResponse(responseKey, msg.requestedLines, 0, msg.err)
-		if isCanceledRequestError(msg.err) {
-			return nil
-		}
-		m.setBackgroundError("transcript snapshot error: " + msg.err.Error())
-		if msg.key != "" && msg.key == m.loadingKey {
-			m.setContentText("Error loading transcript.")
-			m.loading = false
-			m.loadingKey = ""
-		}
-		return nil
+	source := normalizeTranscriptAttachmentSource(msg.source)
+	responseKey := transcriptSnapshotResponseKey(msg)
+	if handled, cmd := m.handleTranscriptSnapshotError(msg, source, responseKey); handled {
+		return cmd
 	}
 	if msg.snapshot != nil {
 		m.recordHistoryWindowFromResponse(responseKey, msg.requestedLines, -1, nil)
 	}
-	if msg.key != "" && msg.key != m.pendingSessionKey {
+	if m.shouldDropTranscriptSnapshotByKey(msg) {
 		return nil
 	}
 	if msg.snapshot == nil {
 		m.recordHistoryWindowFromResponse(responseKey, msg.requestedLines, -1, nil)
-		return nil
+		return m.maybeOpenTranscriptFollowAfterSnapshot(msg.id, source, "")
 	}
-	applied := true
-	if m.transcriptStream != nil {
-		_, applied = m.transcriptStream.SetSnapshot(*msg.snapshot)
-	}
+	blocks, authoritativeSnapshot, applied := m.applyTranscriptSnapshotPayload(msg, source)
 	if !applied {
-		m.recordTranscriptBoundaryMetric(newStaleRevisionDropMetric(
-			transcriptReasonSnapshotSuperseded,
-			transcriptSourceSessionBlocksProject,
-			msg.id,
-			m.providerForSessionID(msg.id),
-		))
 		return nil
-	}
-	blocks := transcriptBlocksToChatBlocks(msg.snapshot.Blocks)
-	if m.transcriptStream != nil {
-		blocks = m.transcriptStream.Blocks()
 	}
 	m.setSessionTranscriptCapabilities(msg.id, msg.snapshot.Capabilities)
-	blocks = m.transcriptComposerOrDefault().MergeApprovals(
-		blocks,
-		filterApprovalRequestsForProvider(m.providerForSessionID(msg.id), m.sessionApprovals[msg.id]),
-		filterApprovalResolutionsForProvider(m.providerForSessionID(msg.id), m.sessionApprovalResolutions[msg.id]),
-		nil,
-	)
+	blocks = m.projectTranscriptSnapshotBlocks(msg.id, blocks)
 	m.applySessionProjection(sessionProjectionSourceHistory, msg.id, msg.key, blocks)
 	m.markTranscriptLoadingSignal(msg.id)
-	if cmd := m.maybeBackfillSnapshotMissingUserTurns(msg.id, responseKey, blocks); cmd != nil {
-		return cmd
+	m.appendTranscriptSessionTrace(
+		msg.id,
+		"snapshot_applied source=%s revision=%s authoritative=%t",
+		source,
+		msg.snapshot.Revision,
+		authoritativeSnapshot,
+	)
+	return m.transcriptSnapshotFollowUps(msg, source, responseKey, blocks)
+}
+
+func (m *Model) maybeOpenTranscriptFollowAfterSnapshot(sessionID string, source TranscriptAttachmentSource, afterRevision string) tea.Cmd {
+	if m == nil || m.sessionTranscriptAPI == nil {
+		return nil
 	}
-	return nil
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	source = normalizeTranscriptAttachmentSource(source)
+	decision := m.transcriptFollowStrategyRegistryOrDefault().StrategyFor(source).Decide(TranscriptFollowOpenRequest{
+		SessionID:     sessionID,
+		Source:        source,
+		AfterRevision: strings.TrimSpace(afterRevision),
+	})
+	if !decision.Open || strings.TrimSpace(decision.ReconnectSource) == "" {
+		return nil
+	}
+	m.appendTranscriptSessionTrace(
+		sessionID,
+		"follow_open source=%s after_revision=%s",
+		source,
+		strings.TrimSpace(afterRevision),
+	)
+	return m.requestTranscriptStreamOpenCmd(sessionID, afterRevision, source, decision.ReconnectSource)
 }
 
 func (m *Model) maybeBackfillSnapshotMissingUserTurns(sessionID, key string, blocks []ChatBlock) tea.Cmd {
@@ -1641,14 +1643,40 @@ func (m *Model) applyTranscriptStreamMsg(msg transcriptStreamMsg) {
 	if msg.err != nil {
 		m.setBackgroundError("transcript stream error: " + msg.err.Error())
 		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeError, transcriptReasonReconnectStreamError)
+		m.appendTranscriptSessionTrace(msg.id, "generation_open_error source=%s generation=%d err=%v", msg.source, msg.generation, msg.err)
 		return
 	}
 	if ok, reason := m.streamMessageTargetDisposition(msg.id, msg.cancel); !ok {
 		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeSkipped, reason)
+		m.appendTranscriptSessionTrace(msg.id, "generation_dropped source=%s generation=%d reason=%s", msg.source, msg.generation, reason)
 		return
 	}
+	if msg.generation > 0 {
+		decision := m.transcriptAttachmentCoordinatorOrDefault().Evaluate(msg.id, msg.generation)
+		if !decision.Accept {
+			if msg.cancel != nil {
+				msg.cancel()
+			}
+			m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeDropped, decision.Reason)
+			m.appendTranscriptSessionTrace(msg.id, "generation_dropped source=%s generation=%d reason=%s", msg.source, msg.generation, decision.Reason)
+			return
+		}
+		m.appendTranscriptSessionTrace(
+			msg.id,
+			"generation_attached source=%s generation=%d after_revision=%s",
+			msg.source,
+			msg.generation,
+			msg.revision,
+		)
+	} else {
+		m.appendTranscriptSessionTrace(msg.id, "generation_attached source=%s generation=legacy after_revision=%s", msg.source, msg.revision)
+	}
 	if m.transcriptStream != nil {
-		m.transcriptStream.SetStream(msg.ch, msg.cancel)
+		if msg.generation > 0 {
+			m.transcriptStream.SetStreamWithGeneration(msg.ch, msg.cancel, msg.generation)
+		} else {
+			m.transcriptStream.SetStream(msg.ch, msg.cancel)
+		}
 	}
 	m.setBackgroundStatus("streaming transcript")
 	if strings.TrimSpace(msg.revision) != "" {

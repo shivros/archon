@@ -10,16 +10,26 @@ type TranscriptStreamController struct {
 	events           <-chan transcriptdomain.TranscriptEvent
 	cancel           func()
 	maxEventsPerTick int
+	ingestor         TranscriptIngestor
 	blocks           []ChatBlock
 	revision         transcriptdomain.RevisionToken
 	streamStatus     transcriptdomain.StreamStatus
+	awaitingFirst    bool
+	generation       uint64
 }
 
 type TranscriptTickSignals struct {
 	Events            int
 	ContentEvents     int
+	DeltaEvents       int
+	FinalizedEvents   int
+	SnapshotEvents    int
+	FinalizedDedupes  int
 	ControlEvents     int
 	CompletionSignals []TranscriptCompletionSignal
+	RevisionRewind    bool
+	Generation        uint64
+	FirstRevision     string
 }
 
 type TranscriptCompletionSignal struct {
@@ -27,7 +37,10 @@ type TranscriptCompletionSignal struct {
 }
 
 func NewTranscriptStreamController(maxEventsPerTick int) *TranscriptStreamController {
-	return &TranscriptStreamController{maxEventsPerTick: maxEventsPerTick}
+	return &TranscriptStreamController{
+		maxEventsPerTick: maxEventsPerTick,
+		ingestor:         NewDefaultTranscriptIngestor(),
+	}
 }
 
 func (c *TranscriptStreamController) Reset() {
@@ -42,9 +55,15 @@ func (c *TranscriptStreamController) Reset() {
 	c.blocks = nil
 	c.revision = ""
 	c.streamStatus = ""
+	c.awaitingFirst = false
+	c.generation = 0
 }
 
 func (c *TranscriptStreamController) SetStream(ch <-chan transcriptdomain.TranscriptEvent, cancel func()) {
+	c.SetStreamWithGeneration(ch, cancel, 0)
+}
+
+func (c *TranscriptStreamController) SetStreamWithGeneration(ch <-chan transcriptdomain.TranscriptEvent, cancel func(), generation uint64) {
 	if c == nil {
 		return
 	}
@@ -53,6 +72,28 @@ func (c *TranscriptStreamController) SetStream(ch <-chan transcriptdomain.Transc
 	}
 	c.events = ch
 	c.cancel = cancel
+	c.awaitingFirst = ch != nil
+	c.generation = generation
+}
+
+func (c *TranscriptStreamController) DetachStream() {
+	if c == nil {
+		return
+	}
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.events = nil
+	c.cancel = nil
+	c.awaitingFirst = false
+	c.streamStatus = transcriptdomain.StreamStatusReconnecting
+}
+
+func (c *TranscriptStreamController) Generation() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.generation
 }
 
 func (c *TranscriptStreamController) HasStream() bool {
@@ -81,16 +122,28 @@ func (c *TranscriptStreamController) StreamStatus() transcriptdomain.StreamStatu
 }
 
 func (c *TranscriptStreamController) SetSnapshot(snapshot transcriptdomain.TranscriptSnapshot) (changed bool, applied bool) {
+	return c.applySnapshot(snapshot, false)
+}
+
+func (c *TranscriptStreamController) SetAuthoritativeSnapshot(snapshot transcriptdomain.TranscriptSnapshot) (changed bool, applied bool) {
+	return c.applySnapshot(snapshot, true)
+}
+
+func (c *TranscriptStreamController) applySnapshot(snapshot transcriptdomain.TranscriptSnapshot, authoritative bool) (changed bool, applied bool) {
 	if c == nil {
 		return false, false
 	}
-	if !isTranscriptRevisionNewer(snapshot.Revision, c.revision) {
+	ingestor := c.ingestor
+	if ingestor == nil {
+		ingestor = NewDefaultTranscriptIngestor()
+	}
+	result := ingestor.ApplySnapshot(TranscriptIngestState{Blocks: c.blocks, Revision: c.revision}, snapshot, authoritative)
+	if !result.Applied {
 		return false, false
 	}
-	blocks := transcriptBlocksToChatBlocks(snapshot.Blocks)
-	c.blocks = blocks
-	c.revision = snapshot.Revision
-	return true, true
+	c.blocks = result.State.Blocks
+	c.revision = result.State.Revision
+	return result.Changed, true
 }
 
 func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, signal bool, signals TranscriptTickSignals) {
@@ -107,15 +160,31 @@ func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, s
 				return changed, true, signal, signals
 			}
 			signals.Events++
-			eventChanged, eventSignal, eventContent, completion := c.applyEvent(event)
+			signals.Generation = c.generation
+			if signals.FirstRevision == "" && c.awaitingFirst && transcriptEventConsumesFirstRevision(event.Kind) {
+				signals.FirstRevision = strings.TrimSpace(event.Revision.String())
+			}
+			eventChanged, eventSignal, eventContent, completion, rewind, category, dedupeHits := c.applyEvent(event)
 			if eventChanged {
 				changed = true
 			}
 			if eventSignal {
 				signal = true
 			}
+			if rewind {
+				signals.RevisionRewind = true
+			}
 			if completion != nil {
 				signals.CompletionSignals = append(signals.CompletionSignals, *completion)
+			}
+			signals.FinalizedDedupes += dedupeHits
+			switch category {
+			case transcriptEventCategoryDelta:
+				signals.DeltaEvents++
+			case transcriptEventCategoryFinalizedMessage:
+				signals.FinalizedEvents++
+			case transcriptEventCategorySnapshotReplace:
+				signals.SnapshotEvents++
 			}
 			if eventContent {
 				signals.ContentEvents++
@@ -129,61 +198,41 @@ func (c *TranscriptStreamController) ConsumeTick() (changed bool, closed bool, s
 	return changed, closed, signal, signals
 }
 
-func (c *TranscriptStreamController) applyEvent(event transcriptdomain.TranscriptEvent) (changed bool, signal bool, content bool, completion *TranscriptCompletionSignal) {
-	switch event.Kind {
-	case transcriptdomain.TranscriptEventHeartbeat:
-		return false, false, false, nil
-	case transcriptdomain.TranscriptEventStreamStatus:
-		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false, nil
-		}
-		c.revision = event.Revision
+func (c *TranscriptStreamController) applyEvent(event transcriptdomain.TranscriptEvent) (changed bool, signal bool, content bool, completion *TranscriptCompletionSignal, rewind bool, category TranscriptEventCategory, finalizedDedupeHits int) {
+	ingestor := c.ingestor
+	if ingestor == nil {
+		ingestor = NewDefaultTranscriptIngestor()
+	}
+	firstEvent := c.awaitingFirst
+	result := ingestor.ApplyEvent(
+		TranscriptIngestState{Blocks: c.blocks, Revision: c.revision},
+		event,
+		firstEvent,
+	)
+	c.blocks = result.State.Blocks
+	c.revision = result.State.Revision
+	if event.Kind == transcriptdomain.TranscriptEventStreamStatus {
 		c.streamStatus = event.StreamStatus
-		if event.StreamStatus == transcriptdomain.StreamStatusReady {
-			return false, true, false, nil
-		}
-		return false, false, false, nil
-	case transcriptdomain.TranscriptEventReplace:
-		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false, nil
-		}
-		c.revision = event.Revision
-		if event.Replace != nil {
-			c.blocks = transcriptBlocksToChatBlocks(event.Replace.Blocks)
-			return true, true, transcriptBlocksContainUserRelevantContent(event.Replace.Blocks), nil
-		}
-		return false, true, false, nil
-	case transcriptdomain.TranscriptEventDelta:
-		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false, nil
-		}
-		c.revision = event.Revision
-		delta := transcriptBlocksToChatBlocks(event.Delta)
-		if len(delta) == 0 {
-			return false, true, false, nil
-		}
-		c.blocks = append(c.blocks, delta...)
-		c.blocks = coalesceAdjacentTranscriptChatBlocks(c.blocks)
-		return true, true, transcriptBlocksContainUserRelevantContent(event.Delta), nil
-	case transcriptdomain.TranscriptEventTurnStarted,
+	}
+	if firstEvent && transcriptEventConsumesFirstRevision(event.Kind) {
+		c.awaitingFirst = false
+	}
+	return result.Changed, result.Signal, result.Content, result.Completion, result.Rewind, result.Category, result.FinalizedDedupeHits
+}
+
+func transcriptEventConsumesFirstRevision(kind transcriptdomain.TranscriptEventKind) bool {
+	switch kind {
+	case transcriptdomain.TranscriptEventStreamStatus,
+		transcriptdomain.TranscriptEventReplace,
+		transcriptdomain.TranscriptEventDelta,
+		transcriptdomain.TranscriptEventTurnStarted,
 		transcriptdomain.TranscriptEventTurnCompleted,
 		transcriptdomain.TranscriptEventTurnFailed,
 		transcriptdomain.TranscriptEventApprovalPending,
 		transcriptdomain.TranscriptEventApprovalResolved:
-		if !isTranscriptRevisionNewer(event.Revision, c.revision) {
-			return false, false, false, nil
-		}
-		c.revision = event.Revision
-		if event.Kind == transcriptdomain.TranscriptEventTurnCompleted || event.Kind == transcriptdomain.TranscriptEventTurnFailed {
-			turnID := ""
-			if event.Turn != nil {
-				turnID = strings.TrimSpace(event.Turn.TurnID)
-			}
-			return false, true, false, &TranscriptCompletionSignal{TurnID: turnID}
-		}
-		return false, true, false, nil
+		return true
 	default:
-		return false, false, false, nil
+		return false
 	}
 }
 

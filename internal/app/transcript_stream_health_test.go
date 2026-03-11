@@ -61,3 +61,44 @@ func TestDefaultStreamHealthPolicyRequiresCodexControlOnlyAndStaleWindow(t *test
 		t.Fatalf("expected control-only stale codex stream to trigger recovery")
 	}
 }
+
+func TestDefaultTranscriptRecoverySchedulerPlan(t *testing.T) {
+	scheduler := defaultTranscriptRecoveryScheduler{}
+	empty := scheduler.Plan(TranscriptRecoveryRequest{})
+	if empty.FetchTranscriptSnapshot || empty.FetchHistory || empty.FetchApprovals {
+		t.Fatalf("expected empty session request to produce empty recovery plan, got %#v", empty)
+	}
+
+	planned := scheduler.Plan(TranscriptRecoveryRequest{SessionID: "s1", Provider: "codex"})
+	if !planned.FetchTranscriptSnapshot || !planned.FetchHistory || !planned.FetchApprovals {
+		t.Fatalf("expected non-empty request to enable recovery fetches, got %#v", planned)
+	}
+	if planned.SnapshotSource != transcriptAttachmentSourceRecovery || !planned.AuthoritativeSnapshot {
+		t.Fatalf("expected recovery plan to require authoritative recovery snapshot, got %#v", planned)
+	}
+}
+
+func TestTranscriptHealthModelOptionsInstallFallbacks(t *testing.T) {
+	model := NewModel(nil,
+		WithTranscriptSignalClassifier(nil),
+		WithStreamHealthPolicy(nil),
+		WithTranscriptRecoveryScheduler(nil),
+	)
+	if model.transcriptSignalClassifierOrDefault() == nil {
+		t.Fatalf("expected signal classifier fallback")
+	}
+	if model.streamHealthPolicyOrDefault() == nil {
+		t.Fatalf("expected stream health policy fallback")
+	}
+	if model.transcriptRecoverySchedulerOrDefault() == nil {
+		t.Fatalf("expected recovery scheduler fallback")
+	}
+
+	model = NewModel(nil)
+	WithTranscriptSignalClassifier(defaultTranscriptSignalClassifier{})(&model)
+	WithStreamHealthPolicy(defaultStreamHealthPolicy{})(&model)
+	WithTranscriptRecoveryScheduler(defaultTranscriptRecoveryScheduler{})(&model)
+	if model.transcriptSignalClassifier == nil || model.streamHealthPolicy == nil || model.transcriptRecoveryScheduler == nil {
+		t.Fatalf("expected explicit health options to install provided implementations")
+	}
+}

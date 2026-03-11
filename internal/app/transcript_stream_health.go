@@ -3,8 +3,6 @@ package app
 import (
 	"strings"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 type transcriptSignalSummary struct {
@@ -91,36 +89,36 @@ func (p defaultStreamHealthPolicy) ShouldRecover(observation StreamHealthObserva
 	return observation.Now.Sub(lastVisible) >= window
 }
 
+type TranscriptRecoveryRequest struct {
+	SessionID string
+	Provider  string
+}
+
+type TranscriptRecoveryPlan struct {
+	FetchTranscriptSnapshot bool
+	FetchHistory            bool
+	FetchApprovals          bool
+	SnapshotSource          TranscriptAttachmentSource
+	AuthoritativeSnapshot   bool
+}
+
 type TranscriptRecoveryScheduler interface {
-	Schedule(m *Model, sessionID, provider string) tea.Cmd
+	Plan(request TranscriptRecoveryRequest) TranscriptRecoveryPlan
 }
 
 type defaultTranscriptRecoveryScheduler struct{}
 
-func (defaultTranscriptRecoveryScheduler) Schedule(m *Model, sessionID, provider string) tea.Cmd {
-	if m == nil || strings.TrimSpace(sessionID) == "" {
-		return nil
+func (defaultTranscriptRecoveryScheduler) Plan(request TranscriptRecoveryRequest) TranscriptRecoveryPlan {
+	if strings.TrimSpace(request.SessionID) == "" {
+		return TranscriptRecoveryPlan{}
 	}
-	cmds := []tea.Cmd{}
-	key := strings.TrimSpace(m.pendingSessionKey)
-	if key == "" {
-		key = strings.TrimSpace(m.selectedKey())
+	return TranscriptRecoveryPlan{
+		FetchTranscriptSnapshot: true,
+		FetchHistory:            true,
+		FetchApprovals:          true,
+		SnapshotSource:          transcriptAttachmentSourceRecovery,
+		AuthoritativeSnapshot:   true,
 	}
-	ctx := m.requestScopeContext(requestScopeSessionLoad)
-	if m.sessionTranscriptAPI != nil {
-		m.recordReconnectAttempt(sessionID, provider, "transcript", transcriptSourceAutoRefreshHistory)
-		cmds = append(cmds, openTranscriptStreamCmd(m.sessionTranscriptAPI, sessionID, m.activeTranscriptRevision()))
-		cmds = append(cmds, fetchTranscriptSnapshotCmdWithContext(m.sessionTranscriptAPI, sessionID, key, m.historyFetchLinesInitial(), ctx))
-	} else if m.sessionHistoryAPI != nil {
-		cmds = append(cmds, fetchHistoryCmdWithContext(m.sessionHistoryAPI, sessionID, key, m.historyFetchLinesInitial(), ctx))
-	}
-	if decision := m.approvalRefreshDecision(sessionID, provider, transcriptSourceAutoRefreshHistory); decision.ShouldFetch {
-		cmds = append(cmds, fetchApprovalsCmdWithContext(m.sessionAPI, sessionID, ctx))
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
 }
 
 func (m *Model) transcriptSignalClassifierOrDefault() TranscriptSignalClassifier {

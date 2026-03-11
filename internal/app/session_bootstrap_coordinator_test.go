@@ -49,8 +49,8 @@ func TestDefaultSessionBootstrapCoordinatorBuildsExpectedCommandCounts(t *testin
 		InitialLines:  100,
 		TranscriptAPI: bootstrapTranscriptAPIStub{},
 	})
-	if len(itemSelection) != 3 {
-		t.Fatalf("expected transcript snapshot + approvals + transcript stream commands, got %d", len(itemSelection))
+	if len(itemSelection) != 2 {
+		t.Fatalf("expected transcript snapshot + approvals commands, got %d", len(itemSelection))
 	}
 
 	codexStart := coordinator.BuildSessionStartCommands(SessionStartBootstrapInput{
@@ -61,8 +61,8 @@ func TestDefaultSessionBootstrapCoordinatorBuildsExpectedCommandCounts(t *testin
 		InitialLines:  100,
 		TranscriptAPI: bootstrapTranscriptAPIStub{},
 	})
-	if len(codexStart) != 3 {
-		t.Fatalf("expected transcript snapshot + approvals + stream commands, got %d", len(codexStart))
+	if len(codexStart) != 2 {
+		t.Fatalf("expected transcript snapshot + approvals commands, got %d", len(codexStart))
 	}
 
 	reconnect := coordinator.BuildReconnectCommands(SessionReconnectBootstrapInput{

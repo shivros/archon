@@ -143,11 +143,19 @@ func (m *Model) maybeAutoRefreshHistory(now time.Time) tea.Cmd {
 	historyCmd := fetchHistoryCmdWithContext(m.sessionHistoryAPI, sessionID, key, m.historyFetchLinesInitial(), ctx)
 	cmds := []tea.Cmd{}
 	if m.sessionTranscriptAPI != nil && (m.transcriptStream == nil || !m.transcriptStream.HasStream()) {
-		m.recordReconnectAttempt(sessionID, provider, "transcript", transcriptSourceAutoRefreshHistory)
-		cmds = append(cmds, openTranscriptStreamCmd(m.sessionTranscriptAPI, sessionID, m.activeTranscriptRevision()))
+		if cmd := m.requestTranscriptStreamOpenCmd(sessionID, m.activeTranscriptRevision(), transcriptAttachmentSourceManualRefresh, transcriptSourceAutoRefreshHistory); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 	if m.sessionTranscriptAPI != nil {
-		historyCmd = fetchTranscriptSnapshotCmdWithContext(m.sessionTranscriptAPI, sessionID, key, m.historyFetchLinesInitial(), ctx)
+		historyCmd = fetchTranscriptSnapshotCmdWithContextAndRequest(
+			m.sessionTranscriptAPI,
+			sessionID,
+			key,
+			m.historyFetchLinesInitial(),
+			ctx,
+			transcriptSnapshotRequest{Source: transcriptAttachmentSourceManualRefresh},
+		)
 	}
 	cmds = append(cmds, historyCmd)
 	if decision := m.approvalRefreshDecision(sessionID, provider, transcriptSourceAutoRefreshHistory); decision.ShouldFetch {

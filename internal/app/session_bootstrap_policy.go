@@ -39,7 +39,7 @@ func (defaultSessionBootstrapPolicy) SelectionLoadPlan(provider string, status t
 	return sessionBootstrapPlan{
 		FetchTranscript: true,
 		FetchApprovals:  true,
-		OpenTranscript:  true,
+		OpenTranscript:  false,
 	}
 }
 
@@ -49,7 +49,7 @@ func (defaultSessionBootstrapPolicy) SessionStartPlan(provider string, status ty
 	return sessionBootstrapPlan{
 		FetchTranscript: true,
 		FetchApprovals:  true,
-		OpenTranscript:  true,
+		OpenTranscript:  false,
 	}
 }
 

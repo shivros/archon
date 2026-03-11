@@ -104,9 +104,55 @@ func TestTranscriptStreamControllerDropsStaleAndEqualRevisions(t *testing.T) {
 	if signals.ContentEvents != 0 {
 		t.Fatalf("expected stale/equal events to produce no content signals, got %d", signals.ContentEvents)
 	}
+	if signals.RevisionRewind {
+		t.Fatalf("expected same-stream stale/equal events not to report rewind")
+	}
 	blocks := controller.Blocks()
 	if len(blocks) != 1 || blocks[0].Text != "latest" {
 		t.Fatalf("expected stale/equal events not to mutate blocks, got %#v", blocks)
+	}
+}
+
+func TestTranscriptStreamControllerDetectsRevisionRewindOnFirstEventOfNewStream(t *testing.T) {
+	controller := NewTranscriptStreamController(16)
+	changed, applied := controller.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("10"),
+		Blocks: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_message", Role: "assistant", Text: "existing"},
+		},
+	})
+	if !changed || !applied {
+		t.Fatalf("expected seed snapshot to apply")
+	}
+
+	ch := make(chan transcriptdomain.TranscriptEvent, 2)
+	controller.SetStream(ch, nil)
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:         transcriptdomain.TranscriptEventStreamStatus,
+		Revision:     transcriptdomain.MustParseRevisionToken("1"),
+		StreamStatus: transcriptdomain.StreamStatusReady,
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("2"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "rewound"},
+		},
+	}
+
+	changed, closed, signal, signals := controller.ConsumeTick()
+	if changed || closed {
+		t.Fatalf("expected rewind batch not to mutate transcript state")
+	}
+	if !signal {
+		t.Fatalf("expected rewind batch to emit recovery signal")
+	}
+	if !signals.RevisionRewind {
+		t.Fatalf("expected rewind signal to be reported")
+	}
+	blocks := controller.Blocks()
+	if len(blocks) != 1 || blocks[0].Text != "existing" {
+		t.Fatalf("expected rewind batch to preserve prior blocks, got %#v", blocks)
 	}
 }
 
@@ -180,6 +226,62 @@ func TestTranscriptStreamControllerCoalescesAdjacentAssistantDeltasForSameMessag
 	}
 }
 
+func TestTranscriptStreamControllerFinalizedMessageSupersetDedupesPriorDeltas(t *testing.T) {
+	controller := NewTranscriptStreamController(16)
+	ch := make(chan transcriptdomain.TranscriptEvent, 4)
+	controller.SetStream(ch, nil)
+
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "hello "},
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("2"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "world"},
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("3"),
+		Delta: []transcriptdomain.Block{
+			{
+				ID:   "msg-1",
+				Kind: "assistant_message",
+				Role: "assistant",
+				Text: "hello world!",
+				Meta: map[string]any{"provider_message_id": "pm-1"},
+			},
+		},
+	}
+
+	changed, closed, signal, signals := controller.ConsumeTick()
+	if closed || !changed || !signal {
+		t.Fatalf("expected finalized-message batch to update stream state")
+	}
+	if signals.FinalizedEvents == 0 {
+		t.Fatalf("expected finalized message classification, got %#v", signals)
+	}
+	if signals.FinalizedDedupes == 0 {
+		t.Fatalf("expected finalized-message dedupe hit, got %#v", signals)
+	}
+
+	blocks := controller.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected finalized dedupe to keep one assistant block, got %#v", blocks)
+	}
+	if blocks[0].Text != "hello world!" {
+		t.Fatalf("expected finalized text to replace streamed text, got %#v", blocks[0])
+	}
+	if blocks[0].ProviderMessageID != "pm-1" {
+		t.Fatalf("expected provider message id to be preserved, got %#v", blocks[0])
+	}
+}
+
 func TestTranscriptStreamControllerNilReceiverNoops(t *testing.T) {
 	var controller *TranscriptStreamController
 	controller.Reset()
@@ -240,7 +342,7 @@ func TestTranscriptStreamControllerTurnFailureEmitsCompletionSignal(t *testing.T
 
 func TestTranscriptStreamControllerIgnoresStaleTurnCompletionAndUnknownEvents(t *testing.T) {
 	controller := NewTranscriptStreamController(8)
-	ch := make(chan transcriptdomain.TranscriptEvent, 2)
+	ch := make(chan transcriptdomain.TranscriptEvent, 3)
 	controller.SetStream(ch, nil)
 
 	changed, applied := controller.SetSnapshot(transcriptdomain.TranscriptSnapshot{
@@ -252,6 +354,15 @@ func TestTranscriptStreamControllerIgnoresStaleTurnCompletionAndUnknownEvents(t 
 	if !changed || !applied {
 		t.Fatalf("expected seed snapshot to apply")
 	}
+
+	// Prime the stream to consume first-event rewind bookkeeping so this test
+	// exercises same-stream stale/unknown handling.
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:         transcriptdomain.TranscriptEventStreamStatus,
+		Revision:     transcriptdomain.MustParseRevisionToken("6"),
+		StreamStatus: transcriptdomain.StreamStatusReady,
+	}
+	_, _, _, _ = controller.ConsumeTick()
 
 	ch <- transcriptdomain.TranscriptEvent{
 		Kind:     transcriptdomain.TranscriptEventTurnCompleted,

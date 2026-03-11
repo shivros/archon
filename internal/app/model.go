@@ -351,6 +351,10 @@ type Model struct {
 	transcriptSignalClassifier          TranscriptSignalClassifier
 	streamHealthPolicy                  StreamHealthPolicy
 	transcriptRecoveryScheduler         TranscriptRecoveryScheduler
+	transcriptAttachmentCoordinator     TranscriptAttachmentCoordinator
+	transcriptRecoveryCoordinator       TranscriptRecoveryCoordinator
+	transcriptRenderProjector           TranscriptRenderProjector
+	transcriptFollowStrategyRegistry    TranscriptFollowStrategyRegistry
 	sidebarProjectionBuilder            SidebarProjectionBuilder
 	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
 	sidebarProjectionRevision           uint64
@@ -385,6 +389,7 @@ type Model struct {
 	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
 	transcriptBoundary                  *transcriptBoundaryObserver
 	sessionTranscriptCapabilities       map[string]transcriptdomain.CapabilityEnvelope
+	transcriptSessionTraces             map[string][]transcriptSessionTraceEntry
 }
 
 type newSessionTarget struct {
@@ -662,6 +667,10 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		transcriptSignalClassifier:          defaultTranscriptSignalClassifier{},
 		streamHealthPolicy:                  defaultStreamHealthPolicy{},
 		transcriptRecoveryScheduler:         defaultTranscriptRecoveryScheduler{},
+		transcriptAttachmentCoordinator:     NewDefaultTranscriptAttachmentCoordinator(),
+		transcriptRecoveryCoordinator:       NewDefaultTranscriptRecoveryCoordinator(),
+		transcriptRenderProjector:           NewDefaultTranscriptRenderProjector(),
+		transcriptFollowStrategyRegistry:    NewDefaultTranscriptFollowStrategyRegistry(),
 		debugPanelProjectionPolicy:          defaultDebugPanelProjectionPolicy{},
 		debugPanelProjectionCoordinator:     NewDefaultDebugPanelProjectionCoordinator(defaultDebugPanelProjectionPolicy{}, nil),
 		debugPanelRefreshPolicy:             defaultDebugPanelRefreshPolicy{},
@@ -698,6 +707,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		settingsMenuHotkeyCatalog:           defaultSettingsMenuHotkeyCatalog{},
 		transcriptBoundary:                  newTranscriptBoundaryObserver(nil),
 		sessionTranscriptCapabilities:       map[string]transcriptdomain.CapabilityEnvelope{},
+		transcriptSessionTraces:             map[string][]transcriptSessionTraceEntry{},
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -1445,6 +1455,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		LoadContext:   ctx,
 		TranscriptAPI: m.sessionTranscriptAPI,
 		SessionAPI:    m.sessionAPI,
+		OpenSource:    transcriptAttachmentSourceSelectionLoad,
 	})
 	if m.appState.DebugStreamsEnabled {
 		debugCtx := m.replaceRequestScope(requestScopeDebugStream)
@@ -2662,6 +2673,8 @@ func (m *Model) resetStreamWithReason(reason string) {
 	sessionID := m.activeStreamTargetID()
 	provider := m.providerForSessionID(sessionID)
 	m.clearReconnectAttemptsForSession(sessionID)
+	m.transcriptAttachmentCoordinatorOrDefault().ClearSession(sessionID)
+	m.transcriptRecoveryCoordinatorOrDefault().Clear(sessionID)
 	m.recordTranscriptBoundaryMetric(newTranscriptResetMetric(reason, transcriptSourceModelResetStream, sessionID, provider))
 	m.cancelRequestScope(requestScopeSessionLoad)
 	m.cancelRequestScope(requestScopeSessionStart)
@@ -2685,6 +2698,9 @@ func (m *Model) resetStreamWithReason(reason string) {
 	m.composeInterruptInFlightSessionID = ""
 	if m.transcriptHealthBySession != nil {
 		clear(m.transcriptHealthBySession)
+	}
+	if m.transcriptSessionTraces != nil {
+		clear(m.transcriptSessionTraces)
 	}
 	m.stopRequestActivity()
 }
@@ -2731,15 +2747,17 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 	if changed {
 		blocks := m.transcriptStream.Blocks()
 		if sessionID != "" {
-			providerApprovals := filterApprovalRequestsForProvider(provider, m.sessionApprovals[sessionID])
-			providerResolutions := filterApprovalResolutionsForProvider(provider, m.sessionApprovalResolutions[sessionID])
-			blocks = m.transcriptComposerOrDefault().MergeApprovals(
-				blocks,
-				providerApprovals,
-				providerResolutions,
-				nil,
-			)
-			blocks = m.applyOptimisticOverlay(sessionID, blocks)
+			blocks = m.transcriptRenderProjectorOrDefault().Project(TranscriptRenderProjectionInput{
+				SessionID:   sessionID,
+				Provider:    provider,
+				Blocks:      blocks,
+				Approvals:   m.sessionApprovals[sessionID],
+				Resolutions: m.sessionApprovalResolutions[sessionID],
+				Composer:    m.transcriptComposerOrDefault(),
+				ApplyOverlay: func(sessionID string, next []ChatBlock) []ChatBlock {
+					return m.applyOptimisticOverlay(sessionID, next)
+				},
+			})
 		}
 		if m.transcriptViewportVisible() {
 			m.applyBlocksNoRender(blocks)
@@ -2752,10 +2770,29 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 			m.cacheTranscriptBlocks(key, blocks)
 		}
 	}
+	if sessionID != "" && tickSignals.FinalizedDedupes > 0 {
+		m.appendTranscriptSessionTrace(
+			sessionID,
+			"dedupe finalized_message generation=%d hits=%d",
+			tickSignals.Generation,
+			tickSignals.FinalizedDedupes,
+		)
+	}
+	if sessionID != "" && strings.TrimSpace(tickSignals.FirstRevision) != "" {
+		m.appendTranscriptSessionTrace(
+			sessionID,
+			"first_revision_seen generation=%d revision=%s",
+			tickSignals.Generation,
+			tickSignals.FirstRevision,
+		)
+	}
 	for _, completion := range tickSignals.CompletionSignals {
 		if cmd := m.handleRecentsCompletionSignal(sessionID, completion.TurnID); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	}
+	if cmd := m.maybeRecoverTranscriptFromRevisionRewind(now, sessionID, provider, tickSignals); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	if cmd := m.maybeRecoverTranscriptFromControlOnlySignals(now, sessionID, provider, tickSignals); cmd != nil {
 		cmds = append(cmds, cmd)
