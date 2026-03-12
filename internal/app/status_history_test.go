@@ -1,6 +1,7 @@
 package app
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -141,13 +142,111 @@ func TestStatusHistoryHitboxTolerances(t *testing.T) {
 	if !hit.contains(11, 6) {
 		t.Fatalf("expected in-bounds point to be contained")
 	}
-	if idx, ok := hit.listIndexAt(7); !ok || idx != 2 {
-		t.Fatalf("expected y+1 tolerance to resolve list index, got idx=%d ok=%v", idx, ok)
+	if idx, ok := hit.listIndexAt(6); !ok || idx != 2 {
+		t.Fatalf("expected exact row to resolve list index, got idx=%d ok=%v", idx, ok)
 	}
-	if !hit.copyContains(12, 7) {
-		t.Fatalf("expected copy y-1 tolerance to be accepted")
+	if _, ok := hit.listIndexAt(7); ok {
+		t.Fatalf("expected adjacent row miss to avoid selecting a neighboring entry")
 	}
-	if !statusHistoryMouseRowInRange(9, 5, 8) {
-		t.Fatalf("expected one-based row tolerance for y=end+1 branch")
+	if hit.copyContains(12, 7) {
+		t.Fatalf("expected copy hitbox to reject adjacent in-range row")
+	}
+	if !hit.copyContains(12, 9) {
+		t.Fatalf("expected copy row to accept bottom boundary clamp")
+	}
+
+	boundary := statusHistoryOverlayHitbox{
+		panelTopY:    5,
+		panelBottomY: 8,
+		listIndexByY: map[int]int{8: 3},
+	}
+	if idx, ok := boundary.listIndexAt(9); !ok || idx != 3 {
+		t.Fatalf("expected bottom boundary clamp to resolve last row, got idx=%d ok=%v", idx, ok)
+	}
+	if statusHistoryMouseRowInRange(4, 5, 8) || !statusHistoryMouseRowInRange(9, 5, 8) {
+		t.Fatalf("expected bottom-only one-row boundary clamp around panel rows")
+	}
+}
+
+func TestStatusHistoryHitboxListIndexAtGuards(t *testing.T) {
+	empty := statusHistoryOverlayHitbox{}
+	if _, ok := empty.listIndexAt(5); ok {
+		t.Fatalf("expected empty list index map to miss")
+	}
+
+	hit := statusHistoryOverlayHitbox{
+		panelTopY:    5,
+		panelBottomY: 8,
+		listIndexByY: map[int]int{6: 2},
+	}
+	if _, ok := hit.listIndexAt(2); ok {
+		t.Fatalf("expected out-of-panel row to miss")
+	}
+}
+
+func TestStatusHistoryHitboxCopyContainsGuards(t *testing.T) {
+	hit := statusHistoryOverlayHitbox{
+		panelTopY:     5,
+		panelBottomY:  8,
+		copyRowY:      8,
+		copyStartX:    12,
+		copyEndX:      18,
+		copyAvailable: false,
+	}
+	if hit.copyContains(12, 8) {
+		t.Fatalf("expected copy hit to reject when copy control is unavailable")
+	}
+
+	hit.copyAvailable = true
+	hit.copyRowY = -1
+	if hit.copyContains(12, 8) {
+		t.Fatalf("expected negative copy row to be rejected")
+	}
+
+	hit.copyRowY = 8
+	if hit.copyContains(11, 8) {
+		t.Fatalf("expected out-of-range copy X to be rejected")
+	}
+	if hit.copyContains(12, 3) {
+		t.Fatalf("expected far-out copy Y to be rejected")
+	}
+}
+
+func TestStatusHistoryPresenterHitboxMappingWhenClipped(t *testing.T) {
+	presenter := newDefaultStatusHistoryOverlayPresenter(defaultStatusHistoryOverlayConfig())
+	view := presenter.Render(statusHistoryOverlayRenderInput{
+		entries:       []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight"},
+		selectedIndex: -1,
+		scrollOffset:  0,
+		width:         120,
+		rightStart:    0,
+		bodyHeight:    3,
+	})
+	if strings.TrimSpace(view.block) == "" {
+		t.Fatalf("expected clipped overlay to render")
+	}
+	if len(view.hitbox.listIndexByY) == 0 {
+		t.Fatalf("expected clipped overlay to still expose list hit targets")
+	}
+
+	ys := make([]int, 0, len(view.hitbox.listIndexByY))
+	for y := range view.hitbox.listIndexByY {
+		ys = append(ys, y)
+	}
+	sort.Ints(ys)
+	for i, y := range ys {
+		if y < view.hitbox.panelTopY || y > view.hitbox.panelBottomY {
+			t.Fatalf("expected mapped list row %d to stay within panel bounds [%d,%d]", y, view.hitbox.panelTopY, view.hitbox.panelBottomY)
+		}
+		if i > 0 && y != ys[i-1]+1 {
+			t.Fatalf("expected mapped list rows to remain contiguous when clipped, got %d then %d", ys[i-1], y)
+		}
+		idx, ok := view.hitbox.listIndexAt(y)
+		if !ok {
+			t.Fatalf("expected mapped clipped row %d to resolve", y)
+		}
+		if want := view.hitbox.listIndexByY[y]; idx != want {
+			t.Fatalf("expected clipped row %d to resolve index %d, got %d", y, want, idx)
+		}
 	}
 }

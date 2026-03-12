@@ -2613,6 +2613,121 @@ func TestMouseReducerStatusHistorySelectAndCopy(t *testing.T) {
 	}
 }
 
+func TestMouseReducerStatusHistoryClickSelectsExactVisibleRowWithZeroBasedY(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("one")
+	m.setStatusMessage("two")
+	m.setStatusMessage("three")
+
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: start, Y: m.height}) {
+		t.Fatalf("expected status click to open history")
+	}
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		t.Fatalf("expected rendered history overlay view")
+	}
+
+	// Click the second visible history row using zero-based Y coordinates.
+	// rows: [header, three, two, one]
+	secondRowY := view.row + 2
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: view.hitbox.panelLeftX + 2, Y: secondRowY}) {
+		t.Fatalf("expected history row click to be handled")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 1 {
+		t.Fatalf("expected second clicked row to select index 1, got %d", got)
+	}
+}
+
+func TestMouseReducerStatusHistoryClickAboveOverlayClosesAndDoesNotSelect(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("one")
+	m.setStatusMessage("two")
+	m.setStatusMessage("three")
+
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: start, Y: m.height}) {
+		t.Fatalf("expected status click to open history")
+	}
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		t.Fatalf("expected rendered history overlay view")
+	}
+
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		X:      view.hitbox.panelLeftX + 2,
+		Y:      view.hitbox.panelTopY - 1,
+	})
+	if !handled {
+		t.Fatalf("expected click above overlay to be handled by close path")
+	}
+	if m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected click above overlay to close status history")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != -1 {
+		t.Fatalf("expected no selection after closing overlay, got %d", got)
+	}
+}
+
+func TestMouseReducerStatusHistoryBottomClampWithoutListTargetDoesNotSelect(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.hotkeys = nil
+	m.setStatusMessage("one")
+	m.setStatusMessage("two")
+	m.setStatusMessage("three")
+
+	start, _, ok := m.statusLineStatusHitbox()
+	if !ok {
+		t.Fatalf("expected global status hitbox")
+	}
+	if !m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: start, Y: m.height}) {
+		t.Fatalf("expected status click to open history")
+	}
+	view, ok := m.currentStatusHistoryOverlayView()
+	if !ok {
+		t.Fatalf("expected rendered history overlay view")
+	}
+	m.statusHistoryOverlay.Select(0, len(view.entries), view.visibleRows)
+	m.statusHistoryLastViewValid = false
+	view, ok = m.currentStatusHistoryOverlayView()
+	if !ok {
+		t.Fatalf("expected rendered selected history overlay view")
+	}
+	if _, mapped := view.hitbox.listIndexByY[view.hitbox.panelBottomY]; mapped {
+		t.Fatalf("expected selected fixture to have panel bottom reserved for non-list content")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 0 {
+		t.Fatalf("expected initial selection to remain 0, got %d", got)
+	}
+
+	handled := m.handleMouse(tea.MouseClickMsg{
+		Button: tea.MouseLeft,
+		X:      view.hitbox.panelLeftX + 2,
+		Y:      view.hitbox.panelBottomY + 1,
+	})
+	if !handled {
+		t.Fatalf("expected bottom+1 clamp click to be handled inside overlay bounds")
+	}
+	if got := m.statusHistoryOverlay.SelectedIndex(); got != 0 {
+		t.Fatalf("expected bottom+1 clamp without list row to keep selection unchanged, got %d", got)
+	}
+	if !m.statusHistoryOverlayOpen() {
+		t.Fatalf("expected overlay to remain open for in-bounds clamp click")
+	}
+}
+
 func TestMouseReducerStatusHistoryOutsideClickClosesOverlay(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

@@ -27,26 +27,47 @@ func (h statusHistoryOverlayHitbox) listIndexAt(y int) (int, bool) {
 	if len(h.listIndexByY) == 0 {
 		return 0, false
 	}
-	index, ok := h.listIndexByY[y]
-	if ok {
-		return index, true
+	row, ok := h.normalizeListRow(y)
+	if !ok {
+		return 0, false
 	}
-	index, ok = h.listIndexByY[y-1]
-	if ok {
-		return index, true
-	}
-	index, ok = h.listIndexByY[y+1]
+	index, ok := h.listIndexByY[row]
 	return index, ok
 }
 
 func (h statusHistoryOverlayHitbox) copyContains(x, y int) bool {
-	if !h.copyAvailable || h.copyRowY <= 0 {
+	if !h.copyAvailable || h.copyRowY < 0 {
 		return false
 	}
-	if y != h.copyRowY && y != h.copyRowY-1 && y != h.copyRowY+1 {
+	row, ok := h.normalizePanelRow(y)
+	if !ok || row != h.copyRowY {
 		return false
 	}
 	return statusHistoryMouseColInRange(x, h.copyStartX, h.copyEndX)
+}
+
+func (h statusHistoryOverlayHitbox) normalizeListRow(y int) (int, bool) {
+	if _, ok := h.listIndexByY[y]; ok {
+		return y, true
+	}
+	row, ok := h.normalizePanelRow(y)
+	if !ok {
+		return 0, false
+	}
+	if _, ok := h.listIndexByY[row]; ok {
+		return row, true
+	}
+	return 0, false
+}
+
+func (h statusHistoryOverlayHitbox) normalizePanelRow(y int) (int, bool) {
+	if y >= h.panelTopY && y <= h.panelBottomY {
+		return y, true
+	}
+	if y == h.panelBottomY+1 {
+		return h.panelBottomY, true
+	}
+	return 0, false
 }
 
 type statusHistoryOverlayView struct {
@@ -257,6 +278,10 @@ func (defaultStatusHistoryOverlayRenderer) Render(layout statusHistoryOverlayLay
 
 type defaultStatusHistoryOverlayHitTester struct{}
 
+func statusHistoryLocalRowToGlobalY(layout statusHistoryOverlayLayout, localRow int) int {
+	return layout.row + (localRow - layout.visibleLineStart) - 1
+}
+
 func (defaultStatusHistoryOverlayHitTester) Build(layout statusHistoryOverlayLayout) statusHistoryOverlayHitbox {
 	hit := statusHistoryOverlayHitbox{
 		listIndexByY: make(map[int]int, len(layout.listLocalRowIndex)),
@@ -267,19 +292,19 @@ func (defaultStatusHistoryOverlayHitTester) Build(layout statusHistoryOverlayLay
 	}
 	hit.panelLeftX = layout.panelLeft
 	hit.panelRightX = layout.panelLeft + layout.panelWidth - 1
-	hit.panelTopY = layout.row + 1
+	hit.panelTopY = layout.row
 	hit.panelBottomY = hit.panelTopY + visibleHeight - 1
 
 	for localRow, entryIndex := range layout.listLocalRowIndex {
 		if localRow <= layout.visibleLineStart {
 			continue
 		}
-		globalY := layout.row + (localRow - layout.visibleLineStart)
+		globalY := statusHistoryLocalRowToGlobalY(layout, localRow)
 		hit.listIndexByY[globalY] = entryIndex
 	}
 	if layout.copyLocalRow > layout.visibleLineStart {
 		hit.copyAvailable = true
-		hit.copyRowY = layout.row + (layout.copyLocalRow - layout.visibleLineStart)
+		hit.copyRowY = statusHistoryLocalRowToGlobalY(layout, layout.copyLocalRow)
 		hit.copyStartX = layout.panelLeft + 4
 		hit.copyEndX = hit.copyStartX + len("[ copy ]") - 1
 	}
@@ -321,8 +346,7 @@ func statusHistoryMouseRowInRange(y, start, end int) bool {
 	if y >= start && y <= end {
 		return true
 	}
-	row := y - 1
-	return row >= start && row <= end
+	return y == end+1
 }
 
 func (m *Model) statusHistoryOverlayOpen() bool {
