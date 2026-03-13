@@ -831,6 +831,37 @@ func TestCanonicalTranscriptHubEmitsReplaceForLateSubscriber(t *testing.T) {
 	_ = hub.Close()
 }
 
+func TestCanonicalTranscriptHubSeedsColdProjectorFromAfterRevision(t *testing.T) {
+	events := make(chan types.CodexEvent, 1)
+	events <- types.CodexEvent{Method: "seeded"}
+	close(events)
+
+	hub, err := newCanonicalTranscriptHub("s-seeded", "codex", &hubTestIngressFactory{handle: TranscriptIngressHandle{
+		Events:          events,
+		FollowAvailable: true,
+		Reconnectable:   false,
+		Close:           func() {},
+	}}, hubTestMapper{}, nil)
+	if err != nil {
+		t.Fatalf("newCanonicalTranscriptHub: %v", err)
+	}
+
+	ch, cancel, err := hub.Subscribe(context.Background(), transcriptdomain.MustParseRevisionToken("10"))
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	first := awaitEventKind(t, ch, transcriptdomain.TranscriptEventStreamStatus)
+	if got := first.Revision.String(); got != "11" {
+		t.Fatalf("expected ready status revision seeded from after_revision, got %q", got)
+	}
+	second := awaitEventKind(t, ch, transcriptdomain.TranscriptEventDelta)
+	if got := second.Revision.String(); got != "12" {
+		t.Fatalf("expected first delta revision seeded from after_revision, got %q", got)
+	}
+}
+
 func TestCanonicalTranscriptHubSubscribeFailsWhenIngressUnavailable(t *testing.T) {
 	hub, err := newCanonicalTranscriptHub("s-ingress", "codex", nil, hubTestMapper{}, nil)
 	if err != nil {

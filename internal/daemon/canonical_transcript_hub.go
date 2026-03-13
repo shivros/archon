@@ -217,7 +217,7 @@ func (h *canonicalTranscriptHub) Subscribe(
 	h.subscribers[subscriberID] = ch
 	h.fanoutMu.Unlock()
 	h.notifySubscriberAttached()
-	if err := h.ensureStarted(ctx); err != nil {
+	if err := h.ensureStarted(ctx, after); err != nil {
 		h.removeSubscriber(subscriberID)
 		return nil, nil, err
 	}
@@ -273,7 +273,7 @@ func (h *canonicalTranscriptHub) isExplicitlyClosed() bool {
 	return h.explicitlyClosed
 }
 
-func (h *canonicalTranscriptHub) ensureStarted(ctx context.Context) error {
+func (h *canonicalTranscriptHub) ensureStarted(ctx context.Context, after transcriptdomain.RevisionToken) error {
 	h.startMu.Lock()
 	defer h.startMu.Unlock()
 	if h.explicitlyClosed {
@@ -298,6 +298,9 @@ func (h *canonicalTranscriptHub) ensureStarted(ctx context.Context) error {
 	h.started = true
 	h.transitionRuntimeState(hubStateStarting)
 	base := h.currentRevision()
+	if base.IsZero() && !after.IsZero() {
+		base = after
+	}
 	go h.runLoop(runCtx, handle, base)
 	return nil
 }
