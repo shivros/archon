@@ -733,10 +733,11 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 		AfterRevision:             m.activeTranscriptRevision(),
 		TranscriptAPI:             m.sessionTranscriptAPI,
 		TranscriptStreamConnected: m.transcriptStream != nil && m.transcriptStream.HasStream(),
+		OpenSource:                transcriptAttachmentSourceSubmitInput,
+		OpenTranscriptCmdBuilder: func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd {
+			return m.requestTranscriptStreamOpenCmd(sessionID, afterRevision, source, transcriptSourceSubmitComposeInput)
+		},
 	})
-	if m.transcriptStream == nil || !m.transcriptStream.HasStream() {
-		m.recordReconnectAttempt(sessionID, provider, "transcript", transcriptSourceSubmitComposeInput)
-	}
 	cmds := make([]tea.Cmd, 0, 4)
 	if len(reconnectCmds) > 0 {
 		cmds = append(cmds, reconnectCmds...)

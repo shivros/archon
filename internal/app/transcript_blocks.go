@@ -15,7 +15,7 @@ func transcriptBlocksToChatBlocks(blocks []transcriptdomain.Block) []ChatBlock {
 	}
 	out := make([]ChatBlock, 0, len(blocks))
 	for _, block := range blocks {
-		if strings.TrimSpace(block.Text) == "" {
+		if transcriptdomain.IsSemanticallyEmpty(block.Text) {
 			continue
 		}
 		role := transcriptBlockRole(block)
@@ -73,7 +73,7 @@ func shouldCoalesceTranscriptChatBlock(current, next ChatBlock) bool {
 	if current.Role != ChatRoleAgent && current.Role != ChatRoleReasoning {
 		return false
 	}
-	if strings.TrimSpace(current.Text) == "" || strings.TrimSpace(next.Text) == "" {
+	if transcriptdomain.IsSemanticallyEmpty(current.Text) || transcriptdomain.IsSemanticallyEmpty(next.Text) {
 		return false
 	}
 	currentID := strings.TrimSpace(current.ID)

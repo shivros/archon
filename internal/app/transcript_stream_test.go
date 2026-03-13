@@ -390,6 +390,76 @@ func TestTranscriptStreamControllerIgnoresStaleTurnCompletionAndUnknownEvents(t 
 	}
 }
 
+func TestTranscriptStreamControllerPreservesLosslessTextAcrossStreamSnapshotAndRefresh(t *testing.T) {
+	cases := []string{
+		"Below is a phased implementation brief...",
+		"conventions.\n\nA few repo anchors...",
+		"[codex_adapter.go](/home/shiv/Workspaces/shivros/archon/main/internal/daemon/transcriptadapters/codex_adapter.go)",
+		"textarea.\n\nExpectations:\n- keep markdown\n- keep newlines",
+	}
+	for i, expected := range cases {
+		t.Run(expected, func(t *testing.T) {
+			controller := NewTranscriptStreamController(8)
+			ch := make(chan transcriptdomain.TranscriptEvent, 1)
+			controller.SetStream(ch, nil)
+			ch <- transcriptdomain.TranscriptEvent{
+				Kind:     transcriptdomain.TranscriptEventDelta,
+				Revision: transcriptdomain.MustParseRevisionToken("1"),
+				Delta: []transcriptdomain.Block{{
+					ID:   "msg-" + string(rune('a'+i)),
+					Kind: "assistant_message",
+					Role: "assistant",
+					Text: expected,
+					Meta: map[string]any{
+						"provider_message_id": "pm-" + string(rune('a'+i)),
+						"turn_id":             "turn-1",
+					},
+				}},
+			}
+			changed, closed, _, _ := controller.ConsumeTick()
+			if !changed || closed {
+				t.Fatalf("expected stream delta to apply")
+			}
+			streamBlocks := controller.Blocks()
+			if len(streamBlocks) != 1 {
+				t.Fatalf("expected single streamed block, got %#v", streamBlocks)
+			}
+			streamText := streamBlocks[0].Text
+
+			snapshot := transcriptdomain.TranscriptSnapshot{
+				Revision: transcriptdomain.MustParseRevisionToken("2"),
+				Blocks: []transcriptdomain.Block{{
+					ID:   "msg-" + string(rune('a'+i)),
+					Kind: "assistant_message",
+					Role: "assistant",
+					Text: expected,
+					Meta: map[string]any{
+						"provider_message_id": "pm-" + string(rune('a'+i)),
+						"turn_id":             "turn-1",
+					},
+				}},
+			}
+			_, applied := controller.SetSnapshot(snapshot)
+			if !applied {
+				t.Fatalf("expected snapshot apply")
+			}
+			snapshotText := controller.Blocks()[0].Text
+
+			hardRefresh := snapshot
+			hardRefresh.Revision = transcriptdomain.MustParseRevisionToken("1")
+			_, applied = controller.SetAuthoritativeSnapshot(hardRefresh)
+			if !applied {
+				t.Fatalf("expected authoritative snapshot apply")
+			}
+			refreshText := controller.Blocks()[0].Text
+
+			if streamText != expected || snapshotText != expected || refreshText != expected {
+				t.Fatalf("expected byte-for-byte text parity, stream=%q snapshot=%q refresh=%q expected=%q", streamText, snapshotText, refreshText, expected)
+			}
+		})
+	}
+}
+
 func TestTranscriptBlocksContainUserRelevantContentRules(t *testing.T) {
 	if transcriptBlocksContainUserRelevantContent([]transcriptdomain.Block{
 		{Kind: "provider_event", Role: "system", Text: "noise"},

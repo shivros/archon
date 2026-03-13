@@ -38,8 +38,8 @@ func TestLoadSelectedSessionSkipsHistoryBackfillByDefault(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected load batch, got %T", msg)
 	}
-	if len(batch) != 3 {
-		t.Fatalf("expected 3 commands (transcript snapshot, approvals, transcript stream), got %d", len(batch))
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 commands (transcript snapshot, approvals), got %d", len(batch))
 	}
 }
 
@@ -60,8 +60,8 @@ func TestLoadSelectedSessionUsesItemsSnapshotBootstrapForItemProviders(t *testin
 	if !ok {
 		t.Fatalf("expected load batch, got %T", msg)
 	}
-	if len(batch) != 3 {
-		t.Fatalf("expected 3 commands (transcript snapshot, approvals, transcript stream), got %d", len(batch))
+	if len(batch) != 2 {
+		t.Fatalf("expected 2 commands (transcript snapshot, approvals), got %d", len(batch))
 	}
 }
 
@@ -139,9 +139,9 @@ func TestStartSessionUsesItemsSnapshotBootstrapForItemProviders(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected batch command, got %T", msg)
 	}
-	// fetch sessions + recents save + transcript snapshot + approvals + transcript stream
-	if len(batch) != 5 {
-		t.Fatalf("expected 5 start-session commands for unified bootstrap, got %d", len(batch))
+	// fetch sessions + recents save + transcript snapshot + approvals
+	if len(batch) != 4 {
+		t.Fatalf("expected 4 start-session commands for snapshot-first bootstrap, got %d", len(batch))
 	}
 }
 

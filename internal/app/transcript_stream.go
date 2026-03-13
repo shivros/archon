@@ -240,7 +240,7 @@ func transcriptBlocksContainUserRelevantContent(blocks []transcriptdomain.Block)
 	for _, block := range blocks {
 		role := strings.ToLower(strings.TrimSpace(block.Role))
 		kind := strings.ToLower(strings.TrimSpace(block.Kind))
-		text := strings.TrimSpace(block.Text)
+		text := transcriptdomain.PreserveText(block.Text)
 		if kind == "provider_event" {
 			continue
 		}
@@ -250,7 +250,7 @@ func transcriptBlocksContainUserRelevantContent(blocks []transcriptdomain.Block)
 		if strings.Contains(kind, "assistant") || strings.Contains(kind, "agent") || strings.Contains(kind, "reasoning") {
 			return true
 		}
-		if text != "" && role != "system" {
+		if !transcriptdomain.IsSemanticallyEmpty(text) && role != "system" {
 			return true
 		}
 	}
