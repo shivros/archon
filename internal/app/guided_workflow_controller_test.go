@@ -476,6 +476,7 @@ func TestGuidedWorkflowControllerRenderSetupShowsReadOnlyFollowUpDependency(t *t
 		workspaceID:      "ws1",
 		followUpRunID:    "gwf-1",
 		followUpRunLabel: "Workflow A",
+		dependencyLocked: true,
 	})
 	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
 		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
@@ -509,6 +510,57 @@ func TestGuidedWorkflowControllerBuildCreateRequestIncludesFollowUpDependency(t 
 	req := controller.BuildCreateRequest()
 	if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-1" {
 		t.Fatalf("expected create request to include follow-up dependency, got %#v", req.DependsOnRunIDs)
+	}
+}
+
+func TestGuidedWorkflowControllerDependencyPickerTypeAheadSelection(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{workspaceID: "ws-target"})
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
+	})
+	if !controller.OpenProvider() || !controller.OpenPolicy() || !controller.OpenSetup() {
+		t.Fatalf("expected launcher/provider/policy/setup flow")
+	}
+	controller.SetDependencyOptions([]guidedWorkflowDependencyOption{
+		{runID: "gwf-a", label: "gwf-a [running] Source A", search: "gwf-a running source a"},
+		{runID: "gwf-b", label: "gwf-b [completed] Source B", search: "gwf-b completed source b"},
+	})
+	if !controller.OpenDependencyPicker() {
+		t.Fatalf("expected dependency picker to open")
+	}
+	if !controller.AppendQuery("gwf-b") {
+		t.Fatalf("expected dependency query append")
+	}
+	if !controller.ConfirmDependencySelection() {
+		t.Fatalf("expected dependency selection confirmation")
+	}
+	req := controller.BuildCreateRequest()
+	if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-b" {
+		t.Fatalf("expected dependency gwf-b after picker selection, got %#v", req.DependsOnRunIDs)
+	}
+	setup := controller.Render()
+	if !strings.Contains(setup, "- Depends on: gwf-b [completed] Source B") {
+		t.Fatalf("expected selected dependency in setup summary, got %q", setup)
+	}
+}
+
+func TestGuidedWorkflowControllerDependencyPickerReadOnlyGuard(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.Enter(guidedWorkflowLaunchContext{
+		workspaceID:      "ws1",
+		followUpRunID:    "gwf-1",
+		followUpRunLabel: "Workflow A",
+		dependencyLocked: true,
+	})
+	controller.SetTemplates([]guidedworkflows.WorkflowTemplate{
+		{ID: "solid_phase_delivery", Name: "SOLID Phase Delivery"},
+	})
+	if !controller.OpenProvider() || !controller.OpenPolicy() || !controller.OpenSetup() {
+		t.Fatalf("expected launcher/provider/policy/setup flow")
+	}
+	if controller.OpenDependencyPicker() {
+		t.Fatalf("did not expect read-only follow-up context to open dependency picker")
 	}
 }
 

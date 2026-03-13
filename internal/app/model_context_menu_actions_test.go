@@ -818,6 +818,9 @@ func TestWorkflowContextActionCreateFollowUpStartsGuidedWorkflowWithDependency(t
 	if m.guidedWorkflow.context.workspaceID != "ws-1" || m.guidedWorkflow.context.worktreeID != "wt-1" || m.guidedWorkflow.context.sessionID != "s-1" {
 		t.Fatalf("expected follow-up context to inherit workflow scope, got %#v", m.guidedWorkflow.context)
 	}
+	if !m.guidedWorkflow.context.dependencyLocked {
+		t.Fatalf("expected follow-up dependency to be locked in setup context")
+	}
 }
 
 func TestWorkflowContextActionCreateFollowUpRejectsUnsupportedStatus(t *testing.T) {

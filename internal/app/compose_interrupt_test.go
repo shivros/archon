@@ -72,8 +72,8 @@ func TestComposeControlsLineShowsInterruptForActiveRequest(t *testing.T) {
 }
 
 func TestComposeControlsLineHidesInterruptForProviderWithoutSupport(t *testing.T) {
-	m := newComposeInterruptTestModel("claude")
-	m.startRequestActivity("s1", "claude")
+	m := newComposeInterruptTestModel("gemini")
+	m.startRequestActivity("s1", "gemini")
 
 	line := m.composeControlsLine()
 	if strings.Contains(line, "Interrupt") {

@@ -1745,6 +1745,51 @@ func TestMouseReducerGuidedWorkflowLauncherIgnoresClicksOutsideTemplatePicker(t 
 	}
 }
 
+func TestMouseReducerGuidedWorkflowSetupDependencyPickerClickSelects(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.resize(120, 40)
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{
+		{
+			ID:           "gwf-source",
+			Status:       guidedworkflows.WorkflowRunStatusRunning,
+			TemplateName: "Source Pattern Workflow",
+		},
+	}
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws-target",
+		worktreeID:  "wt-target",
+	})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+	if cmd := m.openGuidedWorkflowDependencyPicker(); cmd != nil {
+		t.Fatalf("expected dependency picker open command to be nil")
+	}
+	if m.guidedWorkflow == nil || !m.guidedWorkflow.DependencyPickerOpen() {
+		t.Fatalf("expected dependency picker to open in setup")
+	}
+
+	layout := m.resolveMouseLayout()
+	pickerLayout, ok := m.guidedWorkflow.ActivePickerLayout()
+	if !ok {
+		t.Fatalf("expected dependency picker layout metadata")
+	}
+	start := m.guidedWorkflowLauncherPickerStartRow(pickerLayout)
+	if start < 0 {
+		t.Fatalf("expected dependency picker start row")
+	}
+	row := start - m.viewport.YOffset() + 1 + 2 // query row + "(no dependency)" + first run
+	handled := m.reduceGuidedWorkflowLauncherLeftPressMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: layout.rightStart, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected dependency picker click to be handled")
+	}
+	if !m.guidedWorkflow.ConfirmDependencySelection() {
+		t.Fatalf("expected selected dependency row to be confirmable")
+	}
+	req := m.guidedWorkflow.BuildCreateRequest()
+	if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-source" {
+		t.Fatalf("expected selected dependency gwf-source after click, got %#v", req.DependsOnRunIDs)
+	}
+}
+
 func TestGuidedWorkflowLauncherPickerStartRowFallbackStripsANSI(t *testing.T) {
 	var nilModel *Model
 	if got := nilModel.guidedWorkflowLauncherPickerStartRow(guidedWorkflowLauncherTemplatePickerLayout{queryLine: "/"}); got != -1 {

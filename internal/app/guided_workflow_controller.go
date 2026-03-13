@@ -8,6 +8,8 @@ import (
 	"control/internal/client"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 type guidedWorkflowStage int
@@ -38,6 +40,7 @@ type guidedWorkflowLaunchContext struct {
 	sessionName      string
 	followUpRunID    string
 	followUpRunLabel string
+	dependencyLocked bool
 }
 
 type guidedWorkflowTemplateOption struct {
@@ -55,6 +58,12 @@ type guidedWorkflowTurnLinkTarget struct {
 	label     string
 	sessionID string
 	turnID    string
+}
+
+type guidedWorkflowDependencyOption struct {
+	runID  string
+	label  string
+	search string
 }
 
 type GuidedWorkflowUIController struct {
@@ -82,20 +91,25 @@ type GuidedWorkflowUIController struct {
 	selectedStep          int
 	userTurnLink          WorkflowUserTurnLinkBuilder
 	promptPresenter       workflowPromptPresenter
+	dependencyPicker      *SelectPicker
+	dependencyPickerOpen  bool
+	dependencyLabelsByID  map[string]string
 }
 
 func NewGuidedWorkflowUIController() *GuidedWorkflowUIController {
 	return &GuidedWorkflowUIController{
-		stage:           guidedWorkflowStageLauncher,
-		templateID:      "",
-		templateName:    "",
-		templatePicker:  newGuidedWorkflowTemplatePicker(),
-		providerPicker:  NewProviderPicker(minViewportWidth, 8),
-		policyPicker:    NewSelectPicker(minViewportWidth, 8),
-		defaultPreset:   guidedPolicySensitivityBalanced,
-		sensitivity:     guidedPolicySensitivityBalanced,
-		userTurnLink:    NewArchonWorkflowUserTurnLinkBuilder(),
-		promptPresenter: newWorkflowPromptPresenter(),
+		stage:                guidedWorkflowStageLauncher,
+		templateID:           "",
+		templateName:         "",
+		templatePicker:       newGuidedWorkflowTemplatePicker(),
+		providerPicker:       NewProviderPicker(minViewportWidth, 8),
+		policyPicker:         NewSelectPicker(minViewportWidth, 8),
+		defaultPreset:        guidedPolicySensitivityBalanced,
+		sensitivity:          guidedPolicySensitivityBalanced,
+		userTurnLink:         NewArchonWorkflowUserTurnLinkBuilder(),
+		promptPresenter:      newWorkflowPromptPresenter(),
+		dependencyPicker:     NewSelectPicker(minViewportWidth, 8),
+		dependencyLabelsByID: map[string]string{},
 	}
 }
 
@@ -120,6 +134,12 @@ func (c *GuidedWorkflowUIController) Enter(context guidedWorkflowLaunchContext) 
 	c.lastRefreshAt = time.Time{}
 	c.selectedPhase = 0
 	c.selectedStep = 0
+	c.dependencyPickerOpen = false
+	if c.dependencyPicker != nil {
+		c.dependencyPicker.ClearQuery()
+		c.dependencyPicker.SetOptions(nil)
+	}
+	c.dependencyLabelsByID = map[string]string{}
 	c.initProviderPicker()
 	c.initPolicyPicker()
 }
@@ -169,6 +189,7 @@ func (c *GuidedWorkflowUIController) OpenSetup() bool {
 		return false
 	}
 	c.stage = guidedWorkflowStageSetup
+	c.dependencyPickerOpen = false
 	c.lastError = ""
 	return true
 }
@@ -178,6 +199,7 @@ func (c *GuidedWorkflowUIController) OpenLauncher() {
 		return
 	}
 	c.stage = guidedWorkflowStageLauncher
+	c.dependencyPickerOpen = false
 }
 
 func (c *GuidedWorkflowUIController) OpenProviderStage() {
@@ -185,6 +207,7 @@ func (c *GuidedWorkflowUIController) OpenProviderStage() {
 		return
 	}
 	c.stage = guidedWorkflowStageProvider
+	c.dependencyPickerOpen = false
 }
 
 func (c *GuidedWorkflowUIController) OpenPolicyStage() {
@@ -192,6 +215,7 @@ func (c *GuidedWorkflowUIController) OpenPolicyStage() {
 		return
 	}
 	c.stage = guidedWorkflowStagePolicy
+	c.dependencyPickerOpen = false
 }
 
 func (c *GuidedWorkflowUIController) BeginTemplateLoad() {
@@ -258,6 +282,9 @@ func (c *GuidedWorkflowUIController) SetTemplatePickerSize(width, height int) {
 	if c.policyPicker != nil {
 		c.policyPicker.SetSize(width, height)
 	}
+	if c.dependencyPicker != nil {
+		c.dependencyPicker.SetSize(width, clamp(height, 6, 10))
+	}
 }
 
 func (c *GuidedWorkflowUIController) SetUserTurnLinkBuilder(builder WorkflowUserTurnLinkBuilder) {
@@ -281,6 +308,10 @@ func (c *GuidedWorkflowUIController) Query() string {
 	case guidedWorkflowStagePolicy:
 		if c.policyPicker != nil {
 			return c.policyPicker.Query()
+		}
+	case guidedWorkflowStageSetup:
+		if c.dependencyPickerOpen && c.dependencyPicker != nil {
+			return c.dependencyPicker.Query()
 		}
 	}
 	return ""
@@ -313,6 +344,10 @@ func (c *GuidedWorkflowUIController) AppendQuery(text string) bool {
 			c.syncPolicySelection()
 			return true
 		}
+	case guidedWorkflowStageSetup:
+		if c.dependencyPickerOpen && c.dependencyPicker != nil {
+			return c.dependencyPicker.AppendQuery(text)
+		}
 	}
 	return false
 }
@@ -344,6 +379,10 @@ func (c *GuidedWorkflowUIController) BackspaceQuery() bool {
 			c.syncPolicySelection()
 			return true
 		}
+	case guidedWorkflowStageSetup:
+		if c.dependencyPickerOpen && c.dependencyPicker != nil {
+			return c.dependencyPicker.BackspaceQuery()
+		}
 	}
 	return false
 }
@@ -374,6 +413,10 @@ func (c *GuidedWorkflowUIController) ClearQuery() bool {
 			}
 			c.syncPolicySelection()
 			return true
+		}
+	case guidedWorkflowStageSetup:
+		if c.dependencyPickerOpen && c.dependencyPicker != nil {
+			return c.dependencyPicker.ClearQuery()
 		}
 	}
 	return false
@@ -410,6 +453,13 @@ func (c *GuidedWorkflowUIController) SelectPolicyByRow(row int) bool {
 	}
 	c.syncPolicySelection()
 	return true
+}
+
+func (c *GuidedWorkflowUIController) SelectDependencyByRow(row int) bool {
+	if c == nil || c.stage != guidedWorkflowStageSetup || !c.dependencyPickerOpen || c.dependencyPicker == nil {
+		return false
+	}
+	return c.dependencyPicker.HandleClick(row)
 }
 
 func (c *GuidedWorkflowUIController) LauncherTemplatePickerLayout() (guidedWorkflowLauncherTemplatePickerLayout, bool) {
@@ -456,6 +506,18 @@ func (c *GuidedWorkflowUIController) ActivePickerLayout() (guidedWorkflowLaunche
 		}
 		return guidedWorkflowLauncherTemplatePickerLayout{
 			queryLine: strings.TrimSpace(renderPickerQueryLine(c.policyPicker.Query())),
+			height:    len(strings.Split(view, "\n")),
+		}, true
+	case guidedWorkflowStageSetup:
+		if !c.dependencyPickerOpen || c.dependencyPicker == nil {
+			return guidedWorkflowLauncherTemplatePickerLayout{}, false
+		}
+		view := strings.TrimSpace(xansi.Strip(c.dependencyPicker.View()))
+		if view == "" {
+			return guidedWorkflowLauncherTemplatePickerLayout{}, false
+		}
+		return guidedWorkflowLauncherTemplatePickerLayout{
+			queryLine: strings.TrimSpace(renderPickerQueryLine(c.dependencyPicker.Query())),
 			height:    len(strings.Split(view, "\n")),
 		}, true
 	default:
@@ -575,6 +637,121 @@ func (c *GuidedWorkflowUIController) SetRuntimeOptions(options *types.SessionRun
 	c.runtimeOptions = types.CloneRuntimeOptions(options)
 }
 
+func (c *GuidedWorkflowUIController) SetDependencyOptions(options []guidedWorkflowDependencyOption) {
+	if c == nil || c.dependencyPicker == nil {
+		return
+	}
+	selectedID := ""
+	if c.dependencyPickerOpen {
+		selectedID = strings.TrimSpace(c.dependencyPicker.SelectedID())
+	}
+	if selectedID == "" {
+		selectedID = strings.TrimSpace(c.context.followUpRunID)
+	}
+	if selectedID == "" {
+		selectedID = strings.TrimSpace(c.dependencyPicker.SelectedID())
+	}
+	labels := map[string]string{}
+	selectOptions := make([]selectOption, 0, len(options)+2)
+	selectOptions = append(selectOptions, selectOption{
+		id:     "",
+		label:  "(no dependency)",
+		search: "none no dependency clear",
+	})
+	for _, option := range options {
+		runID := strings.TrimSpace(option.runID)
+		if runID == "" {
+			continue
+		}
+		label := strings.TrimSpace(option.label)
+		if label == "" {
+			label = runID
+		}
+		search := strings.TrimSpace(option.search)
+		selectOptions = append(selectOptions, selectOption{
+			id:     runID,
+			label:  label,
+			search: search,
+		})
+		labels[runID] = label
+	}
+	if selectedID != "" {
+		if _, ok := labels[selectedID]; !ok {
+			fallbackLabel := strings.TrimSpace(c.context.followUpRunLabel)
+			if fallbackLabel == "" {
+				fallbackLabel = selectedID
+			}
+			selectOptions = append(selectOptions, selectOption{
+				id:     selectedID,
+				label:  fallbackLabel,
+				search: fallbackLabel + " " + selectedID,
+			})
+			labels[selectedID] = fallbackLabel
+		}
+	}
+	c.dependencyLabelsByID = labels
+	c.dependencyPicker.SetOptions(selectOptions)
+	if selectedID != "" {
+		c.dependencyPicker.SelectID(selectedID)
+	}
+}
+
+func (c *GuidedWorkflowUIController) OpenDependencyPicker() bool {
+	if c == nil || c.stage != guidedWorkflowStageSetup || c.dependencyPicker == nil || c.context.dependencyLocked {
+		return false
+	}
+	c.dependencyPickerOpen = true
+	c.dependencyPicker.ClearQuery()
+	if selected := strings.TrimSpace(c.context.followUpRunID); selected != "" {
+		c.dependencyPicker.SelectID(selected)
+	}
+	return true
+}
+
+func (c *GuidedWorkflowUIController) CloseDependencyPicker() {
+	if c == nil {
+		return
+	}
+	c.dependencyPickerOpen = false
+	if c.dependencyPicker != nil {
+		c.dependencyPicker.ClearQuery()
+	}
+}
+
+func (c *GuidedWorkflowUIController) DependencyPickerOpen() bool {
+	return c != nil && c.dependencyPickerOpen
+}
+
+func (c *GuidedWorkflowUIController) MoveDependencySelection(delta int) bool {
+	if c == nil || c.stage != guidedWorkflowStageSetup || !c.dependencyPickerOpen || c.dependencyPicker == nil || delta == 0 {
+		return false
+	}
+	return c.dependencyPicker.Move(delta)
+}
+
+func (c *GuidedWorkflowUIController) ConfirmDependencySelection() bool {
+	if c == nil || c.stage != guidedWorkflowStageSetup || !c.dependencyPickerOpen || c.dependencyPicker == nil {
+		return false
+	}
+	selectedID := strings.TrimSpace(c.dependencyPicker.SelectedID())
+	c.context.followUpRunID = selectedID
+	if selectedID == "" {
+		c.context.followUpRunLabel = ""
+	} else {
+		label := strings.TrimSpace(c.dependencyLabelsByID[selectedID])
+		if strings.EqualFold(label, selectedID) {
+			label = ""
+		}
+		c.context.followUpRunLabel = label
+	}
+	c.CloseDependencyPicker()
+	return true
+}
+
+func (c *GuidedWorkflowUIController) DependencyLocked() bool {
+	return c != nil && c.context.dependencyLocked
+}
+
 func (c *GuidedWorkflowUIController) CycleSensitivity(delta int) {
 	if c == nil || c.stage != guidedWorkflowStagePolicy || delta == 0 {
 		return
@@ -689,6 +866,7 @@ func (c *GuidedWorkflowUIController) SetRun(run *guidedworkflows.WorkflowRun) {
 	if c == nil {
 		return
 	}
+	c.dependencyPickerOpen = false
 	c.run = cloneWorkflowRun(run)
 	c.lastError = ""
 	c.refreshQueued = false
@@ -712,6 +890,7 @@ func (c *GuidedWorkflowUIController) SetSnapshot(run *guidedworkflows.WorkflowRu
 	if c == nil {
 		return
 	}
+	c.dependencyPickerOpen = false
 	c.run = cloneWorkflowRun(run)
 	c.timeline = cloneRunTimeline(timeline)
 	c.lastError = ""
@@ -965,7 +1144,23 @@ func (c *GuidedWorkflowUIController) renderSetup() string {
 		fmt.Sprintf("- Policy sensitivity: %s", sensitivity),
 	}
 	if dependsOn := c.followUpDependencySummary(); dependsOn != "" {
-		lines = append(lines, fmt.Sprintf("- Depends on: %s (read-only)", dependsOn))
+		if c.context.dependencyLocked {
+			lines = append(lines, fmt.Sprintf("- Depends on: %s (read-only)", dependsOn))
+		} else {
+			lines = append(lines, fmt.Sprintf("- Depends on: %s", dependsOn))
+		}
+	} else {
+		lines = append(lines, "- Depends on: (none)")
+	}
+	if !c.context.dependencyLocked {
+		lines = append(lines, "- Dependency picker: ctrl+4 to search workflow runs")
+	}
+	if c.dependencyPickerOpen && c.dependencyPicker != nil {
+		pickerLines := strings.Split(strings.TrimRight(xansi.Strip(c.dependencyPicker.View()), "\n"), "\n")
+		lines = append(lines, "", "### Dependency Selector", "")
+		lines = append(lines, renderGuidedWorkflowMonospaceBlock(pickerLines)...)
+		lines = append(lines, "", "- enter: set dependency")
+		lines = append(lines, "- esc: close dependency selector")
 	}
 	if text := strings.TrimSpace(c.lastError); text != "" {
 		lines = append(lines, "", "Error: "+text)
@@ -984,6 +1179,9 @@ func (c *GuidedWorkflowUIController) followUpDependencySummary() string {
 	label := strings.TrimSpace(c.context.followUpRunLabel)
 	if label == "" || strings.EqualFold(label, runID) {
 		return runID
+	}
+	if strings.Contains(strings.ToLower(label), strings.ToLower(runID)) {
+		return label
 	}
 	return label + " (" + runID + ")"
 }

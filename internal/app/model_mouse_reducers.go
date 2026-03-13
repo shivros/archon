@@ -773,6 +773,10 @@ func (m *Model) reduceGuidedWorkflowLauncherLeftPressMouse(msg tea.MouseMsg, lay
 	}
 	if m.guidedWorkflow.SelectPolicyByRow(row) {
 		m.renderGuidedWorkflowContent()
+		return true
+	}
+	if m.guidedWorkflow.SelectDependencyByRow(row) {
+		m.renderGuidedWorkflowContent()
 	}
 	return true
 }

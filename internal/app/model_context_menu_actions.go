@@ -291,6 +291,7 @@ func (m *Model) handleWorkflowContextMenuAction(action ContextMenuAction, target
 		ctx := guidedWorkflowLaunchContext{
 			followUpRunID:    runID,
 			followUpRunLabel: strings.TrimSpace(target.targetLabel),
+			dependencyLocked: true,
 		}
 		if run != nil {
 			ctx.workspaceID = strings.TrimSpace(run.WorkspaceID)

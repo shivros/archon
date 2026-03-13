@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ func (m *Model) enterGuidedWorkflow(context guidedWorkflowLaunchContext) {
 	m.newSession = nil
 	m.closeComposeOptionPicker()
 	m.guidedWorkflow.Enter(context)
+	m.guidedWorkflow.SetDependencyOptions(m.guidedWorkflowDependencyOptions())
 	m.guidedWorkflow.BeginTemplateLoad()
 	m.resetGuidedWorkflowPromptInput()
 	m.resetGuidedWorkflowResumeInput()
@@ -151,6 +153,7 @@ func (m *Model) renderGuidedWorkflowContent() {
 	pickerHeight := clamp(m.viewport.Height()/2, 6, 10)
 	m.guidedWorkflow.SetTemplatePickerSize(pickerWidth, pickerHeight)
 	if m.guidedWorkflow.Stage() == guidedWorkflowStageSetup {
+		m.guidedWorkflow.SetDependencyOptions(m.guidedWorkflowDependencyOptions())
 		m.syncGuidedWorkflowPromptInput()
 	}
 	if m.guidedWorkflow.Stage() == guidedWorkflowStageSummary && m.guidedWorkflow.CanResumeFailedRun() {
@@ -213,6 +216,47 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 			return true, cmd
 		}
 	}
+	if m.guidedWorkflow != nil && m.guidedWorkflow.Stage() == guidedWorkflowStageSetup && m.guidedWorkflow.DependencyPickerOpen() {
+		arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
+		handled, cmd := arbiter.Handle(msg, m.guidedWorkflow, pickerKeyboardHooks{
+			Cancel: func() tea.Cmd {
+				m.guidedWorkflow.CloseDependencyPicker()
+				m.syncGuidedWorkflowInputFocus()
+				m.setStatusMessage("dependency picker closed")
+				m.renderGuidedWorkflowContent()
+				return nil
+			},
+			Confirm: func() tea.Cmd {
+				if !m.guidedWorkflow.ConfirmDependencySelection() {
+					return nil
+				}
+				m.syncGuidedWorkflowInputFocus()
+				req := m.guidedWorkflow.BuildCreateRequest()
+				dependsOn := ""
+				if len(req.DependsOnRunIDs) > 0 {
+					dependsOn = strings.TrimSpace(req.DependsOnRunIDs[0])
+				}
+				if dependsOn != "" {
+					m.setStatusMessage("dependency set: " + dependsOn)
+				} else {
+					m.setStatusMessage("dependency cleared")
+				}
+				m.renderGuidedWorkflowContent()
+				return nil
+			},
+			MoveDown: func() {
+				m.guidedWorkflow.MoveDependencySelection(1)
+			},
+			MoveUp: func() {
+				m.guidedWorkflow.MoveDependencySelection(-1)
+			},
+			OnTypeAhead: m.renderGuidedWorkflowContent,
+		})
+		if handled {
+			m.renderGuidedWorkflowContent()
+			return true, cmd
+		}
+	}
 	if handled, cmd := m.handleGuidedWorkflowSetupInput(msg); handled {
 		return true, cmd
 	}
@@ -246,6 +290,8 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionReasoning)
 			case "ctrl+3":
 				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionAccess)
+			case "ctrl+4":
+				return true, m.openGuidedWorkflowDependencyPicker()
 			}
 		}
 		if handled, cmd := m.reduceGlobalKey(keyMsg, globalKeyOptions{
@@ -479,6 +525,7 @@ func (m *Model) handleGuidedWorkflowEnter() tea.Cmd {
 			return nil
 		}
 		m.prepareGuidedWorkflowComposerDefaults()
+		m.guidedWorkflow.SetDependencyOptions(m.guidedWorkflowDependencyOptions())
 		if m.guidedWorkflowPromptInput != nil {
 			m.guidedWorkflowPromptInput.Focus()
 		}
@@ -845,6 +892,98 @@ func (m *Model) guidedWorkflowTurnLinkAtPosition(col, absolute int) (guidedWorkf
 	return guidedWorkflowTurnLinkTarget{}, false
 }
 
+func (m *Model) guidedWorkflowDependencyOptions() []guidedWorkflowDependencyOption {
+	if m == nil || len(m.workflowRuns) == 0 {
+		return nil
+	}
+	runs := make([]*guidedworkflows.WorkflowRun, 0, len(m.workflowRuns))
+	seen := map[string]struct{}{}
+	for _, run := range m.workflowRuns {
+		if run == nil {
+			continue
+		}
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		if _, exists := seen[runID]; exists {
+			continue
+		}
+		seen[runID] = struct{}{}
+		runs = append(runs, run)
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		left := guidedWorkflowRunSortTime(runs[i])
+		right := guidedWorkflowRunSortTime(runs[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return strings.Compare(strings.TrimSpace(runs[i].ID), strings.TrimSpace(runs[j].ID)) < 0
+	})
+	options := make([]guidedWorkflowDependencyOption, 0, len(runs))
+	for _, run := range runs {
+		runID := strings.TrimSpace(run.ID)
+		if runID == "" {
+			continue
+		}
+		status := strings.TrimSpace(string(run.Status))
+		if status == "" {
+			status = "unknown"
+		}
+		templateName := strings.TrimSpace(run.TemplateName)
+		if templateName == "" {
+			templateName = strings.TrimSpace(run.TemplateID)
+		}
+		if templateName == "" {
+			templateName = "workflow"
+		}
+		workspace := strings.TrimSpace(m.workspaceNameByID(strings.TrimSpace(run.WorkspaceID)))
+		if workspace == "" {
+			workspace = strings.TrimSpace(run.WorkspaceID)
+		}
+		worktree := strings.TrimSpace(m.worktreeNameByID(strings.TrimSpace(run.WorktreeID)))
+		if worktree == "" {
+			worktree = strings.TrimSpace(run.WorktreeID)
+		}
+		location := strings.TrimSpace(strings.TrimSpace(workspace) + "/" + strings.TrimSpace(worktree))
+		location = strings.Trim(location, "/")
+		label := fmt.Sprintf("%s [%s] %s", runID, status, templateName)
+		if location != "" {
+			label += " @ " + location
+		}
+		search := strings.Join([]string{
+			runID,
+			status,
+			templateName,
+			workspace,
+			worktree,
+			strings.TrimSpace(run.SessionID),
+		}, " ")
+		options = append(options, guidedWorkflowDependencyOption{
+			runID:  runID,
+			label:  label,
+			search: search,
+		})
+	}
+	return options
+}
+
+func guidedWorkflowRunSortTime(run *guidedworkflows.WorkflowRun) time.Time {
+	if run == nil {
+		return time.Time{}
+	}
+	if run.CompletedAt != nil {
+		return run.CompletedAt.UTC()
+	}
+	if run.PausedAt != nil {
+		return run.PausedAt.UTC()
+	}
+	if run.StartedAt != nil {
+		return run.StartedAt.UTC()
+	}
+	return run.CreatedAt.UTC()
+}
+
 func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflowPromptInput == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
 		return false, nil
@@ -879,6 +1018,8 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionReasoning)
 			case m.keyMatchesCommand(keyMsg, KeyCommandComposeAccess, "ctrl+3"):
 				return true, m.requestGuidedWorkflowComposeOptionPicker(composeOptionAccess)
+			case m.keyString(keyMsg) == "ctrl+4":
+				return true, m.openGuidedWorkflowDependencyPicker()
 			}
 			return false, nil
 		},
@@ -1003,6 +1144,15 @@ func (m *Model) syncGuidedWorkflowInputFocus() {
 	}
 	switch m.guidedWorkflow.Stage() {
 	case guidedWorkflowStageSetup:
+		if m.guidedWorkflow.DependencyPickerOpen() {
+			if m.guidedWorkflowPromptInput != nil {
+				m.guidedWorkflowPromptInput.Blur()
+			}
+			if m.guidedWorkflowResumeInput != nil {
+				m.guidedWorkflowResumeInput.Blur()
+			}
+			return
+		}
 		if m.guidedWorkflowPromptInput != nil {
 			m.guidedWorkflowPromptInput.Focus()
 		}
@@ -1158,6 +1308,25 @@ func (m *Model) requestGuidedWorkflowComposeOptionPicker(target composeOptionKin
 	m.syncGuidedWorkflowRuntimeOptionsFromCompose()
 	m.renderGuidedWorkflowContent()
 	return cmd
+}
+
+func (m *Model) openGuidedWorkflowDependencyPicker() tea.Cmd {
+	if m == nil || m.guidedWorkflow == nil || m.guidedWorkflow.Stage() != guidedWorkflowStageSetup {
+		return nil
+	}
+	if m.guidedWorkflow.DependencyLocked() {
+		m.setValidationStatus("dependency is read-only for this follow-up workflow")
+		return nil
+	}
+	m.guidedWorkflow.SetDependencyOptions(m.guidedWorkflowDependencyOptions())
+	if !m.guidedWorkflow.OpenDependencyPicker() {
+		m.setValidationStatus("dependency picker unavailable")
+		return nil
+	}
+	m.syncGuidedWorkflowInputFocus()
+	m.setStatusMessage("select dependency workflow (type to filter)")
+	m.renderGuidedWorkflowContent()
+	return nil
 }
 
 func (m *Model) reflowGuidedWorkflowLayout() {

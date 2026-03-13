@@ -508,6 +508,69 @@ func TestGuidedWorkflowSetupComposeOptionPickerEscClearsThenCloses(t *testing.T)
 	}
 }
 
+func TestGuidedWorkflowSetupDependencyPickerSupportsCrossWorkspaceSelection(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{
+		{
+			ID:           "gwf-source",
+			Status:       guidedworkflows.WorkflowRunStatusRunning,
+			TemplateName: "Source Pattern Workflow",
+			WorkspaceID:  "ws-source",
+		},
+	}
+	m.workspaces = append(m.workspaces, &types.Workspace{ID: "ws-source", Name: "Source Workspace", RepoPath: "/tmp/source"})
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID: "ws-target",
+		worktreeID:  "wt-target",
+	})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '4', Mod: tea.ModCtrl})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || !m.guidedWorkflow.DependencyPickerOpen() {
+		t.Fatalf("expected dependency picker to open in setup")
+	}
+	for _, key := range []string{"s", "o", "u", "r", "c", "e"} {
+		updated, _ = m.Update(tea.KeyPressMsg{Text: key})
+		m = asModel(t, updated)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.DependencyPickerOpen() {
+		t.Fatalf("expected dependency picker to close after selection")
+	}
+	req := m.guidedWorkflow.BuildCreateRequest()
+	if len(req.DependsOnRunIDs) != 1 || req.DependsOnRunIDs[0] != "gwf-source" {
+		t.Fatalf("expected cross-workspace dependency selection, got %#v", req.DependsOnRunIDs)
+	}
+	if req.WorkspaceID != "ws-target" {
+		t.Fatalf("expected target workspace to remain ws-target, got %q", req.WorkspaceID)
+	}
+}
+
+func TestGuidedWorkflowSetupDependencyPickerHonorsReadOnlyFollowUpLock(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{
+		workspaceID:      "ws1",
+		followUpRunID:    "gwf-1",
+		followUpRunLabel: "Workflow A",
+		dependencyLocked: true,
+	})
+	advanceGuidedWorkflowToComposerForTest(t, &m)
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '4', Mod: tea.ModCtrl})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	if m.guidedWorkflow.DependencyPickerOpen() {
+		t.Fatalf("expected dependency picker to remain closed for read-only follow-up lock")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "read-only") {
+		t.Fatalf("expected read-only validation status, got %q", m.status)
+	}
+}
+
 func TestGuidedWorkflowLauncherPreservesANSIPickerRendering(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.resize(120, 40)
