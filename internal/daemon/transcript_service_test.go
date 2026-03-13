@@ -160,7 +160,7 @@ func TestTranscriptProjectionRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
-func TestTranscriptProjectionDedupesSemanticReplayWithinTurn(t *testing.T) {
+func TestTranscriptProjectionDedupesReplayWithStableIdentity(t *testing.T) {
 	projection := NewTranscriptProjector("s1", "codex", "")
 	first := transcriptdomain.TranscriptEvent{
 		Kind:      transcriptdomain.TranscriptEventDelta,
@@ -189,8 +189,9 @@ func TestTranscriptProjectionDedupesSemanticReplayWithinTurn(t *testing.T) {
 			Role: "user",
 			Text: "I want to be able to configure the test models used in my archon core config.",
 			Meta: map[string]any{
-				"turn_id":    "turn-1",
-				"created_at": "2026-03-09T01:37:16.300Z",
+				"turn_id":             "turn-1",
+				"provider_message_id": "msg-user",
+				"created_at":          "2026-03-09T01:37:16.300Z",
 			},
 		}},
 	}
@@ -198,7 +199,7 @@ func TestTranscriptProjectionDedupesSemanticReplayWithinTurn(t *testing.T) {
 		t.Fatalf("expected first event to apply")
 	}
 	if projection.Apply(duplicate) {
-		t.Fatalf("expected semantic replay duplicate to be suppressed")
+		t.Fatalf("expected replay duplicate with stable identity to be suppressed")
 	}
 	snapshot := projection.Snapshot()
 	if len(snapshot.Blocks) != 1 {

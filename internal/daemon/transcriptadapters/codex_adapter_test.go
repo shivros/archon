@@ -151,7 +151,7 @@ func TestTranscriptEventFromCodexEventAgentMessageDeltaPreservesWhitespace(t *te
 }
 
 func TestDeltaBlockFromCodexEventMethodReasoningVariant(t *testing.T) {
-	block, ok := deltaBlockFromCodexEventMethod("item/reasoning/delta", json.RawMessage(`{"itemId":"r_1","delta":"thinking"}`))
+	block, ok := deltaBlockFromCodexEventMethod("item/reasoning/delta", json.RawMessage(`{"itemId":"r_1","delta":"thinking"}`), nil)
 	if !ok {
 		t.Fatal("expected reasoning delta block")
 	}
@@ -353,7 +353,7 @@ func TestBlockFromItemParsesUserMessageContentArray(t *testing.T) {
 		"type": "userMessage",
 		"content": []any{
 			map[string]any{"type": "text", "text": "hello"},
-			map[string]any{"type": "text", "text": "from user"},
+			map[string]any{"type": "text", "text": " from user"},
 		},
 	})
 	if !ok {
@@ -373,7 +373,7 @@ func TestBlockFromItemParsesNestedMessageContentArray(t *testing.T) {
 		"message": map[string]any{
 			"content": []any{
 				map[string]any{"type": "text", "text": "nested"},
-				map[string]any{"type": "text", "text": "reply"},
+				map[string]any{"type": "text", "text": " reply"},
 			},
 		},
 	})
@@ -602,7 +602,7 @@ func TestItemTextFromContentAndMapFallbacks(t *testing.T) {
 	got := itemTextFromContent([]any{
 		"",
 		map[string]any{"type": "text", "text": "nested"},
-		map[string]any{"type": "text", "text": "value"},
+		map[string]any{"type": "text", "text": " value"},
 	})
 	if got != "nested value" {
 		t.Fatalf("expected mixed array content to skip empties, got %q", got)
@@ -610,4 +610,72 @@ func TestItemTextFromContentAndMapFallbacks(t *testing.T) {
 	if got := itemTextFromMap(nil); got != "" {
 		t.Fatalf("expected nil map content to resolve empty text, got %q", got)
 	}
+}
+
+func TestCodexAdapterLosslessTextExtractionFromRealFailures(t *testing.T) {
+	cases := []string{
+		"Below is a phased implementation brief...",
+		"conventions.\n\nA few repo anchors...",
+		"[codex_adapter.go](/home/shiv/Workspaces/shivros/archon/main/internal/daemon/transcriptadapters/codex_adapter.go)",
+		"textarea.\n\nExpectations:\n- preserve markdown\n- preserve newlines",
+	}
+	for i, expected := range cases {
+		t.Run(expected, func(t *testing.T) {
+			event := types.CodexEvent{
+				Method: "item/agentMessage/delta",
+				Params: json.RawMessage(`{"itemId":"msg_` + string(rune('a'+i)) + `","delta":` + string(mustJSONMarshalString(expected)) + `}`),
+			}
+			got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("42"), event)
+			if got.Kind != transcriptdomain.TranscriptEventDelta || len(got.Delta) != 1 {
+				t.Fatalf("expected transcript delta event, got %#v", got)
+			}
+			if got.Delta[0].Text != expected {
+				t.Fatalf("expected exact text preservation, got %q want %q", got.Delta[0].Text, expected)
+			}
+		})
+	}
+}
+
+func TestBlockFromItemLosslessNestedContentExtraction(t *testing.T) {
+	expected := "conventions.\n\nA few repo anchors..."
+	block, ok := BlockFromItem(map[string]any{
+		"type": "assistant_message",
+		"content": []any{
+			map[string]any{"type": "text", "text": "conventions."},
+			map[string]any{"type": "text", "text": "\n\n"},
+			map[string]any{"type": "text", "text": "A few repo anchors..."},
+		},
+	})
+	if !ok {
+		t.Fatal("expected block conversion")
+	}
+	if block.Text != expected {
+		t.Fatalf("expected exact nested content extraction, got %q want %q", block.Text, expected)
+	}
+}
+
+func TestBlockFromItemLosslessNestedContentExtractionMarkdownPath(t *testing.T) {
+	expected := "[codex_adapter.go](/home/shiv/Workspaces/shivros/archon/main/internal/daemon/transcriptadapters/codex_adapter.go)"
+	block, ok := BlockFromItem(map[string]any{
+		"type": "assistant_message",
+		"content": []any{
+			map[string]any{"type": "text", "text": "[codex_adapter.go]("},
+			map[string]any{"type": "text", "text": "/home/shiv/Workspaces/shivros/archon/main/internal/daemon/transcriptadapters/codex_adapter.go"},
+			map[string]any{"type": "text", "text": ")"},
+		},
+	})
+	if !ok {
+		t.Fatal("expected block conversion")
+	}
+	if block.Text != expected {
+		t.Fatalf("expected exact markdown-path extraction, got %q want %q", block.Text, expected)
+	}
+}
+
+func mustJSONMarshalString(value string) []byte {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }

@@ -2,15 +2,13 @@ package daemon
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
-	"time"
 
 	"control/internal/daemon/transcriptadapters"
 	"control/internal/daemon/transcriptdomain"
 )
-
-const transcriptDuplicateTimestampWindow = 2 * time.Second
 
 type TranscriptProjector interface {
 	Apply(event transcriptdomain.TranscriptEvent) bool
@@ -20,12 +18,14 @@ type TranscriptProjector interface {
 }
 
 type transcriptProjector struct {
-	sessionID  string
-	provider   string
-	blocks     []transcriptdomain.Block
-	turn       transcriptdomain.TurnState
-	activeTurn string
-	last       transcriptdomain.RevisionToken
+	sessionID      string
+	provider       string
+	blocks         []transcriptdomain.Block
+	turn           transcriptdomain.TurnState
+	activeTurn     string
+	last           transcriptdomain.RevisionToken
+	dedupePolicy   transcriptdomain.TranscriptDedupePolicy
+	decisionLogger transcriptdomain.TranscriptDecisionLogger
 
 	numericMode bool
 	nextNumeric uint64
@@ -34,13 +34,44 @@ type transcriptProjector struct {
 }
 
 func NewTranscriptProjector(sessionID, provider string, baseRevision transcriptdomain.RevisionToken) TranscriptProjector {
+	return NewTranscriptProjectorWithPolicies(sessionID, provider, baseRevision, nil, nil)
+}
+
+func NewTranscriptProjectorWithIdentityPolicy(
+	sessionID, provider string,
+	baseRevision transcriptdomain.RevisionToken,
+	identityPolicy transcriptdomain.TranscriptIdentityPolicy,
+) TranscriptProjector {
+	return NewTranscriptProjectorWithPolicies(
+		sessionID,
+		provider,
+		baseRevision,
+		transcriptdomain.NewProjectorTranscriptDedupePolicy(identityPolicy),
+		nil,
+	)
+}
+
+func NewTranscriptProjectorWithPolicies(
+	sessionID, provider string,
+	baseRevision transcriptdomain.RevisionToken,
+	dedupePolicy transcriptdomain.TranscriptDedupePolicy,
+	decisionLogger transcriptdomain.TranscriptDecisionLogger,
+) TranscriptProjector {
 	sessionID = strings.TrimSpace(sessionID)
 	provider = strings.TrimSpace(provider)
+	if dedupePolicy == nil {
+		dedupePolicy = transcriptdomain.NewProjectorTranscriptDedupePolicy(nil)
+	}
+	if decisionLogger == nil {
+		decisionLogger = transcriptProjectorStdDecisionLogger{}
+	}
 	projection := &transcriptProjector{
-		sessionID: sessionID,
-		provider:  provider,
-		blocks:    []transcriptdomain.Block{},
-		turn:      transcriptdomain.TurnState{State: transcriptdomain.TurnStateIdle},
+		sessionID:      sessionID,
+		provider:       provider,
+		blocks:         []transcriptdomain.Block{},
+		turn:           transcriptdomain.TurnState{State: transcriptdomain.TurnStateIdle},
+		dedupePolicy:   dedupePolicy,
+		decisionLogger: decisionLogger,
 	}
 	if baseRevision.IsZero() {
 		projection.numericMode = true
@@ -109,7 +140,7 @@ func (p *transcriptProjector) Apply(event transcriptdomain.TranscriptEvent) bool
 		if len(event.Delta) == 0 {
 			return false
 		}
-		delta := filterDuplicateTranscriptBlocks(p.blocks, event.Delta)
+		delta := filterDuplicateTranscriptBlocks(p.blocks, event.Delta, p.dedupePolicy, p.decisionLogger, p.sessionID, p.provider)
 		if len(delta) == 0 {
 			return false
 		}
@@ -153,99 +184,125 @@ func (p *transcriptProjector) ActiveTurnID() string {
 func filterDuplicateTranscriptBlocks(
 	existing []transcriptdomain.Block,
 	incoming []transcriptdomain.Block,
+	dedupePolicy transcriptdomain.TranscriptDedupePolicy,
+	decisionLogger transcriptdomain.TranscriptDecisionLogger,
+	sessionID string,
+	provider string,
 ) []transcriptdomain.Block {
 	if len(incoming) == 0 {
 		return nil
 	}
+	if dedupePolicy == nil {
+		dedupePolicy = transcriptdomain.NewProjectorTranscriptDedupePolicy(nil)
+	}
+	if decisionLogger == nil {
+		decisionLogger = transcriptProjectorStdDecisionLogger{}
+	}
 	out := make([]transcriptdomain.Block, 0, len(incoming))
 	seen := append([]transcriptdomain.Block(nil), existing...)
 	for _, block := range incoming {
-		if isDuplicateTranscriptBlock(seen, block) {
+		decision := dedupePolicy.ReplayDecision(
+			transcriptIdentityBlocksFromDomainBlocks(seen),
+			transcriptIdentityBlockFromDomainBlock(block),
+		)
+		if decision.Action == transcriptdomain.TranscriptDedupeActionDropDuplicate {
+			logTranscriptProjectorDedupeDecision(
+				decisionLogger,
+				"dropped_replay_duplicate",
+				decision.Reason,
+				sessionID,
+				provider,
+				block,
+				decision.Identity,
+			)
+			continue
+		}
+		if decision.Action == transcriptdomain.TranscriptDedupeActionReplaceExisting {
+			logTranscriptProjectorDedupeDecision(
+				decisionLogger,
+				"dropped_replay_duplicate",
+				decision.Reason,
+				sessionID,
+				provider,
+				block,
+				decision.Identity,
+			)
 			continue
 		}
 		out = append(out, block)
 		seen = append(seen, block)
+		logTranscriptProjectorDedupeDecision(
+			decisionLogger,
+			"accepted_new",
+			decision.Reason,
+			sessionID,
+			provider,
+			block,
+			decision.Identity,
+		)
 	}
 	return out
 }
 
-func isDuplicateTranscriptBlock(existing []transcriptdomain.Block, next transcriptdomain.Block) bool {
-	role := strings.ToLower(strings.TrimSpace(next.Role))
-	if !transcriptRoleSupportsReplayDedupe(role) {
-		return false
+func transcriptIdentityBlocksFromDomainBlocks(blocks []transcriptdomain.Block) []transcriptdomain.TranscriptIdentityBlock {
+	if len(blocks) == 0 {
+		return nil
 	}
-	text := normalizeTranscriptBlockText(next.Text)
-	if text == "" {
-		return false
+	out := make([]transcriptdomain.TranscriptIdentityBlock, 0, len(blocks))
+	for _, block := range blocks {
+		out = append(out, transcriptIdentityBlockFromDomainBlock(block))
 	}
-	nextMessageID := transcriptBlockMetaString(next.Meta, "provider_message_id", "providerMessageID", "message_id")
-	nextTurnID := transcriptBlockMetaString(next.Meta, "turn_id", "turnId")
-	nextCreatedAt := transcriptBlockMetaTime(next.Meta, "provider_created_at", "created_at", "createdAt", "timestamp", "ts")
-	for _, block := range existing {
-		if strings.ToLower(strings.TrimSpace(block.Role)) != role {
-			continue
-		}
-		if normalizeTranscriptBlockText(block.Text) != text {
-			continue
-		}
-		if nextMessageID != "" {
-			if currentMessageID := transcriptBlockMetaString(block.Meta, "provider_message_id", "providerMessageID", "message_id"); currentMessageID == nextMessageID {
-				return true
-			}
-		}
-		if nextTurnID != "" {
-			if currentTurnID := transcriptBlockMetaString(block.Meta, "turn_id", "turnId"); currentTurnID == nextTurnID {
-				return true
-			}
-		}
-		currentCreatedAt := transcriptBlockMetaTime(block.Meta, "provider_created_at", "created_at", "createdAt", "timestamp", "ts")
-		if !nextCreatedAt.IsZero() && !currentCreatedAt.IsZero() {
-			delta := nextCreatedAt.Sub(currentCreatedAt)
-			if delta < 0 {
-				delta = -delta
-			}
-			if delta <= transcriptDuplicateTimestampWindow {
-				return true
-			}
-		}
-	}
-	return false
+	return out
 }
 
-func transcriptRoleSupportsReplayDedupe(role string) bool {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "assistant", "agent", "model", "user", "reasoning":
-		return true
-	default:
-		return false
+func transcriptIdentityBlockFromDomainBlock(block transcriptdomain.Block) transcriptdomain.TranscriptIdentityBlock {
+	return transcriptdomain.TranscriptIdentityBlock{
+		ID:   strings.TrimSpace(block.ID),
+		Role: strings.TrimSpace(block.Role),
+		Text: transcriptdomain.PreserveText(block.Text),
+		Meta: block.Meta,
 	}
 }
 
-func normalizeTranscriptBlockText(text string) string {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	return strings.TrimSpace(text)
+func logTranscriptProjectorDedupeDecision(
+	decisionLogger transcriptdomain.TranscriptDecisionLogger,
+	decision string,
+	reason string,
+	sessionID string,
+	provider string,
+	block transcriptdomain.Block,
+	identity transcriptdomain.MessageIdentity,
+) {
+	if decisionLogger == nil {
+		return
+	}
+	decisionLogger.LogDecision(transcriptdomain.TranscriptDecisionLogEntry{
+		Layer:    "projector",
+		Decision: strings.TrimSpace(decision),
+		Reason:   strings.TrimSpace(reason),
+		Identity: identity,
+		Block:    transcriptIdentityBlockFromDomainBlock(block),
+		Context: map[string]string{
+			"session_id": strings.TrimSpace(sessionID),
+			"provider":   strings.TrimSpace(provider),
+		},
+	})
 }
 
-func transcriptBlockMetaString(meta map[string]any, keys ...string) string {
-	if len(meta) == 0 {
-		return ""
-	}
-	for _, key := range keys {
-		if value := strings.TrimSpace(asString(meta[key])); value != "" {
-			return value
-		}
-	}
-	return ""
-}
+type transcriptProjectorStdDecisionLogger struct{}
 
-func transcriptBlockMetaTime(meta map[string]any, keys ...string) time.Time {
-	if len(meta) == 0 {
-		return time.Time{}
-	}
-	for _, key := range keys {
-		if when := parsePersistedTimestamp(meta[key]); !when.IsZero() {
-			return when
-		}
-	}
-	return time.Time{}
+func (transcriptProjectorStdDecisionLogger) LogDecision(entry transcriptdomain.TranscriptDecisionLogEntry) {
+	log.Printf(
+		"transcript_projector_dedupe decision=%s reason=%s session_id=%s provider=%s role=%s block_id=%s provider_message_id=%s provider_item_id=%s turn_id=%s turn_scoped_id=%s",
+		strings.TrimSpace(entry.Decision),
+		strings.TrimSpace(entry.Reason),
+		strings.TrimSpace(entry.Context["session_id"]),
+		strings.TrimSpace(entry.Context["provider"]),
+		strings.TrimSpace(entry.Block.Role),
+		strings.TrimSpace(entry.Block.ID),
+		strings.TrimSpace(entry.Identity.ProviderMessageID),
+		strings.TrimSpace(entry.Identity.ProviderItemID),
+		strings.TrimSpace(entry.Identity.TurnID),
+		strings.TrimSpace(entry.Identity.TurnScopedID),
+	)
 }

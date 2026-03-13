@@ -11,8 +11,9 @@ import (
 )
 
 type codexTranscriptAdapter struct {
-	providerName string
-	classifier   ProviderEventClassifier
+	providerName  string
+	classifier    ProviderEventClassifier
+	textExtractor TranscriptTextExtractor
 }
 
 func NewCodexTranscriptAdapter(providerName string) *codexTranscriptAdapter {
@@ -21,8 +22,9 @@ func NewCodexTranscriptAdapter(providerName string) *codexTranscriptAdapter {
 		providerName = "codex"
 	}
 	return &codexTranscriptAdapter{
-		providerName: providerName,
-		classifier:   NewCodexEventClassifier(providerName),
+		providerName:  providerName,
+		classifier:    NewCodexEventClassifier(providerName),
+		textExtractor: newCodexTranscriptTextExtractor(),
 	}
 }
 
@@ -35,7 +37,11 @@ func (a codexTranscriptAdapter) MapEvent(ctx MappingContext, event types.CodexEv
 	if classifier == nil {
 		classifier = NewCodexEventClassifier(a.providerName)
 	}
-	mapped, ok := mapCodexEventWithClassifier(a.providerName, classifier, ctx, event)
+	textExtractor := a.textExtractor
+	if textExtractor == nil {
+		textExtractor = newCodexTranscriptTextExtractor()
+	}
+	mapped, ok := mapCodexEventWithClassifier(a.providerName, classifier, textExtractor, ctx, event)
 	if !ok {
 		return nil
 	}
@@ -46,7 +52,11 @@ func (a codexTranscriptAdapter) MapEvent(ctx MappingContext, event types.CodexEv
 }
 
 func (a codexTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any) []transcriptdomain.TranscriptEvent {
-	event, ok := DeltaEventFromItem(ctx.SessionID, a.providerName, ctx.Revision, item)
+	textExtractor := a.textExtractor
+	if textExtractor == nil {
+		textExtractor = newCodexTranscriptTextExtractor()
+	}
+	event, ok := deltaEventFromItemWithExtractor(ctx.SessionID, a.providerName, ctx.Revision, item, textExtractor)
 	if !ok {
 		return nil
 	}
@@ -59,11 +69,15 @@ func (a codexTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any)
 func mapCodexEventWithClassifier(
 	providerName string,
 	classifier ProviderEventClassifier,
+	textExtractor TranscriptTextExtractor,
 	ctx MappingContext,
 	event types.CodexEvent,
 ) (transcriptdomain.TranscriptEvent, bool) {
 	if classifier == nil {
 		classifier = NewCodexEventClassifier(providerName)
+	}
+	if textExtractor == nil {
+		textExtractor = newCodexTranscriptTextExtractor()
 	}
 	classified := classifier.ClassifyEvent(event)
 	method := classified.Method
@@ -93,7 +107,7 @@ func mapCodexEventWithClassifier(
 			Method:    strings.TrimSpace(event.Method),
 		}
 	case EventIntentAssistantDelta:
-		block, ok := deltaBlockFromCodexEventMethod(method, event.Params)
+		block, ok := deltaBlockFromCodexEventMethod(method, event.Params, textExtractor)
 		if !ok {
 			return transcriptdomain.TranscriptEvent{}, false
 		}
@@ -125,7 +139,7 @@ func mapCodexEventWithClassifier(
 	default:
 		switch {
 		case strings.HasPrefix(method, "item/"):
-			block, ok := blockFromCodexEventItem(method, event.Params)
+			block, ok := blockFromCodexEventItem(method, event.Params, textExtractor)
 			if !ok {
 				return transcriptdomain.TranscriptEvent{}, false
 			}
@@ -162,14 +176,17 @@ func TranscriptEventFromCodexEvent(
 	return events[0]
 }
 
-func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage) (transcriptdomain.Block, bool) {
+func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage, extractor TranscriptTextExtractor) (transcriptdomain.Block, bool) {
 	params := decodeMap(raw)
-	text := firstNonEmpty(
-		asString(params["delta"]),
-		asString(params["text"]),
-		asString(params["content"]),
+	if extractor == nil {
+		extractor = newCodexTranscriptTextExtractor()
+	}
+	text := firstNonEmptyExtracted(extractor,
+		params["delta"],
+		params["text"],
+		params["content"],
 	)
-	if strings.TrimSpace(text) == "" {
+	if transcriptdomain.IsSemanticallyEmpty(text) {
 		return transcriptdomain.Block{}, false
 	}
 	lowerMethod := strings.ToLower(strings.TrimSpace(method))
@@ -196,13 +213,16 @@ func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage) (transcr
 	return block, true
 }
 
-func blockFromCodexEventItem(method string, raw json.RawMessage) (transcriptdomain.Block, bool) {
+func blockFromCodexEventItem(method string, raw json.RawMessage, extractor TranscriptTextExtractor) (transcriptdomain.Block, bool) {
 	params := decodeMap(raw)
 	item, _ := params["item"].(map[string]any)
 	if item == nil {
 		return transcriptdomain.Block{}, false
 	}
-	block, ok := BlockFromItem(item)
+	if extractor == nil {
+		extractor = newCodexTranscriptTextExtractor()
+	}
+	block, ok := blockFromItemWithExtractor(item, extractor)
 	if !ok {
 		return transcriptdomain.Block{}, false
 	}
@@ -246,24 +266,31 @@ func threadStatusFromEventParams(raw json.RawMessage) string {
 }
 
 func BlockFromItem(item map[string]any) (transcriptdomain.Block, bool) {
+	return blockFromItemWithExtractor(item, newCodexTranscriptTextExtractor())
+}
+
+func blockFromItemWithExtractor(item map[string]any, extractor TranscriptTextExtractor) (transcriptdomain.Block, bool) {
 	if item == nil {
 		return transcriptdomain.Block{}, false
 	}
 	kind := strings.TrimSpace(asString(item["type"]))
 	role := strings.TrimSpace(asString(item["role"]))
-	text := firstNonEmpty(
-		asString(item["text"]),
-		asString(item["delta"]),
-		asString(item["content"]),
+	if extractor == nil {
+		extractor = newCodexTranscriptTextExtractor()
+	}
+	text := firstNonEmptyExtracted(extractor,
+		item["text"],
+		item["delta"],
+		item["content"],
 	)
-	if strings.TrimSpace(text) == "" {
-		text = firstNonEmpty(
-			itemTextFromContent(item["content"]),
-			itemTextFromContent(item["message"]),
-			itemTextFromContent(item["result"]),
+	if transcriptdomain.IsSemanticallyEmpty(text) {
+		text = firstNonEmptyExtracted(extractor,
+			item["content"],
+			item["message"],
+			item["result"],
 		)
 	}
-	if strings.TrimSpace(text) == "" {
+	if transcriptdomain.IsSemanticallyEmpty(text) {
 		return transcriptdomain.Block{}, false
 	}
 	if kind == "" {
@@ -419,44 +446,11 @@ func ensureTranscriptBlockIdentityMeta(block *transcriptdomain.Block) {
 }
 
 func itemTextFromContent(raw any) string {
-	switch typed := raw.(type) {
-	case string:
-		return firstNonEmpty(typed)
-	case map[string]any:
-		return itemTextFromMap(typed)
-	case []any:
-		parts := make([]string, 0, len(typed))
-		for _, entry := range typed {
-			part := itemTextFromContent(entry)
-			if strings.TrimSpace(part) == "" {
-				continue
-			}
-			parts = append(parts, strings.TrimSpace(part))
-		}
-		return strings.Join(parts, " ")
-	default:
-		return ""
-	}
+	return firstNonEmptyExtracted(newCodexTranscriptTextExtractor(), raw)
 }
 
 func itemTextFromMap(raw map[string]any) string {
-	if raw == nil {
-		return ""
-	}
-	direct := firstNonEmpty(
-		asString(raw["text"]),
-		asString(raw["delta"]),
-		asString(raw["content"]),
-		asString(raw["thinking"]),
-	)
-	if strings.TrimSpace(direct) != "" {
-		return direct
-	}
-	return firstNonEmpty(
-		itemTextFromContent(raw["content"]),
-		itemTextFromContent(raw["message"]),
-		itemTextFromContent(raw["result"]),
-	)
+	return firstNonEmptyExtracted(newCodexTranscriptTextExtractor(), raw)
 }
 
 func DeltaEventFromItem(
@@ -464,7 +458,16 @@ func DeltaEventFromItem(
 	revision transcriptdomain.RevisionToken,
 	item map[string]any,
 ) (transcriptdomain.TranscriptEvent, bool) {
-	block, ok := BlockFromItem(item)
+	return deltaEventFromItemWithExtractor(sessionID, provider, revision, item, newCodexTranscriptTextExtractor())
+}
+
+func deltaEventFromItemWithExtractor(
+	sessionID, provider string,
+	revision transcriptdomain.RevisionToken,
+	item map[string]any,
+	extractor TranscriptTextExtractor,
+) (transcriptdomain.TranscriptEvent, bool) {
+	block, ok := blockFromItemWithExtractor(item, extractor)
 	if !ok {
 		return transcriptdomain.TranscriptEvent{}, false
 	}

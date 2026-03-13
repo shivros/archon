@@ -1,6 +1,7 @@
 package app
 
 import (
+	"log"
 	"strings"
 
 	"control/internal/daemon/transcriptdomain"
@@ -44,6 +45,8 @@ type TranscriptIngestor interface {
 
 type defaultTranscriptIngestor struct {
 	adapterRegistry TranscriptEventAdapterRegistry
+	dedupePolicy    transcriptdomain.TranscriptDedupePolicy
+	decisionLogger  transcriptdomain.TranscriptDecisionLogger
 }
 
 func NewDefaultTranscriptIngestor() TranscriptIngestor {
@@ -51,10 +54,36 @@ func NewDefaultTranscriptIngestor() TranscriptIngestor {
 }
 
 func NewTranscriptIngestorWithAdapterRegistry(registry TranscriptEventAdapterRegistry) TranscriptIngestor {
+	return NewTranscriptIngestorWithPolicies(registry, nil)
+}
+
+func NewTranscriptIngestorWithPolicies(
+	registry TranscriptEventAdapterRegistry,
+	identityPolicy transcriptdomain.TranscriptIdentityPolicy,
+) TranscriptIngestor {
+	return NewTranscriptIngestorWithDependencies(registry, nil, nil, identityPolicy)
+}
+
+func NewTranscriptIngestorWithDependencies(
+	registry TranscriptEventAdapterRegistry,
+	dedupePolicy transcriptdomain.TranscriptDedupePolicy,
+	decisionLogger transcriptdomain.TranscriptDecisionLogger,
+	identityPolicy transcriptdomain.TranscriptIdentityPolicy,
+) TranscriptIngestor {
 	if registry == nil {
 		registry = NewDefaultTranscriptEventAdapterRegistry()
 	}
-	return defaultTranscriptIngestor{adapterRegistry: registry}
+	if dedupePolicy == nil {
+		dedupePolicy = transcriptdomain.NewIngestorTranscriptDedupePolicy(identityPolicy, nil)
+	}
+	if decisionLogger == nil {
+		decisionLogger = transcriptIngestorStdDecisionLogger{}
+	}
+	return defaultTranscriptIngestor{
+		adapterRegistry: registry,
+		dedupePolicy:    dedupePolicy,
+		decisionLogger:  decisionLogger,
+	}
 }
 
 func (defaultTranscriptIngestor) ApplySnapshot(state TranscriptIngestState, snapshot transcriptdomain.TranscriptSnapshot, authoritative bool) TranscriptSnapshotApplyResult {
@@ -131,7 +160,13 @@ func (ingestor defaultTranscriptIngestor) ApplyEvent(state TranscriptIngestState
 			return result
 		}
 		result.State.Revision = event.Revision
-		nextBlocks, changed, dedupeHits := applyTranscriptDeltaWithFinalizationDedupe(state.Blocks, event.Delta, normalized.FinalizedDeltaBlockIndexes)
+		nextBlocks, changed, dedupeHits := applyTranscriptDeltaWithFinalizationDedupe(
+			state.Blocks,
+			event.Delta,
+			normalized.FinalizedDeltaBlockIndexes,
+			ingestor.dedupePolicy,
+			ingestor.decisionLogger,
+		)
 		if changed {
 			result.State.Blocks = nextBlocks
 			result.Changed = true
@@ -182,9 +217,21 @@ func isTranscriptRevisionRewind(current, candidate transcriptdomain.RevisionToke
 	return newer
 }
 
-func applyTranscriptDeltaWithFinalizationDedupe(existing []ChatBlock, delta []transcriptdomain.Block, finalizedIndexes map[int]struct{}) ([]ChatBlock, bool, int) {
+func applyTranscriptDeltaWithFinalizationDedupe(
+	existing []ChatBlock,
+	delta []transcriptdomain.Block,
+	finalizedIndexes map[int]struct{},
+	dedupePolicy transcriptdomain.TranscriptDedupePolicy,
+	decisionLogger transcriptdomain.TranscriptDecisionLogger,
+) ([]ChatBlock, bool, int) {
 	if len(delta) == 0 {
 		return existing, false, 0
+	}
+	if dedupePolicy == nil {
+		dedupePolicy = transcriptdomain.NewIngestorTranscriptDedupePolicy(nil, nil)
+	}
+	if decisionLogger == nil {
+		decisionLogger = transcriptIngestorStdDecisionLogger{}
 	}
 	out := append([]ChatBlock(nil), existing...)
 	changed := false
@@ -196,20 +243,54 @@ func applyTranscriptDeltaWithFinalizationDedupe(existing []ChatBlock, delta []tr
 		}
 		candidate := chatBlocks[0]
 		_, finalized := finalizedIndexes[i]
-		idx := findTranscriptDedupeCandidateIndex(out, candidate)
-		if idx >= 0 {
-			next, blockChanged, deduped := mergeTranscriptDedupeCandidate(out[idx], candidate, finalized)
-			if blockChanged {
-				out[idx] = next
-				changed = true
-			}
-			if deduped {
+		existingIdentityBlocks := transcriptIdentityBlocksFromChatBlocks(out)
+		candidateIdentityBlock := transcriptIdentityBlockFromChatBlock(candidate)
+		var decision transcriptdomain.TranscriptDedupeDecision
+		if finalized {
+			decision = dedupePolicy.FinalizedDecision(existingIdentityBlocks, candidateIdentityBlock)
+		} else {
+			decision = dedupePolicy.ReplayDecision(existingIdentityBlocks, candidateIdentityBlock)
+		}
+		switch decision.Action {
+		case transcriptdomain.TranscriptDedupeActionDropDuplicate:
+			if finalized && decision.Deduped {
 				dedupeHits++
+				logTranscriptIngestorDecision(decisionLogger, "finalized_replaced", decision.Reason, candidate, decision.Identity)
+			} else {
+				logTranscriptIngestorDecision(decisionLogger, "dropped_replay_duplicate", decision.Reason, candidate, decision.Identity)
+			}
+			continue
+		case transcriptdomain.TranscriptDedupeActionReplaceExisting:
+			idx := decision.Index
+			if idx >= 0 && idx < len(out) {
+				next := chatBlockFromTranscriptIdentityBlock(out[idx], decision.Merged)
+				if out[idx] != next {
+					out[idx] = next
+					changed = true
+				}
+				if finalized && decision.Deduped {
+					dedupeHits++
+					logTranscriptIngestorDecision(decisionLogger, "finalized_replaced", decision.Reason, candidate, decision.Identity)
+				} else {
+					logTranscriptIngestorDecision(decisionLogger, "dropped_replay_duplicate", decision.Reason, candidate, decision.Identity)
+				}
 				continue
 			}
+			out = append(out, candidate)
+			changed = true
+			logTranscriptIngestorDecision(decisionLogger, "accepted_new", "invalid_replacement_index", candidate, decision.Identity)
+			continue
+		case transcriptdomain.TranscriptDedupeActionRejectAmbiguous:
+			out = append(out, candidate)
+			changed = true
+			logTranscriptIngestorDecision(decisionLogger, "rejected_ambiguous_identity", decision.Reason, candidate, decision.Identity)
+			continue
+		default:
+			out = append(out, candidate)
+			changed = true
+			logTranscriptIngestorDecision(decisionLogger, "accepted_new", decision.Reason, candidate, decision.Identity)
+			continue
 		}
-		out = append(out, candidate)
-		changed = true
 	}
 	if !changed {
 		return out, false, dedupeHits
@@ -219,26 +300,30 @@ func applyTranscriptDeltaWithFinalizationDedupe(existing []ChatBlock, delta []tr
 }
 
 func findTranscriptDedupeCandidateIndex(existing []ChatBlock, candidate ChatBlock) int {
+	return findTranscriptReplayDuplicateCandidateIndex(existing, candidate, transcriptdomain.NewDefaultTranscriptIdentityPolicy())
+}
+
+func findTranscriptReplayDuplicateCandidateIndex(
+	existing []ChatBlock,
+	candidate ChatBlock,
+	identityPolicy transcriptdomain.TranscriptIdentityPolicy,
+) int {
 	if len(existing) == 0 {
 		return -1
 	}
-	for i := len(existing) - 1; i >= 0; i-- {
-		if existing[i].Role != candidate.Role {
-			continue
-		}
-		if transcriptBlocksShareIdentity(existing[i], candidate) {
-			return i
-		}
+	if identityPolicy == nil {
+		identityPolicy = transcriptdomain.NewDefaultTranscriptIdentityPolicy()
 	}
-	candidateTurnID := strings.TrimSpace(candidate.TurnID)
-	if candidateTurnID == "" {
+	candidateIdentity := identityPolicy.Identity(transcriptIdentityBlockFromChatBlock(candidate))
+	if !candidateIdentity.HasStableIdentity() {
 		return -1
 	}
+	candidateIdentityBlock := transcriptIdentityBlockFromChatBlock(candidate)
 	for i := len(existing) - 1; i >= 0; i-- {
 		if existing[i].Role != candidate.Role {
 			continue
 		}
-		if strings.TrimSpace(existing[i].TurnID) == candidateTurnID {
+		if identityPolicy.Equivalent(transcriptIdentityBlockFromChatBlock(existing[i]), candidateIdentityBlock) {
 			return i
 		}
 	}
@@ -246,66 +331,140 @@ func findTranscriptDedupeCandidateIndex(existing []ChatBlock, candidate ChatBloc
 }
 
 func transcriptBlocksShareIdentity(current, candidate ChatBlock) bool {
-	currentProviderID := strings.TrimSpace(current.ProviderMessageID)
-	candidateProviderID := strings.TrimSpace(candidate.ProviderMessageID)
-	if currentProviderID != "" && candidateProviderID != "" && currentProviderID == candidateProviderID {
-		return true
-	}
-	currentID := strings.TrimSpace(current.ID)
-	candidateID := strings.TrimSpace(candidate.ID)
-	if currentID != "" && candidateID != "" && currentID == candidateID {
-		return true
-	}
-	currentTurnID := strings.TrimSpace(current.TurnID)
-	candidateTurnID := strings.TrimSpace(candidate.TurnID)
-	return currentTurnID != "" && candidateTurnID != "" && currentTurnID == candidateTurnID
+	policy := transcriptdomain.NewDefaultTranscriptIdentityPolicy()
+	return policy.Equivalent(transcriptIdentityBlockFromChatBlock(current), transcriptIdentityBlockFromChatBlock(candidate))
 }
 
 func mergeTranscriptDedupeCandidate(current ChatBlock, candidate ChatBlock, finalized bool) (ChatBlock, bool, bool) {
-	next := current
-	changed := false
-	normalizedCurrent := normalizeTranscriptMessageText(current.Text)
-	normalizedCandidate := normalizeTranscriptMessageText(candidate.Text)
+	next, changed, deduped, _ := mergeTranscriptDedupeCandidateWithPolicy(
+		current,
+		candidate,
+		finalized,
+		false,
+		transcriptdomain.NewDefaultTranscriptIdentityPolicy(),
+	)
+	return next, changed, deduped
+}
 
-	if strings.TrimSpace(next.ProviderMessageID) == "" && strings.TrimSpace(candidate.ProviderMessageID) != "" {
-		next.ProviderMessageID = strings.TrimSpace(candidate.ProviderMessageID)
-		changed = true
-	}
-	if strings.TrimSpace(next.TurnID) == "" && strings.TrimSpace(candidate.TurnID) != "" {
-		next.TurnID = strings.TrimSpace(candidate.TurnID)
-		changed = true
-	}
-	if next.CreatedAt.IsZero() && !candidate.CreatedAt.IsZero() {
-		next.CreatedAt = candidate.CreatedAt
-		changed = true
-	}
+func mergeTranscriptDedupeCandidateWithPolicy(
+	current ChatBlock,
+	candidate ChatBlock,
+	finalized bool,
+	allowTurnFallback bool,
+	identityPolicy transcriptdomain.TranscriptIdentityPolicy,
+) (ChatBlock, bool, bool, string) {
+	mergePolicy := transcriptdomain.NewDefaultTranscriptBlockMergePolicy(identityPolicy)
+	nextIdentity, changed, deduped, reason := mergePolicy.Merge(
+		transcriptIdentityBlockFromChatBlock(current),
+		transcriptIdentityBlockFromChatBlock(candidate),
+		finalized,
+		allowTurnFallback,
+	)
+	return chatBlockFromTranscriptIdentityBlock(current, nextIdentity), changed, deduped, reason
+}
 
-	if normalizedCandidate == "" {
-		return next, changed, false
-	}
-	if normalizedCurrent == "" {
-		next.Text = candidate.Text
-		return next, true, true
-	}
-	if normalizedCandidate == normalizedCurrent {
-		return next, changed, true
-	}
-	if strings.Contains(normalizedCandidate, normalizedCurrent) && len(normalizedCandidate) >= len(normalizedCurrent) {
-		next.Text = candidate.Text
-		return next, true, true
-	}
-	if strings.Contains(normalizedCurrent, normalizedCandidate) {
-		return next, changed, true
-	}
+type transcriptFinalizedReplacementCandidate struct {
+	Index             int
+	Reason            string
+	Ambiguous         bool
+	AllowTurnFallback bool
+}
 
-	if finalized {
-		if len(normalizedCandidate) >= len(normalizedCurrent) {
-			next.Text = candidate.Text
-			return next, true, true
+func findTranscriptFinalizedReplacementCandidate(
+	existing []ChatBlock,
+	candidate ChatBlock,
+	identityPolicy transcriptdomain.TranscriptIdentityPolicy,
+) transcriptFinalizedReplacementCandidate {
+	dedupePolicy := transcriptdomain.NewIngestorTranscriptDedupePolicy(identityPolicy, nil)
+	decision := dedupePolicy.FinalizedDecision(
+		transcriptIdentityBlocksFromChatBlocks(existing),
+		transcriptIdentityBlockFromChatBlock(candidate),
+	)
+	match := transcriptFinalizedReplacementCandidate{
+		Index:     -1,
+		Reason:    decision.Reason,
+		Ambiguous: decision.Action == transcriptdomain.TranscriptDedupeActionRejectAmbiguous,
+	}
+	if decision.Action == transcriptdomain.TranscriptDedupeActionDropDuplicate ||
+		decision.Action == transcriptdomain.TranscriptDedupeActionReplaceExisting {
+		match.Index = decision.Index
+		if strings.HasPrefix(strings.TrimSpace(decision.Reason), "turn_fallback_") {
+			match.AllowTurnFallback = true
 		}
-		return next, changed, true
 	}
-	return next, changed, false
+	return match
+}
+
+func transcriptIdentityBlockFromChatBlock(block ChatBlock) transcriptdomain.TranscriptIdentityBlock {
+	return transcriptdomain.TranscriptIdentityBlock{
+		ID:                strings.TrimSpace(block.ID),
+		Role:              strings.TrimSpace(string(block.Role)),
+		Text:              transcriptdomain.PreserveText(block.Text),
+		TurnID:            strings.TrimSpace(block.TurnID),
+		ProviderMessageID: strings.TrimSpace(block.ProviderMessageID),
+		CreatedAt:         block.CreatedAt,
+	}
+}
+
+func logTranscriptIngestorDecision(
+	decisionLogger transcriptdomain.TranscriptDecisionLogger,
+	decision string,
+	reason string,
+	block ChatBlock,
+	identity transcriptdomain.MessageIdentity,
+) {
+	if decisionLogger == nil {
+		return
+	}
+	decisionLogger.LogDecision(transcriptdomain.TranscriptDecisionLogEntry{
+		Layer:    "ingestor",
+		Decision: strings.TrimSpace(decision),
+		Reason:   strings.TrimSpace(reason),
+		Identity: identity,
+		Block:    transcriptIdentityBlockFromChatBlock(block),
+	})
+}
+
+type transcriptIngestorStdDecisionLogger struct{}
+
+func (transcriptIngestorStdDecisionLogger) LogDecision(entry transcriptdomain.TranscriptDecisionLogEntry) {
+	log.Printf(
+		"transcript_ingestor_dedupe decision=%s reason=%s role=%s block_id=%s provider_message_id=%s provider_item_id=%s turn_id=%s turn_scoped_id=%s",
+		strings.TrimSpace(entry.Decision),
+		strings.TrimSpace(entry.Reason),
+		strings.TrimSpace(entry.Block.Role),
+		strings.TrimSpace(entry.Block.ID),
+		strings.TrimSpace(entry.Identity.ProviderMessageID),
+		strings.TrimSpace(entry.Identity.ProviderItemID),
+		strings.TrimSpace(entry.Identity.TurnID),
+		strings.TrimSpace(entry.Identity.TurnScopedID),
+	)
+}
+
+func transcriptIdentityBlocksFromChatBlocks(blocks []ChatBlock) []transcriptdomain.TranscriptIdentityBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]transcriptdomain.TranscriptIdentityBlock, 0, len(blocks))
+	for _, block := range blocks {
+		out = append(out, transcriptIdentityBlockFromChatBlock(block))
+	}
+	return out
+}
+
+func chatBlockFromTranscriptIdentityBlock(current ChatBlock, block transcriptdomain.TranscriptIdentityBlock) ChatBlock {
+	next := current
+	if id := strings.TrimSpace(block.ID); id != "" {
+		next.ID = id
+	}
+	if role := strings.TrimSpace(block.Role); role != "" {
+		next.Role = ChatRole(role)
+	}
+	next.Text = block.Text
+	next.TurnID = strings.TrimSpace(block.TurnID)
+	next.ProviderMessageID = strings.TrimSpace(block.ProviderMessageID)
+	next.CreatedAt = block.CreatedAt
+	return next
 }
 
 func chatBlocksEqual(left, right []ChatBlock) bool {
