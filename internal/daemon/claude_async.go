@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -153,10 +154,24 @@ func (r defaultClaudeTurnFailureReporter) Report(job claudeTurnJob, turnErr erro
 		}
 	}
 	turnID := strings.TrimSpace(job.prepared.TurnID)
+	interrupted := errors.Is(turnErr, errClaudeTurnInterrupted)
+	status := "failed"
+	source := "claude_async_send_failed"
 	message := fmt.Sprintf("Claude turn failed (%s): %v", turnID, turnErr)
+	if interrupted {
+		status = "interrupted"
+		source = "claude_async_send_interrupted"
+		message = fmt.Sprintf("Claude turn interrupted (%s): %v", turnID, turnErr)
+	}
 
 	if r.logger != nil {
-		r.logger.Error("claude_turn_failed_async",
+		logFn := r.logger.Error
+		logKey := "claude_turn_failed_async"
+		if interrupted {
+			logFn = r.logger.Info
+			logKey = "claude_turn_interrupted_async"
+		}
+		logFn(logKey,
 			logging.F("session_id", sessionID),
 			logging.F("turn_id", turnID),
 			logging.F("provider", provider),
@@ -182,11 +197,11 @@ func (r defaultClaudeTurnFailureReporter) Report(job claudeTurnJob, turnErr erro
 		SessionID: sessionID,
 		TurnID:    turnID,
 		Provider:  provider,
-		Source:    "claude_async_send_failed",
-		Status:    "failed",
+		Source:    source,
+		Status:    status,
 		Error:     strings.TrimSpace(turnErr.Error()),
 		Payload: map[string]any{
-			"turn_status": "failed",
+			"turn_status": status,
 			"turn_error":  strings.TrimSpace(turnErr.Error()),
 		},
 	}

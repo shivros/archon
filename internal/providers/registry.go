@@ -51,6 +51,7 @@ var registry = []Definition{
 			SupportsGuidedWorkflowDispatch: true,
 			UsesItems:                      true,
 			SupportsApprovals:              true,
+			SupportsInterrupt:              true,
 			NoProcess:                      true,
 		},
 	},

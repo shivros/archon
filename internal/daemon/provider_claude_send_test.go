@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -172,6 +173,60 @@ func TestClaudeProviderStartValidationAndLifecycle(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("wait did not unblock after interrupt")
+	}
+}
+
+func TestClaudeRunnerInterruptStopsActiveCommand(t *testing.T) {
+	testBin := os.Args[0]
+	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
+	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("WriteFile wrapper: %v", err)
+	}
+
+	runner := &claudeRunner{
+		cmdName: wrapper,
+		env:     []string{"GO_WANT_HELPER_PROCESS=1"},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.run("sleep_ms=10000", nil)
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	if err := runner.Interrupt(); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, errClaudeTurnInterrupted) {
+			t.Fatalf("expected interrupted error, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("expected active command to stop after interrupt")
+	}
+}
+
+func TestClaudeRunnerInterruptQueuesForNextCommand(t *testing.T) {
+	testBin := os.Args[0]
+	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
+	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
+		t.Fatalf("WriteFile wrapper: %v", err)
+	}
+
+	runner := &claudeRunner{
+		cmdName: wrapper,
+		env:     []string{"GO_WANT_HELPER_PROCESS=1"},
+	}
+
+	if err := runner.Interrupt(); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if err := runner.run("sleep_ms=10000", nil); !errors.Is(err, errClaudeTurnInterrupted) {
+		t.Fatalf("expected queued interrupt to stop next command, got %v", err)
 	}
 }
 

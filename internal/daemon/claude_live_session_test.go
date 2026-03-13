@@ -334,10 +334,39 @@ func TestClaudeLiveSessionInterruptRequiresManager(t *testing.T) {
 }
 
 func TestClaudeLiveSessionInterruptDelegatesToManager(t *testing.T) {
+	called := 0
 	manager := &SessionManager{
 		sessions: map[string]*sessionRuntime{
 			"s1": {
-				interrupt: func() error { return nil },
+				interrupt: func() error {
+					called++
+					return nil
+				},
+			},
+		},
+	}
+	session := &claudeLiveSession{
+		sessionID:  "s1",
+		manager:    manager,
+		activeTurn: "turn-1",
+	}
+	if err := session.Interrupt(context.Background()); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("expected interrupt delegation, got %d calls", called)
+	}
+}
+
+func TestClaudeLiveSessionInterruptWithoutActiveTurnIsNoop(t *testing.T) {
+	called := 0
+	manager := &SessionManager{
+		sessions: map[string]*sessionRuntime{
+			"s1": {
+				interrupt: func() error {
+					called++
+					return nil
+				},
 			},
 		},
 	}
@@ -347,6 +376,9 @@ func TestClaudeLiveSessionInterruptDelegatesToManager(t *testing.T) {
 	}
 	if err := session.Interrupt(context.Background()); err != nil {
 		t.Fatalf("Interrupt: %v", err)
+	}
+	if called != 0 {
+		t.Fatalf("expected no interrupt delegation without active turn, got %d calls", called)
 	}
 }
 

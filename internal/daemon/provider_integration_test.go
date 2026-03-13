@@ -173,6 +173,154 @@ func TestProviderSessionFlow(t *testing.T) {
 	}
 }
 
+func TestProviderInterruptParity(t *testing.T) {
+	for _, tc := range allProviderTestCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.require(t)
+
+			repoDir, runtimeOpts := tc.setup(t)
+			server, manager, _ := newCodexIntegrationServer(t)
+			defer server.Close()
+
+			ws := createWorkspace(t, server, repoDir)
+			session := startSession(t, server, StartSessionRequest{
+				Provider:       tc.name,
+				WorkspaceID:    ws.ID,
+				RuntimeOptions: runtimeOpts,
+			})
+
+			stream, closeFn := openSSE(t, server, "/v1/sessions/"+session.ID+"/transcript/stream?follow=1")
+			defer closeFn()
+
+			finalToken := "interrupt-final-token-" + tc.name
+			turnID := sendMessageWithRetry(t, server, session.ID, providerInterruptPrompt(finalToken), tc.timeout())
+			if strings.TrimSpace(turnID) == "" {
+				t.Fatalf("expected turn id from send")
+			}
+
+			if !waitForProviderInterruptReadiness(stream, 2*time.Second) {
+				time.Sleep(1500 * time.Millisecond)
+			}
+
+			status, body := interruptSession(server, session.ID)
+			if status != 200 {
+				t.Fatalf("interrupt failed status=%d body=%s", status, body)
+			}
+
+			waitForProviderInterruptConfirmation(t, server, manager, session.ID, stream, finalToken, 45*time.Second)
+		})
+	}
+}
+
+func providerInterruptPrompt(finalToken string) string {
+	return "Write a very detailed response with at least 18 numbered sections about distributed systems, reliability, scheduling, retries, and failure handling. " +
+		"Do not stop early. Put the exact final line `" + strings.TrimSpace(finalToken) + "` only after the full response is completely finished."
+}
+
+func waitForProviderInterruptReadiness(stream <-chan string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case data, ok := <-stream:
+			if !ok {
+				return false
+			}
+			var event transcriptdomain.TranscriptEvent
+			if err := json.Unmarshal([]byte(data), &event); err == nil {
+				if event.Kind == transcriptdomain.TranscriptEventTurnStarted || event.Kind == transcriptdomain.TranscriptEventDelta {
+					return true
+				}
+			}
+			if codexEvent, ok := codexEventFromSSEPayload(data); ok {
+				if codexEvent.Method == "turn/started" {
+					return true
+				}
+			}
+		case <-time.After(providerFailurePollInterval):
+		}
+	}
+	return false
+}
+
+func waitForProviderInterruptConfirmation(
+	t *testing.T,
+	server *httptest.Server,
+	manager *SessionManager,
+	sessionID string,
+	stream <-chan string,
+	finalToken string,
+	timeout time.Duration,
+) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		history := historySession(t, server, sessionID)
+		if historyHasAgentText(history.Items, finalToken) {
+			t.Fatalf("provider completed after interrupt and emitted final token %q\n%s", finalToken, sessionDiagnostics(manager, sessionID))
+		}
+		if historyHasInterruptedTurn(history.Items) {
+			return
+		}
+
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal state %q while waiting for interrupt confirmation\n%s", failure, sessionDiagnostics(manager, sessionID))
+		}
+
+		data, ok := waitForSSEData(stream, 2*time.Second)
+		if !ok {
+			continue
+		}
+		if transcriptPayloadHasAgentText(data, finalToken) {
+			t.Fatalf("provider streamed final token %q after interrupt\n%s", finalToken, sessionDiagnostics(manager, sessionID))
+		}
+		if transcriptPayloadIndicatesInterrupted(data) {
+			return
+		}
+	}
+	t.Fatalf("timeout waiting for interrupted turn confirmation\n%s", sessionDiagnostics(manager, sessionID))
+}
+
+func historyHasInterruptedTurn(items []map[string]any) bool {
+	for _, item := range items {
+		if !strings.EqualFold(strings.TrimSpace(asString(item["type"])), "turnCompletion") {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(asString(item["turn_status"])))
+		errMsg := strings.ToLower(strings.TrimSpace(asString(item["turn_error"])))
+		switch status {
+		case "interrupted", "aborted", "cancelled", "canceled", "stopped":
+			return true
+		}
+		if strings.Contains(errMsg, "interrupt") {
+			return true
+		}
+	}
+	return false
+}
+
+func transcriptPayloadHasAgentText(data string, needle string) bool {
+	var event transcriptdomain.TranscriptEvent
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return false
+	}
+	return transcriptEventHasAgentText(event, needle)
+}
+
+func transcriptPayloadIndicatesInterrupted(data string) bool {
+	event, ok := codexEventFromSSEPayload(data)
+	if !ok || event.Method != "turn/completed" {
+		return false
+	}
+	turn := parseTurnEventFromParams(event.Params)
+	status := strings.ToLower(strings.TrimSpace(turn.Status))
+	switch status {
+	case "interrupted", "aborted", "cancelled", "canceled", "stopped":
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(turn.Error)), "interrupt")
+}
+
 func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {
 	t.Helper()
 	stream, closeFn := openSSE(t, server, "/v1/sessions/"+sessionID+"/transcript/stream?follow=1")

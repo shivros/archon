@@ -31,6 +31,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsGuidedWorkflowDispatch: true,
 				UsesItems:                      true,
 				SupportsApprovals:              true,
+				SupportsInterrupt:              true,
 				NoProcess:                      true,
 			},
 		},

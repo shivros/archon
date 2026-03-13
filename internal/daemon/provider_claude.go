@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"control/internal/types"
 )
@@ -29,7 +30,19 @@ type claudeRunner struct {
 	mu        sync.Mutex
 	sessionID string
 	onSession func(string)
+
+	execMu          sync.Mutex
+	nextExecID      int
+	activeExecs     map[int]*claudeExecHandle
+	interruptQueued bool
 }
+
+type claudeExecHandle struct {
+	cmd         *exec.Cmd
+	interrupted bool
+}
+
+var errClaudeTurnInterrupted = errors.New("claude turn interrupted")
 
 var claudeRecursiveSessionEnv = []string{
 	"CLAUDECODE",
@@ -88,8 +101,9 @@ func (p *claudeProvider) Start(cfg StartSessionConfig, sink ProviderSink, items 
 			return nil
 		},
 		Interrupt: func() error {
+			err := runner.Interrupt()
 			closeDone()
-			return nil
+			return err
 		},
 		ThreadID: threadID,
 		Send:     runner.Send,
@@ -166,6 +180,10 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	execID, shouldInterrupt := r.registerActiveExec(cmd)
+	if shouldInterrupt {
+		interruptClaudeProcess(cmd.Process)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -180,6 +198,9 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 
 	err = cmd.Wait()
 	wg.Wait()
+	if r.finishActiveExec(execID) {
+		return errClaudeTurnInterrupted
+	}
 	return err
 }
 
@@ -213,6 +234,73 @@ func (r *claudeRunner) updateSessionID(id string) {
 	if changed && r.onSession != nil {
 		r.onSession(id)
 	}
+}
+
+func (r *claudeRunner) Interrupt() error {
+	if r == nil {
+		return errors.New("runner is nil")
+	}
+	processes := make([]*os.Process, 0, 1)
+	r.execMu.Lock()
+	if len(r.activeExecs) == 0 {
+		r.interruptQueued = true
+		r.execMu.Unlock()
+		return nil
+	}
+	for _, handle := range r.activeExecs {
+		if handle == nil {
+			continue
+		}
+		handle.interrupted = true
+		if handle.cmd != nil && handle.cmd.Process != nil {
+			processes = append(processes, handle.cmd.Process)
+		}
+	}
+	r.execMu.Unlock()
+	for _, process := range processes {
+		interruptClaudeProcess(process)
+	}
+	return nil
+}
+
+func (r *claudeRunner) registerActiveExec(cmd *exec.Cmd) (int, bool) {
+	r.execMu.Lock()
+	defer r.execMu.Unlock()
+	r.nextExecID++
+	id := r.nextExecID
+	handle := &claudeExecHandle{cmd: cmd}
+	shouldInterrupt := r.interruptQueued
+	if shouldInterrupt {
+		handle.interrupted = true
+		r.interruptQueued = false
+	}
+	if r.activeExecs == nil {
+		r.activeExecs = make(map[int]*claudeExecHandle)
+	}
+	r.activeExecs[id] = handle
+	return id, shouldInterrupt
+}
+
+func (r *claudeRunner) finishActiveExec(id int) bool {
+	r.execMu.Lock()
+	defer r.execMu.Unlock()
+	handle := r.activeExecs[id]
+	delete(r.activeExecs, id)
+	if handle == nil {
+		return false
+	}
+	return handle.interrupted
+}
+
+func interruptClaudeProcess(process *os.Process) {
+	if process == nil {
+		return
+	}
+	_ = signalTerminate(process)
+	go func(p *os.Process) {
+		time.Sleep(750 * time.Millisecond)
+		_ = signalKill(p)
+	}(process)
 }
 
 func readClaudeStream(r io.Reader, rawStream string, sink ProviderSink, items ProviderItemSink, onSessionID func(string)) error {

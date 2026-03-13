@@ -248,6 +248,32 @@ func TestDefaultClaudeTurnFailureReporterWithoutNotifier(t *testing.T) {
 	}
 }
 
+func TestDefaultClaudeTurnFailureReporterMarksInterruptions(t *testing.T) {
+	notifier := &stubTurnCompletionNotifier{}
+	reporter := defaultClaudeTurnFailureReporter{
+		sessionID: "s1",
+		notifier:  notifier,
+	}
+	reporter.Report(claudeTurnJob{
+		prepared: claudePreparedTurn{TurnID: "turn-interrupted"},
+	}, errClaudeTurnInterrupted)
+
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if notifier.calls == 0 {
+		t.Fatalf("expected interruption notification")
+	}
+	if notifier.lastEvent.Status != "interrupted" {
+		t.Fatalf("expected interrupted status, got %q", notifier.lastEvent.Status)
+	}
+	if notifier.lastEvent.Source != "claude_async_send_interrupted" {
+		t.Fatalf("expected interrupted source, got %q", notifier.lastEvent.Source)
+	}
+	if !strings.Contains(strings.ToLower(notifier.lastEvent.Error), "interrupt") {
+		t.Fatalf("expected interruption error text, got %q", notifier.lastEvent.Error)
+	}
+}
+
 type schedulerOrderExecutor struct {
 	execErr error
 	started chan string

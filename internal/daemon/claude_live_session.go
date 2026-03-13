@@ -95,6 +95,9 @@ func (s *claudeLiveSession) Interrupt(ctx context.Context) error {
 	if s.manager == nil {
 		return unavailableError("session manager not available", nil)
 	}
+	if strings.TrimSpace(s.ActiveTurnID()) == "" {
+		return nil
+	}
 	return s.manager.InterruptSession(s.sessionID)
 }
 
