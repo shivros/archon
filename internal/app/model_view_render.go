@@ -1,10 +1,12 @@
 package app
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 func (m *Model) renderRightPaneView() string {
@@ -60,9 +62,13 @@ func (m *Model) renderRightPaneView() string {
 
 func (m *Model) renderBodyWithSidebar(rightView string) string {
 	frame := m.layoutFrame()
+	rightWidth := m.width - frame.rightStart
+	if rightWidth < 1 {
+		rightWidth = max(1, blockWidth(strings.Split(rightView, "\n")))
+	}
 	body := rightView
 	if frame.sidebarWidth <= 0 {
-		return body
+		return fillBlockWithBackground(body, rightWidth, lipgloss.Height(body), mainPaneStyle)
 	}
 	listView := ""
 	if m.sidebar != nil {
@@ -74,8 +80,125 @@ func (m *Model) renderBodyWithSidebar(rightView string) string {
 	if height < 1 {
 		height = 1
 	}
+	rightView = fillBlockWithBackground(rightView, rightWidth, height, mainPaneStyle)
+	listView = fillBlockWithBackground(listView, frame.sidebarWidth, height, sidebarPaneStyle)
 	divider := strings.Repeat("│\n", height-1) + "│"
 	return lipgloss.JoinHorizontal(lipgloss.Top, listView, dividerStyle.Render(divider), rightView)
+}
+
+func fillBlockWithBackground(block string, width, height int, style lipgloss.Style) string {
+	if width <= 0 {
+		return block
+	}
+	if height < 1 {
+		height = max(1, lipgloss.Height(block))
+	}
+	prefix, suffix, hasBackgroundEnvelope := backgroundEnvelope(style)
+	lines := strings.Split(block, "\n")
+	rendered := make([]string, 0, height)
+	for i := 0; i < height; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		rendered = append(rendered, applyBackgroundAcrossLine(line, width, prefix, suffix, hasBackgroundEnvelope))
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func backgroundEnvelope(style lipgloss.Style) (prefix, suffix string, ok bool) {
+	marker := "X"
+	styledMarker := style.Render(marker)
+	idx := strings.Index(styledMarker, marker)
+	if idx < 0 {
+		return "", "", false
+	}
+	prefix = styledMarker[:idx]
+	suffix = styledMarker[idx+len(marker):]
+	if prefix == "" && suffix == "" {
+		return "", "", false
+	}
+	return prefix, suffix, true
+}
+
+func applyBackgroundAcrossLine(line string, width int, prefix, suffix string, hasBackgroundEnvelope bool) string {
+	lineWidth := xansi.StringWidth(line)
+	if width < 0 {
+		width = 0
+	}
+	padding := ""
+	if lineWidth < width {
+		padding = strings.Repeat(" ", width-lineWidth)
+	}
+	if !hasBackgroundEnvelope {
+		return line + padding
+	}
+	// Re-apply pane background after background-reset SGR sequences so existing
+	// styled segments don't leak back to the terminal default background.
+	line = reapplyBackgroundAfterResetSGR(line, prefix)
+	return prefix + line + padding + suffix
+}
+
+func reapplyBackgroundAfterResetSGR(line, prefix string) string {
+	if line == "" || prefix == "" {
+		return line
+	}
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] != '\x1b' || i+1 >= len(line) || line[i+1] != '[' {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		seqEnd := i + 2
+		for seqEnd < len(line) && line[seqEnd] != 'm' {
+			seqEnd++
+		}
+		if seqEnd >= len(line) {
+			b.WriteString(line[i:])
+			break
+		}
+		seq := line[i : seqEnd+1]
+		b.WriteString(seq)
+		params := line[i+2 : seqEnd]
+		if sgrResetsBackground(params) {
+			b.WriteString(prefix)
+		}
+		i = seqEnd + 1
+	}
+	return b.String()
+}
+
+func sgrResetsBackground(params string) bool {
+	if params == "" {
+		return true
+	}
+	parts := strings.Split(params, ";")
+	resetsBg := false
+	setsBg := false
+	for _, part := range parts {
+		if part == "" {
+			resetsBg = true
+			continue
+		}
+		code, err := strconv.Atoi(part)
+		if err != nil {
+			continue
+		}
+		switch {
+		case code == 0:
+			resetsBg = true
+		case code == 49:
+			resetsBg = true
+		case code == 48:
+			setsBg = true
+		case code >= 40 && code <= 47:
+			setsBg = true
+		case code >= 100 && code <= 107:
+			setsBg = true
+		}
+	}
+	return resetsBg && !setsBg
 }
 
 func normalizeBlockWidth(block string, width int) string {

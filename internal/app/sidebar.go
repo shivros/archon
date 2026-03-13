@@ -312,18 +312,21 @@ func (d *sidebarDelegate) Render(w io.Writer, m list.Model, index int, item list
 func (d *sidebarDelegate) renderRecentsAllRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
 	line := truncateToWidth("• "+label, maxWidth)
+	line = padToWidth(line, maxWidth)
 	return sidebarSelectStyle(workspaceStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
 func (d *sidebarDelegate) renderRecentsReadyRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
 	line := truncateToWidth("  - "+label, maxWidth)
+	line = padToWidth(line, maxWidth)
 	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
 func (d *sidebarDelegate) renderRecentsRunningRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := fmt.Sprintf("%s (%d)", entry.Title(), max(0, entry.recentsCount))
 	line := truncateToWidth("  - "+label, maxWidth)
+	line = padToWidth(line, maxWidth)
 	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
@@ -339,6 +342,7 @@ func (d *sidebarDelegate) renderWorkspaceRow(entry *sidebarItem, maxWidth int, i
 		}
 	}
 	line := truncateToWidth(indent+prefix+label, maxWidth)
+	line = padToWidth(line, maxWidth)
 	baseStyle := workspaceStyle
 	if entry.workspace != nil && entry.workspace.ID == d.activeWorkspaceID {
 		baseStyle = workspaceActiveStyle
@@ -358,6 +362,7 @@ func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, is
 		}
 	}
 	line := truncateToWidth(indent+marker+" "+label, maxWidth)
+	line = padToWidth(line, maxWidth)
 	baseStyle := worktreeStyle
 	if entry.worktree != nil && entry.worktree.ID == d.activeWorktreeID {
 		baseStyle = worktreeActiveStyle
@@ -381,6 +386,7 @@ func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, is
 	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
 	line := truncateToWidth(indent+marker+" "+indicatorForRowState(workflowRowState(entry.workflow))+" [WFL] "+label, maxWidth)
+	line = padToWidth(line, maxWidth)
 	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
 
@@ -430,11 +436,17 @@ func (d *sidebarDelegate) renderSessionRow(entry *sidebarItem, maxWidth int, isS
 	}
 	titleStyle := baseStyle
 	if viewModel.TitleIsUnread {
-		titleStyle = sessionUnreadStyle
+		titleStyle = baseStyle.Foreground(sessionUnreadStyle.GetForeground())
 	}
 	rendered += titleStyle.Render(viewModel.Title)
 	if strings.TrimSpace(viewModel.RightText) != "" {
 		rendered += baseStyle.Render(viewModel.RightText)
+	}
+	if maxWidth > 0 {
+		renderedWidth := ansi.StringWidth(rendered)
+		if renderedWidth < maxWidth {
+			rendered += baseStyle.Render(strings.Repeat(" ", maxWidth-renderedWidth))
+		}
 	}
 	return rendered
 }

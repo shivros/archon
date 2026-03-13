@@ -16,6 +16,8 @@ type ThemePreset struct {
 }
 
 type themePalette struct {
+	MainPaneBg                      string
+	SidebarPaneBg                   string
 	HeaderFg                        string
 	StatusFg                        string
 	StatusHistorySelectedFg         string
@@ -100,6 +102,8 @@ type themePalette struct {
 }
 
 var (
+	mainPaneStyle                   lipgloss.Style
+	sidebarPaneStyle                lipgloss.Style
 	headerStyle                     lipgloss.Style
 	statusStyle                     lipgloss.Style
 	statusHistorySelectedStyle      lipgloss.Style
@@ -161,6 +165,12 @@ var (
 
 func applyTheme(preset ThemePreset) {
 	p := preset.palette
+	mainPaneStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(p.SessionFg)).
+		Background(lipgloss.Color(p.MainPaneBg))
+	sidebarPaneStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(p.SessionFg)).
+		Background(lipgloss.Color(p.SidebarPaneBg))
 	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.HeaderFg))
 	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.StatusFg))
 	statusHistorySelectedStyle = lipgloss.NewStyle().

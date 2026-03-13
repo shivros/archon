@@ -280,6 +280,8 @@ type themeScheme struct {
 
 func paletteFromScheme(s themeScheme) themePalette {
 	p := defaultThemePalette()
+	p.MainPaneBg = s.BgBase
+	p.SidebarPaneBg = s.BgElevated
 	p.HeaderFg = s.Accent
 	p.StatusFg = s.FgMuted
 	p.StatusHistorySelectedFg = s.FgStrong
@@ -368,6 +370,8 @@ func paletteFromScheme(s themeScheme) themePalette {
 
 func defaultThemePalette() themePalette {
 	return themePalette{
+		MainPaneBg:                      "234",
+		SidebarPaneBg:                   "235",
 		HeaderFg:                        "63",
 		StatusFg:                        "245",
 		StatusHistorySelectedFg:         "230",
