@@ -371,10 +371,6 @@ func resolveThreadOwnerSession(snapshot *syncSnapshot, threadID string) (string,
 	if snapshot == nil || threadID == "" {
 		return "", nil, nil
 	}
-	// Fast path: session id already matches thread id (the preferred shape).
-	if record, ok := snapshot.record(threadID); ok && record != nil && record.Session != nil {
-		return threadID, record, snapshot.meta(threadID)
-	}
 
 	var chosenSessionID string
 	var chosenRecord *types.SessionRecord
@@ -393,16 +389,42 @@ func resolveThreadOwnerSession(snapshot *syncSnapshot, threadID string) (string,
 			chosenMeta = meta
 			continue
 		}
-		currentSource := strings.TrimSpace(record.Source)
-		chosenSource := strings.TrimSpace(chosenRecord.Source)
-		// Prefer internal records over codex-synced aliases.
-		if currentSource == sessionSourceInternal && chosenSource != sessionSourceInternal {
+		if preferThreadOwnerCandidate(record, meta, chosenRecord, chosenMeta) {
 			chosenSessionID = sessionID
 			chosenRecord = record
 			chosenMeta = meta
 		}
 	}
+	if chosenSessionID != "" {
+		return chosenSessionID, chosenRecord, chosenMeta
+	}
+	if record, ok := snapshot.record(threadID); ok && record != nil && record.Session != nil {
+		return threadID, record, snapshot.meta(threadID)
+	}
 	return chosenSessionID, chosenRecord, chosenMeta
+}
+
+func preferThreadOwnerCandidate(currentRecord *types.SessionRecord, currentMeta *types.SessionMeta, chosenRecord *types.SessionRecord, chosenMeta *types.SessionMeta) bool {
+	if currentRecord == nil || currentRecord.Session == nil {
+		return false
+	}
+	if chosenRecord == nil || chosenRecord.Session == nil {
+		return true
+	}
+	currentSource := strings.TrimSpace(currentRecord.Source)
+	chosenSource := strings.TrimSpace(chosenRecord.Source)
+	if currentSource == sessionSourceInternal && chosenSource != sessionSourceInternal {
+		return true
+	}
+	if currentSource != sessionSourceInternal && chosenSource == sessionSourceInternal {
+		return false
+	}
+	currentHasMeta := currentMeta != nil && strings.TrimSpace(currentMeta.ThreadID) != ""
+	chosenHasMeta := chosenMeta != nil && strings.TrimSpace(chosenMeta.ThreadID) != ""
+	if currentHasMeta != chosenHasMeta {
+		return currentHasMeta
+	}
+	return false
 }
 
 func (s *CodexSyncer) removeStale(ctx context.Context, workspaceID, worktreeID string, seen map[string]struct{}, snapshot *syncSnapshot, stats *syncPathStats) error {

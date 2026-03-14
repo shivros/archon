@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
@@ -366,78 +367,6 @@ func (s *SessionService) normalizeSessionStatuses(ctx context.Context, sessionMa
 				Source:  source,
 			})
 		}
-	}
-}
-
-// migrateCodexDualEntries reconciles old-format codex sessions where an
-// internal session (random ID) and a codex-synced session (thread ID) exist
-// for the same conversation. It merges them under the thread ID and removes
-// the old internal entry.
-func (s *SessionService) migrateCodexDualEntries(ctx context.Context) {
-	if s.stores == nil || s.stores.Sessions == nil || s.stores.SessionMeta == nil {
-		return
-	}
-	metaEntries, err := s.stores.SessionMeta.List(ctx)
-	if err != nil {
-		return
-	}
-	metaByID := make(map[string]*types.SessionMeta, len(metaEntries))
-	for _, m := range metaEntries {
-		if m != nil {
-			metaByID[m.SessionID] = m
-		}
-	}
-	records, err := s.stores.Sessions.ListRecords(ctx)
-	if err != nil {
-		return
-	}
-
-	for _, record := range records {
-		if record == nil || record.Session == nil || record.Source != sessionSourceInternal {
-			continue
-		}
-		if providers.Normalize(record.Session.Provider) != "codex" {
-			continue
-		}
-		meta := metaByID[record.Session.ID]
-		if meta == nil {
-			continue
-		}
-		threadID := strings.TrimSpace(meta.ThreadID)
-		if threadID == "" || threadID == record.Session.ID {
-			continue // Already re-keyed or no thread ID.
-		}
-
-		// This is an old-format internal codex session whose ID differs
-		// from its thread ID. Merge it under the thread ID.
-		merged := *record.Session
-		merged.ID = threadID
-
-		_, _ = s.stores.Sessions.UpsertRecord(ctx, &types.SessionRecord{
-			Session: &merged,
-			Source:  sessionSourceInternal,
-		})
-
-		// Merge meta, preserving the internal session's title/lock.
-		mergedMeta := *meta
-		mergedMeta.SessionID = threadID
-		if mergedMeta.ThreadID == "" {
-			mergedMeta.ThreadID = threadID
-		}
-		// Carry over workspace/worktree from the codex-synced entry if present.
-		if codexMeta := metaByID[threadID]; codexMeta != nil {
-			if mergedMeta.WorkspaceID == "" {
-				mergedMeta.WorkspaceID = codexMeta.WorkspaceID
-			}
-			if mergedMeta.WorktreeID == "" {
-				mergedMeta.WorktreeID = codexMeta.WorktreeID
-			}
-		}
-		_, _ = s.stores.SessionMeta.Upsert(ctx, &mergedMeta)
-
-		// Remove the old internal entry.
-		_ = s.stores.Sessions.DeleteRecord(ctx, record.Session.ID)
-		_ = s.stores.SessionMeta.Delete(ctx, record.Session.ID)
 	}
 }
 
@@ -1573,10 +1502,27 @@ func resolveThreadID(session *types.Session, meta *types.SessionMeta) string {
 	if meta != nil && strings.TrimSpace(meta.ThreadID) != "" {
 		return meta.ThreadID
 	}
-	if session != nil && session.Provider == "codex" && session.ID != "" {
-		return session.ID
+	return legacyCodexThreadIDFallback(session)
+}
+
+func legacyCodexThreadIDFallback(session *types.Session) string {
+	if session == nil || providers.Normalize(session.Provider) != "codex" {
+		return ""
 	}
-	return ""
+	sessionID := strings.TrimSpace(session.ID)
+	if sessionID == "" || isGeneratedInternalSessionID(sessionID) {
+		return ""
+	}
+	return sessionID
+}
+
+func isGeneratedInternalSessionID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) != 24 {
+		return false
+	}
+	decoded, err := hex.DecodeString(id)
+	return err == nil && len(decoded) == 12
 }
 
 func trimTitle(input string) string {

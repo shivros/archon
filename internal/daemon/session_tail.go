@@ -207,7 +207,7 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 		return nil, invalidError("session cwd is required", nil)
 	}
 	if strings.TrimSpace(threadID) == "" {
-		threadID = session.ID
+		threadID = legacyCodexThreadIDFallback(session)
 	}
 	workspacePath := ""
 	if s.stores != nil && s.stores.SessionMeta != nil && s.stores.Workspaces != nil {

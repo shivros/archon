@@ -671,9 +671,7 @@ func codexThreadResumeCandidates(session *types.Session, meta *types.SessionMeta
 		candidates = append(candidates, value)
 	}
 	appendUnique(resolveThreadID(session, meta))
-	if session != nil && session.Provider == "codex" {
-		appendUnique(session.ID)
-	}
+	appendUnique(legacyCodexThreadIDFallback(session))
 	return candidates
 }
 

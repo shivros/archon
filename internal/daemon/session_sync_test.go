@@ -14,14 +14,14 @@ import (
 	"control/internal/types"
 )
 
-func TestSyncSkipsRekeyedInternalSession(t *testing.T) {
+func TestSyncSkipsInternalSessionBoundToThreadID(t *testing.T) {
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
 	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
 	ctx := context.Background()
 
 	threadID := "thread-abc-123"
 
-	// Simulate a re-keyed internal session that already uses the thread ID.
+	// Simulate an internal session keyed by an existing thread ID.
 	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
 		Session: &types.Session{
 			ID:       threadID,
@@ -67,137 +67,67 @@ func TestSyncSkipsRekeyedInternalSession(t *testing.T) {
 	}
 }
 
-func TestMigrateCodexDualEntries(t *testing.T) {
-	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
-	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
-	ctx := context.Background()
-
-	internalID := "random-hex-id"
-	threadID := "codex-thread-uuid"
-
-	// Seed old-format dual entries: an internal session with a different thread ID.
-	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: &types.Session{
-			ID:       internalID,
-			Provider: "codex",
-			Title:    "User Title",
-			Status:   types.SessionStatusInactive,
+func TestResolveThreadOwnerSessionPrefersMetadataLinkedInternalSession(t *testing.T) {
+	internalID := "internal-123"
+	threadID := "thread-123"
+	snapshot := &syncSnapshot{
+		recordsBySessionID: map[string]*types.SessionRecord{
+			internalID: {
+				Session: &types.Session{ID: internalID, Provider: "codex"},
+				Source:  sessionSourceInternal,
+			},
+			threadID: {
+				Session: &types.Session{ID: threadID, Provider: "codex"},
+				Source:  sessionSourceCodex,
+			},
 		},
-		Source: sessionSourceInternal,
-	})
-	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:   internalID,
-		Title:       "User Title",
-		TitleLocked: true,
-		ThreadID:    threadID,
-	})
-
-	// Seed the codex-synced duplicate.
-	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: &types.Session{
-			ID:       threadID,
-			Provider: "codex",
-			Title:    "Codex preview text",
-			Status:   types.SessionStatusInactive,
+		metaBySessionID: map[string]*types.SessionMeta{
+			internalID: {
+				SessionID: internalID,
+				ThreadID:  threadID,
+			},
+			threadID: {
+				SessionID: threadID,
+				ThreadID:  threadID,
+			},
 		},
-		Source: sessionSourceCodex,
-	})
-	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:   threadID,
-		Title:       "Codex preview text",
-		ThreadID:    threadID,
-		WorkspaceID: "ws-1",
-		WorktreeID:  "wt-1",
-	})
-
-	service := &SessionService{
-		stores: &Stores{
-			Sessions:    sessionStore,
-			SessionMeta: metaStore,
-		},
+		dismissedSessionID: map[string]struct{}{},
 	}
 
-	service.migrateCodexDualEntries(ctx)
-
-	// The old internal entry should be gone.
-	_, oldExists, _ := sessionStore.GetRecord(ctx, internalID)
-	if oldExists {
-		t.Fatalf("old internal session record should be deleted")
+	ownerID, ownerRecord, ownerMeta := resolveThreadOwnerSession(snapshot, threadID)
+	if ownerID != internalID {
+		t.Fatalf("expected internal owner %q, got %q", internalID, ownerID)
 	}
-	_, oldMetaExists, _ := metaStore.Get(ctx, internalID)
-	if oldMetaExists {
-		t.Fatalf("old internal meta entry should be deleted")
+	if ownerRecord == nil || ownerRecord.Session == nil || ownerRecord.Session.ID != internalID {
+		t.Fatalf("expected internal session record, got %#v", ownerRecord)
 	}
-
-	// The thread ID entry should exist with merged data.
-	record, exists, _ := sessionStore.GetRecord(ctx, threadID)
-	if !exists || record.Session == nil {
-		t.Fatalf("merged session record should exist under thread ID")
-	}
-	if record.Session.Title != "User Title" {
-		t.Fatalf("merged session should have user's title, got %q", record.Session.Title)
-	}
-	if record.Source != sessionSourceInternal {
-		t.Fatalf("merged session should have internal source, got %q", record.Source)
-	}
-
-	meta, metaExists, _ := metaStore.Get(ctx, threadID)
-	if !metaExists || meta == nil {
-		t.Fatalf("merged meta should exist under thread ID")
-	}
-	if meta.Title != "User Title" {
-		t.Fatalf("merged meta should have user's title, got %q", meta.Title)
-	}
-	if !meta.TitleLocked {
-		t.Fatalf("merged meta should have title locked")
-	}
-	if meta.WorkspaceID != "ws-1" {
-		t.Fatalf("merged meta should carry over workspace from codex entry, got %q", meta.WorkspaceID)
-	}
-	if meta.WorktreeID != "wt-1" {
-		t.Fatalf("merged meta should carry over worktree from codex entry, got %q", meta.WorktreeID)
+	if ownerMeta == nil || ownerMeta.SessionID != internalID {
+		t.Fatalf("expected internal meta, got %#v", ownerMeta)
 	}
 }
 
-func TestMigrateSkipsAlreadyRekeyedSessions(t *testing.T) {
-	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
-	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
-	ctx := context.Background()
-
-	threadID := "codex-thread-already-rekeyed"
-
-	// A session that was already re-keyed: ID == ThreadID.
-	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: &types.Session{
-			ID:       threadID,
-			Provider: "codex",
-			Title:    "Already Good",
-			Status:   types.SessionStatusInactive,
+func TestResolveThreadOwnerSessionFallsBackToThreadRecordWithoutMetadataLink(t *testing.T) {
+	threadID := "thread-only"
+	snapshot := &syncSnapshot{
+		recordsBySessionID: map[string]*types.SessionRecord{
+			threadID: {
+				Session: &types.Session{ID: threadID, Provider: "codex"},
+				Source:  sessionSourceCodex,
+			},
 		},
-		Source: sessionSourceInternal,
-	})
-	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID: threadID,
-		Title:     "Already Good",
-		ThreadID:  threadID,
-	})
-
-	service := &SessionService{
-		stores: &Stores{
-			Sessions:    sessionStore,
-			SessionMeta: metaStore,
-		},
+		metaBySessionID:    map[string]*types.SessionMeta{},
+		dismissedSessionID: map[string]struct{}{},
 	}
 
-	service.migrateCodexDualEntries(ctx)
-
-	// Session should be untouched.
-	record, exists, _ := sessionStore.GetRecord(ctx, threadID)
-	if !exists || record.Session == nil {
-		t.Fatalf("session should still exist")
+	ownerID, ownerRecord, ownerMeta := resolveThreadOwnerSession(snapshot, threadID)
+	if ownerID != threadID {
+		t.Fatalf("expected direct thread owner %q, got %q", threadID, ownerID)
 	}
-	if record.Session.Title != "Already Good" {
-		t.Fatalf("session title should be unchanged, got %q", record.Session.Title)
+	if ownerRecord == nil || ownerRecord.Session == nil || ownerRecord.Session.ID != threadID {
+		t.Fatalf("expected thread record, got %#v", ownerRecord)
+	}
+	if ownerMeta != nil {
+		t.Fatalf("expected no metadata, got %#v", ownerMeta)
 	}
 }
 

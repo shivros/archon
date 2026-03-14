@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/providers"
 	"control/internal/store"
 	"control/internal/types"
 )
@@ -32,6 +33,48 @@ func (c *captureSessionMetadataPublisher) Events() []types.MetadataEvent {
 	out := make([]types.MetadataEvent, len(c.events))
 	copy(out, c.events)
 	return out
+}
+
+type stubThreadProvider struct {
+	command  string
+	threadID string
+}
+
+func (p *stubThreadProvider) Name() string {
+	return "custom"
+}
+
+func (p *stubThreadProvider) Command() string {
+	return p.command
+}
+
+func (p *stubThreadProvider) Start(cfg StartSessionConfig, _ ProviderSink, _ ProviderItemSink) (*providerProcess, error) {
+	if cfg.OnProviderSessionID != nil {
+		cfg.OnProviderSessionID(p.threadID)
+	}
+	return &providerProcess{
+		ThreadID: p.threadID,
+		Send: func([]byte) error {
+			return nil
+		},
+		Interrupt: func() error {
+			return nil
+		},
+		Wait: func() error {
+			return nil
+		},
+	}, nil
+}
+
+func installStubCustomProvider(t *testing.T, provider Provider) {
+	t.Helper()
+	originalFactory := providerFactories[providers.RuntimeCustom]
+	providerFactories[providers.RuntimeCustom] = func(_ providers.Definition, _ string) (Provider, error) {
+		return provider, nil
+	}
+	t.Cleanup(func() {
+		providerFactories[providers.RuntimeCustom] = originalFactory
+	})
 }
 
 func TestSessionManagerStartAndTail(t *testing.T) {
@@ -557,7 +600,7 @@ func TestUpdateSessionTitleNoStoresNoop(t *testing.T) {
 	}
 }
 
-func TestRekeySessionMigratesStores(t *testing.T) {
+func TestStartSessionKeepsInternalIDWhenProviderReportsRemoteThread(t *testing.T) {
 	manager := newTestManager(t)
 	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
 	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
@@ -565,93 +608,151 @@ func TestRekeySessionMigratesStores(t *testing.T) {
 	manager.SetSessionStore(sessionStore)
 	ctx := context.Background()
 
-	oldID := "random-internal-id"
-	newID := "codex-thread-uuid"
-
-	// Seed initial data under the old ID.
-	session := &types.Session{
-		ID:       oldID,
-		Provider: "codex",
-		Title:    "My Session",
-		Status:   types.SessionStatusRunning,
-	}
-	state := &sessionRuntime{session: session, done: make(chan struct{})}
-	manager.mu.Lock()
-	manager.sessions[oldID] = state
-	manager.mu.Unlock()
-
-	_, _ = metaStore.Upsert(ctx, &types.SessionMeta{
-		SessionID:   oldID,
-		Title:       "My Session",
-		TitleLocked: true,
-		ThreadID:    newID,
-	})
-	_, _ = sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-		Session: session,
-		Source:  sessionSourceInternal,
+	remoteThreadID := "remote-thread-123"
+	installStubCustomProvider(t, &stubThreadProvider{
+		command:  os.Args[0],
+		threadID: remoteThreadID,
 	})
 
-	// Create the old log directory.
-	oldDir := filepath.Join(manager.baseDir, oldID)
-	if err := os.MkdirAll(oldDir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	session, err := manager.StartSession(StartSessionConfig{
+		Provider: "custom",
+		Cmd:      os.Args[0],
+		Title:    "Immutable session",
+	})
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if session.ID == "" {
+		t.Fatalf("expected internal session id")
+	}
+	if session.ID == remoteThreadID {
+		t.Fatalf("session id should remain internal, got remote thread id %q", session.ID)
 	}
 
-	// Perform re-key.
+	waitForStatus(t, manager, session.ID, types.SessionStatusExited, 2*time.Second)
+
 	manager.mu.Lock()
-	manager.rekeySession(oldID, newID, state)
+	_, hasInternalRuntime := manager.sessions[session.ID]
+	_, hasRemoteRuntime := manager.sessions[remoteThreadID]
 	manager.mu.Unlock()
-
-	// In-memory map should be re-keyed.
-	if _, ok := manager.sessions[oldID]; ok {
-		t.Fatalf("old ID should be removed from sessions map")
+	if !hasInternalRuntime {
+		t.Fatalf("expected runtime state to remain keyed by internal session id")
 	}
-	if _, ok := manager.sessions[newID]; !ok {
-		t.Fatalf("new ID should be in sessions map")
-	}
-	if session.ID != newID {
-		t.Fatalf("session.ID should be updated to %q, got %q", newID, session.ID)
+	if hasRemoteRuntime {
+		t.Fatalf("did not expect runtime state under remote thread id")
 	}
 
-	// Meta store should have the new entry, not the old one.
-	_, oldExists, _ := metaStore.Get(ctx, oldID)
-	if oldExists {
-		t.Fatalf("old meta entry should be deleted")
+	meta, metaExists, err := metaStore.Get(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
 	}
-	newMeta, newExists, _ := metaStore.Get(ctx, newID)
-	if !newExists || newMeta == nil {
-		t.Fatalf("new meta entry should exist")
+	if !metaExists || meta == nil {
+		t.Fatalf("expected meta entry for internal session id")
 	}
-	if newMeta.Title != "My Session" {
-		t.Fatalf("meta title should be preserved, got %q", newMeta.Title)
+	if meta.ThreadID != remoteThreadID {
+		t.Fatalf("expected thread id %q, got %q", remoteThreadID, meta.ThreadID)
 	}
-	if !newMeta.TitleLocked {
-		t.Fatalf("meta title_locked should be preserved")
+	if meta.ProviderSessionID != remoteThreadID {
+		t.Fatalf("expected provider session id %q, got %q", remoteThreadID, meta.ProviderSessionID)
 	}
-	if newMeta.ThreadID != newID {
-		t.Fatalf("meta thread_id should be %q, got %q", newID, newMeta.ThreadID)
+	if _, remoteMetaExists, _ := metaStore.Get(ctx, remoteThreadID); remoteMetaExists {
+		t.Fatalf("did not expect meta entry under remote thread id")
 	}
 
-	// Session index should have the new entry, not the old one.
-	_, oldRecordExists, _ := sessionStore.GetRecord(ctx, oldID)
-	if oldRecordExists {
-		t.Fatalf("old session record should be deleted")
+	record, recordExists, err := sessionStore.GetRecord(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("record get: %v", err)
 	}
-	newRecord, newRecordExists, _ := sessionStore.GetRecord(ctx, newID)
-	if !newRecordExists || newRecord.Session == nil {
-		t.Fatalf("new session record should exist")
+	if !recordExists || record == nil || record.Session == nil {
+		t.Fatalf("expected session record for internal session id")
 	}
-	if newRecord.Session.Title != "My Session" {
-		t.Fatalf("session record title should be preserved, got %q", newRecord.Session.Title)
+	if record.Session.ID != session.ID {
+		t.Fatalf("expected persisted session id %q, got %q", session.ID, record.Session.ID)
+	}
+	if _, remoteRecordExists, _ := sessionStore.GetRecord(ctx, remoteThreadID); remoteRecordExists {
+		t.Fatalf("did not expect session record under remote thread id")
+	}
+}
+
+func TestResumeSessionKeepsInternalIDWhenProviderReportsRemoteThread(t *testing.T) {
+	manager := newTestManager(t)
+	metaStore := store.NewFileSessionMetaStore(filepath.Join(t.TempDir(), "sessions_meta.json"))
+	sessionStore := store.NewFileSessionIndexStore(filepath.Join(t.TempDir(), "sessions_index.json"))
+	manager.SetMetaStore(metaStore)
+	manager.SetSessionStore(sessionStore)
+	ctx := context.Background()
+
+	internalSessionID := "sess-internal-123"
+	remoteThreadID := "remote-thread-456"
+	installStubCustomProvider(t, &stubThreadProvider{
+		command:  os.Args[0],
+		threadID: remoteThreadID,
+	})
+
+	existing := &types.Session{
+		ID:        internalSessionID,
+		Provider:  "custom",
+		Cmd:       os.Args[0],
+		Status:    types.SessionStatusInactive,
+		CreatedAt: time.Now().UTC(),
 	}
 
-	// Log directory should be renamed.
-	newDir := filepath.Join(manager.baseDir, newID)
-	if _, err := os.Stat(newDir); err != nil {
-		t.Fatalf("new log directory should exist: %v", err)
+	session, err := manager.ResumeSession(StartSessionConfig{
+		Provider: "custom",
+		Cmd:      os.Args[0],
+	}, existing)
+	if err != nil {
+		t.Fatalf("ResumeSession: %v", err)
 	}
-	if _, err := os.Stat(oldDir); err == nil {
-		t.Fatalf("old log directory should be gone")
+	if session.ID != internalSessionID {
+		t.Fatalf("expected resumed session id %q, got %q", internalSessionID, session.ID)
+	}
+	if existing.ID != internalSessionID {
+		t.Fatalf("expected original session id to remain %q, got %q", internalSessionID, existing.ID)
+	}
+
+	waitForStatus(t, manager, internalSessionID, types.SessionStatusExited, 2*time.Second)
+
+	manager.mu.Lock()
+	_, hasInternalRuntime := manager.sessions[internalSessionID]
+	_, hasRemoteRuntime := manager.sessions[remoteThreadID]
+	manager.mu.Unlock()
+	if !hasInternalRuntime {
+		t.Fatalf("expected runtime state under internal session id")
+	}
+	if hasRemoteRuntime {
+		t.Fatalf("did not expect runtime state under remote thread id")
+	}
+
+	meta, metaExists, err := metaStore.Get(ctx, internalSessionID)
+	if err != nil {
+		t.Fatalf("meta get: %v", err)
+	}
+	if !metaExists || meta == nil {
+		t.Fatalf("expected meta entry for resumed session")
+	}
+	if meta.ThreadID != remoteThreadID {
+		t.Fatalf("expected thread id %q, got %q", remoteThreadID, meta.ThreadID)
+	}
+	if meta.ProviderSessionID != remoteThreadID {
+		t.Fatalf("expected provider session id %q, got %q", remoteThreadID, meta.ProviderSessionID)
+	}
+	if _, remoteMetaExists, _ := metaStore.Get(ctx, remoteThreadID); remoteMetaExists {
+		t.Fatalf("did not expect meta entry under remote thread id")
+	}
+
+	record, recordExists, err := sessionStore.GetRecord(ctx, internalSessionID)
+	if err != nil {
+		t.Fatalf("record get: %v", err)
+	}
+	if !recordExists || record == nil || record.Session == nil {
+		t.Fatalf("expected resumed session record")
+	}
+	if record.Session.ID != internalSessionID {
+		t.Fatalf("expected persisted session id %q, got %q", internalSessionID, record.Session.ID)
+	}
+	if _, remoteRecordExists, _ := sessionStore.GetRecord(ctx, remoteThreadID); remoteRecordExists {
+		t.Fatalf("did not expect session record under remote thread id")
 	}
 }
 

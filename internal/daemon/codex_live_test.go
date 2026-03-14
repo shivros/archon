@@ -65,6 +65,14 @@ func TestCodexThreadResumeCandidatesPrefersMetaThenSession(t *testing.T) {
 	}
 }
 
+func TestCodexThreadResumeCandidatesSkipsInternalSessionIDFallback(t *testing.T) {
+	session := &types.Session{ID: "2524b2a8dc9079f135cdf9fe", Provider: "codex"}
+	got := codexThreadResumeCandidates(session, nil)
+	if len(got) != 0 {
+		t.Fatalf("expected no candidates for internal-only codex session id, got %#v", got)
+	}
+}
+
 func TestTryResumeCodexThreadFallsBackToSecondaryCandidate(t *testing.T) {
 	client := &stubCodexThreadResumer{
 		errByThread: map[string]error{

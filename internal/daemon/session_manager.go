@@ -262,8 +262,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 	m.mu.Unlock()
 
 	cfg.OnProviderSessionID = func(providerID string) {
-		// Use session.ID rather than the original sessionID because the
-		// session may have been re-keyed to a codex thread ID.
+		// Always attach provider identifiers to the immutable Archon session ID.
 		m.upsertSessionProviderID(cfg.Provider, session.ID, providerID)
 	}
 	caps := providers.CapabilitiesFor(cfg.Provider)
@@ -298,15 +297,9 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		session.Status = types.SessionStatusRunning
 		session.StartedAt = &startedAt
 	}
-	// Re-key the session to the codex thread ID so there is exactly one
-	// entry per conversation thread. session.ID is mutated in place.
-	if threadID := strings.TrimSpace(proc.ThreadID); threadID != "" && threadID != sessionID {
-		m.rekeySession(sessionID, threadID, runtimeState)
-	}
 	startedSession := cloneSession(session)
 	m.mu.Unlock()
 
-	// After re-key, session.ID holds the effective (possibly new) ID.
 	m.upsertSessionMeta(cfg, session.ID, session.Status)
 	m.upsertSessionThreadID(session.ID, proc.ThreadID)
 	m.upsertSessionProviderID(cfg.Provider, session.ID, proc.ThreadID)
@@ -336,8 +329,6 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 			session.ExitedAt = ptrTime(time.Now().UTC())
 			m.mu.Unlock()
 
-			// Use session.ID (not the original sessionID) since it may
-			// have been re-keyed to the codex thread ID.
 			m.upsertSessionMeta(cfg, session.ID, finalStatus)
 			m.upsertSessionRecord(session, sessionSourceInternal)
 			m.publishSessionLifecycleEvent(session, cfg, finalStatus, "session_manager_wait")
@@ -416,7 +407,6 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 		return nil, err
 	}
 
-	oldID := session.ID
 	startedAt := time.Now().UTC()
 	m.mu.Lock()
 	runtimeState.process = proc.Process
@@ -436,10 +426,6 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 		session.StartedAt = &startedAt
 	}
 	session.ExitedAt = nil
-	// Re-key old-format sessions that still use a random internal ID.
-	if threadID := strings.TrimSpace(proc.ThreadID); threadID != "" && threadID != oldID {
-		m.rekeySession(oldID, threadID, runtimeState)
-	}
 	m.mu.Unlock()
 
 	m.upsertSessionMeta(cfg, session.ID, session.Status)
@@ -838,58 +824,6 @@ func exitCodeFromError(err error) *int {
 		return &code
 	}
 	return nil
-}
-
-// rekeySession changes a session's ID from oldID to newID. This is used to
-// reconcile codex sessions: they start with a random internal ID, but once
-// the codex thread ID is known we re-key so that every codex conversation
-// has exactly one entry keyed by its thread ID.
-//
-// Must be called while m.mu is held.
-func (m *SessionManager) rekeySession(oldID, newID string, state *sessionRuntime) {
-	// Re-key the in-memory sessions map and session object.
-	state.session.ID = newID
-	m.sessions[newID] = state
-	delete(m.sessions, oldID)
-
-	// Rename the log directory. On Linux this is atomic and existing open
-	// file descriptors (stdout/stderr writers) remain valid.
-	oldDir := filepath.Join(m.baseDir, oldID)
-	newDir := filepath.Join(m.baseDir, newID)
-	if _, err := os.Stat(newDir); err != nil {
-		// Target doesn't exist; safe to rename.
-		_ = os.Rename(oldDir, newDir)
-	}
-	// If newDir already exists we leave files in oldDir. The open handles
-	// are still valid and codex history comes from the thread server anyway.
-
-	// Migrate the meta store entry.
-	if m.metaStore != nil {
-		ctx := context.Background()
-		if existing, ok, err := m.metaStore.Get(ctx, oldID); err == nil && ok && existing != nil {
-			migrated := *existing
-			migrated.SessionID = newID
-			if migrated.ThreadID == "" {
-				migrated.ThreadID = newID
-			}
-			_, _ = m.metaStore.Upsert(ctx, &migrated)
-		}
-		_ = m.metaStore.Delete(ctx, oldID)
-	}
-
-	// Migrate the session index entry.
-	if m.sessionStore != nil {
-		ctx := context.Background()
-		if record, ok, err := m.sessionStore.GetRecord(ctx, oldID); err == nil && ok && record != nil && record.Session != nil {
-			clone := *record.Session
-			clone.ID = newID
-			_, _ = m.sessionStore.UpsertRecord(ctx, &types.SessionRecord{
-				Session: &clone,
-				Source:  record.Source,
-			})
-		}
-		_ = m.sessionStore.DeleteRecord(ctx, oldID)
-	}
 }
 
 func (m *SessionManager) UpdateSessionTitle(id, title string) error {
