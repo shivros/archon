@@ -15,6 +15,79 @@ import (
 	"control/internal/types"
 )
 
+type stubInterruptSessionAPI struct {
+	calls []string
+}
+
+func (s *stubInterruptSessionAPI) ListSessionsWithMeta(context.Context) ([]*types.Session, []*types.SessionMeta, error) {
+	return nil, nil, nil
+}
+
+func (s *stubInterruptSessionAPI) GetProviderOptions(context.Context, string) (*types.ProviderOptionCatalog, error) {
+	return nil, nil
+}
+
+func (s *stubInterruptSessionAPI) TailItems(context.Context, string, int) (*client.TailItemsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubInterruptSessionAPI) History(context.Context, string, int) (*client.TailItemsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubInterruptSessionAPI) TailStream(context.Context, string, string) (<-chan types.LogEvent, func(), error) {
+	return nil, func() {}, nil
+}
+
+func (s *stubInterruptSessionAPI) DebugStream(context.Context, string) (<-chan types.DebugEvent, func(), error) {
+	return nil, func() {}, nil
+}
+
+func (s *stubInterruptSessionAPI) KillSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) MarkSessionExited(context.Context, string) error {
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) DismissSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) UndismissSession(context.Context, string) error {
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) UpdateSession(context.Context, string, client.UpdateSessionRequest) error {
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) SendMessage(context.Context, string, client.SendSessionRequest) (*client.SendSessionResponse, error) {
+	return nil, nil
+}
+
+func (s *stubInterruptSessionAPI) ApproveSession(context.Context, string, client.ApproveSessionRequest) error {
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) ListApprovals(context.Context, string) ([]*types.Approval, error) {
+	return nil, nil
+}
+
+func (s *stubInterruptSessionAPI) InterruptSession(_ context.Context, id string) error {
+	s.calls = append(s.calls, id)
+	return nil
+}
+
+func (s *stubInterruptSessionAPI) StartWorkspaceSession(context.Context, string, string, client.StartSessionRequest) (*types.Session, error) {
+	return nil, nil
+}
+
+func (s *stubInterruptSessionAPI) PinSessionMessage(context.Context, string, client.PinSessionNoteRequest) (*types.Note, error) {
+	return nil, nil
+}
+
 func TestApplySelectionStateEntersRecentsMode(t *testing.T) {
 	m := NewModel(nil)
 	handled, _, _ := m.applySelectionState(&sidebarItem{kind: sidebarRecentsAll})
@@ -107,6 +180,68 @@ func TestRecentsCardRendersControlsAboveBubble(t *testing.T) {
 	}
 }
 
+func TestRecentsRunningEntryShowsInterruptControlWhenSupported(t *testing.T) {
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusInactive, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+
+	block, meta := m.buildRecentsEntryBlock(m.buildRecentsEntry(m.sessions[0], recentsEntryRunning))
+	if block.ID != "recents:running:s1" {
+		t.Fatalf("unexpected block id %q", block.ID)
+	}
+	if !containsMetaControl(meta.Controls, recentsControlInterrupt) {
+		t.Fatalf("expected interrupt control for running recents entry, got %#v", meta.Controls)
+	}
+}
+
+func TestReduceRecentsModeInterruptsSelectedRunningSession(t *testing.T) {
+	sessionAPI := &stubInterruptSessionAPI{}
+	m := NewModel(nil)
+	now := time.Now().UTC()
+	m.sessionAPI = sessionAPI
+	m.showRecents = true
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.sessions = []*types.Session{
+		{ID: "s1", Provider: "codex", Status: types.SessionStatusInactive, CreatedAt: now},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", LastTurnID: "turn-1"},
+	}
+	m.recents.StartRun("s1", "turn-0", now.Add(-time.Minute))
+	m.mode = uiModeRecents
+	m.recentsSelectedSessionID = "s1"
+
+	handled, cmd := m.reduceRecentsMode(keyRune('i'))
+	if !handled {
+		t.Fatalf("expected interrupt hotkey to be handled in recents mode")
+	}
+	if cmd == nil {
+		t.Fatalf("expected interrupt command")
+	}
+	if got := m.status; got != "interrupting s1" {
+		t.Fatalf("unexpected status %q", got)
+	}
+	msg := cmd()
+	interrupt, ok := msg.(interruptMsg)
+	if !ok {
+		t.Fatalf("expected interruptMsg, got %T", msg)
+	}
+	if interrupt.id != "s1" {
+		t.Fatalf("expected interrupt session id s1, got %q", interrupt.id)
+	}
+	if len(sessionAPI.calls) != 1 || sessionAPI.calls[0] != "s1" {
+		t.Fatalf("expected interrupt call for s1, got %#v", sessionAPI.calls)
+	}
+}
+
 func TestStartRecentsReplyUsesSharedMultilineInputStyle(t *testing.T) {
 	m := NewModel(nil)
 	now := time.Now().UTC()
@@ -160,6 +295,15 @@ func TestRecentsReplyShiftEnterInsertsNewline(t *testing.T) {
 	if got := m.recentsReplyInput.Value(); !strings.Contains(got, "\n") {
 		t.Fatalf("expected shift+enter to insert newline, got %q", got)
 	}
+}
+
+func containsMetaControl(controls []ChatMetaControl, id ChatMetaControlID) bool {
+	for _, control := range controls {
+		if control.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRecentsReplyRemappedInputNewlineInsertsNewline(t *testing.T) {

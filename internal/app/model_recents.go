@@ -29,10 +29,11 @@ const (
 )
 
 const (
-	recentsControlReply   ChatMetaControlID = "recents_reply"
-	recentsControlExpand  ChatMetaControlID = "recents_expand"
-	recentsControlOpen    ChatMetaControlID = "recents_open"
-	recentsControlDismiss ChatMetaControlID = "recents_dismiss"
+	recentsControlReply     ChatMetaControlID = "recents_reply"
+	recentsControlExpand    ChatMetaControlID = "recents_expand"
+	recentsControlInterrupt ChatMetaControlID = "recents_interrupt"
+	recentsControlOpen      ChatMetaControlID = "recents_open"
+	recentsControlDismiss   ChatMetaControlID = "recents_dismiss"
 )
 
 type recentsEntry struct {
@@ -325,7 +326,7 @@ func (m *Model) buildRecentsRenderContent(state recentsViewState) recentsRenderC
 			{
 				ID:   "recents:help",
 				Role: ChatRoleSystem,
-				Text: "Use j/k to choose • 1/2/3 or tab to switch all/ready/running • r reply • x expand • enter open • d dismiss ready",
+				Text: "Use j/k to choose • 1/2/3 or tab to switch all/ready/running • i interrupt • r reply • x expand • enter open • d dismiss ready",
 			},
 		},
 		metaByBlockID: map[string]ChatBlockMetaPresentation{
@@ -390,6 +391,9 @@ func (m *Model) buildRecentsEntryBlock(entry recentsEntry) (ChatBlock, ChatBlock
 		{ID: recentsControlReply, Label: "[Reply]", Tone: ChatMetaControlToneCopy},
 		{ID: recentsControlExpand, Label: expandLabel, Tone: ChatMetaControlToneCopy},
 		{ID: recentsControlOpen, Label: "[Open]", Tone: ChatMetaControlTonePin},
+	}
+	if m.canInterruptRecentsEntry(entry) {
+		controls = append([]ChatMetaControl{{ID: recentsControlInterrupt, Label: "[Interrupt]", Tone: ChatMetaControlToneDelete}}, controls...)
 	}
 	if entry.Status == recentsEntryReady {
 		controls = append(controls, ChatMetaControl{ID: recentsControlDismiss, Label: "[Dismiss]", Tone: ChatMetaControlToneDelete})
@@ -498,6 +502,8 @@ func recentsControlIDFromLabel(label string) ChatMetaControlID {
 		return recentsControlReply
 	case "[expand]", "[collapse]":
 		return recentsControlExpand
+	case "[interrupt]":
+		return recentsControlInterrupt
 	case "[open]":
 		return recentsControlOpen
 	case "[dismiss]":
@@ -553,6 +559,8 @@ func (m *Model) applyRecentsControlClick(hit recentsControlClick) tea.Cmd {
 		return m.ensureRecentsPreviewForSelection()
 	}
 	switch hit.controlID {
+	case recentsControlInterrupt:
+		return m.interruptSelectedRecentsThread()
 	case recentsControlReply:
 		if !m.startRecentsReply() {
 			m.setValidationStatus("select a session to reply")
@@ -643,6 +651,37 @@ func (m *Model) startRecentsReply() bool {
 	m.setStatusMessage("replying inline")
 	m.resize(m.width, m.height)
 	return true
+}
+
+func (m *Model) canInterruptRecentsEntry(entry recentsEntry) bool {
+	if m == nil || entry.Session == nil || entry.Status != recentsEntryRunning {
+		return false
+	}
+	sessionID := strings.TrimSpace(entry.SessionID)
+	if sessionID == "" || !isSessionInterruptible(entry.Session.Status) {
+		return false
+	}
+	capabilities, _ := m.sessionTranscriptCapabilitiesForSession(sessionID)
+	return m.composeInterruptCapabilityProbeOrDefault().SupportsInterrupt(ComposeInterruptCapabilityInput{
+		SessionID:    sessionID,
+		Provider:     entry.Session.Provider,
+		Capabilities: capabilities,
+		ModeResolver: m.sessionCapabilityModeResolverOrDefault(),
+	})
+}
+
+func (m *Model) interruptSelectedRecentsThread() tea.Cmd {
+	entry, ok := m.selectedRecentsEntry()
+	if !ok || strings.TrimSpace(entry.SessionID) == "" {
+		m.setValidationStatus("select a running session to interrupt")
+		return nil
+	}
+	if !m.canInterruptRecentsEntry(entry) {
+		m.setValidationStatus("select a running interruptible session")
+		return nil
+	}
+	m.setStatusMessage("interrupting " + entry.SessionID)
+	return interruptSessionCmd(m.sessionAPI, entry.SessionID)
 }
 
 func (m *Model) cancelRecentsReply() {
@@ -936,6 +975,8 @@ func (m *Model) reduceRecentsMode(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			m.setValidationStatus("select a session to reply")
 			return true, nil
+		case "i":
+			return true, m.interruptSelectedRecentsThread()
 		case "d":
 			if m.dismissSelectedRecentsReady() {
 				return true, m.requestRecentsStateSaveCmd()

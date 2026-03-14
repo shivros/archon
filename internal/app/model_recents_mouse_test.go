@@ -10,6 +10,10 @@ import (
 	"control/internal/types"
 )
 
+type recentsMouseSessionAPI struct {
+	stubInterruptSessionAPI
+}
+
 func TestMouseReducerRecentsReplyControlClickStartsInlineReply(t *testing.T) {
 	m := setupRecentsMouseModel(t, true)
 	x, y := findVisualTokenInBody(t, m, "[Reply]")
@@ -20,6 +24,32 @@ func TestMouseReducerRecentsReplyControlClickStartsInlineReply(t *testing.T) {
 	}
 	if got := strings.TrimSpace(m.recentsReplySessionID); got != "s1" {
 		t.Fatalf("expected inline reply target s1, got %q", got)
+	}
+}
+
+func TestMouseReducerRecentsInterruptControlClickQueuesInterrupt(t *testing.T) {
+	m := setupRecentsMouseModel(t, false)
+	sessionAPI := &recentsMouseSessionAPI{}
+	m.sessionAPI = sessionAPI
+	x, y := findVisualTokenInBody(t, m, "[Interrupt]")
+
+	handled := m.handleMouse(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
+	if !handled {
+		t.Fatalf("expected recents interrupt control click to be handled")
+	}
+	if m.pendingMouseCmd == nil {
+		t.Fatalf("expected recents interrupt to queue a follow-up command")
+	}
+	msg := m.pendingMouseCmd()
+	interrupt, ok := msg.(interruptMsg)
+	if !ok {
+		t.Fatalf("expected interruptMsg, got %T", msg)
+	}
+	if interrupt.id != "s1" {
+		t.Fatalf("expected interrupt target s1, got %q", interrupt.id)
+	}
+	if len(sessionAPI.calls) != 1 || sessionAPI.calls[0] != "s1" {
+		t.Fatalf("expected interrupt call for s1, got %#v", sessionAPI.calls)
 	}
 }
 
