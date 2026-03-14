@@ -17,6 +17,11 @@ repos:
         entry: bash -lc 'scripts/check_duplicate_logic.sh'
         language: system
         pass_filenames: false
+      - id: deprecated-workflow-fields-guard
+        name: deprecated workflow fields guard
+        entry: bash -lc 'scripts/check_deprecated_workflow_fields.sh'
+        language: system
+        pass_filenames: false
       - id: go-test
         name: go test (default)
         entry: bash -lc 'ARCHON_UI_INTEGRATION=disabled ARCHON_CLAUDE_INTEGRATION=disabled ARCHON_CODEX_INTEGRATION=disabled ARCHON_OPENCODE_INTEGRATION=disabled ARCHON_KILOCODE_INTEGRATION=disabled go test -timeout 6m ./...'

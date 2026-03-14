@@ -1035,14 +1035,13 @@ func (c *GuidedWorkflowUIController) TurnLinkTargets() []guidedWorkflowTurnLinkT
 
 func (c *GuidedWorkflowUIController) BuildCreateRequest() client.CreateWorkflowRunRequest {
 	req := client.CreateWorkflowRunRequest{
-		TemplateID:                strings.TrimSpace(c.templateID),
-		WorkspaceID:               strings.TrimSpace(c.context.workspaceID),
-		WorktreeID:                strings.TrimSpace(c.context.worktreeID),
-		SessionID:                 strings.TrimSpace(c.context.sessionID),
-		UserPrompt:                strings.TrimSpace(c.userPrompt),
-		SelectedProvider:          strings.TrimSpace(c.provider),
-		SelectedPolicySensitivity: strings.ToLower(strings.TrimSpace(c.sensitivityLabel())),
-		SelectedRuntimeOptions:    types.CloneRuntimeOptions(c.runtimeOptions),
+		TemplateID:             strings.TrimSpace(c.templateID),
+		WorkspaceID:            strings.TrimSpace(c.context.workspaceID),
+		WorktreeID:             strings.TrimSpace(c.context.worktreeID),
+		SessionID:              strings.TrimSpace(c.context.sessionID),
+		UserPrompt:             strings.TrimSpace(c.userPrompt),
+		SelectedProvider:       strings.TrimSpace(c.provider),
+		SelectedRuntimeOptions: types.CloneRuntimeOptions(c.runtimeOptions),
 	}
 	if dependsOn := strings.TrimSpace(c.context.followUpRunID); dependsOn != "" {
 		req.DependsOnRunIDs = []string{dependsOn}

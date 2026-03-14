@@ -46,17 +46,16 @@ func (a *API) WorkflowRunsEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		run, err := service.CreateRun(r.Context(), guidedworkflows.CreateRunRequest{
-			TemplateID:                strings.TrimSpace(req.TemplateID),
-			WorkspaceID:               strings.TrimSpace(req.WorkspaceID),
-			WorktreeID:                strings.TrimSpace(req.WorktreeID),
-			SessionID:                 strings.TrimSpace(req.SessionID),
-			TaskID:                    strings.TrimSpace(req.TaskID),
-			UserPrompt:                strings.TrimSpace(req.UserPrompt),
-			SelectedProvider:          strings.TrimSpace(req.SelectedProvider),
-			SelectedPolicySensitivity: strings.TrimSpace(req.SelectedPolicySensitivity),
-			SelectedRuntimeOptions:    types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
-			DependsOnRunIDs:           append([]string(nil), req.DependsOnRunIDs...),
-			PolicyOverrides:           a.workflowPolicyResolver().ResolvePolicyOverrides(req.PolicyOverrides),
+			TemplateID:             strings.TrimSpace(req.TemplateID),
+			WorkspaceID:            strings.TrimSpace(req.WorkspaceID),
+			WorktreeID:             strings.TrimSpace(req.WorktreeID),
+			SessionID:              strings.TrimSpace(req.SessionID),
+			TaskID:                 strings.TrimSpace(req.TaskID),
+			UserPrompt:             strings.TrimSpace(req.UserPrompt),
+			SelectedProvider:       strings.TrimSpace(req.SelectedProvider),
+			SelectedRuntimeOptions: types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+			DependsOnRunIDs:        append([]string(nil), req.DependsOnRunIDs...),
+			PolicyOverrides:        a.workflowPolicyResolver().ResolvePolicyOverrides(req.PolicyOverrides),
 		})
 		if err != nil {
 			writeServiceError(w, toGuidedWorkflowServiceError(err))

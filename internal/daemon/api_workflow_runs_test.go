@@ -777,6 +777,61 @@ func TestWorkflowRunEndpointsCreateWithPolicyOverrides(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunEndpointsCreateIgnoresLegacySelectedPolicySensitivityField(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"workspace_id":                "ws-1",
+		"worktree_id":                 "wt-1",
+		"selected_policy_sensitivity": "high",
+		"selected_runtime_options":    map[string]any{"model": "gpt-5"},
+	})
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/workflow-runs", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create run request: %v", err)
+	}
+	defer closeTestCloser(t, resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response payload: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		t.Fatalf("decode create run response payload: %v", err)
+	}
+	if _, exists := raw["selected_policy_sensitivity"]; exists {
+		t.Fatalf("expected response payload to omit selected_policy_sensitivity, got %#v", raw["selected_policy_sensitivity"])
+	}
+
+	var created guidedworkflows.WorkflowRun
+	if err := json.Unmarshal(payload, &created); err != nil {
+		t.Fatalf("decode create run response: %v", err)
+	}
+	expected := guidedworkflows.DefaultCheckpointPolicy(guidedworkflows.DefaultCheckpointStyle)
+	if created.Policy.ConfidenceThreshold != expected.ConfidenceThreshold {
+		t.Fatalf("expected baseline confidence threshold %v, got %v", expected.ConfidenceThreshold, created.Policy.ConfidenceThreshold)
+	}
+	if created.Policy.PauseThreshold != expected.PauseThreshold {
+		t.Fatalf("expected baseline pause threshold %v, got %v", expected.PauseThreshold, created.Policy.PauseThreshold)
+	}
+	if created.PolicyOverrides != nil {
+		t.Fatalf("expected no policy overrides when only legacy sensitivity is provided, got %#v", created.PolicyOverrides)
+	}
+}
+
 func TestWorkflowRunEndpointsCreateUsesBaselinePolicyWithoutResolver(t *testing.T) {
 	api := &API{
 		Version:      "test",

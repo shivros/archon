@@ -576,28 +576,27 @@ func (s *InMemoryRunService) CreateRun(ctx context.Context, req CreateRunRequest
 			}
 			return level
 		}(),
-		WorkspaceID:               strings.TrimSpace(req.WorkspaceID),
-		WorktreeID:                strings.TrimSpace(req.WorktreeID),
-		SessionID:                 strings.TrimSpace(req.SessionID),
-		TaskID:                    strings.TrimSpace(req.TaskID),
-		UserPrompt:                strings.TrimSpace(req.UserPrompt),
-		SelectedProvider:          policy.Normalize(selectedProvider),
-		SelectedPolicySensitivity: strings.TrimSpace(req.SelectedPolicySensitivity),
-		SelectedRuntimeOptions:    types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
-		Mode:                      s.cfg.Mode,
-		CheckpointStyle:           s.cfg.CheckpointStyle,
-		Policy:                    MergeCheckpointPolicy(s.cfg.Policy, req.PolicyOverrides),
-		PolicyOverrides:           cloneCheckpointPolicyOverride(req.PolicyOverrides),
-		Dependencies:              append([]RunDependency(nil), dependencies...),
-		Status:                    WorkflowRunStatusCreated,
-		CreatedAt:                 now,
-		CurrentPhaseIndex:         0,
-		CurrentStepIndex:          0,
-		Phases:                    instantiatePhases(template),
+		WorkspaceID:            strings.TrimSpace(req.WorkspaceID),
+		WorktreeID:             strings.TrimSpace(req.WorktreeID),
+		SessionID:              strings.TrimSpace(req.SessionID),
+		TaskID:                 strings.TrimSpace(req.TaskID),
+		UserPrompt:             strings.TrimSpace(req.UserPrompt),
+		SelectedProvider:       policy.Normalize(selectedProvider),
+		SelectedRuntimeOptions: types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+		Mode:                   s.cfg.Mode,
+		CheckpointStyle:        s.cfg.CheckpointStyle,
+		Policy:                 MergeCheckpointPolicy(s.cfg.Policy, req.PolicyOverrides),
+		PolicyOverrides:        cloneCheckpointPolicyOverride(req.PolicyOverrides),
+		Dependencies:           append([]RunDependency(nil), dependencies...),
+		Status:                 WorkflowRunStatusCreated,
+		CreatedAt:              now,
+		CurrentPhaseIndex:      0,
+		CurrentStepIndex:       0,
+		Phases:                 instantiatePhases(template),
 	}
 	run.DependencyState = s.evaluateRunDependencyStateLocked(run)
 	controls := s.engine.executionControls()
-	if controls.Enabled && controls.Commit.RequireApproval {
+	if controls.Enabled && controls.Commit.Enabled && controls.Capabilities.Commit && controls.Commit.RequireApproval {
 		run.Policy.HardGates.PreCommitApproval = true
 		run.Policy.ConditionalGates.PreCommitApproval = true
 		run.Policy = NormalizeCheckpointPolicy(run.Policy)

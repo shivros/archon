@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,56 @@ import (
 
 	"control/internal/guidedworkflows"
 )
+
+func TestCreateWorkflowRunRequestWireFormatOmitsDeprecatedSensitivityField(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/workflow-runs" {
+			http.NotFound(w, r)
+			return
+		}
+		rawBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read create req body: %v", err)
+		}
+		var raw map[string]any
+		if err := json.Unmarshal(rawBody, &raw); err != nil {
+			t.Fatalf("decode create req: %v", err)
+		}
+		if _, exists := raw["selected_policy_sensitivity"]; exists {
+			t.Fatalf("expected create request to omit selected_policy_sensitivity, got %#v", raw["selected_policy_sensitivity"])
+		}
+		overrides, ok := raw["policy_overrides"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected policy_overrides payload, got %#v", raw["policy_overrides"])
+		}
+		if _, exists := overrides["confidence_threshold"]; !exists {
+			t.Fatalf("expected confidence_threshold in policy_overrides payload, got %#v", overrides)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"gwf-1","status":"created","template_id":"solid_phase_delivery","template_name":"SOLID Phase Delivery"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{
+		baseURL: server.URL,
+		token:   "token",
+		http: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	}
+
+	confidence := 0.88
+	_, err := c.CreateWorkflowRun(context.Background(), CreateWorkflowRunRequest{
+		WorkspaceID: "ws1",
+		WorktreeID:  "wt1",
+		PolicyOverrides: &guidedworkflows.CheckpointPolicyOverride{
+			ConfidenceThreshold: &confidence,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkflowRun error: %v", err)
+	}
+}
 
 func TestWorkflowRunClientEndpoints(t *testing.T) {
 	seen := map[string]bool{}

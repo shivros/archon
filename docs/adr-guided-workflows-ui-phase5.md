@@ -39,3 +39,4 @@ Tradeoffs:
 
 - Decision inbox currently comes from run polling + decision metadata, not from a standalone notification inbox view.
 - Sensitivity presets currently tune threshold overrides only (not full gate matrices).
+- Sensitivity is represented operationally via `policy_overrides`; there is no standalone persisted/requested `selected_policy_sensitivity` field in workflow run contracts.

@@ -39,6 +39,8 @@ Run hooks manually:
 prek run --all-files
 ```
 
+The hook set includes a guard against reintroducing deprecated guided-workflow contract fields (for example `selected_policy_sensitivity`) in non-test Go code.
+
 ## Session Provider Badges
 Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD]`, `[OPN]`). You can override badge prefix/color per provider by setting `provider_badges` in `~/.archon/state.json`:
 

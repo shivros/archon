@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,58 @@ func TestFileWorkflowRunStoreReadsV1AndWritesV2(t *testing.T) {
 	}
 	if saved.Version != workflowRunSchemaVersion {
 		t.Fatalf("expected saved schema version %d, got %d", workflowRunSchemaVersion, saved.Version)
+	}
+}
+
+func TestFileWorkflowRunStoreIgnoresLegacySelectedPolicySensitivityField(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "workflow_runs.json")
+	createdAt := time.Date(2026, 3, 12, 9, 30, 0, 0, time.UTC).Format(time.RFC3339Nano)
+
+	raw := []byte(`{
+		"version": 1,
+		"runs": [
+			{
+				"run": {
+					"id": "gwf-legacy-sensitivity",
+					"status": "created",
+					"created_at": "` + createdAt + `",
+					"selected_policy_sensitivity": "high"
+				},
+				"timeline": []
+			}
+		]
+	}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write legacy payload: %v", err)
+	}
+
+	store := NewFileWorkflowRunStore(path)
+	snapshots, err := store.ListWorkflowRuns(context.Background())
+	if err != nil {
+		t.Fatalf("list legacy snapshots: %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].Run == nil || snapshots[0].Run.ID != "gwf-legacy-sensitivity" {
+		t.Fatalf("unexpected legacy snapshots: %#v", snapshots)
+	}
+	if err := store.UpsertWorkflowRun(context.Background(), snapshots[0]); err != nil {
+		t.Fatalf("upsert migrated snapshot: %v", err)
+	}
+
+	savedRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved payload: %v", err)
+	}
+	if string(savedRaw) == "" {
+		t.Fatalf("expected non-empty saved payload")
+	}
+	if valid := json.Valid(savedRaw); !valid {
+		t.Fatalf("expected saved payload to be valid JSON")
+	}
+	if strings.Contains(string(savedRaw), "selected_policy_sensitivity") {
+		t.Fatalf("expected saved payload to drop selected_policy_sensitivity, got %s", string(savedRaw))
 	}
 }
 
