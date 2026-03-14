@@ -924,6 +924,75 @@ func openCodeMissingHistoryItems(localItems, remoteItems []map[string]any) []map
 	return missing
 }
 
+func openCodeLocalOnlyHistoryItems(localItems, remoteItems []map[string]any) []map[string]any {
+	if len(localItems) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	semanticCounts := map[string]int{}
+	for _, item := range remoteItems {
+		if key := openCodeHistoryItemKey(item); key != "" {
+			seen[key] = struct{}{}
+		}
+		if semantic := openCodeHistoryItemSemanticKey(item); semantic != "" {
+			semanticCounts[semantic]++
+		}
+	}
+	localOnly := make([]map[string]any, 0, len(localItems))
+	for _, item := range localItems {
+		key := openCodeHistoryItemKey(item)
+		semantic := openCodeHistoryItemSemanticKey(item)
+		if key == "" {
+			if semantic != "" && semanticCounts[semantic] > 0 {
+				semanticCounts[semantic]--
+				continue
+			}
+			if semantic != "" {
+				semanticCounts[semantic]++
+			}
+			localOnly = append(localOnly, item)
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			if semantic != "" && semanticCounts[semantic] > 0 {
+				semanticCounts[semantic]--
+			}
+			continue
+		}
+		if semantic != "" && semanticCounts[semantic] > 0 {
+			semanticCounts[semantic]--
+			seen[key] = struct{}{}
+			continue
+		}
+		seen[key] = struct{}{}
+		if semantic != "" {
+			semanticCounts[semantic]++
+		}
+		localOnly = append(localOnly, item)
+	}
+	return localOnly
+}
+
+func openCodeLatestTurnWasInterrupted(items []map[string]any) bool {
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if !strings.EqualFold(strings.TrimSpace(asString(item["type"])), "turnCompletion") {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+			asString(item["turn_status"]),
+			asString(item["status"]),
+		)))
+		switch status {
+		case "interrupted", "aborted", "cancelled", "canceled", "stopped":
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func openCodeHistoryItemKey(item map[string]any) string {
 	if item == nil {
 		return ""

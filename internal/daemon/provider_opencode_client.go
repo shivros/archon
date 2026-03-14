@@ -210,6 +210,16 @@ func (c *openCodeClient) Prompt(ctx context.Context, sessionID, text string, run
 	return c.promptService.Prompt(ctx, sessionID, text, runtimeOptions, directory)
 }
 
+func (c *openCodeClient) PromptAsync(ctx context.Context, sessionID, text string, runtimeOptions *types.SessionRuntimeOptions, directory string) error {
+	if c == nil || c.promptService == nil {
+		return errors.New("prompt service is required")
+	}
+	if err := c.validateRuntimeModel(ctx, runtimeOptions); err != nil {
+		return err
+	}
+	return c.promptService.PromptAsync(ctx, sessionID, text, runtimeOptions, directory)
+}
+
 func (c *openCodeClient) resolveRuntimeModel(ctx context.Context, runtimeOptions *types.SessionRuntimeOptions) map[string]string {
 	if c == nil || c.modelResolver == nil {
 		return nil

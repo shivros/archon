@@ -350,6 +350,45 @@ func (s *openCodePromptService) Prompt(ctx context.Context, sessionID, text stri
 	return "", lastErr
 }
 
+func (s *openCodePromptService) PromptAsync(ctx context.Context, sessionID, text string, runtimeOptions *types.SessionRuntimeOptions, directory string) error {
+	if s == nil || s.requester == nil {
+		return errors.New("prompt service dependencies are required")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("session id is required")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("text is required")
+	}
+	body := map[string]any{
+		"parts": []map[string]any{
+			{
+				"type": "text",
+				"text": text,
+			},
+		},
+	}
+	if s.modelProvider != nil {
+		if model := s.modelProvider.resolveRuntimeModel(ctx, runtimeOptions); len(model) > 0 {
+			body["model"] = model
+		}
+	}
+
+	sendCtx, cancel := s.promptSendContext(ctx)
+	defer cancel()
+	path := appendOpenCodeDirectoryQuery(fmt.Sprintf("/session/%s/prompt_async", url.PathEscape(sessionID)), directory)
+	if err := s.requester.doJSON(sendCtx, http.MethodPost, path, body, nil); err != nil {
+		if openCodeShouldFallbackLegacy(err) {
+			_, promptErr := s.Prompt(ctx, sessionID, text, runtimeOptions, directory)
+			return promptErr
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *openCodePromptService) promptSendContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()

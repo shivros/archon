@@ -98,6 +98,40 @@ func TestOpenCodeMissingHistoryItemsKeepsDifferentText(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLocalOnlyHistoryItemsIncludesLocalTerminalEntries(t *testing.T) {
+	local := []map[string]any{
+		{"type": "assistant", "provider_message_id": "msg-1", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "done"}}}},
+		{"type": "turnCompletion", "turn_id": "turn-1", "turn_status": "interrupted", "turn_error": "turn interrupted"},
+	}
+	remote := []map[string]any{
+		{"type": "assistant", "provider_message_id": "msg-1", "message": map[string]any{"content": []map[string]any{{"type": "text", "text": "done"}}}},
+	}
+	localOnly := openCodeLocalOnlyHistoryItems(local, remote)
+	if len(localOnly) != 1 {
+		t.Fatalf("expected one local-only item, got %#v", localOnly)
+	}
+	if got := asString(localOnly[0]["type"]); got != "turnCompletion" {
+		t.Fatalf("expected local-only turnCompletion, got %#v", localOnly[0])
+	}
+}
+
+func TestOpenCodeLatestTurnWasInterrupted(t *testing.T) {
+	items := []map[string]any{
+		{"type": "turnCompletion", "turn_status": "completed"},
+		{"type": "turnCompletion", "turn_status": "interrupted"},
+	}
+	if !openCodeLatestTurnWasInterrupted(items) {
+		t.Fatalf("expected latest interrupted turn to be detected")
+	}
+	items = []map[string]any{
+		{"type": "turnCompletion", "turn_status": "interrupted"},
+		{"type": "turnCompletion", "turn_status": "completed"},
+	}
+	if openCodeLatestTurnWasInterrupted(items) {
+		t.Fatalf("did not expect completed latest turn to be treated as interrupted")
+	}
+}
+
 func TestExtractOpenCodePartsTextIncludesReasoningAndTools(t *testing.T) {
 	text := extractOpenCodePartsText([]map[string]any{
 		{"type": "reasoning", "summary": "planning"},

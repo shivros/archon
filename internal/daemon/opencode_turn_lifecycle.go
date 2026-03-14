@@ -21,9 +21,10 @@ const (
 type turnTerminalState string
 
 const (
-	turnTerminalCompleted turnTerminalState = "completed"
-	turnTerminalFailed    turnTerminalState = "failed"
-	turnTerminalAbandoned turnTerminalState = "abandoned"
+	turnTerminalCompleted   turnTerminalState = "completed"
+	turnTerminalFailed      turnTerminalState = "failed"
+	turnTerminalAbandoned   turnTerminalState = "abandoned"
+	turnTerminalInterrupted turnTerminalState = "interrupted"
 )
 
 type EventSubscriber interface {

@@ -35,6 +35,8 @@ type openCodeLiveSession struct {
 	freshness     TurnEvidenceFreshnessTracker
 	finalizer     openCodeTurnFinalizer
 	activeTurn    string
+	lastTurnID    string
+	cancelTurn    context.CancelFunc
 	lifecycle     *openCodeTurnLifecycleEngine
 	retryAttempt  int
 	closed        bool
@@ -61,6 +63,19 @@ func (s *openCodeLiveSession) ActiveTurnID() string {
 	return s.activeTurn
 }
 
+func (s *openCodeLiveSession) SetSessionMeta(meta *types.SessionMeta) {
+	if s == nil {
+		return
+	}
+	lastTurnID := ""
+	if meta != nil {
+		lastTurnID = strings.TrimSpace(meta.LastTurnID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastTurnID = lastTurnID
+}
+
 func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]any, opts *types.SessionRuntimeOptions) (string, error) {
 	text := extractTextInput(input)
 	if text == "" {
@@ -70,8 +85,11 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 	turnID := generateTurnID()
 	baseline := s.fetchLatestAssistantSnapshot(ctx)
 	startedAt := time.Now().UTC()
+	turnCtx, cancelTurn := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.activeTurn = turnID
+	s.lastTurnID = turnID
+	s.cancelTurn = cancelTurn
 	s.mu.Unlock()
 	if s.lifecycle != nil {
 		s.lifecycle.RegisterTurn(turnID, baseline, startedAt)
@@ -86,7 +104,12 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 		},
 	})
 
-	_, err := s.client.Prompt(ctx, s.providerID, text, opts, s.directory)
+	err := s.client.PromptAsync(turnCtx, s.providerID, text, opts, s.directory)
+	s.mu.Lock()
+	if s.activeTurn == turnID {
+		s.cancelTurn = nil
+	}
+	s.mu.Unlock()
 	if err != nil {
 		if errors.Is(err, errOpenCodePromptPending) {
 			// The upstream may continue processing after client timeout; keep
@@ -112,6 +135,41 @@ func (s *openCodeLiveSession) StartTurn(ctx context.Context, input []map[string]
 }
 
 func (s *openCodeLiveSession) Interrupt(ctx context.Context) error {
+	turnID := strings.TrimSpace(s.ActiveTurnID())
+	if turnID == "" && s.lifecycle != nil {
+		turnID = strings.TrimSpace(s.lifecycle.ActiveTurnID())
+	}
+	if turnID == "" {
+		s.mu.Lock()
+		turnID = strings.TrimSpace(s.lastTurnID)
+		cancelTurn := s.cancelTurn
+		s.mu.Unlock()
+		if cancelTurn != nil {
+			cancelTurn()
+		}
+	} else {
+		s.mu.Lock()
+		cancelTurn := s.cancelTurn
+		s.mu.Unlock()
+		if cancelTurn != nil {
+			cancelTurn()
+		}
+	}
+	if turnID != "" {
+		if s.lifecycle != nil {
+			s.lifecycle.UnregisterTurn(turnID)
+		}
+		now := time.Now().UTC()
+		s.onTurnTerminal(openCodeTerminalResult{
+			TurnID:         turnID,
+			Status:         turnTerminalInterrupted,
+			Error:          "turn interrupted",
+			Reason:         "interrupt_requested",
+			Source:         "interrupt_request",
+			StartedAt:      now,
+			TerminalizedAt: now,
+		})
+	}
 	return s.client.AbortSession(ctx, s.providerID, s.directory)
 }
 
@@ -424,6 +482,7 @@ func (s *openCodeLiveSession) onTurnTerminal(result openCodeTerminalResult) {
 	s.mu.Lock()
 	if strings.TrimSpace(s.activeTurn) == turnID {
 		s.activeTurn = ""
+		s.cancelTurn = nil
 	}
 	s.mu.Unlock()
 

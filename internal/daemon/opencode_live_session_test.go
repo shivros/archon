@@ -383,6 +383,82 @@ func TestOpenCodeLiveSessionBasicAccessorsAndInterrupt(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLiveSessionInterruptPublishesInterruptedTurn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/session/provider-open-1/abort" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{
+		BaseURL:  server.URL,
+		Username: "opencode",
+		Timeout:  time.Second,
+	})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+
+	notifier := &captureOpenCodeNotificationPublisher{}
+	ls := &openCodeLiveSession{
+		sessionID:    "sess-open-interrupt",
+		providerName: "opencode",
+		providerID:   "provider-open-1",
+		client:       client,
+		hub:          newCodexSubscriberHub(),
+		turnNotifier: NewTurnCompletionNotifier(notifier, nil),
+		activeTurn:   "turn-interrupt-1",
+	}
+	ls.lifecycle = newOpenCodeTurnLifecycleEngine(
+		ls.sessionID,
+		ls.providerName,
+		&stubTurnHistoryFetcher{},
+		openCodeDefaultTurnStateResolver{},
+		openCodeLiveTurnPublisher{session: ls},
+		logging.Nop(),
+		openCodeTurnLifecycleConfig{},
+	)
+	ls.lifecycle.RegisterTurn("turn-interrupt-1", openCodeAssistantSnapshot{}, time.Now().UTC())
+
+	sub, cancel := ls.Events()
+	defer cancel()
+
+	if err := ls.Interrupt(context.Background()); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if got := ls.ActiveTurnID(); got != "" {
+		t.Fatalf("expected active turn to clear after interrupt, got %q", got)
+	}
+	if got := ls.lifecycle.ActiveTurnID(); got != "" {
+		t.Fatalf("expected lifecycle pending turn to clear after interrupt, got %q", got)
+	}
+
+	events := notifier.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one notification event, got %d", len(events))
+	}
+	if got := strings.TrimSpace(asString(events[0].Payload["turn_status"])); got != "interrupted" {
+		t.Fatalf("expected turn_status=interrupted, got %q", got)
+	}
+
+	select {
+	case evt := <-sub:
+		if evt.Method != "turn/completed" {
+			t.Fatalf("expected rebroadcast turn/completed event, got %q", evt.Method)
+		}
+		turn := parseTurnEventFromParams(evt.Params)
+		if got := strings.TrimSpace(turn.Status); got != "interrupted" {
+			t.Fatalf("expected interrupted turn status, got %q", got)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("expected interrupted SSE event")
+	}
+}
+
 func TestOpenCodeLiveSessionOnTurnTerminalLiveEventDoesNotRebroadcast(t *testing.T) {
 	notifier := &captureOpenCodeNotificationPublisher{}
 	ls := &openCodeLiveSession{

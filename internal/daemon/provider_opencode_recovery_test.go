@@ -88,3 +88,61 @@ func TestOpenCodeHistoryReconcilerSyncAppendFailureStillReturnsItems(t *testing.
 		t.Fatalf("expected no backfilled record on append failure, got %#v", result.backfilled)
 	}
 }
+
+func TestOpenCodeHistoryReconcilerSyncIncludesLocalOnlyTerminalItems(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/session/ses_remote_s_3/message":
+			writeJSON(w, http.StatusOK, []map[string]any{
+				{
+					"info": map[string]any{
+						"id":        "msg-assistant",
+						"role":      "assistant",
+						"createdAt": "2026-02-13T01:00:00Z",
+					},
+					"parts": []map[string]any{{"type": "text", "text": "done"}},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENCODE_BASE_URL", server.URL)
+	rec := newOpenCodeHistoryReconciler(
+		&types.Session{ID: "s3", Provider: "opencode", Cwd: "/tmp/opencode"},
+		&types.SessionMeta{SessionID: "s3", ProviderSessionID: "ses_remote_s_3"},
+		openCodeHistoryReconcilerStore{
+			readSessionItems: func(string, int) ([]map[string]any, error) {
+				return []map[string]any{
+					{
+						"type":                "assistant",
+						"provider_message_id": "msg-assistant",
+						"message": map[string]any{
+							"content": []map[string]any{{"type": "text", "text": "done"}},
+						},
+					},
+					{
+						"type":        "turnCompletion",
+						"turn_id":     "turn-1",
+						"turn_status": "interrupted",
+						"turn_error":  "turn interrupted",
+					},
+				}, nil
+			},
+		},
+		nil,
+	)
+
+	result, err := rec.Sync(context.Background(), 20)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(result.items) != 2 {
+		t.Fatalf("expected merged remote + local terminal items, got %#v", result.items)
+	}
+	if got := asString(result.items[1]["turn_status"]); got != "interrupted" {
+		t.Fatalf("expected local interrupted turn to remain visible, got %#v", result.items[1])
+	}
+}

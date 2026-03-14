@@ -78,6 +78,23 @@ func TestOpenCodeAdapterMapsAbandonedTurnCompletionAsFailed(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAdapterMapsInterruptedTurnCompletionAsFailed(t *testing.T) {
+	adapter := NewOpenCodeTranscriptAdapter("opencode")
+	events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("4"),
+	}, map[string]any{"type": "turnCompletion", "turn_id": "turn-3", "turn_status": "interrupted"})
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %d", len(events))
+	}
+	if events[0].Kind != transcriptdomain.TranscriptEventTurnFailed {
+		t.Fatalf("expected interrupted turn to map to turn.failed, got %q", events[0].Kind)
+	}
+	if events[0].Turn == nil || events[0].Turn.Error != "turn interrupted" {
+		t.Fatalf("expected interrupted error payload, got %#v", events[0].Turn)
+	}
+}
+
 func TestOpenCodeAdapterMapsDeltaItem(t *testing.T) {
 	adapter := NewOpenCodeTranscriptAdapter("opencode")
 	events := adapter.MapItem(MappingContext{

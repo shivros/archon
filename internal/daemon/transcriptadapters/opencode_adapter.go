@@ -159,10 +159,15 @@ func mapTurnCompletionItem(
 		Revision:  ctx.Revision,
 	}
 	switch status {
-	case "failed", "error", "abandoned":
+	case "failed", "error", "abandoned", "interrupted", "aborted", "cancelled", "canceled", "stopped":
 		event.Kind = transcriptdomain.TranscriptEventTurnFailed
 		if errText == "" {
-			errText = "provider error"
+			switch status {
+			case "interrupted", "aborted", "cancelled", "canceled", "stopped":
+				errText = "turn interrupted"
+			default:
+				errText = "provider error"
+			}
 		}
 		event.Turn = &transcriptdomain.TurnState{State: transcriptdomain.TurnStateFailed, TurnID: turnID, Error: errText}
 	default:

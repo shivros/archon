@@ -82,15 +82,22 @@ func (r openCodeHistoryReconciler) Sync(ctx context.Context, lines int) (openCod
 	}
 
 	items := trimItemsToLimit(openCodeSessionMessagesToItems(messages), lines)
-	if len(items) == 0 {
-		return openCodeHistorySyncResult{items: items}, nil
-	}
 	if r.store.readSessionItems == nil {
 		return openCodeHistorySyncResult{items: items}, nil
 	}
 	localItems, localErr := r.store.readSessionItems(r.session.ID, limit)
 	if localErr != nil {
 		return openCodeHistorySyncResult{items: items}, nil
+	}
+	if openCodeLatestTurnWasInterrupted(localItems) {
+		return openCodeHistorySyncResult{items: trimItemsToLimit(localItems, lines)}, nil
+	}
+	if len(items) == 0 {
+		return openCodeHistorySyncResult{items: items}, nil
+	}
+	localOnly := openCodeLocalOnlyHistoryItems(localItems, items)
+	if len(localOnly) > 0 {
+		items = trimItemsToLimit(append(items, localOnly...), lines)
 	}
 	missing := openCodeMissingHistoryItems(localItems, items)
 	if len(missing) == 0 {
