@@ -105,8 +105,8 @@ func NormalizeExecutionControls(in ExecutionControls) ExecutionControls {
 func defaultQualityHooks() []QualityHook {
 	return []QualityHook{
 		{ID: "tests", Command: "go test ./...", Required: true},
-		{ID: "lint", Command: "go test ./...", Required: true},
-		{ID: "typecheck", Command: "go test ./...", Required: true},
+		{ID: "lint", Command: "go vet ./...", Required: true},
+		{ID: "typecheck", Command: "go test -run=^$ ./...", Required: true},
 	}
 }
 

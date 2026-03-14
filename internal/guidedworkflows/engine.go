@@ -319,13 +319,13 @@ func (e *Engine) qualityChecksHandler(ctx context.Context, run *WorkflowRun, pha
 		appendRunAudit(run, RunAuditEntry{
 			At:      e.now(),
 			Scope:   "step",
-			Action:  "quality_checks_capability_denied",
+			Action:  "quality_checks_skipped",
 			PhaseID: phase.ID,
 			StepID:  step.ID,
-			Outcome: "failed",
+			Outcome: "skipped",
 			Detail:  "quality checks capability is disabled",
 		})
-		return fmt.Errorf("%w: quality checks capability is disabled", ErrCapabilityDenied)
+		return nil
 	}
 	for _, hook := range e.controls.Quality.Hooks {
 		hookID := strings.TrimSpace(hook.ID)
@@ -359,13 +359,13 @@ func (e *Engine) commitStepHandler(ctx context.Context, run *WorkflowRun, phase 
 		appendRunAudit(run, RunAuditEntry{
 			At:      e.now(),
 			Scope:   "step",
-			Action:  "commit_capability_denied",
+			Action:  "commit_skipped",
 			PhaseID: phase.ID,
 			StepID:  step.ID,
-			Outcome: "failed",
+			Outcome: "skipped",
 			Detail:  "commit capability is disabled",
 		})
-		return fmt.Errorf("%w: commit capability is disabled", ErrCapabilityDenied)
+		return nil
 	}
 	message := e.commitMessageForRun(run)
 	if !isConventionalCommitMessage(message) {

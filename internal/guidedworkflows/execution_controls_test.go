@@ -137,7 +137,7 @@ func TestExecutionControlsHappyPathWithRetryAndCommitApproval(t *testing.T) {
 	}
 }
 
-func TestExecutionControlsQualityCapabilityDeniedFailsSafely(t *testing.T) {
+func TestExecutionControlsDisabledCapabilitiesSkipSafely(t *testing.T) {
 	engine := NewEngine(
 		WithExecutionControls(ExecutionControls{
 			Enabled: true,
@@ -171,14 +171,44 @@ func TestExecutionControlsQualityCapabilityDeniedFailsSafely(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
 	}
-	if run.Status != WorkflowRunStatusFailed {
-		t.Fatalf("expected failed run status, got %q", run.Status)
+	if run.Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected completed run status with skipped automation, got %q", run.Status)
 	}
-	if !strings.Contains(strings.ToLower(run.LastError), "capability") {
-		t.Fatalf("expected capability failure detail, got %q", run.LastError)
+	if strings.TrimSpace(run.LastError) != "" {
+		t.Fatalf("expected no last error for skipped automation, got %q", run.LastError)
 	}
-	if !hasAuditAction(run.AuditTrail, "quality_checks_capability_denied") {
-		t.Fatalf("expected capability-denied audit entry")
+	if !hasAuditAction(run.AuditTrail, "quality_checks_skipped") {
+		t.Fatalf("expected quality_checks_skipped audit entry")
+	}
+	if !hasAuditAction(run.AuditTrail, "commit_skipped") {
+		t.Fatalf("expected commit_skipped audit entry")
+	}
+}
+
+func TestExecutionControlsDisabledCommitDoesNotInjectPreCommitApproval(t *testing.T) {
+	engine := NewEngine(
+		WithExecutionControls(ExecutionControls{
+			Enabled: true,
+			Capabilities: ExecutionCapabilities{
+				QualityChecks: true,
+				Commit:        false,
+			},
+			Commit: CommitConfig{
+				RequireApproval: true,
+			},
+		}),
+		WithExecutionRunner(&scriptedExecutionRunner{}),
+	)
+	service := NewRunService(Config{Enabled: true}, WithEngine(engine))
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if run.Policy.HardGates.PreCommitApproval || run.Policy.ConditionalGates.PreCommitApproval {
+		t.Fatalf("expected pre-commit approval gates to stay disabled when commit capability is off, got %#v", run.Policy)
 	}
 }
 
