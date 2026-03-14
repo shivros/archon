@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -204,5 +205,48 @@ func TestTranscriptProjectionDedupesReplayWithStableIdentity(t *testing.T) {
 	snapshot := projection.Snapshot()
 	if len(snapshot.Blocks) != 1 {
 		t.Fatalf("expected one deduped block, got %#v", snapshot.Blocks)
+	}
+}
+
+func TestCanonicalTranscriptSnapshotServiceMapsClaudeUserAndAssistantItems(t *testing.T) {
+	reader := NewCanonicalTranscriptSnapshotService(
+		NewDefaultTranscriptMapper(nil),
+		func(_ context.Context, _ string, _ int) ([]map[string]any, error) {
+			return []map[string]any{
+				{
+					"type":       "userMessage",
+					"turn_id":    "turn-1",
+					"created_at": "2026-03-14T12:00:00Z",
+					"content":    []any{map[string]any{"type": "text", "text": "hello"}},
+				},
+				{
+					"type":       "assistant",
+					"created_at": "2026-03-14T12:00:01Z",
+					"message": map[string]any{
+						"id":         "msg-1",
+						"turn_id":    "turn-1",
+						"created_at": "2026-03-14T12:00:01Z",
+						"content":    []any{map[string]any{"type": "text", "text": "hi there"}},
+					},
+				},
+			}, nil
+		},
+	)
+
+	snapshot, err := reader.ReadSnapshot(context.Background(), "s1", "claude", 50)
+	if err != nil {
+		t.Fatalf("ReadSnapshot: %v", err)
+	}
+	if len(snapshot.Blocks) != 2 {
+		t.Fatalf("expected user and assistant blocks, got %#v", snapshot.Blocks)
+	}
+	if snapshot.Blocks[0].Role != "user" || snapshot.Blocks[0].Text != "hello" {
+		t.Fatalf("expected first block to be the user message, got %#v", snapshot.Blocks[0])
+	}
+	if snapshot.Blocks[0].Meta["turn_id"] != "turn-1" {
+		t.Fatalf("expected user turn metadata, got %#v", snapshot.Blocks[0].Meta)
+	}
+	if snapshot.Blocks[1].Role != "assistant" || snapshot.Blocks[1].Text != "hi there" {
+		t.Fatalf("expected second block to be the assistant message, got %#v", snapshot.Blocks[1])
 	}
 }

@@ -24,6 +24,32 @@ func TestClaudeAdapterMapsDeltaItem(t *testing.T) {
 	}
 }
 
+func TestClaudeAdapterMapsUserMessageItem(t *testing.T) {
+	adapter := NewClaudeTranscriptAdapter("claude")
+	events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("1"),
+	}, map[string]any{
+		"type":       "userMessage",
+		"turn_id":    "turn-1",
+		"created_at": "2026-03-14T12:00:00Z",
+		"content":    []any{map[string]any{"type": "text", "text": "hello from user"}},
+	})
+	if len(events) != 1 {
+		t.Fatalf("expected one canonical event, got %d", len(events))
+	}
+	got := events[0]
+	if got.Kind != transcriptdomain.TranscriptEventDelta {
+		t.Fatalf("expected delta event, got %q", got.Kind)
+	}
+	if len(got.Delta) != 1 || got.Delta[0].Role != "user" || got.Delta[0].Kind != "user_message" || got.Delta[0].Text != "hello from user" {
+		t.Fatalf("unexpected user delta payload: %#v", got.Delta)
+	}
+	if got.Delta[0].Meta["turn_id"] != "turn-1" {
+		t.Fatalf("expected turn metadata, got %#v", got.Delta[0].Meta)
+	}
+}
+
 func TestClaudeAdapterMapsReasoningFromContentBlocks(t *testing.T) {
 	adapter := NewClaudeTranscriptAdapter("claude")
 	events := adapter.MapItem(MappingContext{

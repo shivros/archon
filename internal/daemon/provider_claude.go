@@ -117,19 +117,19 @@ func (r *claudeRunner) Send(payload []byte) error {
 	if len(payload) == 0 {
 		return errors.New("payload is required")
 	}
-	text, runtimeOptions, err := extractClaudeSendRequest(payload)
+	text, runtimeOptions, turnID, err := extractClaudeSendRequest(payload)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(text) == "" {
 		return errors.New("text is required")
 	}
-	r.appendUserItem(text)
+	r.appendUserItem(text, turnID)
 	return r.run(text, runtimeOptions)
 }
 
 func (r *claudeRunner) SendUser(text string) error {
-	payload := buildClaudeUserPayloadWithRuntime(text, r.options)
+	payload := buildClaudeUserPayloadWithRuntimeAndTurn(text, r.options, "")
 	return r.Send(payload)
 }
 
@@ -204,16 +204,20 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 	return err
 }
 
-func (r *claudeRunner) appendUserItem(text string) {
+func (r *claudeRunner) appendUserItem(text string, turnID string) {
 	if r == nil || r.items == nil {
 		return
 	}
-	r.items.Append(map[string]any{
+	item := map[string]any{
 		"type": "userMessage",
 		"content": []map[string]any{
 			{"type": "text", "text": text},
 		},
-	})
+	}
+	if turnID = strings.TrimSpace(turnID); turnID != "" {
+		item["turn_id"] = turnID
+	}
+	r.items.Append(item)
 }
 
 func (r *claudeRunner) getSessionID() string {
@@ -355,10 +359,14 @@ func claudeCommandEnv(extra []string) []string {
 }
 
 func buildClaudeUserPayload(text string) []byte {
-	return buildClaudeUserPayloadWithRuntime(text, nil)
+	return buildClaudeUserPayloadWithRuntimeAndTurn(text, nil, "")
 }
 
 func buildClaudeUserPayloadWithRuntime(text string, runtimeOptions *types.SessionRuntimeOptions) []byte {
+	return buildClaudeUserPayloadWithRuntimeAndTurn(text, runtimeOptions, "")
+}
+
+func buildClaudeUserPayloadWithRuntimeAndTurn(text string, runtimeOptions *types.SessionRuntimeOptions, turnID string) []byte {
 	text = strings.TrimSpace(text)
 	payload := map[string]any{
 		"type": "user",
@@ -372,6 +380,9 @@ func buildClaudeUserPayloadWithRuntime(text string, runtimeOptions *types.Sessio
 	if runtimeOptions != nil {
 		payload["runtime_options"] = runtimeOptions
 	}
+	if turnID = strings.TrimSpace(turnID); turnID != "" {
+		payload["turn_id"] = turnID
+	}
 	data, _ := json.Marshal(payload)
 	return data
 }
@@ -379,17 +390,17 @@ func buildClaudeUserPayloadWithRuntime(text string, runtimeOptions *types.Sessio
 // session_id is provided by the CLI in the first system init event.
 
 func extractClaudeUserText(payload []byte) (string, error) {
-	text, _, err := extractClaudeSendRequest(payload)
+	text, _, _, err := extractClaudeSendRequest(payload)
 	return text, err
 }
 
-func extractClaudeSendRequest(payload []byte) (string, *types.SessionRuntimeOptions, error) {
+func extractClaudeSendRequest(payload []byte) (string, *types.SessionRuntimeOptions, string, error) {
 	var body map[string]any
 	if err := json.Unmarshal(payload, &body); err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	if typ, _ := body["type"].(string); typ != "user" {
-		return "", nil, errors.New("unsupported payload type")
+		return "", nil, "", errors.New("unsupported payload type")
 	}
 	text := extractClaudeMessageText(body["message"])
 	var runtimeOptions *types.SessionRuntimeOptions
@@ -402,7 +413,11 @@ func extractClaudeSendRequest(payload []byte) (string, *types.SessionRuntimeOpti
 			}
 		}
 	}
-	return text, runtimeOptions, nil
+	turnID := strings.TrimSpace(firstNonEmpty(
+		asString(body["turn_id"]),
+		asString(body["turnID"]),
+	))
+	return text, runtimeOptions, turnID, nil
 }
 
 func claudeAccessToPermissionMode(level types.AccessLevel) string {

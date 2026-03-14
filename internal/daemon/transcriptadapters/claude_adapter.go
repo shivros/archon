@@ -29,8 +29,10 @@ func (a claudeTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any
 	}
 	itemType := strings.ToLower(strings.TrimSpace(asString(item["type"])))
 	switch itemType {
+	case "usermessage":
+		return a.mapMessageItem(ctx, item, "user_message", "user", "")
 	case "agentmessagedelta", "agentmessage", "assistant", "reasoning":
-		return a.mapDeltaLikeItem(ctx, item, itemType)
+		return a.mapMessageItem(ctx, item, itemType, "assistant", itemVariantForClaudeItem(itemType, item))
 	case "agentmessageend":
 		turnID := strings.TrimSpace(firstNonEmpty(asString(item["turn_id"]), asString(item["turnId"]), ctx.ActiveTurnID))
 		if turnID == "" {
@@ -57,41 +59,50 @@ func (a claudeTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any
 	}
 }
 
-func (a claudeTranscriptAdapter) mapDeltaLikeItem(
+func (a claudeTranscriptAdapter) mapMessageItem(
 	ctx MappingContext,
 	item map[string]any,
-	itemType string,
+	kind string,
+	role string,
+	variant string,
 ) []transcriptdomain.TranscriptEvent {
 	text := strings.TrimSpace(extractItemText(item))
 	if text == "" {
 		return nil
-	}
-	variant := strings.TrimSpace(asString(item["variant"]))
-	if itemType == "reasoning" && variant == "" {
-		variant = "reasoning"
 	}
 	id := strings.TrimSpace(firstNonEmpty(
 		asString(item["id"]),
 		asString(item["item_id"]),
 		asString(item["message_id"]),
 	))
+	block := transcriptdomain.Block{
+		ID:      id,
+		Kind:    kind,
+		Role:    role,
+		Text:    text,
+		Variant: variant,
+		Meta:    transcriptMetaFromCodexItem(item),
+	}
+	ensureTranscriptBlockIdentityMeta(&block)
 	event := transcriptdomain.TranscriptEvent{
 		Kind:      transcriptdomain.TranscriptEventDelta,
 		SessionID: strings.TrimSpace(ctx.SessionID),
 		Provider:  a.providerName,
 		Revision:  ctx.Revision,
-		Delta: []transcriptdomain.Block{{
-			ID:      id,
-			Kind:    itemType,
-			Role:    "assistant",
-			Text:    text,
-			Variant: variant,
-		}},
+		Delta:     []transcriptdomain.Block{block},
 	}
 	if err := transcriptdomain.ValidateEvent(event); err != nil {
 		return nil
 	}
 	return []transcriptdomain.TranscriptEvent{event}
+}
+
+func itemVariantForClaudeItem(itemType string, item map[string]any) string {
+	variant := strings.TrimSpace(asString(item["variant"]))
+	if itemType == "reasoning" && variant == "" {
+		return "reasoning"
+	}
+	return variant
 }
 
 func extractItemText(item map[string]any) string {
@@ -104,6 +115,11 @@ func extractItemText(item map[string]any) string {
 		asString(item["content"]),
 	); strings.TrimSpace(direct) != "" {
 		return strings.TrimSpace(direct)
+	}
+	if message, ok := item["message"].(map[string]any); ok && message != nil {
+		if nested := extractItemText(message); nested != "" {
+			return nested
+		}
 	}
 	content, ok := item["content"].([]map[string]any)
 	if !ok {

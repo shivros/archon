@@ -225,7 +225,7 @@ func (o claudeSendOrchestrator) PrepareTurn(
 	if meta != nil {
 		runtimeOptions = types.CloneRuntimeOptions(meta.RuntimeOptions)
 	}
-	payload := buildClaudeUserPayloadWithRuntime(text, runtimeOptions)
+	payload := buildClaudeUserPayloadWithRuntimeAndTurn(text, runtimeOptions, turnID)
 	preSendCount := claudeCompletionProbeItemCount(o.completionReader, session.ID)
 
 	return claudePreparedTurn{

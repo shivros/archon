@@ -39,7 +39,7 @@ func TestExtractClaudeSendRequestRuntimeOptions(t *testing.T) {
 		Model:  "sonnet",
 		Access: types.AccessFull,
 	})
-	text, options, err := extractClaudeSendRequest(payload)
+	text, options, turnID, err := extractClaudeSendRequest(payload)
 	if err != nil {
 		t.Fatalf("extractClaudeSendRequest: %v", err)
 	}
@@ -54,5 +54,27 @@ func TestExtractClaudeSendRequestRuntimeOptions(t *testing.T) {
 	}
 	if options.Access != types.AccessFull {
 		t.Fatalf("expected access full_access, got %q", options.Access)
+	}
+	if turnID != "" {
+		t.Fatalf("expected empty turn id, got %q", turnID)
+	}
+}
+
+func TestExtractClaudeSendRequestTurnID(t *testing.T) {
+	t.Parallel()
+
+	payload := buildClaudeUserPayloadWithRuntimeAndTurn("hello", nil, "turn-123")
+	text, options, turnID, err := extractClaudeSendRequest(payload)
+	if err != nil {
+		t.Fatalf("extractClaudeSendRequest: %v", err)
+	}
+	if text != "hello" {
+		t.Fatalf("expected text hello, got %q", text)
+	}
+	if options != nil {
+		t.Fatalf("expected nil runtime options, got %#v", options)
+	}
+	if turnID != "turn-123" {
+		t.Fatalf("expected turn id turn-123, got %q", turnID)
 	}
 }

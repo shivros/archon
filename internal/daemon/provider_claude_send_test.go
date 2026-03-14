@@ -126,13 +126,16 @@ func TestBuildClaudeUserPayloadAndExtractText(t *testing.T) {
 func TestClaudeRunnerAppendUserItem(t *testing.T) {
 	items := &testItemSink{}
 	runner := &claudeRunner{items: items}
-	runner.appendUserItem("hello")
+	runner.appendUserItem("hello", "turn-1")
 	if items.Len() != 1 {
 		t.Fatalf("expected one item, got %d", items.Len())
 	}
 	snapshot := items.Snapshot()
 	if snapshot[0]["type"] != "userMessage" {
 		t.Fatalf("unexpected item type: %#v", snapshot[0]["type"])
+	}
+	if got, _ := snapshot[0]["turn_id"].(string); got != "turn-1" {
+		t.Fatalf("expected persisted turn id, got %#v", snapshot[0]["turn_id"])
 	}
 }
 
