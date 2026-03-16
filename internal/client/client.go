@@ -880,18 +880,20 @@ func (c *Client) loadToken() error {
 func decodeAPIError(resp *http.Response) error {
 	type errorPayload struct {
 		Error string `json:"error"`
+		Code  string `json:"code"`
 	}
 	var payload errorPayload
 	_ = json.NewDecoder(resp.Body).Decode(&payload)
 	if payload.Error != "" {
-		return &APIError{StatusCode: resp.StatusCode, Message: payload.Error}
+		return &APIError{StatusCode: resp.StatusCode, Message: payload.Error, Code: payload.Code}
 	}
-	return &APIError{StatusCode: resp.StatusCode, Message: resp.Status}
+	return &APIError{StatusCode: resp.StatusCode, Message: resp.Status, Code: payload.Code}
 }
 
 type APIError struct {
 	StatusCode int
 	Message    string
+	Code       string
 }
 
 func (e *APIError) Error() string {

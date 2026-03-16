@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"control/internal/apicode"
 	"control/internal/config"
 	"control/internal/logging"
 	"control/internal/types"
@@ -223,6 +224,9 @@ func (s *SessionService) tailCodexThread(ctx context.Context, session *types.Ses
 	}
 	thread, resolvedThreadID, err := s.readCodexThreadWithFallback(ctx, session, codexHome, threadID)
 	if err != nil {
+		if isCodexHistoryPendingError(err) {
+			return nil, unavailableErrorWithCode("transcript history pending", apicode.ErrorCodeTranscriptHistoryPending, err)
+		}
 		return nil, err
 	}
 	if resolvedThreadID != "" && strings.TrimSpace(resolvedThreadID) != strings.TrimSpace(threadID) {

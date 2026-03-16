@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"control/internal/apicode"
 )
 
 func TestClientListSessionsWithMetaOptionsIncludesWorkflowOwned(t *testing.T) {
@@ -107,6 +109,31 @@ func TestClientGetTranscriptSnapshotReturnsAPIErrorOnNon2xx(t *testing.T) {
 	}
 	if _, err := c.GetTranscriptSnapshot(context.Background(), "s1", 150); err == nil {
 		t.Fatalf("expected non-2xx error")
+	}
+}
+
+func TestClientGetTranscriptSnapshotReturnsAPIErrorCodeOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"transcript history pending","code":"transcript_history_pending"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{
+		baseURL: server.URL,
+		token:   "token",
+		http: &http.Client{
+			Timeout: 2 * time.Second,
+		},
+	}
+
+	_, err := c.GetTranscriptSnapshot(context.Background(), "s1", 150)
+	apiErr := asAPIError(err)
+	if apiErr == nil {
+		t.Fatalf("expected api error, got %v", err)
+	}
+	if apiErr.Code != apicode.ErrorCodeTranscriptHistoryPending {
+		t.Fatalf("expected transcript history pending error code, got %#v", apiErr)
 	}
 }
 

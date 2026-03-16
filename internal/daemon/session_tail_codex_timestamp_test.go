@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/apicode"
 	"control/internal/logging"
 	"control/internal/store"
 	"control/internal/types"
@@ -238,6 +239,33 @@ func TestTailCodexThreadFallsBackToSessionIDWhenMetadataThreadMissing(t *testing
 	}
 	if got := strings.TrimSpace(meta.ThreadID); got != "thread-session" {
 		t.Fatalf("expected metadata thread id healed to session id, got %q", got)
+	}
+}
+
+func TestTailCodexThreadMapsPendingHistoryToTypedServiceError(t *testing.T) {
+	session := &types.Session{ID: "session-pending", Provider: "codex", Cwd: t.TempDir()}
+	service := NewSessionService(
+		&SessionManager{baseDir: t.TempDir()},
+		nil,
+		logging.Nop(),
+		WithCodexHistoryPool(&fallbackCodexHistoryPool{
+			errs: map[string]error{
+				"thread-pending":  errors.New("rpc error -32600: no rollout found for thread id thread-pending"),
+				"session-pending": errors.New("rpc error -32600: no rollout found for thread id session-pending"),
+			},
+		}),
+	)
+
+	_, err := service.tailCodexThread(context.Background(), session, "thread-pending", 20)
+	if err == nil {
+		t.Fatalf("expected pending history error")
+	}
+	svcErr, ok := err.(*ServiceError)
+	if !ok {
+		t.Fatalf("expected service error, got %T", err)
+	}
+	if svcErr.Code != apicode.ErrorCodeTranscriptHistoryPending {
+		t.Fatalf("expected transcript history pending code, got %#v", svcErr)
 	}
 }
 

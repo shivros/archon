@@ -154,6 +154,10 @@ func (p *codexHistoryPool) tryReadWithResume(ctx context.Context, client codexHi
 }
 
 func isCodexHistoryResumeRequiredError(err error) bool {
+	return isCodexHistoryPendingError(err)
+}
+
+func isCodexHistoryPendingError(err error) bool {
 	if err == nil {
 		return false
 	}

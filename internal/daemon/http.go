@@ -17,6 +17,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	}
 	status := http.StatusInternalServerError
 	message := err.Error()
+	code := ""
 	if svcErr, ok := err.(*ServiceError); ok {
 		switch svcErr.Kind {
 		case ServiceErrorInvalid:
@@ -33,6 +34,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		if svcErr.Message != "" {
 			message = svcErr.Message
 		}
+		code = svcErr.Code
 	}
-	writeJSON(w, status, map[string]string{"error": message})
+	payload := map[string]string{"error": message}
+	if code != "" {
+		payload["code"] = code
+	}
+	writeJSON(w, status, payload)
 }

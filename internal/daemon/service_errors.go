@@ -13,6 +13,7 @@ const (
 
 type ServiceError struct {
 	Kind    ServiceErrorKind
+	Code    string
 	Message string
 	Err     error
 }
@@ -49,6 +50,10 @@ func notFoundError(message string, err error) *ServiceError {
 
 func unavailableError(message string, err error) *ServiceError {
 	return &ServiceError{Kind: ServiceErrorUnavailable, Message: message, Err: err}
+}
+
+func unavailableErrorWithCode(message, code string, err error) *ServiceError {
+	return &ServiceError{Kind: ServiceErrorUnavailable, Code: code, Message: message, Err: err}
 }
 
 func conflictError(message string, err error) *ServiceError {
