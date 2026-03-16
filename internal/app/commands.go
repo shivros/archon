@@ -605,6 +605,23 @@ func fetchTranscriptSnapshotCmdWithContextAndRequest(
 	}
 }
 
+func retryTranscriptSnapshotCmdWithDelay(
+	api SessionTranscriptSnapshotAPI,
+	id, key string,
+	lines int,
+	parent context.Context,
+	delay time.Duration,
+	request transcriptSnapshotRequest,
+) tea.Cmd {
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		cmd := fetchTranscriptSnapshotCmdWithContextAndRequest(api, id, key, lines, parent, request)
+		if cmd == nil {
+			return nil
+		}
+		return cmd()
+	})
+}
+
 func fetchRecentsPreviewCmd(api SessionHistoryAPI, id, revision string, lines int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

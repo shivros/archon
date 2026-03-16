@@ -27,6 +27,7 @@ type Definition struct {
 	Runtime           Runtime
 	CommandCandidates []string
 	Capabilities      Capabilities
+	Bootstrap         BootstrapProfile
 }
 
 var registry = []Definition{
@@ -41,6 +42,10 @@ var registry = []Definition{
 			SupportsApprovals:              true,
 			SupportsInterrupt:              true,
 		},
+		Bootstrap: BootstrapProfile{
+			HistoryConsistency:     HistoryConsistencyEventuallyConsistent,
+			SessionStartTranscript: TranscriptBootstrapModeDeferSnapshot,
+		},
 	},
 	{
 		Name:              "claude",
@@ -54,6 +59,7 @@ var registry = []Definition{
 			SupportsInterrupt:              true,
 			NoProcess:                      true,
 		},
+		Bootstrap: defaultBootstrapProfile(),
 	},
 	{
 		Name:    "opencode",
@@ -67,6 +73,7 @@ var registry = []Definition{
 			SupportsInterrupt:              true,
 			NoProcess:                      true,
 		},
+		Bootstrap: defaultBootstrapProfile(),
 	},
 	{
 		Name:    "kilocode",
@@ -80,17 +87,20 @@ var registry = []Definition{
 			SupportsInterrupt:              true,
 			NoProcess:                      true,
 		},
+		Bootstrap: defaultBootstrapProfile(),
 	},
 	{
 		Name:              "gemini",
 		Label:             "gemini",
 		Runtime:           RuntimeExec,
 		CommandCandidates: []string{"gemini"},
+		Bootstrap:         defaultBootstrapProfile(),
 	},
 	{
-		Name:    "custom",
-		Label:   "custom",
-		Runtime: RuntimeCustom,
+		Name:      "custom",
+		Label:     "custom",
+		Runtime:   RuntimeCustom,
+		Bootstrap: defaultBootstrapProfile(),
 	},
 }
 
@@ -123,6 +133,21 @@ func CapabilitiesFor(name string) Capabilities {
 		return Capabilities{}
 	}
 	return def.Capabilities
+}
+
+func BootstrapProfileFor(name string) BootstrapProfile {
+	def, ok := Lookup(name)
+	if !ok {
+		return defaultBootstrapProfile()
+	}
+	profile := def.Bootstrap
+	if profile.HistoryConsistency == "" {
+		profile.HistoryConsistency = HistoryConsistencyImmediate
+	}
+	if profile.SessionStartTranscript == "" {
+		profile.SessionStartTranscript = TranscriptBootstrapModeSnapshotFirst
+	}
+	return profile
 }
 
 func buildByName(defs []Definition) map[string]Definition {

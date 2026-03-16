@@ -229,6 +229,7 @@ type Model struct {
 	historyTraverseExhausted            map[string]bool
 	snapshotHistoryBackfillRequested    map[string]bool
 	loading                             bool
+	pendingTranscriptSnapshotRetryCount map[string]int
 	loadingKey                          string
 	loader                              spinner.Model
 	pendingMouseCmd                     tea.Cmd
@@ -634,6 +635,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		recentsCompletionWatching:           map[string]string{},
 		transcriptHealthBySession:           map[string]transcriptStreamHealthState{},
 		requestScopes:                       map[string]requestScope{},
+		pendingTranscriptSnapshotRetryCount: map[string]int{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
 		debugPanelExpandedByID:              map[string]bool{},
@@ -1416,6 +1418,9 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.pendingApproval = nil
 	m.pendingSessionKey = token
 	m.setStatusMessage("loading " + id)
+	if m.pendingTranscriptSnapshotRetryCount != nil {
+		delete(m.pendingTranscriptSnapshotRetryCount, token)
+	}
 	m.scrollOnLoad = true
 	m.loading = true
 	m.loadingKey = token

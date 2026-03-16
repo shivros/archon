@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 
+	"control/internal/providers"
 	"control/internal/types"
 )
 
@@ -44,8 +45,13 @@ func (defaultSessionBootstrapPolicy) SelectionLoadPlan(provider string, status t
 }
 
 func (defaultSessionBootstrapPolicy) SessionStartPlan(provider string, status types.SessionStatus) sessionBootstrapPlan {
-	_ = provider
 	_ = status
+	profile := providers.BootstrapProfileFor(provider)
+	if profile.SessionStartTranscript == providers.TranscriptBootstrapModeDeferSnapshot {
+		return sessionBootstrapPlan{
+			FetchApprovals: true,
+		}
+	}
 	return sessionBootstrapPlan{
 		FetchTranscript: true,
 		FetchApprovals:  true,

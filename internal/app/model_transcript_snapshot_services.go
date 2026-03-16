@@ -1,9 +1,19 @@
 package app
 
 import (
+	"errors"
 	"strings"
+	"time"
+
+	"control/internal/apicode"
+	"control/internal/client"
 
 	tea "charm.land/bubbletea/v2"
+)
+
+const (
+	transcriptHistoryPendingRetryDelay = 500 * time.Millisecond
+	transcriptHistoryPendingRetryLimit = 2
 )
 
 func transcriptSnapshotResponseKey(msg transcriptSnapshotMsg) string {
@@ -25,6 +35,9 @@ func (m *Model) handleTranscriptSnapshotError(msg transcriptSnapshotMsg, source 
 	if m.shouldDropTranscriptSnapshotByKey(msg) {
 		return true, nil
 	}
+	if isTranscriptHistoryPendingError(msg.err) {
+		return true, m.handleTranscriptSnapshotPending(msg, source, responseKey)
+	}
 	m.setBackgroundError("transcript snapshot error: " + msg.err.Error())
 	if msg.key != "" && msg.key == m.loadingKey {
 		m.setContentText("Error loading transcript.")
@@ -32,6 +45,69 @@ func (m *Model) handleTranscriptSnapshotError(msg transcriptSnapshotMsg, source 
 		m.loadingKey = ""
 	}
 	return true, m.maybeOpenTranscriptFollowAfterSnapshot(msg.id, source, "")
+}
+
+func isTranscriptHistoryPendingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return false
+	}
+	return strings.TrimSpace(apiErr.Code) == apicode.ErrorCodeTranscriptHistoryPending
+}
+
+func (m *Model) handleTranscriptSnapshotPending(msg transcriptSnapshotMsg, source TranscriptAttachmentSource, responseKey string) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.setBackgroundStatus("transcript history pending; retrying")
+	if msg.key != "" && msg.key == m.loadingKey {
+		m.loading = false
+		m.loadingKey = ""
+	}
+	cmds := make([]tea.Cmd, 0, 2)
+	if cmd := m.maybeOpenTranscriptFollowAfterSnapshot(msg.id, source, ""); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if cmd := m.maybeRetryPendingTranscriptSnapshot(msg, source, responseKey); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) maybeRetryPendingTranscriptSnapshot(msg transcriptSnapshotMsg, source TranscriptAttachmentSource, responseKey string) tea.Cmd {
+	if m == nil || m.sessionTranscriptAPI == nil {
+		return nil
+	}
+	responseKey = strings.TrimSpace(responseKey)
+	if responseKey == "" {
+		return nil
+	}
+	if m.pendingTranscriptSnapshotRetryCount == nil {
+		m.pendingTranscriptSnapshotRetryCount = map[string]int{}
+	}
+	attempts := m.pendingTranscriptSnapshotRetryCount[responseKey]
+	if attempts >= transcriptHistoryPendingRetryLimit {
+		return nil
+	}
+	m.pendingTranscriptSnapshotRetryCount[responseKey] = attempts + 1
+	return retryTranscriptSnapshotCmdWithDelay(
+		m.sessionTranscriptAPI,
+		msg.id,
+		msg.key,
+		msg.requestedLines,
+		m.requestScopeContext(requestScopeSessionLoad),
+		transcriptHistoryPendingRetryDelay,
+		transcriptSnapshotRequest{
+			Source:        source,
+			Authoritative: msg.authoritative,
+		},
+	)
 }
 
 func (m *Model) shouldDropTranscriptSnapshotByKey(msg transcriptSnapshotMsg) bool {
@@ -93,6 +169,9 @@ func (m *Model) projectTranscriptSnapshotBlocks(sessionID string, snapshotBlocks
 }
 
 func (m *Model) transcriptSnapshotFollowUps(msg transcriptSnapshotMsg, source TranscriptAttachmentSource, responseKey string, blocks []ChatBlock) tea.Cmd {
+	if m != nil && responseKey != "" && m.pendingTranscriptSnapshotRetryCount != nil {
+		delete(m.pendingTranscriptSnapshotRetryCount, responseKey)
+	}
 	cmds := make([]tea.Cmd, 0, 2)
 	if cmd := m.maybeBackfillSnapshotMissingUserTurns(msg.id, responseKey, blocks); cmd != nil {
 		cmds = append(cmds, cmd)

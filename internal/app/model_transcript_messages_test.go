@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"control/internal/apicode"
+	"control/internal/client"
 
 	"control/internal/daemon/transcriptdomain"
 )
@@ -173,6 +175,47 @@ func TestApplyTranscriptSnapshotMsgErrorWithMismatchedKeyDropsResponse(t *testin
 	}
 	if !m.loading || m.loadingKey != "sess:s1" {
 		t.Fatalf("expected dropped mismatched-key error not to touch loading state")
+	}
+}
+
+func TestApplyTranscriptSnapshotMsgPendingErrorRetriesWithoutUserVisibleError(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
+	m.pendingSessionKey = "sess:s1"
+	m.loading = true
+	m.loadingKey = "sess:s1"
+
+	cmd := m.applyTranscriptSnapshotMsg(transcriptSnapshotMsg{
+		id:     "s1",
+		key:    "sess:s1",
+		source: transcriptAttachmentSourceSelectionLoad,
+		err: &client.APIError{
+			StatusCode: 500,
+			Message:    "transcript history pending",
+			Code:       apicode.ErrorCodeTranscriptHistoryPending,
+		},
+		requestedLines: 200,
+	})
+	if cmd == nil {
+		t.Fatalf("expected pending snapshot error to trigger follow-up commands")
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected pending snapshot error to clear loading state")
+	}
+	if strings.Contains(strings.ToLower(m.status), "error") {
+		t.Fatalf("expected pending snapshot error not to set an error status, got %q", m.status)
+	}
+	if got := m.pendingTranscriptSnapshotRetryCount["sess:s1"]; got != 1 {
+		t.Fatalf("expected one pending snapshot retry to be queued, got %d", got)
+	}
+
+	raw := cmd()
+	batch, ok := raw.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected batched follow-up commands, got %T", raw)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("expected follow stream open and delayed retry commands, got %d", len(batch))
 	}
 }
 

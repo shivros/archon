@@ -11,6 +11,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 		runtime      Runtime
 		candidates   []string
 		capabilities Capabilities
+		bootstrap    BootstrapProfile
 	}{
 		{
 			name:       "codex",
@@ -21,6 +22,10 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsEvents:                 true,
 				SupportsApprovals:              true,
 				SupportsInterrupt:              true,
+			},
+			bootstrap: BootstrapProfile{
+				HistoryConsistency:     HistoryConsistencyEventuallyConsistent,
+				SessionStartTranscript: TranscriptBootstrapModeDeferSnapshot,
 			},
 		},
 		{
@@ -34,6 +39,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsInterrupt:              true,
 				NoProcess:                      true,
 			},
+			bootstrap: defaultBootstrapProfile(),
 		},
 		{
 			name:       "opencode",
@@ -47,6 +53,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsInterrupt:              true,
 				NoProcess:                      true,
 			},
+			bootstrap: defaultBootstrapProfile(),
 		},
 		{
 			name:       "kilocode",
@@ -60,16 +67,19 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsInterrupt:              true,
 				NoProcess:                      true,
 			},
+			bootstrap: defaultBootstrapProfile(),
 		},
 		{
 			name:       "gemini",
 			runtime:    RuntimeExec,
 			candidates: []string{"gemini"},
+			bootstrap:  defaultBootstrapProfile(),
 		},
 		{
 			name:       "custom",
 			runtime:    RuntimeCustom,
 			candidates: nil,
+			bootstrap:  defaultBootstrapProfile(),
 		},
 	}
 
@@ -90,6 +100,9 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 			}
 			if def.Capabilities != tt.capabilities {
 				t.Fatalf("expected capabilities %#v, got %#v", tt.capabilities, def.Capabilities)
+			}
+			if def.Bootstrap != tt.bootstrap {
+				t.Fatalf("expected bootstrap %#v, got %#v", tt.bootstrap, def.Bootstrap)
 			}
 		})
 	}
@@ -143,5 +156,15 @@ func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
 	caps := CapabilitiesFor("codex")
 	if !caps.SupportsGuidedWorkflowDispatch || !caps.SupportsEvents || !caps.SupportsApprovals || !caps.SupportsInterrupt {
 		t.Fatalf("unexpected codex capabilities: %#v", caps)
+	}
+}
+
+func TestProviderRegistryBootstrapProfileForKnown(t *testing.T) {
+	profile := BootstrapProfileFor("codex")
+	if profile.HistoryConsistency != HistoryConsistencyEventuallyConsistent {
+		t.Fatalf("expected eventual consistency profile, got %#v", profile)
+	}
+	if profile.SessionStartTranscript != TranscriptBootstrapModeDeferSnapshot {
+		t.Fatalf("expected deferred session-start transcript bootstrap, got %#v", profile)
 	}
 }

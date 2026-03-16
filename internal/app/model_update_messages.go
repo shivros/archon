@@ -1240,6 +1240,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		key := "sess:" + msg.session.ID
 		m.pendingSessionKey = key
+		if m.pendingTranscriptSnapshotRetryCount != nil {
+			delete(m.pendingTranscriptSnapshotRetryCount, key)
+		}
 		m.loading = true
 		m.loadingKey = key
 		m.scrollOnLoad = true
