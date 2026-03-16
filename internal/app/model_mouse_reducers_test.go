@@ -139,6 +139,53 @@ func TestMouseReducerRightPressWorkflowOpensFollowUpActionForPausedRun(t *testin
 	}
 }
 
+func TestMouseReducerRightPressSelectedSessionUsesBulkCopyLabel(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.appState.ActiveWorkspaceGroupIDs = []string{"ungrouped"}
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Status: types.SessionStatusRunning},
+		{ID: "s2", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1"},
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByKey("sess:s1") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected to select s1 into multi-select")
+	}
+	if !m.sidebar.SelectByKey("sess:s2") || !m.sidebar.ToggleFocusedSelection() {
+		t.Fatalf("expected to select s2 into multi-select")
+	}
+
+	layout := m.resolveMouseLayout()
+	row := -1
+	for y := 0; y < 20; y++ {
+		entry := m.sidebar.ItemAtRow(y)
+		if entry != nil && entry.kind == sidebarSession && entry.session != nil && entry.session.ID == "s2" {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("expected visible session row")
+	}
+
+	handled := m.reduceContextMenuRightPressMouse(tea.MouseClickMsg{Button: tea.MouseRight, X: 6, Y: row}, layout)
+	if !handled {
+		t.Fatalf("expected right click to open session context menu")
+	}
+	if m.contextMenu == nil || !m.contextMenu.IsOpen() {
+		t.Fatalf("expected context menu to be open")
+	}
+	if got := findContextMenuLabel(m.contextMenu, ContextMenuSessionCopyID); got != "Copy Selected IDs" {
+		t.Fatalf("expected bulk copy label, got %q", got)
+	}
+}
+
 func TestMouseReducerBackwardAndForwardButtonsNavigateSelectionHistory(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

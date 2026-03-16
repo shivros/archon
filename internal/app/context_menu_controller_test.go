@@ -7,6 +7,15 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
+func findContextMenuLabel(c *ContextMenuController, action ContextMenuAction) string {
+	for _, item := range c.items {
+		if item.Action == action {
+			return item.Label
+		}
+	}
+	return ""
+}
+
 func TestContextMenuViewBlockMatchesLayoutGeometry(t *testing.T) {
 	c := NewContextMenuController()
 	c.OpenWorkspace("ws-1", "Workspace One", 12, 5)
@@ -51,5 +60,32 @@ func TestContextMenuContainsUsesComputedBounds(t *testing.T) {
 	}
 	if c.Contains(x, y+height, 120, 40) {
 		t.Fatalf("expected below-outside point to be outside context menu")
+	}
+}
+
+func TestContextMenuWorkspaceSelectionCopyUsesSelectedIDsLabel(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenWorkspaceSelectionCopy("ws-1", "Workspace One", 12, 5)
+
+	if got := findContextMenuLabel(c, ContextMenuWorkspaceCopyPath); got != "Copy Selected IDs" {
+		t.Fatalf("expected selection copy label, got %q", got)
+	}
+}
+
+func TestContextMenuSessionSelectionCopyUsesSelectedIDsLabel(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenSessionSelectionCopy("s-1", "ws-1", "wt-1", "Session One", 12, 5)
+
+	if got := findContextMenuLabel(c, ContextMenuSessionCopyID); got != "Copy Selected IDs" {
+		t.Fatalf("expected selection copy label, got %q", got)
+	}
+}
+
+func TestContextMenuWorkflowSelectionCopyUsesSelectedIDsLabel(t *testing.T) {
+	c := NewContextMenuController()
+	c.OpenWorkflowSelectionCopy("gwf-1", "Workflow One", "running", false, 12, 5)
+
+	if got := findContextMenuLabel(c, ContextMenuWorkflowCopyID); got != "Copy Selected IDs" {
+		t.Fatalf("expected selection copy label, got %q", got)
 	}
 }

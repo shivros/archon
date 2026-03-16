@@ -6,6 +6,8 @@ import (
 
 	"control/internal/guidedworkflows"
 	"control/internal/types"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestWorkspaceContextActionCreateEntersAddWorkspace(t *testing.T) {
@@ -176,6 +178,88 @@ func TestWorkspaceContextActionCopyPathUnavailable(t *testing.T) {
 	}
 	if m.status != "workspace path unavailable" {
 		t.Fatalf("unexpected status %q", m.status)
+	}
+}
+
+func TestContextMenuCopyActionsUseSidebarSelectionPayloadForMultiSelect(t *testing.T) {
+	cases := []struct {
+		name   string
+		action func(*Model, ContextMenuAction, contextMenuTarget) (bool, tea.Cmd)
+		target contextMenuTarget
+		menu   ContextMenuAction
+	}{
+		{
+			name:   "workspace",
+			action: (*Model).handleWorkspaceContextMenuAction,
+			target: contextMenuTarget{id: "ws1"},
+			menu:   ContextMenuWorkspaceCopyPath,
+		},
+		{
+			name:   "session",
+			action: (*Model).handleSessionContextMenuAction,
+			target: contextMenuTarget{sessionID: "s1"},
+			menu:   ContextMenuSessionCopyID,
+		},
+		{
+			name:   "workflow",
+			action: (*Model).handleWorkflowContextMenuAction,
+			target: contextMenuTarget{workflowID: "gwf-1"},
+			menu:   ContextMenuWorkflowCopyID,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder := &recordingSelectionCopyPayloadBuilder{
+				payload: "/tmp/ws1\ngwf-1\ns1",
+				copied:  3,
+			}
+			clipboard := &testClipboardService{}
+			m := NewModel(
+				nil,
+				WithSelectionCopyPayloadBuilder(builder),
+				WithClipboardService(clipboard),
+			)
+			m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+			m.sessions = []*types.Session{{ID: "s1", Title: "Session", Status: types.SessionStatusExited}}
+			m.sessionMeta = map[string]*types.SessionMeta{
+				"s1": {SessionID: "s1", WorkspaceID: "ws1", WorkflowRunID: "gwf-1"},
+			}
+			m.workflowRuns = []*guidedworkflows.WorkflowRun{
+				{ID: "gwf-1", WorkspaceID: "ws1", TemplateName: "Workflow", Status: guidedworkflows.WorkflowRunStatusRunning},
+			}
+			m.sidebar.Apply(m.workspaces, map[string][]*types.Worktree{}, m.sessions, m.workflowRuns, m.sessionMeta, "", "", false)
+			for _, key := range []string{"ws:ws1", "gwf:gwf-1", "sess:s1"} {
+				if !m.sidebar.SelectByKey(key) || !m.sidebar.ToggleFocusedSelection() {
+					t.Fatalf("expected to multi-select %s", key)
+				}
+			}
+
+			handled, cmd := tc.action(&m, tc.menu, tc.target)
+			if !handled {
+				t.Fatalf("expected context menu copy action to be handled")
+			}
+			if cmd == nil {
+				t.Fatalf("expected copy command")
+			}
+			msg := cmd()
+			result, ok := msg.(clipboardResultMsg)
+			if !ok {
+				t.Fatalf("expected clipboardResultMsg, got %T", msg)
+			}
+			if result.err != nil {
+				t.Fatalf("unexpected clipboard error: %v", result.err)
+			}
+			if result.success != "copied 3 id(s)" {
+				t.Fatalf("unexpected success text %q", result.success)
+			}
+			if clipboard.text != builder.payload {
+				t.Fatalf("expected bulk copy payload %q, got %q", builder.payload, clipboard.text)
+			}
+			if builder.calls != 1 {
+				t.Fatalf("expected selection payload builder to be used once, got %d", builder.calls)
+			}
+		})
 	}
 }
 

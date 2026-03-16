@@ -20,6 +20,35 @@ type contextMenuTarget struct {
 	workflowDismissed bool
 }
 
+func contextMenuTargetSidebarKey(target contextMenuTarget) string {
+	switch {
+	case strings.TrimSpace(target.workflowID) != "":
+		return "gwf:" + strings.TrimSpace(target.workflowID)
+	case strings.TrimSpace(target.sessionID) != "":
+		return "sess:" + strings.TrimSpace(target.sessionID)
+	case strings.TrimSpace(target.worktreeID) != "":
+		return "wt:" + strings.TrimSpace(target.worktreeID)
+	case strings.TrimSpace(target.id) != "":
+		return "ws:" + strings.TrimSpace(target.id)
+	default:
+		return ""
+	}
+}
+
+func (m *Model) copySidebarSelectionIDsForContextTarget(target contextMenuTarget) (tea.Cmd, bool) {
+	if m == nil || m.sidebar == nil {
+		return nil, false
+	}
+	if m.sidebar.SelectedKeyCount() <= 1 {
+		return nil, false
+	}
+	key := contextMenuTargetSidebarKey(target)
+	if key == "" || !m.sidebar.IsKeySelected(key) {
+		return nil, false
+	}
+	return m.copySidebarSelectionIDsCmd(), true
+}
+
 func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, target contextMenuTarget) (bool, tea.Cmd) {
 	switch action {
 	case ContextMenuWorkspaceCreate:
@@ -80,6 +109,9 @@ func (m *Model) handleWorkspaceContextMenuAction(action ContextMenuAction, targe
 		if target.id == "" || target.id == unassignedWorkspaceID {
 			m.setValidationStatus("select a workspace")
 			return true, nil
+		}
+		if cmd, ok := m.copySidebarSelectionIDsForContextTarget(target); ok {
+			return true, cmd
 		}
 		workspace := m.workspaceByID(target.id)
 		path := ""
@@ -240,6 +272,9 @@ func (m *Model) handleSessionContextMenuAction(action ContextMenuAction, target 
 			m.setCopyStatusWarning("select a session")
 			return true, nil
 		}
+		if cmd, ok := m.copySidebarSelectionIDsForContextTarget(target); ok {
+			return true, cmd
+		}
 		return true, m.copyWithStatusCmd(target.sessionID, "copied session id")
 	default:
 		return false, nil
@@ -345,6 +380,9 @@ func (m *Model) handleWorkflowContextMenuAction(action ContextMenuAction, target
 		if runID == "" {
 			m.setCopyStatusWarning("select a workflow")
 			return true, nil
+		}
+		if cmd, ok := m.copySidebarSelectionIDsForContextTarget(target); ok {
+			return true, cmd
 		}
 		return true, m.copyWithStatusCmd(runID, "copied workflow id")
 	default:

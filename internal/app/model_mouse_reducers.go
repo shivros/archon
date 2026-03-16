@@ -198,6 +198,10 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 				switch entry.kind {
 				case sidebarWorkspace:
 					if entry.workspace != nil {
+						if m.shouldUseSelectionCopyContextMenu(entry) {
+							m.contextMenu.OpenWorkspaceSelectionCopy(entry.workspace.ID, entry.workspace.Name, mouse.X, mouse.Y)
+							return true
+						}
 						m.contextMenu.OpenWorkspace(entry.workspace.ID, entry.workspace.Name, mouse.X, mouse.Y)
 						return true
 					}
@@ -214,6 +218,10 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 							workspaceID = entry.meta.WorkspaceID
 							worktreeID = entry.meta.WorktreeID
 						}
+						if m.shouldUseSelectionCopyContextMenu(entry) {
+							m.contextMenu.OpenSessionSelectionCopy(entry.session.ID, workspaceID, worktreeID, entry.Title(), mouse.X, mouse.Y)
+							return true
+						}
 						m.contextMenu.OpenSession(entry.session.ID, workspaceID, worktreeID, entry.Title(), mouse.X, mouse.Y)
 						return true
 					}
@@ -224,6 +232,10 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 						status := guidedworkflows.WorkflowRunStatus("")
 						if entry.workflow != nil {
 							status = entry.workflow.Status
+						}
+						if m.shouldUseSelectionCopyContextMenu(entry) {
+							m.contextMenu.OpenWorkflowSelectionCopy(runID, entry.Title(), status, dismissed, mouse.X, mouse.Y)
+							return true
 						}
 						m.contextMenu.OpenWorkflow(runID, entry.Title(), status, dismissed, mouse.X, mouse.Y)
 						return true
@@ -237,6 +249,16 @@ func (m *Model) reduceContextMenuRightPressMouse(msg tea.MouseMsg, layout mouseL
 		return true
 	}
 	return false
+}
+
+func (m *Model) shouldUseSelectionCopyContextMenu(entry *sidebarItem) bool {
+	if m == nil || m.sidebar == nil || entry == nil {
+		return false
+	}
+	if m.sidebar.SelectedKeyCount() <= 1 {
+		return false
+	}
+	return m.sidebar.IsKeySelected(entry.key())
 }
 
 func (m *Model) reduceSidebarDragMouse(msg tea.MouseMsg, layout mouseLayout) bool {

@@ -162,6 +162,14 @@ func (c *ContextMenuController) Close() {
 }
 
 func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
+	c.openWorkspace(id, label, "Copy Workspace Path", x, y)
+}
+
+func (c *ContextMenuController) OpenWorkspaceSelectionCopy(id, label string, x, y int) {
+	c.openWorkspace(id, label, "Copy Selected IDs", x, y)
+}
+
+func (c *ContextMenuController) openWorkspace(id, label, copyLabel string, x, y int) {
 	if c == nil {
 		return
 	}
@@ -183,7 +191,7 @@ func (c *ContextMenuController) OpenWorkspace(id, label string, x, y int) {
 		{Label: "Add Note", Action: ContextMenuWorkspaceAddNote},
 		{Label: "Add Worktree", Action: ContextMenuWorkspaceAddWorktree},
 		{Label: "Start Guided Workflow", Action: ContextMenuWorkspaceStartGuidedWorkflow},
-		{Label: "Copy Workspace Path", Action: ContextMenuWorkspaceCopyPath},
+		{Label: copyLabel, Action: ContextMenuWorkspaceCopyPath},
 		{Label: "Delete Workspace", Action: ContextMenuWorkspaceDelete},
 	}
 	c.selected = 0
@@ -219,6 +227,14 @@ func (c *ContextMenuController) OpenWorktree(worktreeID, workspaceID, label stri
 }
 
 func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, label string, x, y int) {
+	c.openSession(sessionID, workspaceID, worktreeID, label, "Copy Session ID", x, y)
+}
+
+func (c *ContextMenuController) OpenSessionSelectionCopy(sessionID, workspaceID, worktreeID, label string, x, y int) {
+	c.openSession(sessionID, workspaceID, worktreeID, label, "Copy Selected IDs", x, y)
+}
+
+func (c *ContextMenuController) openSession(sessionID, workspaceID, worktreeID, label, copyLabel string, x, y int) {
 	if c == nil {
 		return
 	}
@@ -241,7 +257,7 @@ func (c *ContextMenuController) OpenSession(sessionID, workspaceID, worktreeID, 
 		{Label: "Dismiss Session", Action: ContextMenuSessionDismiss},
 		{Label: "Kill Session", Action: ContextMenuSessionKill},
 		{Label: "Interrupt Session", Action: ContextMenuSessionInterrupt},
-		{Label: "Copy Session ID", Action: ContextMenuSessionCopyID},
+		{Label: copyLabel, Action: ContextMenuSessionCopyID},
 	}
 	c.selected = 0
 	c.x = x
@@ -253,6 +269,27 @@ func (c *ContextMenuController) OpenWorkflow(
 	label string,
 	status guidedworkflows.WorkflowRunStatus,
 	dismissed bool,
+	x, y int,
+) {
+	c.openWorkflow(workflowID, label, status, dismissed, "Copy Workflow ID", x, y)
+}
+
+func (c *ContextMenuController) OpenWorkflowSelectionCopy(
+	workflowID,
+	label string,
+	status guidedworkflows.WorkflowRunStatus,
+	dismissed bool,
+	x, y int,
+) {
+	c.openWorkflow(workflowID, label, status, dismissed, "Copy Selected IDs", x, y)
+}
+
+func (c *ContextMenuController) openWorkflow(
+	workflowID,
+	label string,
+	status guidedworkflows.WorkflowRunStatus,
+	dismissed bool,
+	copyLabel string,
 	x, y int,
 ) {
 	if c == nil {
@@ -285,7 +322,7 @@ func (c *ContextMenuController) OpenWorkflow(
 		contextMenuItem{Label: "Rename Workflow", Action: ContextMenuWorkflowRename},
 		contextMenuItem{Label: "Stop Workflow", Action: ContextMenuWorkflowStop},
 		visibilityAction,
-		contextMenuItem{Label: "Copy Workflow ID", Action: ContextMenuWorkflowCopyID},
+		contextMenuItem{Label: copyLabel, Action: ContextMenuWorkflowCopyID},
 	)
 	c.selected = 0
 	c.x = x
