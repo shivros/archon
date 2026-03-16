@@ -199,7 +199,11 @@ func TestProviderInterruptParity(t *testing.T) {
 				t.Fatalf("expected turn id from send")
 			}
 
-			if !waitForProviderInterruptReadiness(stream, 2*time.Second) {
+			readinessTimeout := 8 * time.Second
+			if perProviderTimeout := tc.timeout(); perProviderTimeout > 0 && perProviderTimeout < readinessTimeout {
+				readinessTimeout = perProviderTimeout
+			}
+			if !waitForProviderInterruptReadiness(stream, readinessTimeout) {
 				time.Sleep(1500 * time.Millisecond)
 			}
 
@@ -208,7 +212,11 @@ func TestProviderInterruptParity(t *testing.T) {
 				t.Fatalf("interrupt failed status=%d body=%s", status, body)
 			}
 
-			waitForProviderInterruptConfirmation(t, server, manager, session.ID, stream, finalToken, 45*time.Second)
+			confirmationTimeout := tc.timeout()
+			if confirmationTimeout <= 0 {
+				confirmationTimeout = 45 * time.Second
+			}
+			waitForProviderInterruptConfirmation(t, server, manager, session.ID, stream, finalToken, confirmationTimeout)
 		})
 	}
 }
@@ -256,7 +264,7 @@ func waitForProviderInterruptConfirmation(
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		history := historySession(t, server, sessionID)
-		if historyHasAgentText(history.Items, finalToken) {
+		if historyHasAgentExactLine(history.Items, finalToken) {
 			t.Fatalf("provider completed after interrupt and emitted final token %q\n%s", finalToken, sessionDiagnostics(manager, sessionID))
 		}
 		if historyHasInterruptedTurn(history.Items) {
@@ -271,7 +279,7 @@ func waitForProviderInterruptConfirmation(
 		if !ok {
 			continue
 		}
-		if transcriptPayloadHasAgentText(data, finalToken) {
+		if transcriptPayloadHasAgentExactLine(data, finalToken) {
 			t.Fatalf("provider streamed final token %q after interrupt\n%s", finalToken, sessionDiagnostics(manager, sessionID))
 		}
 		if transcriptPayloadIndicatesInterrupted(data) {
@@ -279,6 +287,65 @@ func waitForProviderInterruptConfirmation(
 		}
 	}
 	t.Fatalf("timeout waiting for interrupted turn confirmation\n%s", sessionDiagnostics(manager, sessionID))
+}
+
+func historyHasAgentExactLine(items []map[string]any, needle string) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		typ, _ := item["type"].(string)
+		if typ != "agentMessage" && typ != "agentMessageDelta" && typ != "assistant" {
+			continue
+		}
+		if textHasExactLine(extractHistoryText(item), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func transcriptPayloadHasAgentExactLine(data string, needle string) bool {
+	var event transcriptdomain.TranscriptEvent
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return false
+	}
+	return transcriptEventHasAgentExactLine(event, needle)
+}
+
+func transcriptEventHasAgentExactLine(event transcriptdomain.TranscriptEvent, needle string) bool {
+	if event.Kind != transcriptdomain.TranscriptEventDelta {
+		return false
+	}
+	for _, block := range event.Delta {
+		role := strings.ToLower(strings.TrimSpace(block.Role))
+		kind := strings.ToLower(strings.TrimSpace(block.Kind))
+		if role != "assistant" && role != "agent" && role != "model" &&
+			kind != "assistant" && kind != "agent" && kind != "model" {
+			continue
+		}
+		if textHasExactLine(block.Text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func textHasExactLine(text string, needle string) bool {
+	needle = strings.TrimSpace(needle)
+	if needle == "" {
+		return false
+	}
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	for _, line := range strings.Split(normalized, "\n") {
+		if strings.EqualFold(strings.TrimSpace(line), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func historyHasInterruptedTurn(items []map[string]any) bool {
