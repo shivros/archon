@@ -19,6 +19,7 @@ type RenderRequest struct {
 	RawContent     string
 	EscapeMarkdown bool
 	RenderRaw      bool
+	ThemeID        string
 	Blocks         []ChatBlock
 	BlockMetaByID  map[string]ChatBlockMetaPresentation
 	Selection      RenderSelection
@@ -69,6 +70,7 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 	if p == nil {
 		return RenderResult{}
 	}
+	themeID := resolveRenderThemeID(req.ThemeID)
 	width := req.Width
 	if width <= 0 {
 		width = 80
@@ -83,6 +85,7 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 		ctx := chatRenderContext{
 			TimestampMode: mode,
 			Now:           now,
+			ThemeID:       themeID,
 			MetaByBlockID: req.BlockMetaByID,
 		}
 		key := hashRenderRequestBlocks(
@@ -90,6 +93,7 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 			req.BlockMetaByID,
 			width,
 			req.MaxLines,
+			themeID,
 			req.Selection,
 			mode,
 			chatTimestampRenderBucket(mode, now),
@@ -112,7 +116,7 @@ func (p *defaultRenderPipeline) Render(req RenderRequest) RenderResult {
 		return result
 	}
 
-	key := hashRenderRequestRaw(req.RawContent, req.EscapeMarkdown, req.RenderRaw, width)
+	key := hashRenderRequestRaw(req.RawContent, req.EscapeMarkdown, req.RenderRaw, width, themeID)
 	if cached, ok := p.resultCache.Get(key); ok {
 		return cached
 	}
@@ -185,10 +189,11 @@ func (c *renderResultCache) Set(key uint64, value RenderResult) {
 	}
 }
 
-func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBlockMetaPresentation, width, maxLines int, selection RenderSelection, mode ChatTimestampMode, relativeBucket int64) uint64 {
+func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBlockMetaPresentation, width, maxLines int, themeID string, selection RenderSelection, mode ChatTimestampMode, relativeBucket int64) uint64 {
 	hasher := fnv.New64a()
 	writeHashInt(hasher, width)
 	writeHashInt(hasher, maxLines)
+	writeHashString(hasher, resolveRenderThemeID(themeID))
 	writeHashInt(hasher, selection.PrimaryIndex)
 	writeHashInt(hasher, selection.RangeStart)
 	writeHashInt(hasher, selection.RangeEnd)
@@ -215,9 +220,10 @@ func hashRenderRequestBlocks(blocks []ChatBlock, blockMetaByID map[string]ChatBl
 	return hasher.Sum64()
 }
 
-func hashRenderRequestRaw(raw string, escaped bool, renderRaw bool, width int) uint64 {
+func hashRenderRequestRaw(raw string, escaped bool, renderRaw bool, width int, themeID string) uint64 {
 	hasher := fnv.New64a()
 	writeHashInt(hasher, width)
+	writeHashString(hasher, resolveRenderThemeID(themeID))
 	if renderRaw {
 		_, _ = hasher.Write([]byte{1})
 	} else {
@@ -230,6 +236,13 @@ func hashRenderRequestRaw(raw string, escaped bool, renderRaw bool, width int) u
 	}
 	writeHashString(hasher, raw)
 	return hasher.Sum64()
+}
+
+func resolveRenderThemeID(themeID string) string {
+	if strings.TrimSpace(themeID) == "" {
+		return normalizeThemeID(CurrentThemeID())
+	}
+	return normalizeThemeID(themeID)
 }
 
 func renderRawContent(content string, escapeMarkdownContent bool, renderRaw bool, width int) string {

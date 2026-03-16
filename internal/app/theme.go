@@ -59,8 +59,10 @@ type themePalette struct {
 	SettingsMenuHelpHintFg          string
 	SettingsMenuHelpRowFg           string
 	SettingsMenuHintFg              string
+	UserBubbleFg                    string
 	UserBubbleBorderFg              string
 	UserBubbleBg                    string
+	AgentBubbleFg                   string
 	AgentBubbleBorderFg             string
 	SystemBubbleBorderFg            string
 	SystemBubbleFg                  string
@@ -92,6 +94,7 @@ type themePalette struct {
 	SidebarSortStripMutedFg         string
 	SidebarSortStripActiveBg        string
 	MarkdownBlockQuoteFg            string
+	MarkdownDark                    bool
 	ProviderBadgeFallbackFg         string
 	ProviderBadgeCodexFg            string
 	ProviderBadgeClaudeFg           string
@@ -218,11 +221,13 @@ func applyTheme(preset ThemePreset) {
 	settingsMenuHintStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(p.SettingsMenuHintFg))
 	userBubbleStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		Foreground(lipgloss.Color(p.UserBubbleFg)).
 		BorderForeground(lipgloss.Color(p.UserBubbleBorderFg)).
 		Background(lipgloss.Color(p.UserBubbleBg)).
 		Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
 	agentBubbleStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		Foreground(lipgloss.Color(p.AgentBubbleFg)).
 		BorderForeground(lipgloss.Color(p.AgentBubbleBorderFg)).
 		Padding(chatBubblePaddingVertical, chatBubblePaddingHorizontal)
 	systemBubbleStyle = lipgloss.NewStyle().
@@ -269,6 +274,7 @@ func applyTheme(preset ThemePreset) {
 	sidebarSortStripMutedColor = p.SidebarSortStripMutedFg
 	sidebarSortStripActiveBgColor = p.SidebarSortStripActiveBg
 	markdownBlockQuoteColor = p.MarkdownBlockQuoteFg
+	_ = setMarkdownBackgroundDark(p.MarkdownDark)
 	defaultBadgeColor = p.ProviderBadgeFallbackFg
 	providerBadgeColors = map[string]string{
 		"codex":    p.ProviderBadgeCodexFg,

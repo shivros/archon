@@ -87,3 +87,28 @@ func TestThemePresetDerivationIncludesInfoToastColor(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyThemeUpdatesChatTextThemeState(t *testing.T) {
+	previousTheme := CurrentThemeID()
+	previousMarkdownDark := markdownBackgroundDark()
+	t.Cleanup(func() {
+		ApplyTheme(previousTheme)
+		_ = setMarkdownBackgroundDark(previousMarkdownDark)
+	})
+
+	ApplyTheme("adwaita")
+	if markdownBackgroundDark() {
+		t.Fatalf("expected markdown renderer to use light styling for adwaita")
+	}
+	if userBubbleStyle.GetForeground() == nil {
+		t.Fatalf("expected user bubble foreground to be configured")
+	}
+	if agentBubbleStyle.GetForeground() == nil {
+		t.Fatalf("expected agent bubble foreground to be configured")
+	}
+
+	ApplyTheme("monokai")
+	if !markdownBackgroundDark() {
+		t.Fatalf("expected markdown renderer to use dark styling for monokai")
+	}
+}

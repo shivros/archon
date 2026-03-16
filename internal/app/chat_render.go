@@ -167,6 +167,7 @@ type renderedChatBlock struct {
 type chatRenderContext struct {
 	TimestampMode ChatTimestampMode
 	Now           time.Time
+	ThemeID       string
 	MetaByBlockID map[string]ChatBlockMetaPresentation
 }
 
@@ -192,7 +193,11 @@ func renderChatBlocksWithSelectionRange(blocks []ChatBlock, width int, maxLines 
 		highlightStart,
 		highlightEnd,
 		defaultChatBlockRenderer{},
-		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()},
+		chatRenderContext{
+			TimestampMode: ChatTimestampModeRelative,
+			Now:           time.Now(),
+			ThemeID:       CurrentThemeID(),
+		},
 	)
 }
 
@@ -205,7 +210,11 @@ func renderChatBlocksWithRenderer(blocks []ChatBlock, width int, maxLines int, s
 		-1,
 		-1,
 		renderer,
-		chatRenderContext{TimestampMode: ChatTimestampModeRelative, Now: time.Now()},
+		chatRenderContext{
+			TimestampMode: ChatTimestampModeRelative,
+			Now:           time.Now(),
+			ThemeID:       CurrentThemeID(),
+		},
 	)
 }
 

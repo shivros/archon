@@ -205,6 +205,7 @@ type Model struct {
 	renderedForSelection                int
 	renderedForHighlightStart           int
 	renderedForHighlightEnd             int
+	renderedForThemeID                  string
 	renderedForTimestampMode            ChatTimestampMode
 	renderedForRelativeBucket           int64
 	renderGeneration                    int
@@ -228,8 +229,8 @@ type Model struct {
 	historyTraverseInFlight             map[string]int
 	historyTraverseExhausted            map[string]bool
 	snapshotHistoryBackfillRequested    map[string]bool
-	loading                             bool
 	pendingTranscriptSnapshotRetryCount map[string]int
+	loading                             bool
 	loadingKey                          string
 	loader                              spinner.Model
 	pendingMouseCmd                     tea.Cmd
@@ -634,8 +635,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		recentsPreviews:                     map[string]recentsPreview{},
 		recentsCompletionWatching:           map[string]string{},
 		transcriptHealthBySession:           map[string]transcriptStreamHealthState{},
-		requestScopes:                       map[string]requestScope{},
 		pendingTranscriptSnapshotRetryCount: map[string]int{},
+		requestScopes:                       map[string]requestScope{},
 		notesByScope:                        map[types.NoteScope][]*types.Note{},
 		notesPanelPendingScopes:             map[types.NoteScope]struct{}{},
 		debugPanelExpandedByID:              map[string]bool{},
@@ -768,7 +769,6 @@ func Run(client *client.Client) error {
 
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
-		tea.RequestBackgroundColor,
 		fetchAppStateCmd(m.stateAPI),
 		fetchWorkspacesCmd(m.workspaceAPI),
 		fetchWorkspaceGroupsCmd(m.workspaceAPI),
@@ -789,11 +789,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tickMsg:
 		return m, m.handleTick(msg)
-	case tea.BackgroundColorMsg:
-		if setMarkdownBackgroundDark(msg.IsDark()) {
-			m.renderViewport()
-		}
-		return m, nil
 	}
 	if handled, cmd := m.reduceMutationMessages(msg); handled {
 		return m, cmd
@@ -1355,6 +1350,9 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		nextSessionID := strings.TrimSpace(item.session.ID)
 		previousSessionID := strings.TrimSpace(m.composeSessionID())
 		sessionChanged := previousSessionID != nextSessionID
+		if m.newSession != nil {
+			m.newSession = nil
+		}
 		if sessionChanged {
 			draftChanged = m.saveCurrentComposeDraft() || draftChanged
 			m.closeComposeOptionPicker()
@@ -1417,10 +1415,10 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.resetStreamWithReason(transcriptResetReasonSelectionLoad)
 	m.pendingApproval = nil
 	m.pendingSessionKey = token
-	m.setStatusMessage("loading " + id)
 	if m.pendingTranscriptSnapshotRetryCount != nil {
 		delete(m.pendingTranscriptSnapshotRetryCount, token)
 	}
+	m.setStatusMessage("loading " + id)
 	m.scrollOnLoad = true
 	m.loading = true
 	m.loadingKey = token
@@ -3246,6 +3244,7 @@ func (m *Model) renderViewport() {
 		selectionIndex: selectedRenderIndex,
 		highlightStart: highlightStart,
 		highlightEnd:   highlightEnd,
+		themeID:        resolveRenderThemeID(m.themeID),
 		timestampMode:  mode,
 		relativeBucket: relativeBucket,
 	}
@@ -3261,6 +3260,7 @@ func (m *Model) renderViewport() {
 				RawContent:     m.contentRaw,
 				EscapeMarkdown: m.contentEsc,
 				RenderRaw:      m.contentRenderRaw,
+				ThemeID:        signature.themeID,
 				Blocks:         m.contentBlocks,
 				BlockMetaByID:  m.contentBlockMetaByID,
 				Selection: RenderSelection{
@@ -3294,6 +3294,7 @@ func (m *Model) isViewportRenderCurrent(signature viewportRenderSignature) bool 
 		m.renderedForSelection == signature.selectionIndex &&
 		m.renderedForHighlightStart == signature.highlightStart &&
 		m.renderedForHighlightEnd == signature.highlightEnd &&
+		m.renderedForThemeID == signature.themeID &&
 		m.renderedForTimestampMode == signature.timestampMode &&
 		m.renderedForRelativeBucket == signature.relativeBucket
 }
@@ -3339,6 +3340,7 @@ func (m *Model) applyViewportRenderResult(signature viewportRenderSignature, gen
 	m.renderedForSelection = signature.selectionIndex
 	m.renderedForHighlightStart = signature.highlightStart
 	m.renderedForHighlightEnd = signature.highlightEnd
+	m.renderedForThemeID = signature.themeID
 	m.renderedForTimestampMode = signature.timestampMode
 	m.renderedForRelativeBucket = signature.relativeBucket
 	m.renderVersion++
@@ -4840,6 +4842,9 @@ func (m *Model) exitRenameWorkflow(status string) {
 func (m *Model) enterCompose(sessionID string) {
 	if m.mode == uiModeCompose {
 		m.saveCurrentComposeDraft()
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		m.newSession = nil
 	}
 	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeCompose

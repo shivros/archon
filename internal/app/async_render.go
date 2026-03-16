@@ -10,6 +10,7 @@ type viewportRenderSignature struct {
 	selectionIndex int
 	highlightStart int
 	highlightEnd   int
+	themeID        string
 	timestampMode  ChatTimestampMode
 	relativeBucket int64
 }
@@ -20,6 +21,7 @@ func (s viewportRenderSignature) Equal(other viewportRenderSignature) bool {
 		s.selectionIndex == other.selectionIndex &&
 		s.highlightStart == other.highlightStart &&
 		s.highlightEnd == other.highlightEnd &&
+		s.themeID == other.themeID &&
 		s.timestampMode == other.timestampMode &&
 		s.relativeBucket == other.relativeBucket
 }

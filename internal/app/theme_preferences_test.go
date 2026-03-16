@@ -15,6 +15,19 @@ type fakeThemePreferenceStore struct {
 	err   error
 }
 
+type themeAwareRenderPipeline struct {
+	calls int
+}
+
+func (p *themeAwareRenderPipeline) Render(req RenderRequest) RenderResult {
+	p.calls++
+	text := strings.TrimSpace(req.ThemeID)
+	if text == "" {
+		text = CurrentThemeID()
+	}
+	return newRenderResult(text, nil)
+}
+
 func (f *fakeThemePreferenceStore) SaveTheme(themeID string) error {
 	f.saved = append(f.saved, themeID)
 	return f.err
@@ -142,6 +155,38 @@ func TestApplyThemeSelectionHandlesNilSettingsMenu(t *testing.T) {
 	}
 	if len(store.saved) != 1 || store.saved[0] != "monokai" {
 		t.Fatalf("expected save call for monokai, got %#v", store.saved)
+	}
+}
+
+func TestApplyThemeSelectionRerendersViewportForThemeOnlyChange(t *testing.T) {
+	previousTheme := CurrentThemeID()
+	t.Cleanup(func() {
+		ApplyTheme(previousTheme)
+	})
+
+	pipeline := &themeAwareRenderPipeline{}
+	store := &fakeThemePreferenceStore{}
+	m := NewModel(nil, WithThemePreferenceStore(store), WithRenderPipeline(pipeline))
+	m.resize(120, 40)
+	m.applyBlocks([]ChatBlock{{ID: "1", Role: ChatRoleAgent, Text: "hello"}})
+
+	initialCalls := pipeline.calls
+	if initialCalls == 0 {
+		t.Fatalf("expected initial viewport render")
+	}
+	if got := strings.TrimSpace(m.renderedText); got != "default" {
+		t.Fatalf("expected initial rendered theme default, got %q", got)
+	}
+
+	_ = m.applyThemeSelection("monokai")
+	if pipeline.calls != initialCalls+1 {
+		t.Fatalf("expected theme change to trigger a fresh viewport render, got %d calls", pipeline.calls)
+	}
+	if got := strings.TrimSpace(m.renderedText); got != "monokai" {
+		t.Fatalf("expected rendered viewport content to refresh for monokai, got %q", got)
+	}
+	if got := m.renderedForThemeID; got != "monokai" {
+		t.Fatalf("expected viewport signature theme to update, got %q", got)
 	}
 }
 

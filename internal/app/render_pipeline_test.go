@@ -82,6 +82,60 @@ func TestDefaultRenderPipelineSelectionImpactsRenderedOutput(t *testing.T) {
 	}
 }
 
+func TestDefaultRenderPipelineInvalidatesBlockCacheOnThemeChange(t *testing.T) {
+	previousTheme := CurrentThemeID()
+	t.Cleanup(func() {
+		ApplyTheme(previousTheme)
+	})
+
+	pipeline := NewDefaultRenderPipeline()
+	ApplyTheme("default")
+	defaultResult := pipeline.Render(RenderRequest{
+		Width:   100,
+		ThemeID: "default",
+		Blocks:  []ChatBlock{{ID: "1", Role: ChatRoleUser, Text: "hello"}},
+	})
+
+	ApplyTheme("monokai")
+	monokaiResult := pipeline.Render(RenderRequest{
+		Width:   100,
+		ThemeID: "monokai",
+		Blocks:  []ChatBlock{{ID: "1", Role: ChatRoleUser, Text: "hello"}},
+	})
+
+	if defaultResult.Text == monokaiResult.Text {
+		t.Fatalf("expected block render output to change across themes")
+	}
+}
+
+func TestDefaultRenderPipelineInvalidatesMarkdownCacheOnThemeChange(t *testing.T) {
+	previousTheme := CurrentThemeID()
+	previousMarkdownDark := markdownBackgroundDark()
+	t.Cleanup(func() {
+		ApplyTheme(previousTheme)
+		_ = setMarkdownBackgroundDark(previousMarkdownDark)
+	})
+
+	pipeline := NewDefaultRenderPipeline()
+	ApplyTheme("adwaita")
+	lightResult := pipeline.Render(RenderRequest{
+		Width:      80,
+		ThemeID:    "adwaita",
+		RawContent: "> quoted",
+	})
+
+	ApplyTheme("monokai")
+	darkResult := pipeline.Render(RenderRequest{
+		Width:      80,
+		ThemeID:    "monokai",
+		RawContent: "> quoted",
+	})
+
+	if lightResult.Text == darkResult.Text {
+		t.Fatalf("expected markdown render output to change across themes")
+	}
+}
+
 func TestRenderResultCacheEvictsOldestKey(t *testing.T) {
 	cache := newRenderResultCache(1)
 	cache.Set(1, RenderResult{Text: "first"})

@@ -24,6 +24,7 @@ type blockRenderKey struct {
 	hasMeta        bool
 	width          int
 	selected       bool
+	themeID        string
 	timestampMode  ChatTimestampMode
 	relativeBucket int64
 }
@@ -100,6 +101,7 @@ func (r *cachedChatBlockRenderer) RenderChatBlock(block ChatBlock, width int, se
 		hasMeta:        hasMeta,
 		width:          width,
 		selected:       selected,
+		themeID:        resolveRenderThemeID(ctx.ThemeID),
 		timestampMode:  mode,
 		relativeBucket: chatTimestampRenderBucket(mode, ctx.Now),
 	}

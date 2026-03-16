@@ -167,6 +167,50 @@ func TestPhase0ComposeStartNewSessionClearsExistingTranscript(t *testing.T) {
 	}
 }
 
+func TestPhase0ComposeSessionSelectionClearsPendingNewSessionTarget(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.newSession = &newSessionTarget{
+		workspaceID: "ws1",
+		provider:    "codex",
+	}
+	m.mode = uiModeCompose
+	if m.compose != nil {
+		m.compose.Enter("", "New session")
+	}
+	if m.chatInput == nil {
+		t.Fatalf("expected chat input")
+	}
+	m.chatInput.SetValue("hello after switching")
+
+	_ = m.onSelectionChangedImmediate()
+
+	if m.newSession != nil {
+		t.Fatalf("expected existing session selection to clear pending new session target")
+	}
+	if got := m.composeSessionID(); got != "s1" {
+		t.Fatalf("expected compose session to retarget to s1, got %q", got)
+	}
+
+	cmd := m.submitComposeInput("hello after switching")
+	if cmd == nil {
+		t.Fatalf("expected send command")
+	}
+	entry, ok := m.pendingSends[1]
+	if !ok {
+		t.Fatalf("expected pending send to be registered for existing session")
+	}
+	if entry.sessionID != "s1" || entry.provider != "codex" {
+		t.Fatalf("unexpected pending send entry: %#v", entry)
+	}
+	if blocks := m.currentBlocks(); len(blocks) == 0 || blocks[0].Role != ChatRoleUser || blocks[0].Text != "hello after switching" {
+		t.Fatalf("expected optimistic user block for existing session send, got %#v", blocks)
+	}
+	lines := strings.Join(m.currentLines(), "\n")
+	if strings.Contains(lines, "Starting new session...") {
+		t.Fatalf("did not expect new-session placeholder after switching to an existing session")
+	}
+}
+
 func TestPhase0ScheduleSessionLoadDebouncesSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.selectSeq = 41

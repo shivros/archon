@@ -1,6 +1,9 @@
 package app
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 var themePresets = buildThemePresets()
 
@@ -323,8 +326,10 @@ func paletteFromScheme(s themeScheme) themePalette {
 	p.SettingsMenuHelpHintFg = s.FgMuted
 	p.SettingsMenuHelpRowFg = s.FgPrimary
 	p.SettingsMenuHintFg = s.FgDim
+	p.UserBubbleFg = s.FgStrong
 	p.UserBubbleBorderFg = s.Border
 	p.UserBubbleBg = s.BgSelection
+	p.AgentBubbleFg = s.FgPrimary
 	p.AgentBubbleBorderFg = s.Border
 	p.SystemBubbleBorderFg = s.Border
 	p.SystemBubbleFg = s.FgMuted
@@ -356,6 +361,7 @@ func paletteFromScheme(s themeScheme) themePalette {
 	p.SidebarSortStripMutedFg = s.SortMuted
 	p.SidebarSortStripActiveBg = s.SortActiveBg
 	p.MarkdownBlockQuoteFg = s.FgMuted
+	p.MarkdownDark = colorAppearsDark(s.BgBase)
 	p.ProviderBadgeFallbackFg = s.FgMuted
 	p.ProviderBadgeCodexFg = s.Accent
 	p.ProviderBadgeClaudeFg = s.Warning
@@ -413,8 +419,10 @@ func defaultThemePalette() themePalette {
 		SettingsMenuHelpHintFg:          "245",
 		SettingsMenuHelpRowFg:           "252",
 		SettingsMenuHintFg:              "244",
+		UserBubbleFg:                    "230",
 		UserBubbleBorderFg:              "240",
 		UserBubbleBg:                    "236",
+		AgentBubbleFg:                   "252",
 		AgentBubbleBorderFg:             "238",
 		SystemBubbleBorderFg:            "237",
 		SystemBubbleFg:                  "245",
@@ -446,6 +454,7 @@ func defaultThemePalette() themePalette {
 		SidebarSortStripMutedFg:         "243",
 		SidebarSortStripActiveBg:        "60",
 		MarkdownBlockQuoteFg:            "245",
+		MarkdownDark:                    true,
 		ProviderBadgeFallbackFg:         "245",
 		ProviderBadgeCodexFg:            "15",
 		ProviderBadgeClaudeFg:           "208",
@@ -454,4 +463,21 @@ func defaultThemePalette() themePalette {
 		ProviderBadgeGeminiFg:           "45",
 		ProviderBadgeCustomFg:           "250",
 	}
+}
+
+func colorAppearsDark(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	if strings.HasPrefix(value, "#") && len(value) == 7 {
+		r, errR := strconv.ParseInt(value[1:3], 16, 64)
+		g, errG := strconv.ParseInt(value[3:5], 16, 64)
+		b, errB := strconv.ParseInt(value[5:7], 16, 64)
+		if errR == nil && errG == nil && errB == nil {
+			luma := (299*r + 587*g + 114*b) / 1000
+			return luma < 128
+		}
+	}
+	return true
 }
