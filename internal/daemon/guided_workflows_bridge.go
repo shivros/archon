@@ -89,6 +89,7 @@ func newGuidedWorkflowRunService(
 	}
 	if promptDispatcher := newGuidedWorkflowPromptDispatcher(coreCfg, manager, stores, liveManager, logger); promptDispatcher != nil {
 		opts = append(opts, guidedworkflows.WithStepPromptDispatcher(promptDispatcher))
+		opts = append(opts, guidedworkflows.WithGateDispatcher(NewLLMJudgeGateDispatcher(promptDispatcher)))
 	}
 	if controls.Enabled {
 		opts = append(opts, guidedworkflows.WithRunExecutionControls(controls))
@@ -389,6 +390,9 @@ type dispatchTelemetryContext struct {
 	RunID        string
 	PhaseID      string
 	StepID       string
+	GateID       string
+	GateKind     string
+	Boundary     string
 	SessionID    string
 	Provider     string
 	Model        string
@@ -416,6 +420,9 @@ func (r loggerDispatchTelemetryReporter) ReportDispatchResult(ctx dispatchTeleme
 		logging.F("run_id", strings.TrimSpace(ctx.RunID)),
 		logging.F("phase_id", strings.TrimSpace(ctx.PhaseID)),
 		logging.F("step_id", strings.TrimSpace(ctx.StepID)),
+		logging.F("gate_id", strings.TrimSpace(ctx.GateID)),
+		logging.F("gate_kind", strings.TrimSpace(ctx.GateKind)),
+		logging.F("boundary", strings.TrimSpace(ctx.Boundary)),
 		logging.F("session_id", strings.TrimSpace(ctx.SessionID)),
 		logging.F("turn_id", strings.TrimSpace(ctx.TurnID)),
 		logging.F("provider", strings.TrimSpace(ctx.Provider)),
@@ -462,6 +469,62 @@ func newGuidedWorkflowPromptDispatcher(
 		dispatchTelemetry:      loggerDispatchTelemetryReporter{logger: logger},
 		logger:                 logger,
 	}
+}
+
+type LLMJudgeGateDispatcher struct {
+	stepDispatcher guidedworkflows.StepPromptDispatcher
+}
+
+func NewLLMJudgeGateDispatcher(stepDispatcher guidedworkflows.StepPromptDispatcher) guidedworkflows.GateDispatcher {
+	if stepDispatcher == nil {
+		return nil
+	}
+	return &LLMJudgeGateDispatcher{stepDispatcher: stepDispatcher}
+}
+
+func (d *LLMJudgeGateDispatcher) DispatchGate(
+	ctx context.Context,
+	req guidedworkflows.GateDispatchRequest,
+) (guidedworkflows.GateDispatchResult, error) {
+	if d == nil || d.stepDispatcher == nil {
+		return guidedworkflows.GateDispatchResult{}, nil
+	}
+	stepResult, err := d.stepDispatcher.DispatchStepPrompt(ctx, guidedworkflows.StepPromptDispatchRequest{
+		RunID:                  strings.TrimSpace(req.RunID),
+		TemplateID:             strings.TrimSpace(req.TemplateID),
+		DefaultAccessLevel:     req.DefaultAccessLevel,
+		SelectedProvider:       strings.TrimSpace(req.SelectedProvider),
+		SelectedRuntimeOptions: types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+		WorkspaceID:            strings.TrimSpace(req.WorkspaceID),
+		WorktreeID:             strings.TrimSpace(req.WorktreeID),
+		SessionID:              strings.TrimSpace(req.SessionID),
+		PhaseID:                strings.TrimSpace(req.PhaseID),
+		GateID:                 strings.TrimSpace(req.GateID),
+		GateKind:               req.GateKind,
+		Boundary:               req.Boundary,
+		Prompt:                 strings.TrimSpace(req.Prompt),
+	})
+	if err != nil {
+		return guidedworkflows.GateDispatchResult{}, wrapGateDispatchError(err)
+	}
+	return guidedworkflows.GateDispatchResult{
+		Dispatched: stepResult.Dispatched,
+		Transport:  "session_turn",
+		SessionID:  strings.TrimSpace(stepResult.SessionID),
+		SignalID:   strings.TrimSpace(stepResult.TurnID),
+		Provider:   strings.TrimSpace(stepResult.Provider),
+		Model:      strings.TrimSpace(stepResult.Model),
+	}, nil
+}
+
+func wrapGateDispatchError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) || errors.Is(err, guidedworkflows.ErrGateDispatchDeferred) {
+		return fmt.Errorf("%w: %v", guidedworkflows.ErrGateDispatchDeferred, err)
+	}
+	return fmt.Errorf("%w: %v", guidedworkflows.ErrGateDispatch, err)
 }
 
 func (d *guidedWorkflowPromptDispatcher) dispatchTelemetryReporterOrDefault() dispatchTelemetryReporter {
@@ -520,6 +583,9 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 			RunID:        req.RunID,
 			PhaseID:      req.PhaseID,
 			StepID:       req.StepID,
+			GateID:       req.GateID,
+			GateKind:     string(req.GateKind),
+			Boundary:     string(req.Boundary),
 			SessionID:    sessionID,
 			Provider:     provider,
 			Disposition:  disposition,
@@ -546,6 +612,9 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		RunID:        req.RunID,
 		PhaseID:      req.PhaseID,
 		StepID:       req.StepID,
+		GateID:       req.GateID,
+		GateKind:     string(req.GateKind),
+		Boundary:     string(req.Boundary),
 		SessionID:    result.SessionID,
 		Provider:     result.Provider,
 		Model:        result.Model,
@@ -554,6 +623,13 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		AttemptCount: attemptCount,
 	})
 	return result, nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) DispatchGate(
+	ctx context.Context,
+	req guidedworkflows.GateDispatchRequest,
+) (guidedworkflows.GateDispatchResult, error) {
+	return (&LLMJudgeGateDispatcher{stepDispatcher: d}).DispatchGate(ctx, req)
 }
 
 func (d *guidedWorkflowPromptDispatcher) sendStepPrompt(
@@ -1572,6 +1648,9 @@ func guidedWorkflowDecisionNotificationEvent(turnEvent *types.NotificationEvent,
 		"decision_id":        decisionID,
 		"phase_id":           strings.TrimSpace(run.LatestDecision.PhaseID),
 		"step_id":            strings.TrimSpace(run.LatestDecision.StepID),
+		"gate_id":            strings.TrimSpace(run.LatestDecision.GateID),
+		"gate_kind":          strings.TrimSpace(string(run.LatestDecision.GateKind)),
+		"boundary":           strings.TrimSpace(string(run.LatestDecision.Boundary)),
 		"reason":             strings.TrimSpace(run.LatestDecision.Reason),
 		"confidence":         metadata.Confidence,
 		"risk_summary":       fmt.Sprintf("severity=%s tier=%s score=%.2f pause_threshold=%.2f", metadata.Severity, metadata.Tier, metadata.Score, metadata.PauseThreshold),

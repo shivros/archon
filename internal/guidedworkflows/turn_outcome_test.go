@@ -37,3 +37,15 @@ func TestTurnSignalFailureDetail(t *testing.T) {
 		t.Fatalf("expected completed terminal status to remain non-failed, got failed=%v msg=%q", failed, msg)
 	}
 }
+
+func TestGateSignalFailureDetail(t *testing.T) {
+	if msg, failed := GateSignalFailureDetail(GateSignal{Error: "transport unavailable"}); !failed || msg != "transport unavailable" {
+		t.Fatalf("expected explicit error to fail, got failed=%v msg=%q", failed, msg)
+	}
+	if msg, failed := GateSignalFailureDetail(GateSignal{Terminal: true, Status: "failed"}); !failed || msg == "" {
+		t.Fatalf("expected failed terminal status to fail, got failed=%v msg=%q", failed, msg)
+	}
+	if msg, failed := GateSignalFailureDetail(GateSignal{Terminal: true, Status: "completed"}); failed || msg != "" {
+		t.Fatalf("expected completed terminal status to remain non-failed, got failed=%v msg=%q", failed, msg)
+	}
+}

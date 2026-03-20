@@ -22,6 +22,8 @@ var (
 	ErrCommandFailed         = errors.New("workflow command failed")
 	ErrStepDispatch          = errors.New("workflow step prompt dispatch unavailable")
 	ErrStepDispatchDeferred  = errors.New("workflow step prompt dispatch deferred")
+	ErrGateDispatch          = errors.New("workflow gate dispatch unavailable")
+	ErrGateDispatchDeferred  = errors.New("workflow gate dispatch deferred")
 	ErrDependencyNotFound    = errors.New("workflow dependency run not found")
 	ErrDependencyInvalid     = errors.New("workflow dependency is invalid")
 	ErrDependencyGraph       = errors.New("workflow dependency graph violation")

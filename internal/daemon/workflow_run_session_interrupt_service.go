@@ -142,6 +142,14 @@ func (s *workflowRunSessionTargetResolverService) ResolveWorkflowRunSessionIDs(
 				add(attempt.SessionID)
 			}
 		}
+		for _, gate := range phase.Gates {
+			if gate.Execution != nil {
+				add(gate.Execution.SessionID)
+			}
+			for _, attempt := range gate.ExecutionAttempts {
+				add(attempt.SessionID)
+			}
+		}
 	}
 	if s.sessionMeta != nil {
 		meta, err := s.sessionMeta.List(ctx)

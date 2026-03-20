@@ -3,6 +3,7 @@ package guidedworkflows
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"control/internal/types"
@@ -39,6 +40,7 @@ type rawWorkflowPhase struct {
 	PhaseTemplateRef string            `json:"phase_template_ref,omitempty"`
 	Steps            []rawWorkflowStep `json:"steps,omitempty"`
 	StepRefs         []string          `json:"step_refs,omitempty"`
+	Gates            []rawWorkflowGate `json:"gates,omitempty"`
 }
 
 type rawWorkflowStep struct {
@@ -48,6 +50,50 @@ type rawWorkflowStep struct {
 	PromptRef      string                       `json:"prompt_ref,omitempty"`
 	StepRef        string                       `json:"step_ref,omitempty"`
 	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+}
+
+type rawWorkflowGate struct {
+	ID        string `json:"id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Boundary  string `json:"boundary,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
+	PromptRef string `json:"prompt_ref,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	fields    map[string]json.RawMessage
+}
+
+func (g *rawWorkflowGate) UnmarshalJSON(data []byte) error {
+	type gateAlias rawWorkflowGate
+	var alias gateAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*g = rawWorkflowGate(alias)
+	g.fields = fields
+	return nil
+}
+
+func (g rawWorkflowGate) unknownFields(allowed ...string) []string {
+	if len(g.fields) == 0 {
+		return nil
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for field := range g.fields {
+		if _, ok := allowedSet[field]; ok {
+			continue
+		}
+		unknown = append(unknown, field)
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 type templateCompositionDefinitions struct {
@@ -203,8 +249,8 @@ func expandPhaseTemplateReference(rawPhase rawWorkflowPhase, defs templateCompos
 	if !ok {
 		return WorkflowTemplatePhase{}, fmt.Errorf("%w: unknown phase_template_ref %q at %s", ErrTemplateConfigInvalid, ref, ctx)
 	}
-	if len(rawPhase.Steps) > 0 || len(rawPhase.StepRefs) > 0 {
-		return WorkflowTemplatePhase{}, fmt.Errorf("%w: %s cannot combine phase_template_ref with steps/step_refs", ErrTemplateConfigInvalid, ctx)
+	if len(rawPhase.Steps) > 0 || len(rawPhase.StepRefs) > 0 || len(rawPhase.Gates) > 0 {
+		return WorkflowTemplatePhase{}, fmt.Errorf("%w: %s cannot combine phase_template_ref with steps/step_refs/gates", ErrTemplateConfigInvalid, ctx)
 	}
 	out := cloneWorkflowTemplatePhase(phase)
 	if id := strings.TrimSpace(rawPhase.ID); id != "" {
@@ -235,7 +281,92 @@ func expandConcretePhase(rawPhase rawWorkflowPhase, defs templateCompositionDefi
 		return WorkflowTemplatePhase{}, fmt.Errorf("%w: %s must define steps or step_refs", ErrTemplateConfigInvalid, ctx)
 	}
 	phase.Steps = steps
+	gates, err := expandPhaseGates(rawPhase, defs.prompts, phase.ID, ctx)
+	if err != nil {
+		return WorkflowTemplatePhase{}, err
+	}
+	phase.Gates = gates
 	return phase, nil
+}
+
+func expandPhaseGates(rawPhase rawWorkflowPhase, prompts map[string]string, phaseID string, ctx string) ([]WorkflowGateSpec, error) {
+	if len(rawPhase.Gates) == 0 {
+		return nil, nil
+	}
+	out := make([]WorkflowGateSpec, 0, len(rawPhase.Gates))
+	gateIDs := map[string]struct{}{}
+	for idx, rawGate := range rawPhase.Gates {
+		gateCtx := fmt.Sprintf("%s.gates[%d]", ctx, idx)
+		kindRaw := strings.TrimSpace(rawGate.Kind)
+		if kindRaw == "" {
+			return nil, fmt.Errorf("%w: %s.kind is required", ErrTemplateConfigInvalid, gateCtx)
+		}
+		var kind WorkflowGateKind
+		switch kindRaw {
+		case string(WorkflowGateKindManualReview):
+			kind = WorkflowGateKindManualReview
+		case string(WorkflowGateKindLLMJudge):
+			kind = WorkflowGateKindLLMJudge
+		default:
+			return nil, fmt.Errorf("%w: %s.kind %q is not supported", ErrTemplateConfigInvalid, gateCtx, kindRaw)
+		}
+		boundary := WorkflowGateBoundary(strings.TrimSpace(rawGate.Boundary))
+		if boundary == "" {
+			boundary = WorkflowGateBoundaryPhaseEnd
+		}
+		if boundary != WorkflowGateBoundaryPhaseEnd {
+			return nil, fmt.Errorf("%w: %s.boundary %q is not supported", ErrTemplateConfigInvalid, gateCtx, boundary)
+		}
+		id := strings.TrimSpace(rawGate.ID)
+		if id == "" {
+			id = fmt.Sprintf("%s_gate_%d", strings.TrimSpace(phaseID), idx+1)
+		}
+		if _, exists := gateIDs[id]; exists {
+			return nil, fmt.Errorf("%w: duplicate gate id %q at %s", ErrTemplateConfigInvalid, id, gateCtx)
+		}
+		gateIDs[id] = struct{}{}
+		gate := WorkflowGateSpec{
+			ID:   id,
+			Kind: kind,
+			Boundary: WorkflowGateBoundaryRef{
+				Boundary: boundary,
+				PhaseID:  strings.TrimSpace(phaseID),
+			},
+		}
+		switch kind {
+		case WorkflowGateKindManualReview:
+			unknown := rawGate.unknownFields("id", "kind", "boundary", "reason")
+			if len(unknown) > 0 {
+				return nil, fmt.Errorf("%w: %s manual_review has unknown field(s): %s", ErrTemplateConfigInvalid, gateCtx, strings.Join(unknown, ", "))
+			}
+			if strings.TrimSpace(rawGate.Prompt) != "" || strings.TrimSpace(rawGate.PromptRef) != "" {
+				return nil, fmt.Errorf("%w: %s manual_review does not accept prompt/prompt_ref", ErrTemplateConfigInvalid, gateCtx)
+			}
+			gate.ManualReviewConfig = &ManualReviewConfig{
+				Reason: strings.TrimSpace(rawGate.Reason),
+			}
+		case WorkflowGateKindLLMJudge:
+			unknown := rawGate.unknownFields("id", "kind", "boundary", "prompt", "prompt_ref")
+			if len(unknown) > 0 {
+				return nil, fmt.Errorf("%w: %s llm_judge has unknown field(s): %s", ErrTemplateConfigInvalid, gateCtx, strings.Join(unknown, ", "))
+			}
+			if strings.TrimSpace(rawGate.Reason) != "" {
+				return nil, fmt.Errorf("%w: %s llm_judge does not accept reason", ErrTemplateConfigInvalid, gateCtx)
+			}
+			prompt, err := resolvePrompt(rawGate.Prompt, rawGate.PromptRef, prompts, gateCtx)
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(prompt) == "" {
+				return nil, fmt.Errorf("%w: %s llm_judge resolved prompt is required", ErrTemplateConfigInvalid, gateCtx)
+			}
+			gate.LLMJudgeConfig = &LLMJudgeConfig{
+				Prompt: strings.TrimSpace(prompt),
+			}
+		}
+		out = append(out, gate)
+	}
+	return out, nil
 }
 
 func expandPhaseSteps(rawPhase rawWorkflowPhase, defs templateCompositionDefinitions, ctx string) ([]WorkflowTemplateStep, error) {
@@ -344,6 +475,25 @@ func cloneWorkflowTemplatePhase(in WorkflowTemplatePhase) WorkflowTemplatePhase 
 	out.Steps = make([]WorkflowTemplateStep, len(in.Steps))
 	for idx, step := range in.Steps {
 		out.Steps[idx] = cloneWorkflowTemplateStep(step)
+	}
+	if len(in.Gates) > 0 {
+		out.Gates = make([]WorkflowGateSpec, 0, len(in.Gates))
+		for _, gate := range in.Gates {
+			out.Gates = append(out.Gates, cloneWorkflowGateSpec(gate))
+		}
+	}
+	return out
+}
+
+func cloneWorkflowGateSpec(in WorkflowGateSpec) WorkflowGateSpec {
+	out := in
+	if in.ManualReviewConfig != nil {
+		cfg := *in.ManualReviewConfig
+		out.ManualReviewConfig = &cfg
+	}
+	if in.LLMJudgeConfig != nil {
+		cfg := *in.LLMJudgeConfig
+		out.LLMJudgeConfig = &cfg
 	}
 	return out
 }

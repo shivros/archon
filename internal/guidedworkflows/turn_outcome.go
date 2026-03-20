@@ -34,3 +34,18 @@ func TurnSignalFailureDetail(signal TurnSignal) (string, bool) {
 	}
 	return "step failed: turn status " + status, true
 }
+
+func GateSignalFailureDetail(signal GateSignal) (string, bool) {
+	errMsg := strings.TrimSpace(signal.Error)
+	if errMsg != "" {
+		return errMsg, true
+	}
+	if !signal.Terminal {
+		return "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(signal.Status))
+	if !IsFailedTurnStatus(status) {
+		return "", false
+	}
+	return "gate failed: signal status " + status, true
+}

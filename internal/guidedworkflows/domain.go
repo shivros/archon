@@ -25,6 +25,7 @@ type WorkflowTemplatePhase struct {
 	ID    string                 `json:"id"`
 	Name  string                 `json:"name"`
 	Steps []WorkflowTemplateStep `json:"steps"`
+	Gates []WorkflowGateSpec     `json:"gates,omitempty"`
 }
 
 type WorkflowTemplateStep struct {
@@ -32,6 +33,61 @@ type WorkflowTemplateStep struct {
 	Name           string                       `json:"name"`
 	Prompt         string                       `json:"prompt,omitempty"`
 	RuntimeOptions *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+}
+
+type WorkflowGateKind string
+
+const (
+	WorkflowGateKindManualReview WorkflowGateKind = "manual_review"
+	WorkflowGateKindLLMJudge     WorkflowGateKind = "llm_judge"
+)
+
+type WorkflowGateBoundary string
+
+const (
+	WorkflowGateBoundaryPhaseEnd WorkflowGateBoundary = "phase_end"
+)
+
+type WorkflowGateStatus string
+
+const (
+	WorkflowGateStatusPending         WorkflowGateStatus = "pending"
+	WorkflowGateStatusAwaitingSignal  WorkflowGateStatus = "awaiting_signal"
+	WorkflowGateStatusPassed          WorkflowGateStatus = "passed"
+	WorkflowGateStatusPaused          WorkflowGateStatus = "paused"
+	WorkflowGateStatusFailed          WorkflowGateStatus = "failed"
+	WorkflowGateStatusWaitingDispatch WorkflowGateStatus = "waiting_dispatch"
+	WorkflowGateStatusStopped         WorkflowGateStatus = "stopped"
+)
+
+type GateOutcome string
+
+const (
+	GateOutcomeContinue GateOutcome = "continue"
+	GateOutcomePause    GateOutcome = "pause"
+	GateOutcomeAwaiting GateOutcome = "awaiting"
+)
+
+type WorkflowGateBoundaryRef struct {
+	Boundary WorkflowGateBoundary `json:"boundary,omitempty"`
+	PhaseID  string               `json:"phase_id,omitempty"`
+	StepID   string               `json:"step_id,omitempty"`
+}
+
+type WorkflowGateSpec struct {
+	ID                 string                  `json:"id"`
+	Kind               WorkflowGateKind        `json:"kind"`
+	Boundary           WorkflowGateBoundaryRef `json:"boundary"`
+	ManualReviewConfig *ManualReviewConfig     `json:"manual_review_config,omitempty"`
+	LLMJudgeConfig     *LLMJudgeConfig         `json:"llm_judge_config,omitempty"`
+}
+
+type ManualReviewConfig struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+type LLMJudgeConfig struct {
+	Prompt string `json:"prompt,omitempty"`
 }
 
 type WorkflowRunStatus string
@@ -107,12 +163,34 @@ type WorkflowRun struct {
 }
 
 type PhaseRun struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Status      PhaseRunStatus `json:"status"`
-	StartedAt   *time.Time     `json:"started_at,omitempty"`
-	CompletedAt *time.Time     `json:"completed_at,omitempty"`
-	Steps       []StepRun      `json:"steps"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Status      PhaseRunStatus    `json:"status"`
+	StartedAt   *time.Time        `json:"started_at,omitempty"`
+	CompletedAt *time.Time        `json:"completed_at,omitempty"`
+	Steps       []StepRun         `json:"steps"`
+	Gates       []WorkflowGateRun `json:"gates,omitempty"`
+}
+
+type WorkflowGateRun struct {
+	ID                 string                  `json:"id"`
+	Kind               WorkflowGateKind        `json:"kind"`
+	Boundary           WorkflowGateBoundaryRef `json:"boundary"`
+	ManualReviewConfig *ManualReviewConfig     `json:"manual_review_config,omitempty"`
+	LLMJudgeConfig     *LLMJudgeConfig         `json:"llm_judge_config,omitempty"`
+	Status             WorkflowGateStatus      `json:"status,omitempty"`
+	SignalID           string                  `json:"signal_id,omitempty"`
+	StartedAt          *time.Time              `json:"started_at,omitempty"`
+	CompletedAt        *time.Time              `json:"completed_at,omitempty"`
+	Outcome            string                  `json:"outcome,omitempty"`
+	Output             string                  `json:"output,omitempty"`
+	Summary            string                  `json:"summary,omitempty"`
+	Error              string                  `json:"error,omitempty"`
+	Execution          *GateExecutionRef       `json:"execution,omitempty"`
+	ExecutionAttempts  []GateExecutionRef      `json:"execution_attempts,omitempty"`
+	ExecutionState     GateExecutionState      `json:"execution_state,omitempty"`
+	ExecutionMessage   string                  `json:"execution_message,omitempty"`
+	LastSignal         *GateSignalContext      `json:"last_signal,omitempty"`
 }
 
 type StepRun struct {
@@ -157,11 +235,36 @@ type StepExecutionRef struct {
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 
+type GateExecutionState string
+
+const (
+	GateExecutionStateNone        GateExecutionState = "none"
+	GateExecutionStateLinked      GateExecutionState = "linked"
+	GateExecutionStateUnavailable GateExecutionState = "unavailable"
+	GateExecutionStateDeferred    GateExecutionState = "deferred"
+)
+
+type GateExecutionRef struct {
+	TraceID        string     `json:"trace_id,omitempty"`
+	Transport      string     `json:"transport,omitempty"`
+	SessionID      string     `json:"session_id,omitempty"`
+	SessionScope   string     `json:"session_scope,omitempty"`
+	Provider       string     `json:"provider,omitempty"`
+	Model          string     `json:"model,omitempty"`
+	SignalID       string     `json:"signal_id,omitempty"`
+	PromptSnapshot string     `json:"prompt_snapshot,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
 type CheckpointDecision struct {
 	ID          string                     `json:"id"`
 	RunID       string                     `json:"run_id"`
 	PhaseID     string                     `json:"phase_id,omitempty"`
 	StepID      string                     `json:"step_id,omitempty"`
+	GateID      string                     `json:"gate_id,omitempty"`
+	GateKind    WorkflowGateKind           `json:"gate_kind,omitempty"`
+	Boundary    WorkflowGateBoundary       `json:"boundary,omitempty"`
 	Decision    string                     `json:"decision"`
 	Reason      string                     `json:"reason,omitempty"`
 	Source      string                     `json:"source,omitempty"`
@@ -171,24 +274,30 @@ type CheckpointDecision struct {
 }
 
 type RunTimelineEvent struct {
-	At      time.Time `json:"at"`
-	Type    string    `json:"type"`
-	RunID   string    `json:"run_id"`
-	PhaseID string    `json:"phase_id,omitempty"`
-	StepID  string    `json:"step_id,omitempty"`
-	Message string    `json:"message,omitempty"`
+	At       time.Time            `json:"at"`
+	Type     string               `json:"type"`
+	RunID    string               `json:"run_id"`
+	PhaseID  string               `json:"phase_id,omitempty"`
+	StepID   string               `json:"step_id,omitempty"`
+	GateID   string               `json:"gate_id,omitempty"`
+	GateKind WorkflowGateKind     `json:"gate_kind,omitempty"`
+	Boundary WorkflowGateBoundary `json:"boundary,omitempty"`
+	Message  string               `json:"message,omitempty"`
 }
 
 type RunAuditEntry struct {
-	At      time.Time `json:"at"`
-	RunID   string    `json:"run_id"`
-	PhaseID string    `json:"phase_id,omitempty"`
-	StepID  string    `json:"step_id,omitempty"`
-	Scope   string    `json:"scope"`
-	Action  string    `json:"action"`
-	Attempt int       `json:"attempt,omitempty"`
-	Outcome string    `json:"outcome,omitempty"`
-	Detail  string    `json:"detail,omitempty"`
+	At       time.Time            `json:"at"`
+	RunID    string               `json:"run_id"`
+	PhaseID  string               `json:"phase_id,omitempty"`
+	StepID   string               `json:"step_id,omitempty"`
+	GateID   string               `json:"gate_id,omitempty"`
+	GateKind WorkflowGateKind     `json:"gate_kind,omitempty"`
+	Boundary WorkflowGateBoundary `json:"boundary,omitempty"`
+	Scope    string               `json:"scope"`
+	Action   string               `json:"action"`
+	Attempt  int                  `json:"attempt,omitempty"`
+	Outcome  string               `json:"outcome,omitempty"`
+	Detail   string               `json:"detail,omitempty"`
 }
 
 type RunDependency struct {
@@ -260,6 +369,21 @@ type TurnSignal struct {
 	Payload     map[string]any `json:"payload,omitempty"`
 }
 
+type GateSignal struct {
+	Transport   string         `json:"transport,omitempty"`
+	SignalID    string         `json:"signal_id,omitempty"`
+	SessionID   string         `json:"session_id,omitempty"`
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	WorktreeID  string         `json:"worktree_id,omitempty"`
+	Provider    string         `json:"provider,omitempty"`
+	Source      string         `json:"source,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Output      string         `json:"output,omitempty"`
+	Terminal    bool           `json:"terminal,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+}
+
 type StepTurnSignalContext struct {
 	ReceivedAt  time.Time      `json:"received_at"`
 	SessionID   string         `json:"session_id,omitempty"`
@@ -268,6 +392,22 @@ type StepTurnSignalContext struct {
 	Provider    string         `json:"provider,omitempty"`
 	Source      string         `json:"source,omitempty"`
 	TurnID      string         `json:"turn_id,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Output      string         `json:"output,omitempty"`
+	Terminal    bool           `json:"terminal,omitempty"`
+	Payload     map[string]any `json:"payload,omitempty"`
+}
+
+type GateSignalContext struct {
+	ReceivedAt  time.Time      `json:"received_at"`
+	Transport   string         `json:"transport,omitempty"`
+	SignalID    string         `json:"signal_id,omitempty"`
+	SessionID   string         `json:"session_id,omitempty"`
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	WorktreeID  string         `json:"worktree_id,omitempty"`
+	Provider    string         `json:"provider,omitempty"`
+	Source      string         `json:"source,omitempty"`
 	Status      string         `json:"status,omitempty"`
 	Error       string         `json:"error,omitempty"`
 	Output      string         `json:"output,omitempty"`
@@ -286,14 +426,42 @@ type StepPromptDispatchRequest struct {
 	SessionID              string                       `json:"session_id,omitempty"`
 	PhaseID                string                       `json:"phase_id,omitempty"`
 	StepID                 string                       `json:"step_id,omitempty"`
+	GateID                 string                       `json:"gate_id,omitempty"`
+	GateKind               WorkflowGateKind             `json:"gate_kind,omitempty"`
+	Boundary               WorkflowGateBoundary         `json:"boundary,omitempty"`
 	Prompt                 string                       `json:"prompt"`
 	RuntimeOptions         *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
+}
+
+type GateDispatchRequest struct {
+	RunID                  string                       `json:"run_id"`
+	TemplateID             string                       `json:"template_id,omitempty"`
+	DefaultAccessLevel     types.AccessLevel            `json:"default_access_level,omitempty"`
+	SelectedProvider       string                       `json:"selected_provider,omitempty"`
+	SelectedRuntimeOptions *types.SessionRuntimeOptions `json:"selected_runtime_options,omitempty"`
+	WorkspaceID            string                       `json:"workspace_id,omitempty"`
+	WorktreeID             string                       `json:"worktree_id,omitempty"`
+	SessionID              string                       `json:"session_id,omitempty"`
+	PhaseID                string                       `json:"phase_id,omitempty"`
+	GateID                 string                       `json:"gate_id,omitempty"`
+	GateKind               WorkflowGateKind             `json:"gate_kind,omitempty"`
+	Boundary               WorkflowGateBoundary         `json:"boundary,omitempty"`
+	Prompt                 string                       `json:"prompt"`
 }
 
 type StepPromptDispatchResult struct {
 	Dispatched bool   `json:"dispatched"`
 	SessionID  string `json:"session_id,omitempty"`
 	TurnID     string `json:"turn_id,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
+}
+
+type GateDispatchResult struct {
+	Dispatched bool   `json:"dispatched"`
+	Transport  string `json:"transport,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	SignalID   string `json:"signal_id,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	Model      string `json:"model,omitempty"`
 }

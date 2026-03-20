@@ -35,6 +35,9 @@ func TestDefaultDispatchErrorClassifier(t *testing.T) {
 	if got := classifier.Classify(ErrStepDispatchDeferred); got != DispatchErrorDispositionDeferred {
 		t.Fatalf("expected deferred error classification, got %v", got)
 	}
+	if got := classifier.Classify(ErrGateDispatchDeferred); got != DispatchErrorDispositionDeferred {
+		t.Fatalf("expected gate deferred error classification, got %v", got)
+	}
 	if got := classifier.Classify(errors.New("boom")); got != DispatchErrorDispositionFatal {
 		t.Fatalf("expected unknown errors to classify as fatal, got %v", got)
 	}

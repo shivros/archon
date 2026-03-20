@@ -25,7 +25,7 @@ func (defaultDispatchErrorClassifier) Classify(err error) DispatchErrorDispositi
 	if err == nil {
 		return DispatchErrorDispositionNone
 	}
-	if errors.Is(err, ErrStepDispatchDeferred) {
+	if errors.Is(err, ErrStepDispatchDeferred) || errors.Is(err, ErrGateDispatchDeferred) {
 		return DispatchErrorDispositionDeferred
 	}
 	return DispatchErrorDispositionFatal

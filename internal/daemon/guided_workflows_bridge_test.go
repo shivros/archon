@@ -1049,6 +1049,134 @@ func TestGuidedWorkflowDispatchDefaultsFromCoreConfigPreservesUnsupportedProvide
 	}
 }
 
+func TestNewLLMJudgeGateDispatcherNilStepDispatcher(t *testing.T) {
+	if dispatcher := NewLLMJudgeGateDispatcher(nil); dispatcher != nil {
+		t.Fatalf("expected nil gate dispatcher when step dispatcher is nil")
+	}
+}
+
+func TestLLMJudgeGateDispatcherDispatchGateMapsStepDispatch(t *testing.T) {
+	stepDispatcher := &bridgeStepPromptDispatcherStub{
+		responses: []guidedworkflows.StepPromptDispatchResult{
+			{
+				Dispatched: true,
+				SessionID:  "sess-gate",
+				TurnID:     "turn-gate",
+				Provider:   "codex",
+				Model:      "gpt-5.3-codex",
+			},
+		},
+	}
+	gateDispatcher := NewLLMJudgeGateDispatcher(stepDispatcher)
+	if gateDispatcher == nil {
+		t.Fatalf("expected gate dispatcher")
+	}
+	result, err := gateDispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:       "run-1",
+		TemplateID:  "tpl-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-gate",
+		PhaseID:     "phase-1",
+		GateID:      "gate-1",
+		GateKind:    guidedworkflows.WorkflowGateKindLLMJudge,
+		Boundary:    guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+		Prompt:      "judge prompt",
+	})
+	if err != nil {
+		t.Fatalf("DispatchGate: %v", err)
+	}
+	if !result.Dispatched || result.Transport != "session_turn" || result.SignalID != "turn-gate" {
+		t.Fatalf("unexpected gate dispatch result: %#v", result)
+	}
+	if len(stepDispatcher.calls) != 1 {
+		t.Fatalf("expected one underlying step dispatch call, got %d", len(stepDispatcher.calls))
+	}
+	call := stepDispatcher.calls[0]
+	if call.GateID != "gate-1" || call.GateKind != guidedworkflows.WorkflowGateKindLLMJudge || call.Boundary != guidedworkflows.WorkflowGateBoundaryPhaseEnd {
+		t.Fatalf("expected gate metadata to be forwarded, got %#v", call)
+	}
+}
+
+func TestLLMJudgeGateDispatcherDispatchGateWrapsDeferredError(t *testing.T) {
+	stepDispatcher := &bridgeStepPromptDispatcherStub{
+		errs: []error{guidedworkflows.ErrStepDispatchDeferred},
+	}
+	gateDispatcher := NewLLMJudgeGateDispatcher(stepDispatcher)
+	if gateDispatcher == nil {
+		t.Fatalf("expected gate dispatcher")
+	}
+	_, err := gateDispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:  "run-1",
+		GateID: "gate-1",
+		Prompt: "judge prompt",
+	})
+	if err == nil || !errors.Is(err, guidedworkflows.ErrGateDispatchDeferred) {
+		t.Fatalf("expected wrapped ErrGateDispatchDeferred, got %v", err)
+	}
+}
+
+func TestWrapGateDispatchError(t *testing.T) {
+	tests := []struct {
+		name string
+		in   error
+		want error
+	}{
+		{name: "nil", in: nil, want: nil},
+		{name: "step deferred", in: guidedworkflows.ErrStepDispatchDeferred, want: guidedworkflows.ErrGateDispatchDeferred},
+		{name: "gate deferred", in: guidedworkflows.ErrGateDispatchDeferred, want: guidedworkflows.ErrGateDispatchDeferred},
+		{name: "step fatal", in: guidedworkflows.ErrStepDispatch, want: guidedworkflows.ErrGateDispatch},
+		{name: "unknown fatal", in: errors.New("boom"), want: guidedworkflows.ErrGateDispatch},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := wrapGateDispatchError(tc.in)
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("expected nil error, got %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherDispatchGateDelegatesToStepPath(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+			},
+		},
+		turnID: "turn-gate",
+	}
+	dispatcher := &guidedWorkflowPromptDispatcher{sessions: gateway}
+	result, err := dispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:       "run-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+		GateID:      "gate-1",
+		GateKind:    guidedworkflows.WorkflowGateKindLLMJudge,
+		Boundary:    guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+		Prompt:      "judge prompt",
+	})
+	if err != nil {
+		t.Fatalf("DispatchGate: %v", err)
+	}
+	if !result.Dispatched || result.SignalID != "turn-gate" || result.Transport != "session_turn" {
+		t.Fatalf("unexpected gate dispatch result: %#v", result)
+	}
+}
+
 func TestGuidedWorkflowPromptDispatcherUsesExplicitSession(t *testing.T) {
 	gateway := &stubGuidedWorkflowSessionGateway{
 		sessions: []*types.Session{
@@ -2587,6 +2715,86 @@ func TestGuidedWorkflowNotificationPublisherEmitsDecisionNeededPayload(t *testin
 	}
 }
 
+func TestGuidedWorkflowNotificationPublisherDecisionPayloadIncludesGateMetadata(t *testing.T) {
+	downstream := &recordNotificationPublisher{}
+	orchestrator := &recordGuidedWorkflowOrchestrator{enabled: true}
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "gate_pause_notification",
+		Name: "Gate Pause Notification",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "ship it"},
+				},
+				Gates: []guidedworkflows.WorkflowGateSpec{
+					{
+						ID:   "gate_manual_1",
+						Kind: guidedworkflows.WorkflowGateKindManualReview,
+						Boundary: guidedworkflows.WorkflowGateBoundaryRef{
+							Boundary: guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						ManualReviewConfig: &guidedworkflows.ManualReviewConfig{
+							Reason: "manual review required",
+						},
+					},
+				},
+			},
+		},
+	}
+	runService := guidedworkflows.NewRunService(
+		guidedworkflows.Config{Enabled: true},
+		guidedworkflows.WithTemplate(template),
+		guidedworkflows.WithStepPromptDispatcher(&guidedWorkflowPromptDispatcher{
+			sessions: &stubGuidedWorkflowSessionGateway{
+				turnID: "turn-gate-1",
+				sessions: []*types.Session{
+					{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning, CreatedAt: time.Now().UTC()},
+				},
+			},
+		}),
+	)
+	run, err := runService.CreateRun(context.Background(), guidedworkflows.CreateRunRequest{
+		TemplateID:  "gate_pause_notification",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := runService.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	publisher := NewGuidedWorkflowNotificationPublisher(downstream, orchestrator, runService)
+	publisher.Publish(types.NotificationEvent{
+		Trigger:     types.NotificationTriggerTurnCompleted,
+		SessionID:   "sess-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		Provider:    "codex",
+		TurnID:      "turn-gate-1",
+	})
+	decisionEvent := lastDecisionNeededEvent(downstream.events)
+	if decisionEvent == nil {
+		t.Fatalf("expected decision-needed event")
+	}
+	if got := asString(decisionEvent.Payload["gate_id"]); got != "gate_manual_1" {
+		t.Fatalf("expected gate_id gate_manual_1, got %q", got)
+	}
+	if got := asString(decisionEvent.Payload["gate_kind"]); got != string(guidedworkflows.WorkflowGateKindManualReview) {
+		t.Fatalf("expected gate_kind manual_review, got %q", got)
+	}
+	if got := asString(decisionEvent.Payload["boundary"]); got != string(guidedworkflows.WorkflowGateBoundaryPhaseEnd) {
+		t.Fatalf("expected boundary phase_end, got %q", got)
+	}
+	if got := asString(decisionEvent.Payload["phase_id"]); got != "phase_1" {
+		t.Fatalf("expected phase_id phase_1, got %q", got)
+	}
+}
+
 func TestGuidedWorkflowNotificationPublisherPropagatesTerminalTurnFailure(t *testing.T) {
 	downstream := &recordNotificationPublisher{}
 	orchestrator := &recordGuidedWorkflowOrchestrator{enabled: true}
@@ -2761,6 +2969,51 @@ func TestGuidedWorkflowNotificationPublisherPublishesTurnProcessingFailures(t *t
 	}
 	if len(orchestrator.turnEvents) != 1 {
 		t.Fatalf("expected orchestrator to still observe turn event, got %d", len(orchestrator.turnEvents))
+	}
+}
+
+func TestRecommendedDecisionAction(t *testing.T) {
+	cases := []struct {
+		name     string
+		metadata guidedworkflows.CheckpointDecisionMetadata
+		want     string
+	}{
+		{
+			name: "hard gate always requests revision",
+			metadata: guidedworkflows.CheckpointDecisionMetadata{
+				HardGateTriggered: true,
+				Severity:          guidedworkflows.DecisionSeverityLow,
+			},
+			want: string(guidedworkflows.DecisionActionRequestRevision),
+		},
+		{
+			name: "high severity requests revision",
+			metadata: guidedworkflows.CheckpointDecisionMetadata{
+				Severity: guidedworkflows.DecisionSeverityHigh,
+			},
+			want: string(guidedworkflows.DecisionActionRequestRevision),
+		},
+		{
+			name: "critical severity requests revision",
+			metadata: guidedworkflows.CheckpointDecisionMetadata{
+				Severity: guidedworkflows.DecisionSeverityCritical,
+			},
+			want: string(guidedworkflows.DecisionActionRequestRevision),
+		},
+		{
+			name: "default recommends approve continue",
+			metadata: guidedworkflows.CheckpointDecisionMetadata{
+				Severity: guidedworkflows.DecisionSeverityMedium,
+			},
+			want: string(guidedworkflows.DecisionActionApproveContinue),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := recommendedDecisionAction(tc.metadata); got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
 

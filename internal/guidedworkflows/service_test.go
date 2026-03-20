@@ -83,6 +83,28 @@ type stubStepOutcomeEvaluator struct {
 	inputs     []StepOutcomeEvaluationInput
 }
 
+type stubGateCoordinator struct {
+	hasActive         bool
+	hasDeferred       bool
+	pendingResolution GateResolution
+	pendingErr        error
+	signalResolution  GateResolution
+	signalErr         error
+	pendingCtx        context.Context
+	signalCtx         context.Context
+}
+
+type stubGateSignalMatcher struct {
+	matches bool
+	calls   int
+}
+
+type stubGateSignalAdapter struct {
+	signal GateSignal
+	calls  int
+	last   TurnSignal
+}
+
 func (s stubDispatchErrorClassifier) Classify(error) DispatchErrorDisposition {
 	return s.disposition
 }
@@ -95,6 +117,57 @@ func (s *stubStepOutcomeEvaluator) EvaluateStepOutcome(_ context.Context, input 
 		return StepOutcomeEvaluation{Decision: StepOutcomeDecisionSuccess}
 	}
 	return s.evaluation
+}
+
+func (s *stubGateCoordinator) HasActiveGate(_ *WorkflowRun) bool {
+	if s == nil {
+		return false
+	}
+	return s.hasActive
+}
+
+func (s *stubGateCoordinator) HasDeferredGate(_ *WorkflowRun) bool {
+	if s == nil {
+		return false
+	}
+	return s.hasDeferred
+}
+
+func (s *stubGateCoordinator) ResolvePendingGate(ctx context.Context, _ *WorkflowRun) (GateResolution, error) {
+	if s != nil {
+		s.pendingCtx = ctx
+	}
+	if s == nil {
+		return GateResolution{}, nil
+	}
+	return s.pendingResolution, s.pendingErr
+}
+
+func (s *stubGateCoordinator) ResolveSignal(ctx context.Context, _ *WorkflowRun, _ GateSignal) (GateResolution, error) {
+	if s != nil {
+		s.signalCtx = ctx
+	}
+	if s == nil {
+		return GateResolution{}, nil
+	}
+	return s.signalResolution, s.signalErr
+}
+
+func (s *stubGateSignalMatcher) Matches(_ *WorkflowGateRun, _ GateSignal) bool {
+	if s == nil {
+		return true
+	}
+	s.calls++
+	return s.matches
+}
+
+func (s *stubGateSignalAdapter) FromTurnSignal(signal TurnSignal) GateSignal {
+	if s == nil {
+		return GateSignal{}
+	}
+	s.calls++
+	s.last = signal
+	return s.signal
 }
 
 func (s *stubDispatchRetryScheduler) Enqueue(runID string) {
@@ -199,6 +272,35 @@ func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req Ste
 		s.responses = s.responses[1:]
 	}
 	return result, nil
+}
+
+func (s *stubStepPromptDispatcher) DispatchGate(ctx context.Context, req GateDispatchRequest) (GateDispatchResult, error) {
+	stepResult, err := s.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
+		RunID:                  req.RunID,
+		TemplateID:             req.TemplateID,
+		DefaultAccessLevel:     req.DefaultAccessLevel,
+		SelectedProvider:       req.SelectedProvider,
+		SelectedRuntimeOptions: types.CloneRuntimeOptions(req.SelectedRuntimeOptions),
+		WorkspaceID:            req.WorkspaceID,
+		WorktreeID:             req.WorktreeID,
+		SessionID:              req.SessionID,
+		PhaseID:                req.PhaseID,
+		GateID:                 req.GateID,
+		GateKind:               req.GateKind,
+		Boundary:               req.Boundary,
+		Prompt:                 req.Prompt,
+	})
+	if err != nil {
+		return GateDispatchResult{}, err
+	}
+	return GateDispatchResult{
+		Dispatched: stepResult.Dispatched,
+		Transport:  "session_turn",
+		SessionID:  stepResult.SessionID,
+		SignalID:   stepResult.TurnID,
+		Provider:   stepResult.Provider,
+		Model:      stepResult.Model,
+	}, nil
 }
 
 func (s *stubMissingRunContextResolver) ResolveMissingRunContext(_ context.Context, runID string) (MissingRunDismissalContext, bool, error) {
@@ -933,6 +1035,7 @@ func TestRunLifecycleResumeFailedRunReusesStepSessionAndCustomMessage(t *testing
 		Config{Enabled: true},
 		WithRunSnapshotStore(snapshotStore),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithEngine(&Engine{
 			now:      func() time.Time { return now },
 			handlers: map[string]StepHandler{},
@@ -1052,6 +1155,7 @@ func TestRunLifecycleResumeFailedRunDefaultsResumeMessage(t *testing.T) {
 		Config{Enabled: true},
 		WithRunSnapshotStore(snapshotStore),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 
 	_, err := service.ResumeFailedRun(context.Background(), runID, ResumeFailedRunRequest{})
@@ -1169,6 +1273,7 @@ func TestRunLifecycleStopRunFromRunningStopsActivePhaseAndStep(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -1681,6 +1786,7 @@ func TestRunLifecycleOnTurnCompletedStrictSessionMatchPreventsCrossSessionAdvanc
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 
 	runA, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -1766,6 +1872,7 @@ func TestRunLifecycleOnTurnCompletedIgnoresWorkspaceOnlySignal(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_session_required",
@@ -1840,6 +1947,7 @@ func TestRunLifecyclePromptDispatchWaitsForTurnThenAdvances(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -1942,6 +2050,7 @@ func TestRunLifecycleOnTurnCompletedTerminalFailureFailsStepAndRun(t *testing.T)
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_turn_failure",
@@ -2035,6 +2144,7 @@ func TestRunLifecycleOnTurnCompletedDelegatesOutcomeToEvaluator(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithStepOutcomeEvaluator(evaluator),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -2113,6 +2223,7 @@ func TestRunLifecycleOnTurnCompletedUnknownDecisionDefersOutcome(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithStepOutcomeEvaluator(evaluator),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -2163,6 +2274,1441 @@ func TestRunLifecycleOnTurnCompletedUnknownDecisionDefersOutcome(t *testing.T) {
 	}
 }
 
+func TestRunLifecyclePhaseEndLLMJudgePassesAndAdvancesToNextPhase(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_pass",
+		Name: "Phase Gate Pass",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "Judge whether phase 1 succeeded.",
+						},
+					},
+				},
+			},
+			{
+				ID:   "phase_2",
+				Name: "Phase 2",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_2", Name: "step 2", Prompt: "prompt 2"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-gate-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-2"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "implemented phase 1",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted step 1: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after phase 1 step, got %d", len(updated))
+	}
+	current := updated[0]
+	if len(current.Phases[0].Gates) != 1 || current.Phases[0].Gates[0].Status != WorkflowGateStatusAwaitingSignal {
+		t.Fatalf("expected llm_judge gate to await turn, got %#v", current.Phases[0].Gates)
+	}
+	if got := dispatcher.calls[1].GateID; got != "gate_1" {
+		t.Fatalf("expected gate_id gate_1, got %q", got)
+	}
+
+	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-gate-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"phase looks good"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted judge: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after judge, got %d", len(updated))
+	}
+	current = updated[0]
+	if current.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected run to keep running after passing gate, got %q", current.Status)
+	}
+	if len(current.Phases[0].Gates) != 1 || current.Phases[0].Gates[0].Status != WorkflowGateStatusPassed {
+		t.Fatalf("expected passed phase gate, got %#v", current.Phases[0].Gates)
+	}
+	if current.Phases[1].Steps[0].Status != StepRunStatusRunning || !current.Phases[1].Steps[0].AwaitingTurn {
+		t.Fatalf("expected next phase step to dispatch after gate pass, got %#v", current.Phases[1].Steps[0])
+	}
+}
+
+func TestRunLifecyclePhaseEndLLMJudgeFailurePausesRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_fail",
+		Name: "Phase Gate Fail",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "Judge whether phase 1 succeeded.",
+						},
+					},
+				},
+			},
+			{
+				ID:   "phase_2",
+				Name: "Phase 2",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_2", Name: "step 2", Prompt: "prompt 2"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-gate-1"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "implemented phase 1",
+	}); err != nil {
+		t.Fatalf("OnTurnCompleted step 1: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-gate-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":false,"reason":"missing tests and validation"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted judge: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after judge failure, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusPaused {
+		t.Fatalf("expected paused run after judge failure, got %q", current.Status)
+	}
+	if current.LatestDecision == nil {
+		t.Fatalf("expected latest decision after gate failure")
+	}
+	if current.LatestDecision.Source != "gate" {
+		t.Fatalf("expected gate decision source, got %q", current.LatestDecision.Source)
+	}
+	if current.LatestDecision.Metadata.Action != CheckpointActionPause {
+		t.Fatalf("expected pause decision action, got %q", current.LatestDecision.Metadata.Action)
+	}
+	if len(current.LatestDecision.Metadata.Reasons) != 1 || current.LatestDecision.Metadata.Reasons[0].Code != reasonGateLLMJudgeFailed {
+		t.Fatalf("expected gate failure reason, got %#v", current.LatestDecision.Metadata.Reasons)
+	}
+	if current.LatestDecision.GateID != "gate_1" {
+		t.Fatalf("expected gate_id in decision, got %#v", current.LatestDecision)
+	}
+	if current.LatestDecision.StepID != "" {
+		t.Fatalf("expected empty step_id for gate decision, got %q", current.LatestDecision.StepID)
+	}
+	if len(current.Phases[0].Gates) != 1 || current.Phases[0].Gates[0].Status != WorkflowGateStatusFailed {
+		t.Fatalf("expected failed phase gate state, got %#v", current.Phases[0].Gates)
+	}
+	if current.Phases[1].Steps[0].Status != StepRunStatusPending {
+		t.Fatalf("expected next phase not to dispatch after gate failure, got %#v", current.Phases[1].Steps[0])
+	}
+}
+
+func TestRunLifecyclePhaseEndManualReviewPausesImmediately(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_manual",
+		Name: "Phase Gate Manual",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "manual_1",
+						Kind: WorkflowGateKindManualReview,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						ManualReviewConfig: &ManualReviewConfig{
+							Reason: "manual review required",
+						},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "phase complete",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after manual gate pause, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusPaused {
+		t.Fatalf("expected paused run, got %q", current.Status)
+	}
+	if current.LatestDecision == nil {
+		t.Fatalf("expected latest decision")
+	}
+	if current.LatestDecision.GateID != "manual_1" {
+		t.Fatalf("expected gate_id manual_1, got %#v", current.LatestDecision)
+	}
+	if len(current.LatestDecision.Metadata.Reasons) != 1 || current.LatestDecision.Metadata.Reasons[0].Code != reasonGateManualReviewRequired {
+		t.Fatalf("expected manual review reason code, got %#v", current.LatestDecision.Metadata.Reasons)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected only step dispatch call, got %d", len(dispatcher.calls))
+	}
+}
+
+func TestRunLifecyclePhaseEndLLMJudgeInvalidOutputPausesRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_invalid",
+		Name: "Phase Gate Invalid Output",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-gate-1"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	}); err != nil {
+		t.Fatalf("OnTurnCompleted step: %v", err)
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-gate-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "phase passed",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted gate: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after invalid gate output, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusPaused {
+		t.Fatalf("expected paused run, got %q", current.Status)
+	}
+	if current.LatestDecision == nil || len(current.LatestDecision.Metadata.Reasons) != 1 {
+		t.Fatalf("expected pause reason, got %#v", current.LatestDecision)
+	}
+	if current.LatestDecision.Metadata.Reasons[0].Code != reasonGateLLMJudgeInvalidOutput {
+		t.Fatalf("expected invalid output reason code, got %#v", current.LatestDecision.Metadata.Reasons)
+	}
+}
+
+func TestRunLifecyclePhaseEndLLMJudgeIgnoresMismatchedSignalBeforeAcceptingCorrectSignal(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_signal_order",
+		Name: "Phase Gate Signal Order",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+			{
+				ID:   "phase_2",
+				Name: "Phase 2",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_2", Name: "step 2", Prompt: "prompt 2"},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-gate-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-2"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	}); err != nil {
+		t.Fatalf("OnTurnCompleted step: %v", err)
+	}
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-wrong",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ignore me"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted mismatched: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after mismatch, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Phases[0].Gates[0].Status != WorkflowGateStatusAwaitingSignal {
+		t.Fatalf("expected gate to keep awaiting turn after mismatch, got %#v", current.Phases[0].Gates[0])
+	}
+	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-gate-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"looks good"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted gate: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run after valid gate turn, got %d", len(updated))
+	}
+	current = updated[0]
+	if current.Phases[0].Gates[0].Status != WorkflowGateStatusPassed {
+		t.Fatalf("expected passed gate after valid signal, got %#v", current.Phases[0].Gates[0])
+	}
+	if current.Phases[1].Steps[0].Status != StepRunStatusRunning {
+		t.Fatalf("expected next step running, got %#v", current.Phases[1].Steps[0])
+	}
+	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-gate-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":false,"reason":"duplicate should be ignored"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted duplicate: %v", err)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("expected duplicate gate signal to be ignored, got %d updates", len(updated))
+	}
+	current, err = service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Phases[0].Gates[0].Status != WorkflowGateStatusPassed {
+		t.Fatalf("expected duplicate signal to keep gate passed, got %#v", current.Phases[0].Gates[0])
+	}
+}
+
+func TestRunLifecyclePhaseEndGateDispatchDeferredUsesScheduler(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_dispatch_deferred",
+		Name: "Phase Gate Dispatch Deferred",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+		},
+		errs: []error{
+			nil,
+			errors.New("temporary gate dispatch contention"),
+		},
+	}
+	scheduler := &stubDispatchRetryScheduler{}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+		WithDispatchErrorClassifier(stubDispatchErrorClassifier{disposition: DispatchErrorDispositionDeferred}),
+		WithDispatchRetryScheduler(scheduler),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    "phase complete",
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+	current := updated[0]
+	if current.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected run to remain running after deferred gate dispatch, got %q", current.Status)
+	}
+	gate := current.Phases[0].Gates[0]
+	if gate.Status != WorkflowGateStatusWaitingDispatch || gate.ExecutionState != GateExecutionStateDeferred || gate.Outcome != "waiting_dispatch" {
+		t.Fatalf("expected waiting dispatch deferred gate state, got %#v", gate)
+	}
+	if len(scheduler.enqueued) != 1 || scheduler.enqueued[0] != run.ID {
+		t.Fatalf("expected scheduler enqueue once for deferred gate dispatch, got %#v", scheduler.enqueued)
+	}
+}
+
+func TestRunLifecyclePhaseEndGateDispatchFatalFailsRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_dispatch_fatal",
+		Name: "Phase Gate Dispatch Fatal",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+		},
+		errs: []error{
+			nil,
+			errors.New("gate transport failed"),
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+		WithDispatchErrorClassifier(stubDispatchErrorClassifier{disposition: DispatchErrorDispositionFatal}),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "gate transport failed") {
+		t.Fatalf("expected gate dispatch fatal error, got %v", err)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("expected no updated runs when gate dispatch fatally fails, got %d", len(updated))
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusFailed || current.Phases[0].Status != PhaseRunStatusFailed {
+		t.Fatalf("expected failed run/phase after gate dispatch fatal error, got run=%q phase=%q", current.Status, current.Phases[0].Status)
+	}
+	gate := current.Phases[0].Gates[0]
+	if gate.Status != WorkflowGateStatusFailed || gate.ExecutionState != GateExecutionStateUnavailable {
+		t.Fatalf("expected failed gate execution state unavailable, got %#v", gate)
+	}
+	if !strings.Contains(strings.ToLower(current.LastError), "gate transport failed") {
+		t.Fatalf("expected run last error to include gate dispatch failure, got %q", current.LastError)
+	}
+}
+
+func TestRunLifecyclePhaseEndGateDispatchUnavailableFailsRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_dispatch_unavailable",
+		Name: "Phase Gate Dispatch Unavailable",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: false},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	}); err == nil || !errors.Is(err, ErrGateDispatch) {
+		t.Fatalf("expected ErrGateDispatch for undispatched gate prompt, got %v", err)
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run after undispatched gate prompt, got %q", current.Status)
+	}
+	if !strings.Contains(strings.ToLower(current.LastError), "did not dispatch gate prompt") {
+		t.Fatalf("expected gate dispatch unavailable detail in LastError, got %q", current.LastError)
+	}
+}
+
+func TestRunLifecyclePhaseEndGateDispatchMissingSessionIDUsesSignalID(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_dispatch_missing_session",
+		Name: "Phase Gate Dispatch Missing Session",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true, TurnID: "turn-gate-1"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	}); err != nil {
+		t.Fatalf("expected gate dispatch without session id to succeed when signal id is present, got %v", err)
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusRunning {
+		t.Fatalf("expected running run after gate dispatch with signal id, got %q", current.Status)
+	}
+	gate := current.Phases[0].Gates[0]
+	if gate.Status != WorkflowGateStatusAwaitingSignal {
+		t.Fatalf("expected gate awaiting signal after dispatch, got %q", gate.Status)
+	}
+	if gate.SignalID != "turn-gate-1" {
+		t.Fatalf("expected gate signal id to be retained, got %q", gate.SignalID)
+	}
+}
+
+func TestRunLifecyclePhaseEndGateDispatchMissingRoutingFailsRun(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_dispatch_missing_routing",
+		Name: "Phase Gate Dispatch Missing Routing",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	}); err == nil || !errors.Is(err, ErrGateDispatch) {
+		t.Fatalf("expected ErrGateDispatch for gate dispatch without routing identifiers, got %v", err)
+	}
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected failed run after gate dispatch missing routing identifiers, got %q", current.Status)
+	}
+	if !strings.Contains(strings.ToLower(current.LastError), "requires session_id or signal_id") {
+		t.Fatalf("expected missing routing detail in LastError, got %q", current.LastError)
+	}
+}
+
+func TestRunLifecycleOnGateSignalCompletesAwaitingLLMJudgeGate(t *testing.T) {
+	template := WorkflowTemplate{
+		ID:   "phase_gate_signal_ingress",
+		Name: "Phase Gate Signal Ingress",
+		Phases: []WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []WorkflowTemplateStep{
+					{ID: "step_1", Name: "step 1", Prompt: "prompt 1"},
+				},
+				Gates: []WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+		},
+	}
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-step-1"},
+			{Dispatched: true, SessionID: "sess-1", TurnID: "turn-gate-1"},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithTemplate(template),
+		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
+	)
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		TemplateID:  template.ID,
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	if _, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-step-1",
+		Status:    "completed",
+		Terminal:  true,
+	}); err != nil {
+		t.Fatalf("OnTurnCompleted step: %v", err)
+	}
+
+	updated, err := service.OnGateSignal(context.Background(), GateSignal{
+		Transport: "session_turn",
+		SignalID:  "turn-gate-1",
+		SessionID: "sess-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ok"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnGateSignal: %v", err)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run from gate signal, got %d", len(updated))
+	}
+	if updated[0].Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected run to complete after gate signal pass, got %q", updated[0].Status)
+	}
+}
+
+func TestRunLifecycleOnGateSignalNoopWithoutIdentifiers(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	updated, err := service.OnGateSignal(context.Background(), GateSignal{
+		Status: "completed",
+		Output: `{"passed":true,"reason":"ok"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnGateSignal: %v", err)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("expected no updated runs for signal without identifiers, got %d", len(updated))
+	}
+}
+
+func TestRunLifecycleOnGateSignalFiltersByWorkspace(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID:          "run-workspace-filter",
+		Status:      WorkflowRunStatusRunning,
+		WorkspaceID: "ws-a",
+		WorktreeID:  "wt-a",
+		SessionID:   "sess-a",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-a",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.mu.Unlock()
+
+	updated, err := service.OnGateSignal(context.Background(), GateSignal{
+		WorkspaceID: "ws-b",
+		SessionID:   "sess-a",
+		SignalID:    "sig-a",
+		Status:      "completed",
+		Terminal:    true,
+		Output:      `{"passed":true,"reason":"ok"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnGateSignal: %v", err)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("expected no updated runs for workspace mismatch, got %d", len(updated))
+	}
+}
+
+func TestRunLifecycleOnGateSignalPropagatesCoordinatorError(t *testing.T) {
+	coordinator := &stubGateCoordinator{signalErr: errors.New("gate coordinator failure")}
+	service := NewRunService(Config{Enabled: true}, WithGateCoordinator(coordinator))
+	run := &WorkflowRun{
+		ID:        "run-gate-error",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.mu.Unlock()
+
+	if _, err := service.OnGateSignal(context.Background(), GateSignal{SessionID: "sess-1"}); err == nil ||
+		!strings.Contains(strings.ToLower(err.Error()), "gate coordinator failure") {
+		t.Fatalf("expected coordinator error to propagate, got %v", err)
+	}
+}
+
+func TestRunLifecycleProcessGateSignalDeduplicatesSeenSignalID(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID:        "run-gate-dedupe",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-1",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.turnSeen[turnReceiptKey(run.ID, "sig-1")] = struct{}{}
+	service.mu.Unlock()
+
+	updated, err := service.processGateSignalForRun(context.Background(), run.ID, GateSignal{
+		SessionID: "sess-1",
+		SignalID:  "sig-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ok"}`,
+	})
+	if err != nil {
+		t.Fatalf("processGateSignalForRun: %v", err)
+	}
+	if updated != nil {
+		t.Fatalf("expected duplicate signal to be ignored without run update, got %#v", updated)
+	}
+}
+
+func TestRunLifecycleOnGateSignalReturnsQueueErrorWhenQueueUnavailable(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID:        "run-gate-queue",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-1",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	queue := NewChannelDispatchQueue(1, 1, func(DispatchRequest) DispatchQueueResult {
+		return DispatchQueueResult{Done: true}
+	})
+	queue.Close()
+	service.dispatchQueue = queue
+	service.mu.Unlock()
+
+	_, err := service.OnGateSignal(context.Background(), GateSignal{
+		SessionID: "sess-1",
+		SignalID:  "sig-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ok"}`,
+	})
+	if err == nil || !errors.Is(err, ErrStepDispatch) {
+		t.Fatalf("expected queue unavailable error to surface as ErrStepDispatch, got %v", err)
+	}
+}
+
+func TestRunLifecycleWithGateSignalMatcherBlocksGateSignalProgression(t *testing.T) {
+	matcher := &stubGateSignalMatcher{matches: false}
+	service := NewRunService(Config{Enabled: true}, WithGateSignalMatcher(matcher))
+	run := &WorkflowRun{
+		ID:        "run-gate-matcher",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-1",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.mu.Unlock()
+
+	updated, err := service.OnGateSignal(context.Background(), GateSignal{
+		SessionID: "sess-1",
+		SignalID:  "sig-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ok"}`,
+	})
+	if err != nil {
+		t.Fatalf("OnGateSignal: %v", err)
+	}
+	if matcher.calls == 0 {
+		t.Fatalf("expected custom gate signal matcher to be called")
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected run snapshot to be returned even when gate signal is ignored, got %d", len(updated))
+	}
+	if updated[0].Phases[0].Gates[0].Status != WorkflowGateStatusAwaitingSignal {
+		t.Fatalf("expected gate to remain awaiting signal when matcher blocks, got %q", updated[0].Phases[0].Gates[0].Status)
+	}
+}
+
+func TestRunLifecycleWithGateSignalAdapterUsedForTurnCompleted(t *testing.T) {
+	adapter := &stubGateSignalAdapter{
+		signal: GateSignal{
+			Transport: "session_turn",
+			SessionID: "sess-1",
+			SignalID:  "sig-1",
+			Status:    "completed",
+			Terminal:  true,
+			Output:    `{"passed":true,"reason":"ok"}`,
+		},
+	}
+	service := NewRunService(Config{Enabled: true}, WithGateSignalAdapter(adapter))
+	run := &WorkflowRun{
+		ID:        "run-gate-adapter",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-1",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.mu.Unlock()
+
+	updated, err := service.OnTurnCompleted(context.Background(), TurnSignal{
+		SessionID: "sess-1",
+		TurnID:    "turn-source",
+		Status:    "completed",
+		Terminal:  true,
+	})
+	if err != nil {
+		t.Fatalf("OnTurnCompleted: %v", err)
+	}
+	if adapter.calls == 0 {
+		t.Fatalf("expected custom gate signal adapter to be invoked")
+	}
+	if adapter.last.TurnID != "turn-source" {
+		t.Fatalf("expected adapter to receive turn signal context, got %#v", adapter.last)
+	}
+	if len(updated) != 1 {
+		t.Fatalf("expected one updated run, got %d", len(updated))
+	}
+}
+
+func TestRunLifecycleStepDispatcherDoesNotImplicitlySetGateDispatcher(t *testing.T) {
+	dispatcher := &stubStepPromptDispatcher{}
+	service := NewRunService(Config{Enabled: true}, WithStepPromptDispatcher(dispatcher))
+	if service.gateDispatcher != nil {
+		t.Fatalf("expected gate dispatcher to remain nil without explicit WithGateDispatcher wiring")
+	}
+}
+
+func TestValidateGateDispatchResult(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      GateDispatchResult
+		wantErr bool
+	}{
+		{
+			name:    "not dispatched",
+			in:      GateDispatchResult{Dispatched: false},
+			wantErr: true,
+		},
+		{
+			name: "session turn with session id",
+			in: GateDispatchResult{
+				Dispatched: true,
+				Transport:  "session_turn",
+				SessionID:  "sess-1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "session turn with signal id",
+			in: GateDispatchResult{
+				Dispatched: true,
+				Transport:  "session_turn",
+				SignalID:   "sig-1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "session turn without routing",
+			in: GateDispatchResult{
+				Dispatched: true,
+				Transport:  "session_turn",
+			},
+			wantErr: true,
+		},
+		{
+			name: "non session transport with signal",
+			in: GateDispatchResult{
+				Dispatched: true,
+				Transport:  "webhook",
+				SignalID:   "sig-1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "non session transport without routing",
+			in: GateDispatchResult{
+				Dispatched: true,
+				Transport:  "webhook",
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGateDispatchResult(tc.in)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected nil error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestPrepareGateDispatchContextFailsClosedOnEmptyPrompt(t *testing.T) {
+	run := &WorkflowRun{
+		ID:     "run-gate-prompt-empty",
+		Status: WorkflowRunStatusRunning,
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:     "gate-1",
+						Kind:   WorkflowGateKindLLMJudge,
+						Status: WorkflowGateStatusPending,
+						Boundary: WorkflowGateBoundaryRef{
+							Boundary: WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase-1",
+						},
+					},
+				},
+			},
+		},
+	}
+	coordinator := &stubGateCoordinator{
+		pendingResolution: GateResolution{
+			Consumed:   true,
+			PhaseIndex: 0,
+			GateIndex:  0,
+			GateID:     "gate-1",
+			GateKind:   WorkflowGateKindLLMJudge,
+			Boundary:   WorkflowGateBoundaryPhaseEnd,
+			Outcome:    GateOutcomeAwaiting,
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithGateCoordinator(coordinator),
+	)
+	service.mu.Lock()
+	_, hasDispatch, err := service.prepareGateDispatchContext(context.Background(), run)
+	service.mu.Unlock()
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "gate dispatch prompt is empty") {
+		t.Fatalf("expected empty gate prompt failure, got %v", err)
+	}
+	if hasDispatch {
+		t.Fatalf("expected no dispatch context when gate prompt is empty")
+	}
+	if run.Status != WorkflowRunStatusFailed || run.Phases[0].Gates[0].Status != WorkflowGateStatusFailed {
+		t.Fatalf("expected fail-closed run/gate state, got run=%q gate=%q", run.Status, run.Phases[0].Gates[0].Status)
+	}
+}
+
+func TestPrepareGateDispatchContextUsesCallerContext(t *testing.T) {
+	coordinator := &stubGateCoordinator{
+		pendingResolution: GateResolution{},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithGateCoordinator(coordinator),
+	)
+	run := &WorkflowRun{
+		ID:     "run-ctx",
+		Status: WorkflowRunStatusRunning,
+	}
+	ctx := context.WithValue(context.Background(), "ctx_key", "ctx_value")
+
+	service.mu.Lock()
+	_, hasDispatch, err := service.prepareGateDispatchContext(ctx, run)
+	service.mu.Unlock()
+
+	if err != nil {
+		t.Fatalf("prepareGateDispatchContext: %v", err)
+	}
+	if hasDispatch {
+		t.Fatalf("expected no gate dispatch from stub coordinator")
+	}
+	if coordinator.pendingCtx == nil {
+		t.Fatalf("expected pending gate resolution context to be captured")
+	}
+	if got := coordinator.pendingCtx.Value("ctx_key"); got != "ctx_value" {
+		t.Fatalf("expected context value propagation, got %#v", got)
+	}
+}
+
+func TestPrepareGateDispatchContextHonorsCancellation(t *testing.T) {
+	coordinator := &stubGateCoordinator{
+		pendingResolution: GateResolution{Consumed: true},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithGateCoordinator(coordinator),
+	)
+	run := &WorkflowRun{
+		ID:     "run-cancel",
+		Status: WorkflowRunStatusRunning,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	service.mu.Lock()
+	_, _, err := service.prepareGateDispatchContext(ctx, run)
+	service.mu.Unlock()
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got %v", err)
+	}
+	if coordinator.pendingCtx != nil {
+		t.Fatalf("expected coordinator not to be called after cancellation")
+	}
+}
+
 func TestRunLifecycleOnTurnCompletedRetainsTurnContextForFutureEvaluation(t *testing.T) {
 	template := WorkflowTemplate{
 		ID:   "prompted_turn_context",
@@ -2186,6 +3732,7 @@ func TestRunLifecycleOnTurnCompletedRetainsTurnContextForFutureEvaluation(t *tes
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_turn_context",
@@ -2286,6 +3833,7 @@ func TestRunLifecycleOnTurnCompletedFailureOutcomeDefaultsWhenEvaluatorOmitsFiel
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithStepOutcomeEvaluator(evaluator),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -2363,6 +3911,7 @@ func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_with_model",
@@ -2425,6 +3974,7 @@ func TestRunLifecyclePromptDispatchIncludesStepRuntimeOptions(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_with_runtime_options",
@@ -2495,6 +4045,7 @@ func TestRunLifecycleFirstDispatchPrependsUserPromptOnlyOnce(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_with_brief",
@@ -2588,6 +4139,7 @@ func TestRunLifecycleAdvanceRunDoesNotBypassAwaitingTurn(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted",
@@ -2683,6 +4235,7 @@ func TestRunLifecyclePromptDispatchUnavailableFailsRun(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted",
@@ -2736,6 +4289,7 @@ func TestRunLifecyclePromptDispatchDeferredRetriesAndSucceeds(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_deferred",
@@ -2813,6 +4367,7 @@ func TestRunLifecycleOnTurnCompletedIgnoresMismatchedTurnID(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_turn_match",
@@ -2885,6 +4440,7 @@ func TestRunLifecycleOnTurnCompletedTerminalFailureBeforeAwaitingTurnFailsAfterD
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "prompted_turn_failure_before_awaiting",
@@ -3087,6 +4643,7 @@ func TestRunLifecycleCustomDispatchRetryPolicyWiresDefaultScheduler(t *testing.T
 		WithTemplate(template),
 		WithDispatchRetryPolicy(policy),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	defer service.Close()
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -3167,6 +4724,7 @@ func TestRetryDeferredDispatchReturnsDoneWhenAdvanceFails(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithDispatchRetryScheduler(&stubDispatchRetryScheduler{}),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -3683,6 +5241,7 @@ func TestRunLifecycleRenameRunDoesNotBlockDuringStartDispatch(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "rename_during_dispatch_template",
@@ -3762,6 +5321,7 @@ func TestRunLifecycleAdvanceRunReturnsRunNotFoundWhenRunRemovedDuringDispatch(t 
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "advance_removed_during_dispatch_template",
@@ -3839,6 +5399,7 @@ func TestRunLifecycleAdvanceRunSkipsStaleDispatchApplyWhenPausedDuringDispatch(t
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "advance_stale_dispatch_template",
@@ -3960,6 +5521,7 @@ func TestRunLifecycleResumeFailedRunSkipsStaleDispatchApplyWhenPausedDuringDispa
 		Config{Enabled: true},
 		WithRunSnapshotStore(snapshotStore),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 
 	resumeDone := make(chan struct{})
@@ -4036,6 +5598,7 @@ func TestRunLifecycleAdvanceOnceLockedCoversSharedDispatchHandoff(t *testing.T) 
 		Config{Enabled: true},
 		WithTemplate(template),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
 		TemplateID:  "advance_once_locked_template",
@@ -4519,6 +6082,7 @@ func TestRunMetricsDispatchReliabilityCounters(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(tpl),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithDispatchRetryScheduler(&stubDispatchRetryScheduler{}),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{
@@ -4595,6 +6159,7 @@ func TestRunMetricsTurnProgressionReliabilityCounters(t *testing.T) {
 		Config{Enabled: true},
 		WithTemplate(tpl),
 		WithStepPromptDispatcher(dispatcher),
+		WithGateDispatcher(dispatcher),
 		WithStepOutcomeEvaluator(evaluator),
 	)
 	run, err := service.CreateRun(context.Background(), CreateRunRequest{

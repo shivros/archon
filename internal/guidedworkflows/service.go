@@ -83,6 +83,11 @@ type TurnEventProcessor interface {
 	OnTurnCompleted(ctx context.Context, signal TurnSignal) ([]*WorkflowRun, error)
 }
 
+// GateSignalProcessor allows adapters to submit gate-native transport signals.
+type GateSignalProcessor interface {
+	OnGateSignal(ctx context.Context, signal GateSignal) ([]*WorkflowRun, error)
+}
+
 type TemplateProvider interface {
 	ListWorkflowTemplates(ctx context.Context) ([]WorkflowTemplate, error)
 }
@@ -97,9 +102,13 @@ type InMemoryRunService struct {
 	templates              map[string]WorkflowTemplate
 	templateProvider       TemplateProvider
 	stepDispatcher         StepPromptDispatcher
+	gateDispatcher         GateDispatcher
 	dispatchProviderPolicy DispatchProviderPolicy
 	turnMatcher            TurnSignalMatcher
+	gateSignalMatcher      GateSignalMatcher
+	gateSignalAdapter      GateSignalAdapter
 	stepOutcomeEvaluator   StepOutcomeEvaluator
+	gateCoordinator        GateCoordinator
 	turnMismatchHandler    TurnSignalMismatchHandler
 	dispatchClassifier     DispatchErrorClassifier
 	dispatchRetryPolicy    DispatchRetryPolicy
@@ -197,6 +206,15 @@ func WithStepPromptDispatcher(dispatcher StepPromptDispatcher) RunServiceOption 
 	}
 }
 
+func WithGateDispatcher(dispatcher GateDispatcher) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || dispatcher == nil {
+			return
+		}
+		s.gateDispatcher = dispatcher
+	}
+}
+
 func WithDispatchProviderPolicy(policy DispatchProviderPolicy) RunServiceOption {
 	return func(s *InMemoryRunService) {
 		if s == nil || policy == nil {
@@ -215,12 +233,39 @@ func WithTurnSignalMatcher(matcher TurnSignalMatcher) RunServiceOption {
 	}
 }
 
+func WithGateSignalMatcher(matcher GateSignalMatcher) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || matcher == nil {
+			return
+		}
+		s.gateSignalMatcher = matcher
+	}
+}
+
+func WithGateSignalAdapter(adapter GateSignalAdapter) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || adapter == nil {
+			return
+		}
+		s.gateSignalAdapter = adapter
+	}
+}
+
 func WithStepOutcomeEvaluator(evaluator StepOutcomeEvaluator) RunServiceOption {
 	return func(s *InMemoryRunService) {
 		if s == nil || evaluator == nil {
 			return
 		}
 		s.stepOutcomeEvaluator = evaluator
+	}
+}
+
+func WithGateCoordinator(coordinator GateCoordinator) RunServiceOption {
+	return func(s *InMemoryRunService) {
+		if s == nil || coordinator == nil {
+			return
+		}
+		s.gateCoordinator = coordinator
 	}
 }
 
@@ -430,7 +475,10 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		telemetryEnabled:       true,
 		tombstoneFactory:       defaultMissingRunTombstoneFactory{},
 		turnMatcher:            StrictSessionTurnSignalMatcher{},
+		gateSignalMatcher:      NewGateSignalMatcher(),
+		gateSignalAdapter:      NewGateSignalAdapter(),
 		stepOutcomeEvaluator:   defaultStepOutcomeEvaluator{},
+		gateCoordinator:        NewGateCoordinator(),
 		turnMismatchHandler:    NewTurnSignalMismatchHandler(),
 		dispatchClassifier:     defaultDispatchErrorClassifier{},
 		dispatchRetryPolicy:    defaultDispatchRetryPolicy(),
@@ -454,6 +502,15 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 	}
 	if service.stepOutcomeEvaluator == nil {
 		service.stepOutcomeEvaluator = defaultStepOutcomeEvaluator{}
+	}
+	if service.gateSignalMatcher == nil {
+		service.gateSignalMatcher = NewGateSignalMatcher()
+	}
+	if service.gateSignalAdapter == nil {
+		service.gateSignalAdapter = NewGateSignalAdapter()
+	}
+	if service.gateCoordinator == nil {
+		service.gateCoordinator = NewGateCoordinator()
 	}
 	if service.turnMismatchHandler == nil {
 		service.turnMismatchHandler = NewTurnSignalMismatchHandler()
@@ -659,6 +716,27 @@ func (s *InMemoryRunService) stepOutcomeEvaluatorOrDefault() StepOutcomeEvaluato
 		return defaultStepOutcomeEvaluator{}
 	}
 	return s.stepOutcomeEvaluator
+}
+
+func (s *InMemoryRunService) gateCoordinatorOrDefault() GateCoordinator {
+	if s == nil || s.gateCoordinator == nil {
+		return NewGateCoordinator()
+	}
+	return s.gateCoordinator
+}
+
+func (s *InMemoryRunService) gateSignalMatcherOrDefault() GateSignalMatcher {
+	if s == nil || s.gateSignalMatcher == nil {
+		return NewGateSignalMatcher()
+	}
+	return s.gateSignalMatcher
+}
+
+func (s *InMemoryRunService) gateSignalAdapterOrDefault() GateSignalAdapter {
+	if s == nil || s.gateSignalAdapter == nil {
+		return NewGateSignalAdapter()
+	}
+	return s.gateSignalAdapter
 }
 
 func (s *InMemoryRunService) ListTemplates(ctx context.Context) ([]WorkflowTemplate, error) {
@@ -1097,6 +1175,60 @@ func (s *InMemoryRunService) OnTurnCompleted(ctx context.Context, signal TurnSig
 	return updated, nil
 }
 
+func (s *InMemoryRunService) OnGateSignal(ctx context.Context, signal GateSignal) ([]*WorkflowRun, error) {
+	normalized := normalizeGateSignal(signal)
+	if normalized.SignalID == "" &&
+		normalized.SessionID == "" &&
+		normalized.WorkspaceID == "" &&
+		normalized.WorktreeID == "" {
+		return nil, nil
+	}
+
+	s.mu.Lock()
+	matchingRunIDs := make([]string, 0)
+	for _, run := range s.listRunsIncludingDismissedLocked() {
+		if run == nil || run.Status != WorkflowRunStatusRunning {
+			continue
+		}
+		if normalized.WorkspaceID != "" &&
+			!strings.EqualFold(strings.TrimSpace(run.WorkspaceID), normalized.WorkspaceID) {
+			continue
+		}
+		if normalized.WorktreeID != "" &&
+			!strings.EqualFold(strings.TrimSpace(run.WorktreeID), normalized.WorktreeID) {
+			continue
+		}
+		if normalized.SessionID != "" {
+			runSessionID := strings.TrimSpace(run.SessionID)
+			if runSessionID != "" && !strings.EqualFold(runSessionID, normalized.SessionID) {
+				continue
+			}
+		}
+		phaseIndex, gateIndex, _, ok := findActiveGate(run)
+		if !ok ||
+			phaseIndex < 0 ||
+			phaseIndex >= len(run.Phases) ||
+			gateIndex < 0 ||
+			gateIndex >= len(run.Phases[phaseIndex].Gates) {
+			continue
+		}
+		matchingRunIDs = append(matchingRunIDs, strings.TrimSpace(run.ID))
+	}
+	s.mu.Unlock()
+
+	updated := make([]*WorkflowRun, 0, len(matchingRunIDs))
+	for _, runID := range matchingRunIDs {
+		run, err := s.processGateSignalForRun(ctx, runID, normalized)
+		if err != nil {
+			return nil, err
+		}
+		if run != nil {
+			updated = append(updated, run)
+		}
+	}
+	return updated, nil
+}
+
 func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID string, signal TurnSignal) (*WorkflowRun, error) {
 	s.mu.Lock()
 
@@ -1126,6 +1258,8 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 
 	beforeStatus := run.Status
 	wasAwaitingTurn := isRunAwaitingTurn(run)
+	wasAwaitingGate := isRunAwaitingGate(run)
+	gateSignal := s.gateSignalAdapterOrDefault().FromTurnSignal(signal)
 	completed, err := s.completeAwaitingTurnStepLocked(ctx, run, signal)
 	if err != nil {
 		snapshot := s.captureRunSnapshot(run.ID)
@@ -1133,8 +1267,17 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 		s.persistRunSnapshotAsync(ctx, snapshot)
 		return nil, err
 	}
+	if !completed {
+		completed, err = s.completeAwaitingGateLocked(ctx, run, gateSignal)
+		if err != nil {
+			snapshot := s.captureRunSnapshot(run.ID)
+			s.mu.Unlock()
+			s.persistRunSnapshotAsync(ctx, snapshot)
+			return nil, err
+		}
+	}
 
-	if wasAwaitingTurn && !completed {
+	if (wasAwaitingTurn || wasAwaitingGate) && !completed {
 		s.recordTurnEventBlockedLocked()
 	}
 	if completed {
@@ -1167,10 +1310,23 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 
 	s.mu.Lock()
 	replayedAfterAdvance := false
-	advancedBeforeAwaiting := !completed && !wasAwaitingTurn
+	advancedBeforeAwaiting := !completed && !wasAwaitingTurn && !wasAwaitingGate
 	terminalSignal := signal.Terminal || IsTerminalTurnStatus(signal.Status) || strings.TrimSpace(signal.Error) != ""
 	if advancedBeforeAwaiting && run.Status == WorkflowRunStatusRunning && isRunAwaitingTurn(run) {
 		replayedAfterAdvance, err = s.completeAwaitingTurnStepLocked(ctx, run, signal)
+		if err != nil {
+			snapshot := s.captureRunSnapshot(run.ID)
+			s.mu.Unlock()
+			s.persistRunSnapshotAsync(ctx, snapshot)
+			return nil, err
+		}
+		if replayedAfterAdvance {
+			s.recordTurnEventStepDoneLocked()
+			markTurnSeen = true
+		}
+	}
+	if advancedBeforeAwaiting && !replayedAfterAdvance && run.Status == WorkflowRunStatusRunning && isRunAwaitingGate(run) {
+		replayedAfterAdvance, err = s.completeAwaitingGateLocked(ctx, run, gateSignal)
 		if err != nil {
 			snapshot := s.captureRunSnapshot(run.ID)
 			s.mu.Unlock()
@@ -1192,6 +1348,84 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 	}
 	if markTurnSeen && signal.TurnID != "" {
 		s.turnSeen[turnReceiptKey(run.ID, signal.TurnID)] = struct{}{}
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+		s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
+	}
+	clone := cloneWorkflowRun(run)
+	snapshot := s.captureRunSnapshot(run.ID)
+	s.mu.Unlock()
+	s.persistRunSnapshotAsync(ctx, snapshot)
+	return clone, nil
+}
+
+func (s *InMemoryRunService) processGateSignalForRun(ctx context.Context, runID string, signal GateSignal) (*WorkflowRun, error) {
+	s.mu.Lock()
+
+	run, ok := s.getRunByIDLocked(runID)
+	if !ok || run == nil || run.Status != WorkflowRunStatusRunning {
+		s.mu.Unlock()
+		return nil, nil
+	}
+
+	markSignalSeen := false
+	if signal.SignalID != "" {
+		receipt := turnReceiptKey(run.ID, signal.SignalID)
+		if _, seen := s.turnSeen[receipt]; seen {
+			s.mu.Unlock()
+			return nil, nil
+		}
+	}
+
+	beforeStatus := run.Status
+	completed, err := s.completeAwaitingGateLocked(ctx, run, signal)
+	if err != nil {
+		snapshot := s.captureRunSnapshot(run.ID)
+		s.mu.Unlock()
+		s.persistRunSnapshotAsync(ctx, snapshot)
+		return nil, err
+	}
+	if completed && signal.SignalID != "" {
+		markSignalSeen = true
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		if markSignalSeen {
+			s.turnSeen[turnReceiptKey(run.ID, signal.SignalID)] = struct{}{}
+		}
+		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
+		s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
+		clone := cloneWorkflowRun(run)
+		snapshot := s.captureRunSnapshot(run.ID)
+		s.mu.Unlock()
+		s.persistRunSnapshotAsync(ctx, snapshot)
+		return clone, nil
+	}
+	if !completed {
+		clone := cloneWorkflowRun(run)
+		snapshot := s.captureRunSnapshot(run.ID)
+		s.mu.Unlock()
+		s.persistRunSnapshotAsync(ctx, snapshot)
+		return clone, nil
+	}
+	s.mu.Unlock()
+
+	if err := s.advanceViaQueue(ctx, run.ID, "gate_signal"); err != nil {
+		s.mu.Lock()
+		snapshot := s.captureRunSnapshot(run.ID)
+		s.mu.Unlock()
+		s.persistRunSnapshotAsync(ctx, snapshot)
+		return nil, err
+	}
+
+	s.mu.Lock()
+	run, _ = s.getRunByIDLocked(runID)
+	if run == nil {
+		s.mu.Unlock()
+		return nil, ErrRunNotFound
+	}
+	if markSignalSeen {
+		s.turnSeen[turnReceiptKey(run.ID, signal.SignalID)] = struct{}{}
 	}
 	if run.Status != WorkflowRunStatusRunning {
 		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
@@ -1739,15 +1973,45 @@ func (s *InMemoryRunService) transitionAndAdvance(ctx context.Context, runID str
 }
 
 func (s *InMemoryRunService) advanceOnceLocked(ctx context.Context, run *WorkflowRun) error {
+	return s.advanceOnceLockedWithPolicy(ctx, run, true)
+}
+
+func (s *InMemoryRunService) advanceOnceLockedWithPolicy(ctx context.Context, run *WorkflowRun, applyPolicy bool) error {
 	if run == nil {
 		return fmt.Errorf("%w: run is required", ErrInvalidTransition)
 	}
-	if isRunAwaitingTurn(run) {
+	if isRunAwaitingTurn(run) || isRunAwaitingGate(run) {
 		return nil
 	}
 	beforeStatus := run.Status
-	if paused := s.applyPolicyDecisionLocked(run, defaultPolicyEvaluationInput(run)); paused {
+	gateDispatchCtx, hasGateDispatch, gatePrepErr := s.prepareGateDispatchContext(ctx, run)
+	if gatePrepErr != nil {
+		return gatePrepErr
+	}
+	if run.Status != WorkflowRunStatusRunning {
 		return nil
+	}
+	if hasGateDispatch {
+		outcome, handoffErr := s.dispatchGateWithRunLockHandoffLocked(ctx, gateDispatchCtx, func() {}, func() {})
+		if outcome.applied && outcome.run != nil {
+			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
+			s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
+		}
+		if handoffErr != nil {
+			return handoffErr
+		}
+		if !outcome.applied || outcome.dispatched {
+			return nil
+		}
+		run = outcome.run
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		return nil
+	}
+	if applyPolicy {
+		if paused := s.applyPolicyDecisionLocked(run, defaultPolicyEvaluationInput(run)); paused {
+			return nil
+		}
 	}
 	dispatchCtx, hasDispatch := s.prepareStepDispatchContext(run)
 	if hasDispatch {
@@ -1854,11 +2118,51 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 		s.mu.Unlock()
 		return nil
 	}
-	if isRunAwaitingTurn(run) {
+	if isRunAwaitingTurn(run) || isRunAwaitingGate(run) {
 		s.mu.Unlock()
 		return nil
 	}
 	beforeStatus := run.Status
+	gateDispatchCtx, hasGateDispatch, gatePrepErr := s.prepareGateDispatchContext(ctx, run)
+	if gatePrepErr != nil {
+		s.mu.Unlock()
+		return gatePrepErr
+	}
+	if run.Status != WorkflowRunStatusRunning {
+		s.mu.Unlock()
+		return nil
+	}
+	if hasGateDispatch {
+		outcome, handoffErr := s.dispatchGateWithRunLockHandoffLocked(
+			ctx,
+			gateDispatchCtx,
+			unlockRunLock,
+			func() {
+				releaseRunLock = s.runLocks.Lock(normalizedRunID)
+				runLockHeld = true
+			},
+		)
+		if outcome.applied && outcome.run != nil {
+			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
+			s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
+		}
+		s.mu.Unlock()
+		if handoffErr != nil {
+			return handoffErr
+		}
+		if !outcome.applied || outcome.dispatched {
+			return nil
+		}
+		run = outcome.run
+		if run == nil {
+			return ErrRunNotFound
+		}
+		s.mu.Lock()
+		if run.Status != WorkflowRunStatusRunning {
+			s.mu.Unlock()
+			return nil
+		}
+	}
 	if paused := s.applyPolicyDecisionLocked(run, defaultPolicyEvaluationInput(run)); paused {
 		s.mu.Unlock()
 		return nil
@@ -2021,6 +2325,116 @@ func (s *InMemoryRunService) deferRunForStepDispatchLocked(run *WorkflowRun, pha
 		PhaseID: phase.ID,
 		StepID:  step.ID,
 		Message: strings.TrimSpace(cause.Error()),
+	})
+	if s.dispatchRetryScheduler != nil {
+		s.dispatchRetryScheduler.Enqueue(run.ID)
+	}
+}
+
+func (s *InMemoryRunService) failRunForGateDispatchLocked(run *WorkflowRun, phaseIndex, gateIndex int, cause error) {
+	if s == nil || run == nil {
+		return
+	}
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return
+	}
+	phase := &run.Phases[phaseIndex]
+	if gateIndex < 0 || gateIndex >= len(phase.Gates) {
+		return
+	}
+	gate := &phase.Gates[gateIndex]
+	now := s.engine.now()
+	gate.Status = WorkflowGateStatusFailed
+	gate.CompletedAt = &now
+	gate.Error = strings.TrimSpace(cause.Error())
+	gate.Outcome = "failed"
+	gate.Summary = "gate dispatch failed"
+	recordGateExecutionFailure(gate, "gate dispatch failed", now)
+	phase.Status = PhaseRunStatusFailed
+	phase.CompletedAt = &now
+	run.Status = WorkflowRunStatusFailed
+	run.CompletedAt = &now
+	run.LastError = strings.TrimSpace(cause.Error())
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "gate",
+		Action:   "gate_dispatch_failed",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  "failed",
+		Detail:   run.LastError,
+	})
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "run",
+		Action:   "run_failed",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  "failed",
+		Detail:   run.LastError,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:       now,
+		Type:     "gate_failed",
+		RunID:    run.ID,
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Message:  run.LastError,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:      now,
+		Type:    "run_failed",
+		RunID:   run.ID,
+		Message: run.LastError,
+	})
+}
+
+func (s *InMemoryRunService) deferRunForGateDispatchLocked(run *WorkflowRun, phaseIndex, gateIndex int, cause error) {
+	if s == nil || run == nil {
+		return
+	}
+	if phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return
+	}
+	phase := &run.Phases[phaseIndex]
+	if gateIndex < 0 || gateIndex >= len(phase.Gates) {
+		return
+	}
+	gate := &phase.Gates[gateIndex]
+	now := s.engine.now()
+	gate.Status = WorkflowGateStatusWaitingDispatch
+	gate.CompletedAt = nil
+	gate.Error = ""
+	gate.Outcome = "waiting_dispatch"
+	gate.Output = ""
+	gate.SignalID = ""
+	recordGateExecutionDeferred(gate, strings.TrimSpace(cause.Error()), now)
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "gate",
+		Action:   "gate_dispatch_deferred",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  "waiting_dispatch",
+		Detail:   strings.TrimSpace(cause.Error()),
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:       now,
+		Type:     "gate_dispatch_deferred",
+		RunID:    run.ID,
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Message:  strings.TrimSpace(cause.Error()),
 	})
 	if s.dispatchRetryScheduler != nil {
 		s.dispatchRetryScheduler.Enqueue(run.ID)
@@ -2229,6 +2643,9 @@ func (s *InMemoryRunService) completeAwaitingTurnStepLocked(ctx context.Context,
 		run.CurrentStepIndex = nextStep
 		return true, nil
 	}
+	if _, _, _, hasPendingGate := findPendingGate(run); hasPendingGate {
+		return true, nil
+	}
 	run.Status = WorkflowRunStatusCompleted
 	run.CompletedAt = &now
 	run.LastError = ""
@@ -2398,6 +2815,252 @@ func (s *InMemoryRunService) applyStepOutcomeSuccess(
 	})
 }
 
+func (s *InMemoryRunService) completeAwaitingGateLocked(ctx context.Context, run *WorkflowRun, gateSignal GateSignal) (bool, error) {
+	if s == nil || run == nil {
+		return false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if phaseIndex, gateIndex, _, ok := findActiveGate(run); ok &&
+		phaseIndex >= 0 && phaseIndex < len(run.Phases) &&
+		gateIndex >= 0 && gateIndex < len(run.Phases[phaseIndex].Gates) {
+		activeGate := &run.Phases[phaseIndex].Gates[gateIndex]
+		if !s.gateSignalMatcherOrDefault().Matches(activeGate, gateSignal) {
+			now := s.engine.now()
+			appendRunAudit(run, RunAuditEntry{
+				At:       now,
+				Scope:    "gate",
+				Action:   "gate_signal_ignored",
+				PhaseID:  run.Phases[phaseIndex].ID,
+				GateID:   activeGate.ID,
+				GateKind: activeGate.Kind,
+				Boundary: activeGate.Boundary.Boundary,
+				Outcome:  "awaiting_signal",
+				Detail:   "signal mismatch while awaiting gate",
+			})
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+				At:       now,
+				Type:     "gate_signal_ignored",
+				RunID:    run.ID,
+				PhaseID:  run.Phases[phaseIndex].ID,
+				GateID:   activeGate.ID,
+				GateKind: activeGate.Kind,
+				Boundary: activeGate.Boundary.Boundary,
+				Message:  "signal mismatch while awaiting gate",
+			})
+			return false, nil
+		}
+	}
+	resolution, err := s.gateCoordinatorOrDefault().ResolveSignal(ctx, run, gateSignal)
+	if err != nil {
+		return false, err
+	}
+	if !resolution.Consumed {
+		if resolution.IgnoreReason != "" &&
+			resolution.PhaseIndex >= 0 &&
+			resolution.PhaseIndex < len(run.Phases) &&
+			resolution.GateIndex >= 0 &&
+			resolution.GateIndex < len(run.Phases[resolution.PhaseIndex].Gates) {
+			now := s.engine.now()
+			phase := &run.Phases[resolution.PhaseIndex]
+			gate := &phase.Gates[resolution.GateIndex]
+			appendRunAudit(run, RunAuditEntry{
+				At:       now,
+				Scope:    "gate",
+				Action:   "gate_signal_ignored",
+				PhaseID:  phase.ID,
+				GateID:   gate.ID,
+				GateKind: gate.Kind,
+				Boundary: gate.Boundary.Boundary,
+				Outcome:  "awaiting_signal",
+				Detail:   resolution.IgnoreReason,
+			})
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+				At:       now,
+				Type:     "gate_signal_ignored",
+				RunID:    run.ID,
+				PhaseID:  phase.ID,
+				GateID:   gate.ID,
+				GateKind: gate.Kind,
+				Boundary: gate.Boundary.Boundary,
+				Message:  resolution.IgnoreReason,
+			})
+		}
+		return false, nil
+	}
+	if resolution.PhaseIndex < 0 || resolution.PhaseIndex >= len(run.Phases) {
+		return false, fmt.Errorf("%w: awaiting gate index out of range", ErrInvalidTransition)
+	}
+	phase := &run.Phases[resolution.PhaseIndex]
+	if resolution.GateIndex < 0 || resolution.GateIndex >= len(phase.Gates) {
+		return false, fmt.Errorf("%w: awaiting gate index out of range", ErrInvalidTransition)
+	}
+	gate := &phase.Gates[resolution.GateIndex]
+	now := s.engine.now()
+	gate.LastSignal = buildGateSignalContext(gateSignal, now)
+	if strings.TrimSpace(gateSignal.Output) != "" {
+		gate.Output = strings.TrimSpace(gateSignal.Output)
+	}
+	switch resolution.Outcome {
+	case GateOutcomePause:
+		s.applyGatePause(run, phase, gate, gateSignal, now, resolution)
+	default:
+		s.applyGatePass(run, phase, gate, gateSignal, now, resolution)
+	}
+	return true, nil
+}
+
+func (s *InMemoryRunService) applyGatePass(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	gate *WorkflowGateRun,
+	signal GateSignal,
+	now time.Time,
+	resolution GateResolution,
+) {
+	if run == nil || phase == nil || gate == nil {
+		return
+	}
+	gate.Status = WorkflowGateStatusPassed
+	gate.CompletedAt = &now
+	gate.Error = ""
+	gate.Outcome = "passed"
+	gate.Summary = firstNonEmpty(resolution.Summary, "gate passed")
+	if signalID := strings.TrimSpace(signal.SignalID); signalID != "" {
+		gate.SignalID = signalID
+	}
+	recordGateExecutionCompletion(run, phase, gate, signal, now)
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "gate",
+		Action:   "gate_passed",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  gate.Outcome,
+		Detail:   gate.Summary,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:       now,
+		Type:     "gate_passed",
+		RunID:    run.ID,
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Message:  gate.Summary,
+	})
+}
+
+func (s *InMemoryRunService) applyGatePause(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	gate *WorkflowGateRun,
+	signal GateSignal,
+	now time.Time,
+	resolution GateResolution,
+) {
+	if run == nil || phase == nil || gate == nil {
+		return
+	}
+	summary := firstNonEmpty(resolution.Summary, "gate rejected the phase")
+	outcome := "failed"
+	reasonCode := strings.TrimSpace(resolution.ReasonCode)
+	if reasonCode == "" {
+		reasonCode = reasonGateLLMJudgeFailed
+	}
+	gate.Status = WorkflowGateStatusPaused
+	if resolution.Status == WorkflowGateStatusFailed {
+		gate.Status = WorkflowGateStatusFailed
+	}
+	gate.CompletedAt = &now
+	gate.Error = summary
+	gate.Outcome = outcome
+	gate.Summary = summary
+	if signalID := strings.TrimSpace(signal.SignalID); signalID != "" {
+		gate.SignalID = signalID
+	}
+	recordGateExecutionCompletion(run, phase, gate, signal, now)
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "gate",
+		Action:   "gate_failed",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  outcome,
+		Detail:   summary,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:       now,
+		Type:     "gate_failed",
+		RunID:    run.ID,
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Message:  summary,
+	})
+	metadata := CheckpointDecisionMetadata{
+		Action:              CheckpointActionPause,
+		Reasons:             []CheckpointReason{{Code: reasonCode, Message: summary, HardGate: true}},
+		Severity:            DecisionSeverityCritical,
+		Tier:                DecisionTier3,
+		Style:               run.CheckpointStyle,
+		Confidence:          0,
+		ConfidenceThreshold: run.Policy.ConfidenceThreshold,
+		Score:               1,
+		PauseThreshold:      run.Policy.PauseThreshold,
+		HardGateTriggered:   true,
+		EvaluatedAt:         now.UTC(),
+	}
+	decision := CheckpointDecision{
+		ID:          fmt.Sprintf("cd-%d", len(run.CheckpointDecisions)+1),
+		RunID:       run.ID,
+		PhaseID:     phase.ID,
+		GateID:      gate.ID,
+		GateKind:    gate.Kind,
+		Boundary:    gate.Boundary.Boundary,
+		Decision:    string(CheckpointActionPause),
+		Reason:      summary,
+		Source:      "gate",
+		RequestedAt: now,
+		DecidedAt:   &now,
+		Metadata:    metadata,
+	}
+	run.CheckpointDecisions = append(run.CheckpointDecisions, decision)
+	copy := decision
+	run.LatestDecision = &copy
+	run.Status = WorkflowRunStatusPaused
+	run.PausedAt = &now
+	s.recordPauseLocked()
+	s.recordInterventionCauseLocked(reasonCode)
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "decision",
+		Action:   "gate_pause",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  string(metadata.Severity),
+		Detail:   summary,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:       now,
+		Type:     "checkpoint_requested",
+		RunID:    run.ID,
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Message:  summary,
+	})
+}
+
 func (s *InMemoryRunService) resumeAndAdvanceWithoutPolicyLocked(ctx context.Context, run *WorkflowRun, note string) error {
 	if run == nil {
 		return fmt.Errorf("%w: run is required", ErrInvalidTransition)
@@ -2420,8 +3083,7 @@ func (s *InMemoryRunService) resumeAndAdvanceWithoutPolicyLocked(ctx context.Con
 	})
 	s.appendDecisionTimelineLocked(run, "decision_approved_continue", "", note)
 
-	beforeStatus := run.Status
-	return s.advanceWithEngineUnlocked(ctx, run, beforeStatus)
+	return s.advanceOnceLockedWithPolicy(ctx, run, false)
 }
 
 // advanceWithEngineUnlocked advances a run by executing engine.Advance without holding the service mutex.
@@ -2548,6 +3210,39 @@ func (s *InMemoryRunService) stopRunLocked(run *WorkflowRun, reason string) {
 				Message: reason,
 			})
 		}
+		for gIndex := range phase.Gates {
+			gate := &phase.Gates[gIndex]
+			if gate.Status != WorkflowGateStatusAwaitingSignal {
+				continue
+			}
+			recordGateExecutionFailure(gate, reason, now)
+			gate.Status = WorkflowGateStatusStopped
+			gate.CompletedAt = &now
+			gate.Error = reason
+			gate.Outcome = "stopped"
+			gate.Summary = reason
+			appendRunAudit(run, RunAuditEntry{
+				At:       now,
+				Scope:    "gate",
+				Action:   "gate_stopped",
+				PhaseID:  phase.ID,
+				GateID:   gate.ID,
+				GateKind: gate.Kind,
+				Boundary: gate.Boundary.Boundary,
+				Outcome:  "stopped",
+				Detail:   reason,
+			})
+			s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+				At:       now,
+				Type:     "gate_stopped",
+				RunID:    run.ID,
+				PhaseID:  phase.ID,
+				GateID:   gate.ID,
+				GateKind: gate.Kind,
+				Boundary: gate.Boundary.Boundary,
+				Message:  reason,
+			})
+		}
 	}
 
 	run.Status = WorkflowRunStatusStopped
@@ -2633,6 +3328,21 @@ func normalizeTurnSignal(signal TurnSignal) TurnSignal {
 	return signal
 }
 
+func normalizeGateSignal(signal GateSignal) GateSignal {
+	signal.Transport = strings.TrimSpace(signal.Transport)
+	signal.SignalID = strings.TrimSpace(signal.SignalID)
+	signal.SessionID = strings.TrimSpace(signal.SessionID)
+	signal.WorkspaceID = strings.TrimSpace(signal.WorkspaceID)
+	signal.WorktreeID = strings.TrimSpace(signal.WorktreeID)
+	signal.Provider = strings.TrimSpace(signal.Provider)
+	signal.Source = strings.TrimSpace(signal.Source)
+	signal.Status = strings.TrimSpace(signal.Status)
+	signal.Error = strings.TrimSpace(signal.Error)
+	signal.Output = strings.TrimSpace(signal.Output)
+	signal.Payload = cloneStringAnyMap(signal.Payload)
+	return signal
+}
+
 func runMatchesTurnSignal(run *WorkflowRun, signal TurnSignal) bool {
 	if run == nil {
 		return false
@@ -2680,6 +3390,25 @@ func stepTraceID(run *WorkflowRun, phase *PhaseRun, step *StepRun, attempt int) 
 	}
 	if step != nil {
 		parts = append(parts, strings.TrimSpace(step.ID))
+	}
+	if attempt > 0 {
+		parts = append(parts, fmt.Sprintf("attempt-%d", attempt))
+	}
+	return strings.Join(parts, ":")
+}
+
+func gateTraceID(run *WorkflowRun, phase *PhaseRun, gate *WorkflowGateRun, attempt int) string {
+	if run == nil {
+		return ""
+	}
+	parts := []string{
+		strings.TrimSpace(run.ID),
+	}
+	if phase != nil {
+		parts = append(parts, strings.TrimSpace(phase.ID))
+	}
+	if gate != nil {
+		parts = append(parts, strings.TrimSpace(gate.ID))
 	}
 	if attempt > 0 {
 		parts = append(parts, fmt.Sprintf("attempt-%d", attempt))
@@ -2837,6 +3566,123 @@ func buildStepTurnSignalContext(signal TurnSignal, now time.Time) *StepTurnSigna
 		Output:      strings.TrimSpace(signal.Output),
 		Terminal:    signal.Terminal,
 		Payload:     cloneStringAnyMap(signal.Payload),
+	}
+}
+
+func buildGateSignalContext(signal GateSignal, now time.Time) *GateSignalContext {
+	return &GateSignalContext{
+		ReceivedAt:  now,
+		Transport:   strings.TrimSpace(signal.Transport),
+		SignalID:    strings.TrimSpace(signal.SignalID),
+		SessionID:   strings.TrimSpace(signal.SessionID),
+		WorkspaceID: strings.TrimSpace(signal.WorkspaceID),
+		WorktreeID:  strings.TrimSpace(signal.WorktreeID),
+		Provider:    strings.TrimSpace(signal.Provider),
+		Source:      strings.TrimSpace(signal.Source),
+		Status:      strings.TrimSpace(signal.Status),
+		Error:       strings.TrimSpace(signal.Error),
+		Output:      strings.TrimSpace(signal.Output),
+		Terminal:    signal.Terminal,
+		Payload:     cloneStringAnyMap(signal.Payload),
+	}
+}
+
+func recordGateExecutionDispatch(
+	run *WorkflowRun,
+	phase *PhaseRun,
+	gate *WorkflowGateRun,
+	result GateDispatchResult,
+	prompt string,
+	now time.Time,
+) {
+	if gate == nil {
+		return
+	}
+	gate.ExecutionState = GateExecutionStateLinked
+	gate.ExecutionMessage = ""
+	execution := GateExecutionRef{
+		TraceID:        gateTraceID(run, phase, gate, max(1, len(gate.ExecutionAttempts)+1)),
+		Transport:      strings.TrimSpace(result.Transport),
+		SessionID:      strings.TrimSpace(result.SessionID),
+		SessionScope:   runSessionScope(run),
+		Provider:       strings.TrimSpace(result.Provider),
+		Model:          strings.TrimSpace(result.Model),
+		SignalID:       strings.TrimSpace(result.SignalID),
+		PromptSnapshot: strings.TrimSpace(prompt),
+		StartedAt:      &now,
+	}
+	gate.Execution = &execution
+	gate.ExecutionAttempts = append(gate.ExecutionAttempts, execution)
+	gate.SignalID = strings.TrimSpace(result.SignalID)
+}
+
+func recordGateExecutionFailure(gate *WorkflowGateRun, message string, now time.Time) {
+	if gate == nil {
+		return
+	}
+	gate.ExecutionState = GateExecutionStateUnavailable
+	gate.ExecutionMessage = strings.TrimSpace(message)
+	if gate.Execution != nil {
+		gate.Execution.CompletedAt = &now
+	}
+	if len(gate.ExecutionAttempts) > 0 {
+		gate.ExecutionAttempts[len(gate.ExecutionAttempts)-1].CompletedAt = &now
+	}
+}
+
+func recordGateExecutionDeferred(gate *WorkflowGateRun, message string, now time.Time) {
+	if gate == nil {
+		return
+	}
+	gate.ExecutionState = GateExecutionStateDeferred
+	gate.ExecutionMessage = strings.TrimSpace(message)
+	if gate.Execution != nil {
+		gate.Execution.CompletedAt = &now
+	}
+	if len(gate.ExecutionAttempts) > 0 {
+		gate.ExecutionAttempts[len(gate.ExecutionAttempts)-1].CompletedAt = &now
+	}
+}
+
+func recordGateExecutionCompletion(run *WorkflowRun, phase *PhaseRun, gate *WorkflowGateRun, signal GateSignal, now time.Time) {
+	if gate == nil {
+		return
+	}
+	gate.ExecutionState = GateExecutionStateLinked
+	gate.ExecutionMessage = ""
+	if gate.Execution == nil {
+		execution := GateExecutionRef{
+			TraceID:      gateTraceID(run, phase, gate, max(1, len(gate.ExecutionAttempts))),
+			Transport:    strings.TrimSpace(signal.Transport),
+			SessionID:    firstNonEmpty(strings.TrimSpace(signal.SessionID), strings.TrimSpace(run.SessionID)),
+			SessionScope: runSessionScope(run),
+			Provider:     strings.TrimSpace(signal.Provider),
+			SignalID:     strings.TrimSpace(gate.SignalID),
+			StartedAt:    gate.StartedAt,
+			CompletedAt:  &now,
+		}
+		gate.Execution = &execution
+		gate.ExecutionAttempts = append(gate.ExecutionAttempts, execution)
+		return
+	}
+	gate.Execution.CompletedAt = &now
+	if signalID := strings.TrimSpace(signal.SignalID); signalID != "" {
+		gate.Execution.SignalID = signalID
+	}
+	if strings.TrimSpace(gate.Execution.SignalID) == "" {
+		gate.Execution.SignalID = strings.TrimSpace(gate.SignalID)
+	}
+	if strings.TrimSpace(gate.Execution.SessionID) == "" {
+		gate.Execution.SessionID = firstNonEmpty(strings.TrimSpace(signal.SessionID), strings.TrimSpace(run.SessionID))
+	}
+	if strings.TrimSpace(gate.Execution.Provider) == "" {
+		gate.Execution.Provider = strings.TrimSpace(signal.Provider)
+	}
+	if strings.TrimSpace(gate.Execution.Transport) == "" {
+		gate.Execution.Transport = strings.TrimSpace(signal.Transport)
+	}
+	if len(gate.ExecutionAttempts) > 0 {
+		gate.ExecutionAttempts[len(gate.ExecutionAttempts)-1] = *gate.Execution
 	}
 }
 
@@ -3177,12 +4023,34 @@ func instantiatePhases(template WorkflowTemplate) []PhaseRun {
 				ExecutionState: StepExecutionStateNone,
 			})
 		}
-		phases = append(phases, PhaseRun{
+		phaseRun := PhaseRun{
 			ID:     phase.ID,
 			Name:   phase.Name,
 			Status: PhaseRunStatusPending,
 			Steps:  steps,
-		})
+		}
+		if len(phase.Gates) > 0 {
+			phaseRun.Gates = make([]WorkflowGateRun, 0, len(phase.Gates))
+			for _, gate := range phase.Gates {
+				boundary := gate.Boundary
+				if boundary.Boundary == "" {
+					boundary.Boundary = WorkflowGateBoundaryPhaseEnd
+				}
+				if strings.TrimSpace(boundary.PhaseID) == "" {
+					boundary.PhaseID = strings.TrimSpace(phase.ID)
+				}
+				phaseRun.Gates = append(phaseRun.Gates, WorkflowGateRun{
+					ID:                 strings.TrimSpace(gate.ID),
+					Kind:               gate.Kind,
+					Boundary:           boundary,
+					ManualReviewConfig: cloneManualReviewConfig(gate.ManualReviewConfig),
+					LLMJudgeConfig:     cloneLLMJudgeConfig(gate.LLMJudgeConfig),
+					Status:             WorkflowGateStatusPending,
+					ExecutionState:     GateExecutionStateNone,
+				})
+			}
+		}
+		phases = append(phases, phaseRun)
 	}
 	return phases
 }
@@ -3192,12 +4060,34 @@ func cloneTemplate(in WorkflowTemplate) WorkflowTemplate {
 	out.Phases = make([]WorkflowTemplatePhase, len(in.Phases))
 	for i, phase := range in.Phases {
 		out.Phases[i] = phase
+		if len(phase.Gates) > 0 {
+			out.Phases[i].Gates = make([]WorkflowGateSpec, 0, len(phase.Gates))
+			for _, gate := range phase.Gates {
+				out.Phases[i].Gates = append(out.Phases[i].Gates, cloneWorkflowGateSpec(gate))
+			}
+		}
 		out.Phases[i].Steps = append([]WorkflowTemplateStep{}, phase.Steps...)
 		for j := range out.Phases[i].Steps {
 			out.Phases[i].Steps[j].RuntimeOptions = types.CloneRuntimeOptions(out.Phases[i].Steps[j].RuntimeOptions)
 		}
 	}
 	return out
+}
+
+func cloneManualReviewConfig(in *ManualReviewConfig) *ManualReviewConfig {
+	if in == nil {
+		return nil
+	}
+	cfg := *in
+	return &cfg
+}
+
+func cloneLLMJudgeConfig(in *LLMJudgeConfig) *LLMJudgeConfig {
+	if in == nil {
+		return nil
+	}
+	cfg := *in
+	return &cfg
 }
 
 func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
@@ -3217,6 +4107,27 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 	for i, phase := range in.Phases {
 		out.Phases[i] = phase
 		out.Phases[i].Steps = append([]StepRun{}, phase.Steps...)
+		if len(phase.Gates) > 0 {
+			out.Phases[i].Gates = make([]WorkflowGateRun, 0, len(phase.Gates))
+			for _, gate := range phase.Gates {
+				gateCopy := gate
+				if gate.Execution != nil {
+					execution := *gate.Execution
+					gateCopy.Execution = &execution
+				}
+				if len(gate.ExecutionAttempts) > 0 {
+					gateCopy.ExecutionAttempts = append([]GateExecutionRef{}, gate.ExecutionAttempts...)
+				}
+				if gate.LastSignal != nil {
+					signal := *gate.LastSignal
+					signal.Payload = cloneStringAnyMap(signal.Payload)
+					gateCopy.LastSignal = &signal
+				}
+				gateCopy.ManualReviewConfig = cloneManualReviewConfig(gate.ManualReviewConfig)
+				gateCopy.LLMJudgeConfig = cloneLLMJudgeConfig(gate.LLMJudgeConfig)
+				out.Phases[i].Gates = append(out.Phases[i].Gates, gateCopy)
+			}
+		}
 		for j := range out.Phases[i].Steps {
 			step := &out.Phases[i].Steps[j]
 			step.RuntimeOptions = types.CloneRuntimeOptions(step.RuntimeOptions)
@@ -3402,6 +4313,11 @@ func isRunAwaitingTurn(run *WorkflowRun) bool {
 	return ok
 }
 
+func isRunAwaitingGate(run *WorkflowRun) bool {
+	_, _, _, ok := findActiveGate(run)
+	return ok
+}
+
 func runHasDeferredDispatch(run *WorkflowRun) bool {
 	if run == nil {
 		return false
@@ -3412,6 +4328,11 @@ func runHasDeferredDispatch(run *WorkflowRun) bool {
 				continue
 			}
 			if step.ExecutionState == StepExecutionStateDeferred || strings.EqualFold(strings.TrimSpace(step.Outcome), "waiting_dispatch") {
+				return true
+			}
+		}
+		for _, gate := range phase.Gates {
+			if gate.ExecutionState == GateExecutionStateDeferred || gate.Status == WorkflowGateStatusWaitingDispatch {
 				return true
 			}
 		}
@@ -3776,6 +4697,16 @@ func (s *InMemoryRunService) hydrateTurnReceiptsLocked(run *WorkflowRun) {
 			}
 			s.turnSeen[turnReceiptKey(runID, turnID)] = struct{}{}
 		}
+		for _, gate := range phase.Gates {
+			signalID := strings.TrimSpace(gate.SignalID)
+			if signalID == "" && gate.Execution != nil {
+				signalID = strings.TrimSpace(gate.Execution.SignalID)
+			}
+			if signalID == "" {
+				continue
+			}
+			s.turnSeen[turnReceiptKey(runID, signalID)] = struct{}{}
+		}
 	}
 }
 
@@ -3875,6 +4806,15 @@ func (s *InMemoryRunService) dispatchStepPrompt(ctx context.Context, req StepPro
 	return s.stepDispatcher.DispatchStepPrompt(ctx, req)
 }
 
+// dispatchGate performs gate dispatch I/O without holding the service lock.
+// The caller must release the lock before calling this method.
+func (s *InMemoryRunService) dispatchGate(ctx context.Context, req GateDispatchRequest) (GateDispatchResult, error) {
+	if s == nil || s.gateDispatcher == nil {
+		return GateDispatchResult{}, nil
+	}
+	return s.gateDispatcher.DispatchGate(ctx, req)
+}
+
 // buildStepDispatchRequest builds a dispatch request from a run.
 // Must be called while holding the service lock.
 func (s *InMemoryRunService) buildStepDispatchRequest(run *WorkflowRun, phaseIndex, stepIndex int, dispatchPrompt string) StepPromptDispatchRequest {
@@ -3902,6 +4842,32 @@ func (s *InMemoryRunService) buildStepDispatchRequest(run *WorkflowRun, phaseInd
 	}
 }
 
+func (s *InMemoryRunService) buildGateDispatchRequest(run *WorkflowRun, phaseIndex, gateIndex int, dispatchPrompt string) GateDispatchRequest {
+	if run == nil || phaseIndex < 0 || phaseIndex >= len(run.Phases) {
+		return GateDispatchRequest{}
+	}
+	phase := &run.Phases[phaseIndex]
+	if gateIndex < 0 || gateIndex >= len(phase.Gates) {
+		return GateDispatchRequest{}
+	}
+	gate := &phase.Gates[gateIndex]
+	return GateDispatchRequest{
+		RunID:                  strings.TrimSpace(run.ID),
+		TemplateID:             strings.TrimSpace(run.TemplateID),
+		DefaultAccessLevel:     run.DefaultAccessLevel,
+		SelectedProvider:       strings.TrimSpace(run.SelectedProvider),
+		SelectedRuntimeOptions: types.CloneRuntimeOptions(run.SelectedRuntimeOptions),
+		WorkspaceID:            strings.TrimSpace(run.WorkspaceID),
+		WorktreeID:             strings.TrimSpace(run.WorktreeID),
+		SessionID:              strings.TrimSpace(run.SessionID),
+		PhaseID:                strings.TrimSpace(phase.ID),
+		GateID:                 strings.TrimSpace(gate.ID),
+		GateKind:               gate.Kind,
+		Boundary:               gate.Boundary.Boundary,
+		Prompt:                 strings.TrimSpace(dispatchPrompt),
+	}
+}
+
 // stepDispatchContext captures all state needed to perform and apply a step dispatch.
 type stepDispatchContext struct {
 	runID          string
@@ -3913,6 +4879,21 @@ type stepDispatchContext struct {
 }
 
 type stepDispatchHandoffOutcome struct {
+	applied    bool
+	dispatched bool
+	run        *WorkflowRun
+}
+
+type gateDispatchContext struct {
+	runID          string
+	phaseIndex     int
+	gateIndex      int
+	dispatchPrompt string
+	req            GateDispatchRequest
+	beforeStatus   WorkflowRunStatus
+}
+
+type gateDispatchHandoffOutcome struct {
 	applied    bool
 	dispatched bool
 	run        *WorkflowRun
@@ -3951,6 +4932,76 @@ func (s *InMemoryRunService) prepareStepDispatchContext(run *WorkflowRun) (stepD
 	}, true
 }
 
+func (s *InMemoryRunService) prepareGateDispatchContext(ctx context.Context, run *WorkflowRun) (gateDispatchContext, bool, error) {
+	if s == nil || run == nil {
+		return gateDispatchContext{}, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	coordinator := s.gateCoordinatorOrDefault()
+	for {
+		if err := ctx.Err(); err != nil {
+			return gateDispatchContext{}, false, err
+		}
+		resolution, err := coordinator.ResolvePendingGate(ctx, run)
+		if err != nil {
+			if strings.TrimSpace(resolution.GateID) != "" &&
+				resolution.PhaseIndex >= 0 &&
+				resolution.PhaseIndex < len(run.Phases) &&
+				resolution.GateIndex >= 0 &&
+				resolution.GateIndex < len(run.Phases[resolution.PhaseIndex].Gates) {
+				s.failRunForGateDispatchLocked(run, resolution.PhaseIndex, resolution.GateIndex, err)
+			}
+			return gateDispatchContext{}, false, err
+		}
+		if !resolution.Consumed {
+			return gateDispatchContext{}, false, nil
+		}
+		if resolution.PhaseIndex < 0 || resolution.PhaseIndex >= len(run.Phases) {
+			return gateDispatchContext{}, false, nil
+		}
+		phase := &run.Phases[resolution.PhaseIndex]
+		if resolution.GateIndex < 0 || resolution.GateIndex >= len(phase.Gates) {
+			return gateDispatchContext{}, false, nil
+		}
+		gate := &phase.Gates[resolution.GateIndex]
+		now := s.engine.now()
+		if gate.StartedAt == nil {
+			gate.StartedAt = &now
+		}
+		switch resolution.Outcome {
+		case GateOutcomePause:
+			s.applyGatePause(run, phase, gate, GateSignal{}, now, resolution)
+			return gateDispatchContext{}, false, nil
+		case GateOutcomeContinue:
+			s.applyGatePass(run, phase, gate, GateSignal{}, now, resolution)
+			continue
+		case GateOutcomeAwaiting:
+			dispatchPrompt := strings.TrimSpace(resolution.DispatchPrompt)
+			if dispatchPrompt == "" {
+				s.failRunForGateDispatchLocked(run, resolution.PhaseIndex, resolution.GateIndex, fmt.Errorf("%w: gate dispatch prompt is empty", ErrGateDispatch))
+				return gateDispatchContext{}, false, fmt.Errorf("%w: gate dispatch prompt is empty", ErrGateDispatch)
+			}
+			if s.gateDispatcher == nil {
+				s.failRunForGateDispatchLocked(run, resolution.PhaseIndex, resolution.GateIndex, fmt.Errorf("%w: gate dispatcher unavailable", ErrGateDispatch))
+				return gateDispatchContext{}, false, fmt.Errorf("%w: gate dispatcher unavailable", ErrGateDispatch)
+			}
+			req := s.buildGateDispatchRequest(run, resolution.PhaseIndex, resolution.GateIndex, dispatchPrompt)
+			return gateDispatchContext{
+				runID:          strings.TrimSpace(run.ID),
+				phaseIndex:     resolution.PhaseIndex,
+				gateIndex:      resolution.GateIndex,
+				dispatchPrompt: dispatchPrompt,
+				req:            req,
+				beforeStatus:   run.Status,
+			}, true, nil
+		default:
+			return gateDispatchContext{}, false, fmt.Errorf("%w: unsupported gate outcome %q", ErrInvalidTransition, resolution.Outcome)
+		}
+	}
+}
+
 // canApplyStepDispatchResultLocked returns true when a dispatch result still matches
 // the run's current state and can be safely applied.
 // Must be called while holding s.mu.
@@ -3978,6 +5029,27 @@ func (s *InMemoryRunService) canApplyStepDispatchResultLocked(dispatchCtx stepDi
 		return false
 	}
 	return true
+}
+
+func (s *InMemoryRunService) canApplyGateDispatchResultLocked(dispatchCtx gateDispatchContext) bool {
+	if s == nil {
+		return false
+	}
+	run, ok := s.getRunByIDLocked(dispatchCtx.runID)
+	if !ok || run == nil || run.Status != WorkflowRunStatusRunning {
+		return false
+	}
+	if dispatchCtx.phaseIndex < 0 || dispatchCtx.phaseIndex >= len(run.Phases) {
+		return false
+	}
+	phase := &run.Phases[dispatchCtx.phaseIndex]
+	if phase.Status != PhaseRunStatusCompleted {
+		return false
+	}
+	if dispatchCtx.gateIndex < 0 || dispatchCtx.gateIndex >= len(phase.Gates) {
+		return false
+	}
+	return phase.Gates[dispatchCtx.gateIndex].Status == WorkflowGateStatusPending
 }
 
 // dispatchWithRunLockHandoffLocked performs dispatch I/O without holding locks, then
@@ -4011,6 +5083,46 @@ func (s *InMemoryRunService) dispatchWithRunLockHandoffLocked(
 		return outcome, nil
 	}
 	dispatched, applyErr := s.applyStepDispatchResult(ctx, dispatchCtx, result, dispatchErr)
+	outcome.applied = true
+	outcome.dispatched = dispatched
+	outcome.run, _ = s.getRunByIDLocked(dispatchCtx.runID)
+	if outcome.run == nil {
+		return outcome, ErrRunNotFound
+	}
+	if applyErr != nil {
+		return outcome, applyErr
+	}
+	return outcome, nil
+}
+
+func (s *InMemoryRunService) dispatchGateWithRunLockHandoffLocked(
+	ctx context.Context,
+	dispatchCtx gateDispatchContext,
+	unlockRunLock func(),
+	relockRunLock func(),
+) (gateDispatchHandoffOutcome, error) {
+	if unlockRunLock == nil {
+		unlockRunLock = func() {}
+	}
+	if relockRunLock == nil {
+		relockRunLock = func() {}
+	}
+	s.mu.Unlock()
+	unlockRunLock()
+
+	result, dispatchErr := s.dispatchGate(ctx, dispatchCtx.req)
+
+	relockRunLock()
+	s.mu.Lock()
+	run, _ := s.getRunByIDLocked(dispatchCtx.runID)
+	if run == nil {
+		return gateDispatchHandoffOutcome{}, ErrRunNotFound
+	}
+	outcome := gateDispatchHandoffOutcome{run: run}
+	if !s.canApplyGateDispatchResultLocked(dispatchCtx) {
+		return outcome, nil
+	}
+	dispatched, applyErr := s.applyGateDispatchResult(ctx, dispatchCtx, result, dispatchErr)
 	outcome.applied = true
 	outcome.dispatched = dispatched
 	outcome.run, _ = s.getRunByIDLocked(dispatchCtx.runID)
@@ -4122,6 +5234,115 @@ func (s *InMemoryRunService) applyStepDispatchResult(
 		Message: "step prompt dispatched to session=" + strings.TrimSpace(result.SessionID),
 	})
 	return true, nil
+}
+
+func (s *InMemoryRunService) applyGateDispatchResult(
+	ctx context.Context,
+	dispatchCtx gateDispatchContext,
+	result GateDispatchResult,
+	dispatchErr error,
+) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	run, ok := s.getRunByIDLocked(dispatchCtx.runID)
+	if !ok || run == nil {
+		return false, nil
+	}
+	if dispatchCtx.phaseIndex < 0 || dispatchCtx.phaseIndex >= len(run.Phases) {
+		return false, nil
+	}
+	phase := &run.Phases[dispatchCtx.phaseIndex]
+	if dispatchCtx.gateIndex < 0 || dispatchCtx.gateIndex >= len(phase.Gates) {
+		return false, nil
+	}
+	gate := &phase.Gates[dispatchCtx.gateIndex]
+
+	s.recordDispatchAttemptLocked()
+
+	if dispatchErr != nil {
+		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(dispatchErr) == DispatchErrorDispositionDeferred {
+			s.recordDispatchDeferredLocked()
+			s.deferRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, dispatchErr)
+			return true, nil
+		}
+		s.recordDispatchFailureLocked()
+		s.failRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, dispatchErr)
+		return false, dispatchErr
+	}
+	if cause := validateGateDispatchResult(result); cause != nil {
+		s.recordDispatchFailureLocked()
+		s.failRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, cause)
+		return false, cause
+	}
+	now := s.engine.now()
+	gate.Status = WorkflowGateStatusAwaitingSignal
+	if gate.StartedAt == nil {
+		gate.StartedAt = &now
+	}
+	gate.CompletedAt = nil
+	gate.Error = ""
+	gate.Outcome = "awaiting_signal"
+	gate.Summary = ""
+	gate.Output = strings.TrimSpace(result.SignalID)
+	gate.SignalID = strings.TrimSpace(result.SignalID)
+	if sessionID := strings.TrimSpace(result.SessionID); sessionID != "" && strings.TrimSpace(run.SessionID) != sessionID {
+		run.SessionID = sessionID
+	}
+	recordGateExecutionDispatch(run, phase, gate, result, dispatchCtx.dispatchPrompt, now)
+	dispatchDetail := "gate transport dispatched"
+	if sessionID := strings.TrimSpace(result.SessionID); sessionID != "" {
+		dispatchDetail = "session=" + sessionID
+	}
+	if transport := strings.TrimSpace(result.Transport); transport != "" {
+		dispatchDetail += " transport=" + transport
+	}
+	if signalID := strings.TrimSpace(result.SignalID); signalID != "" {
+		dispatchDetail += " signal=" + signalID
+	}
+	appendRunAudit(run, RunAuditEntry{
+		At:       now,
+		Scope:    "gate",
+		Action:   "gate_dispatched",
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Outcome:  "awaiting_signal",
+		Detail:   dispatchDetail,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:       now,
+		Type:     "gate_dispatched",
+		RunID:    run.ID,
+		PhaseID:  phase.ID,
+		GateID:   gate.ID,
+		GateKind: gate.Kind,
+		Boundary: gate.Boundary.Boundary,
+		Message:  dispatchDetail,
+	})
+	s.persistRunSnapshotLocked(ctx, run.ID)
+	return true, nil
+}
+
+func validateGateDispatchResult(result GateDispatchResult) error {
+	if !result.Dispatched {
+		return fmt.Errorf("%w: dispatcher did not dispatch gate prompt", ErrGateDispatch)
+	}
+	transport := strings.ToLower(strings.TrimSpace(result.Transport))
+	sessionID := strings.TrimSpace(result.SessionID)
+	signalID := strings.TrimSpace(result.SignalID)
+	switch transport {
+	case "session_turn":
+		if sessionID == "" && signalID == "" {
+			return fmt.Errorf("%w: session_turn dispatch requires session_id or signal_id", ErrGateDispatch)
+		}
+	default:
+		if sessionID == "" && signalID == "" {
+			return fmt.Errorf("%w: dispatcher returned dispatched gate without routing signal/session", ErrGateDispatch)
+		}
+	}
+	return nil
 }
 
 func sanitizeCounter(value int) int {
