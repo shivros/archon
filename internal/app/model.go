@@ -89,309 +89,311 @@ const (
 )
 
 type Model struct {
-	workspaceAPI                        WorkspaceAPI
-	sessionAPI                          SessionAPI
-	metadataStreamAPI                   MetadataStreamAPI
-	sessionTranscriptAPI                SessionTranscriptAPI
-	guidedWorkflowAPI                   GuidedWorkflowRunAPI
-	guidedWorkflowTemplateAPI           GuidedWorkflowTemplateAPI
-	sessionSelectionAPI                 SessionSelectionAPI
-	sessionHistoryAPI                   SessionHistoryAPI
-	notesAPI                            NotesAPI
-	stateAPI                            StateAPI
-	clipboard                           ClipboardService
-	fileLinkResolver                    FileLinkResolver
-	fileLinkOpener                      FileLinkOpener
-	mouseGesturePolicy                  MouseGesturePolicy
-	pickerPasteNormalizer               PickerPasteNormalizer
-	sidebar                             *SidebarController
-	viewport                            viewport.Model
-	mode                                uiMode
-	addWorkspace                        *AddWorkspaceController
-	editWorkspace                       *EditWorkspaceController
-	addWorktree                         *AddWorktreeController
-	providerPicker                      *ProviderPicker
-	compose                             *ComposeController
-	chatAddonController                 *ChatInputAddonController
-	chatInput                           *TextInput
-	guidedWorkflowPromptInput           *TextInput
-	guidedWorkflowResumeInput           *TextInput
-	searchInput                         *TextInput
-	renameInput                         *TextInput
-	groupInput                          *TextInput
-	groupPicker                         *GroupPicker
-	workspacePicker                     *SelectPicker
-	groupSelectPicker                   *SelectPicker
-	workspaceMulti                      *MultiSelectPicker
-	noteInput                           *TextInput
-	approvalInput                       *TextInput
-	recentsReplyInput                   *TextInput
-	renameWorkspaceID                   string
-	renameWorktreeWorkspaceID           string
-	renameWorktreeID                    string
-	renameSessionID                     string
-	renameWorkflowRunID                 string
-	editWorkspaceID                     string
-	renameGroupID                       string
-	assignGroupID                       string
-	status                              string
-	statusHistory                       statusHistoryStore
-	statusHistoryOverlay                statusHistoryOverlayController
-	statusHistoryPresenter              StatusHistoryOverlayPresenter
-	statusHistoryKeyPolicy              StatusHistoryKeyPolicy
-	statusHistoryLastView               statusHistoryOverlayView
-	statusHistoryLastViewValid          bool
-	toastText                           string
-	toastLevel                          toastLevel
-	toastUntil                          time.Time
-	startupToasts                       []queuedToast
-	width                               int
-	height                              int
-	follow                              bool
-	showDismissed                       bool
-	showRecents                         bool
-	sidebarSort                         sidebarSortState
-	sidebarFilterActive                 bool
-	sidebarFilterQuery                  string
-	workspaces                          []*types.Workspace
-	groups                              []*types.WorkspaceGroup
-	worktrees                           map[string][]*types.Worktree
-	sessions                            []*types.Session
-	sessionMeta                         map[string]*types.SessionMeta
-	workflowRuns                        []*guidedworkflows.WorkflowRun
-	workflowRunStatusIndex              map[string]guidedworkflows.WorkflowRunStatus
-	workflowRunContextIndex             map[string]guidedWorkflowLaunchContext
-	providerOptions                     map[string]*types.ProviderOptionCatalog
-	appState                            types.AppState
-	hasAppState                         bool
-	initialStateLoaded                  bool
-	appStateSaveSeq                     int
-	appStateSaveDirty                   bool
-	appStateSaveScheduled               bool
-	appStateSaveScheduledSeq            int
-	appStateSaveInFlight                bool
-	stream                              *StreamController
-	transcriptStream                    *TranscriptStreamController
-	debugStream                         debugStreamConsumer
-	metadataStream                      *MetadataStreamController
-	metadataStreamRevision              string
-	metadataStreamReconnectAttempts     int
-	metadataEventApplier                MetadataEventApplier
-	metadataStreamRecoveryPolicy        MetadataStreamRecoveryPolicy
-	debugStreamSnapshot                 debugStreamSnapshot
-	input                               *InputController
-	pendingApproval                     *ApprovalRequest
-	approvalResponseRequest             *ApprovalRequest
-	approvalResponseSessionID           string
-	approvalResponseRequestID           int
-	approvalResponseReturnMode          uiMode
-	approvalResponseReturnFocus         inputFocus
-	sessionApprovals                    map[string][]*ApprovalRequest
-	sessionApprovalResolutions          map[string][]*ApprovalResolution
-	contentRaw                          string
-	contentEsc                          bool
-	contentRenderRaw                    bool
-	contentBlocks                       []ChatBlock
-	contentBlockMetaByID                map[string]ChatBlockMetaPresentation
-	contentBlockSpans                   []renderedBlockSpan
-	reasoningExpanded                   map[string]bool
-	renderedText                        string
-	renderedLines                       []string
-	renderedPlain                       []string
-	contentVersion                      int
-	renderVersion                       int
-	renderedForWidth                    int
-	renderedForContent                  int
-	renderedForSelection                int
-	renderedForHighlightStart           int
-	renderedForHighlightEnd             int
-	renderedForThemeID                  string
-	renderedForTimestampMode            ChatTimestampMode
-	renderedForRelativeBucket           int64
-	renderGeneration                    int
-	lastRenderRequested                 viewportRenderSignature
-	hasLastRenderRequested              bool
-	searchQuery                         string
-	searchMatches                       []int
-	searchIndex                         int
-	searchVersion                       int
-	messageSelectActive                 bool
-	messageSelectIndex                  int
-	highlight                           highlightCoordinator
-	highlightAdapter                    *modelHighlightAdapter
-	sectionOffsets                      []int
-	sectionVersion                      int
-	transcriptCache                     map[string][]ChatBlock
-	pendingSessionKey                   string
-	sessionProjectionSeq                int
-	sessionProjectionLatest             map[string]int
-	historyWindowBySessionKey           map[string]int
-	historyTraverseInFlight             map[string]int
-	historyTraverseExhausted            map[string]bool
-	snapshotHistoryBackfillRequested    map[string]bool
-	pendingTranscriptSnapshotRetryCount map[string]int
-	loading                             bool
-	loadingKey                          string
-	loader                              spinner.Model
-	pendingMouseCmd                     tea.Cmd
-	lastSidebarWheelAt                  time.Time
-	sidebarDragging                     bool
-	splitDraggingTarget                 splitDragTarget
-	splitDraggingPanelMode              sidePanelMode
-	splitDraggingChanged                bool
-	lastSessionMetaRefreshAt            time.Time
-	lastSessionMetaSyncAt               time.Time
-	sessionMetaRefreshPending           bool
-	sessionMetaSyncPending              bool
-	streamRenderScheduler               RenderScheduler
-	asyncViewportRendering              bool
-	asyncViewportRenderer               *asyncViewportRenderer
-	pendingComposeOptionTarget          composeOptionKind
-	pendingComposeOptionFor             string
-	composeInterruptInFlightSessionID   string
-	composeInterruptEligibilityPolicy   ComposeInterruptEligibilityPolicy
-	composeInterruptSignalProbe         ComposeInterruptSignalProbe
-	composeInterruptCapabilityProbe     ComposeInterruptCapabilityProbe
-	composeControlActionDispatcher      ComposeControlActionDispatcher
-	menu                                *MenuController
-	hotkeys                             *HotkeyRenderer
-	keybindings                         *Keybindings
-	contextMenu                         *ContextMenuController
-	confirm                             *ConfirmController
-	recents                             recentsDomain
-	recentsSelectedSessionID            string
-	recentsExpandedSessions             map[string]bool
-	recentsReplySessionID               string
-	recentsPreviews                     map[string]recentsPreview
-	recentsCompletionWatching           map[string]string
-	newSession                          *newSessionTarget
-	pendingSelectID                     string
-	selectSeq                           int
-	sendSeq                             int
-	pendingSends                        map[int]pendingSend
-	optimisticSends                     map[int]optimisticSendEntry
-	composeHistory                      map[string]*composeHistoryState
-	composeDrafts                       map[string]string
-	noteDrafts                          map[string]string
-	requestActivity                     requestActivity
-	transcriptHealthBySession           map[string]transcriptStreamHealthState
-	requestScopes                       map[string]requestScope
-	tickFn                              func() tea.Cmd
-	pendingConfirm                      confirmAction
-	pendingSelectionAction              selectionAction
-	scrollOnLoad                        bool
-	notes                               []*types.Note
-	notesByScope                        map[types.NoteScope][]*types.Note
-	notesFilters                        notesFilterState
-	notesScope                          noteScopeTarget
-	notesReturnMode                     uiMode
-	notesPanelOpen                      bool
-	notesPanelVisible                   bool
-	notesPanelWidth                     int
-	notesPanelMainWidth                 int
-	debugPanelVisible                   bool
-	debugPanelWidth                     int
-	debugPanelMainWidth                 int
-	contextPanelVisible                 bool
-	contextPanelWidth                   int
-	contextPanelMainWidth               int
-	sidePanelModePolicy                 SidePanelModePolicy
-	threadContextMetricsService         ThreadContextMetricsService
-	debugPanel                          debugPanelView
-	debugPanelPresenter                 debugPanelPresenter
-	debugPanelBlocksRenderer            debugPanelBlocksRenderer
-	debugPanelInteractionService        debugPanelInteractionService
-	debugPanelBlocks                    []ChatBlock
-	debugPanelSpans                     []renderedBlockSpan
-	debugPanelMetaByID                  map[string]ChatBlockMetaPresentation
-	debugPanelCopyByID                  map[string]string
-	debugPanelExpandedByID              map[string]bool
-	debugPanelLoading                   bool
-	debugPanelRefreshPending            bool
-	debugPanelProjectionPolicy          DebugPanelProjectionPolicy
-	debugPanelProjectionCoordinator     debugPanelProjectionCoordinator
-	debugPanelRefreshPolicy             DebugPanelRefreshPolicy
-	debugStreamSubscriptionService      DebugStreamSubscriptionService
-	viewportCommandRouter               ViewportCommandRouter
-	notesPanelPendingScopes             map[types.NoteScope]struct{}
-	notesPanelLoadErrors                int
-	notesPanelBlocks                    []ChatBlock
-	notesPanelSpans                     []renderedBlockSpan
-	notesPanelViewport                  viewport.Model
-	noteMoveNoteID                      string
-	noteMoveReturnMode                  uiMode
-	guidedWorkflow                      *GuidedWorkflowUIController
-	uiLatency                           *uiLatencyTracker
-	selectionLoadPolicy                 SessionSelectionLoadPolicy
-	historyLoadPolicy                   SessionHistoryLoadPolicy
-	sessionBootstrapPolicy              SessionBootstrapPolicy
-	sessionBootstrapCoordinator         SessionBootstrapCoordinator
-	inputFramePolicy                    InputFramePolicy
-	recentsCompletionPolicy             RecentsCompletionPolicy
-	recentsCompletionSignalPolicy       RecentsCompletionSignalPolicy
-	sessionApprovalRefreshPolicy        SessionApprovalRefreshPolicy
-	sessionReloadPolicy                 SessionReloadDecisionPolicy
-	sessionReloadCoalescer              SessionReloadCoalescer
-	sessionCapabilityModeResolver       SessionCapabilityModeResolver
-	sidebarSortPolicy                   SidebarSortPolicy
-	sortStripHintPolicy                 SortStripHintPolicy
-	sortStripVisibilityPolicy           SortStripVisibilityPolicy
-	sidebarSelectionRangeAnchorPolicy   SidebarSelectionRangeAnchorPolicy
-	sidebarSelectionIntentPolicy        SidebarSelectionIntentPolicy
-	sidebarSelectionService             SidebarSelectionService
-	sidebarThreadClassificationPolicy   SidebarThreadClassificationPolicy
-	sidebarExpansionIntentPolicy        SidebarExpansionIntentPolicy
-	sidebarExpansionService             SidebarExpansionService
-	sidebarUpdatePolicy                 SidebarUpdatePolicy
-	sessionProjectionPolicy             SessionProjectionPolicy
-	sessionProjectionPostProcessor      SessionProjectionPostProcessor
-	approvalStateService                ApprovalStateService
-	transcriptComposer                  TranscriptComposer
-	optimisticOverlayService            OptimisticOverlayService
-	optimisticReconcilePolicy           OptimisticReconcilePolicy
-	failedOptimisticRetentionPolicy     FailedOptimisticRetentionPolicy
-	transcriptSignalClassifier          TranscriptSignalClassifier
-	streamHealthPolicy                  StreamHealthPolicy
-	transcriptRecoveryScheduler         TranscriptRecoveryScheduler
-	transcriptAttachmentCoordinator     TranscriptAttachmentCoordinator
-	transcriptRecoveryCoordinator       TranscriptRecoveryCoordinator
-	transcriptRenderProjector           TranscriptRenderProjector
-	transcriptFollowStrategyRegistry    TranscriptFollowStrategyRegistry
-	sidebarProjectionBuilder            SidebarProjectionBuilder
-	sidebarProjectionInvalidationPolicy SidebarProjectionInvalidationPolicy
-	sidebarProjectionRevision           uint64
-	sidebarProjectionApplied            uint64
-	renderPipeline                      RenderPipeline
-	overlayComposer                     OverlayComposer
-	overlayBlockJoiner                  BlockJoiner
-	transientOverlayProviders           []TransientOverlayProvider
-	timestampMode                       ChatTimestampMode
-	clockNow                            time.Time
-	reasoningSnapshotHash               uint64
-	reasoningSnapshotHas                bool
-	reasoningSnapshotCollapsed          bool
-	selectionHistory                    SelectionHistory
-	selectionOriginPolicy               SelectionOriginPolicy
-	selectionFocusPolicy                SelectionFocusPolicy
-	selectionTransitionService          SelectionTransitionService
-	guidedWorkflowStartService          GuidedWorkflowStartService
-	selectionActivationService          SelectionActivationService
-	selectionEnterActionService         SelectionEnterActionService
-	selectionOperationPlanner           SelectionOperationPlanner
-	selectionConfirmationPresenter      SelectionConfirmationPresenter
-	selectionOperationExecutor          SelectionOperationExecutor
-	selectionCopyPayloadBuilder         SelectionCopyPayloadBuilder
-	themeID                             string
-	themePreferenceStore                ThemePreferenceStore
-	settingsMenu                        *SettingsMenuController
-	settingsMenuPresenter               SettingsMenuPresenter
-	settingsMenuEscPolicy               SettingsMenuEscPolicy
-	settingsMenuHotkeyCatalog           SettingsMenuHotkeyCatalog
-	pendingWorkflowTurnFocus            *workflowTurnFocusRequest
-	pendingGuidedWorkflowSessionLookup  *guidedWorkflowSessionLookupRequest
-	transcriptBoundary                  *transcriptBoundaryObserver
-	sessionTranscriptCapabilities       map[string]transcriptdomain.CapabilityEnvelope
-	transcriptSessionTraces             map[string][]transcriptSessionTraceEntry
+	workspaceAPI                         WorkspaceAPI
+	sessionAPI                           SessionAPI
+	metadataStreamAPI                    MetadataStreamAPI
+	sessionTranscriptAPI                 SessionTranscriptAPI
+	guidedWorkflowAPI                    GuidedWorkflowRunAPI
+	guidedWorkflowTemplateAPI            GuidedWorkflowTemplateAPI
+	sessionSelectionAPI                  SessionSelectionAPI
+	sessionHistoryAPI                    SessionHistoryAPI
+	notesAPI                             NotesAPI
+	stateAPI                             StateAPI
+	clipboard                            ClipboardService
+	fileLinkResolver                     FileLinkResolver
+	fileLinkOpener                       FileLinkOpener
+	mouseGesturePolicy                   MouseGesturePolicy
+	pickerPasteNormalizer                PickerPasteNormalizer
+	sidebar                              *SidebarController
+	viewport                             viewport.Model
+	mode                                 uiMode
+	addWorkspace                         *AddWorkspaceController
+	editWorkspace                        *EditWorkspaceController
+	addWorktree                          *AddWorktreeController
+	providerPicker                       *ProviderPicker
+	compose                              *ComposeController
+	chatAddonController                  *ChatInputAddonController
+	chatInput                            *TextInput
+	guidedWorkflowPromptInput            *TextInput
+	guidedWorkflowResumeInput            *TextInput
+	searchInput                          *TextInput
+	renameInput                          *TextInput
+	groupInput                           *TextInput
+	groupPicker                          *GroupPicker
+	workspacePicker                      *SelectPicker
+	groupSelectPicker                    *SelectPicker
+	workspaceMulti                       *MultiSelectPicker
+	noteInput                            *TextInput
+	approvalInput                        *TextInput
+	recentsReplyInput                    *TextInput
+	renameWorkspaceID                    string
+	renameWorktreeWorkspaceID            string
+	renameWorktreeID                     string
+	renameSessionID                      string
+	renameWorkflowRunID                  string
+	editWorkspaceID                      string
+	renameGroupID                        string
+	assignGroupID                        string
+	status                               string
+	statusHistory                        statusHistoryStore
+	statusHistoryOverlay                 statusHistoryOverlayController
+	statusHistoryPresenter               StatusHistoryOverlayPresenter
+	statusHistoryKeyPolicy               StatusHistoryKeyPolicy
+	statusHistoryLastView                statusHistoryOverlayView
+	statusHistoryLastViewValid           bool
+	toastText                            string
+	toastLevel                           toastLevel
+	toastUntil                           time.Time
+	startupToasts                        []queuedToast
+	width                                int
+	height                               int
+	follow                               bool
+	showDismissed                        bool
+	showRecents                          bool
+	sidebarSort                          sidebarSortState
+	sidebarFilterActive                  bool
+	sidebarFilterQuery                   string
+	workspaces                           []*types.Workspace
+	groups                               []*types.WorkspaceGroup
+	worktrees                            map[string][]*types.Worktree
+	sessions                             []*types.Session
+	sessionMeta                          map[string]*types.SessionMeta
+	workflowRuns                         []*guidedworkflows.WorkflowRun
+	workflowRunStatusIndex               map[string]guidedworkflows.WorkflowRunStatus
+	workflowRunContextIndex              map[string]guidedWorkflowLaunchContext
+	providerOptions                      map[string]*types.ProviderOptionCatalog
+	appState                             types.AppState
+	hasAppState                          bool
+	initialStateLoaded                   bool
+	appStateSaveSeq                      int
+	appStateSaveDirty                    bool
+	appStateSaveScheduled                bool
+	appStateSaveScheduledSeq             int
+	appStateSaveInFlight                 bool
+	stream                               *StreamController
+	transcriptStream                     *TranscriptStreamController
+	debugStream                          debugStreamConsumer
+	metadataStream                       *MetadataStreamController
+	metadataStreamRevision               string
+	metadataStreamReconnectAttempts      int
+	metadataEventApplier                 MetadataEventApplier
+	metadataStreamRecoveryPolicy         MetadataStreamRecoveryPolicy
+	debugStreamSnapshot                  debugStreamSnapshot
+	input                                *InputController
+	pendingApproval                      *ApprovalRequest
+	approvalResponseRequest              *ApprovalRequest
+	approvalResponseSessionID            string
+	approvalResponseRequestID            int
+	approvalResponseReturnMode           uiMode
+	approvalResponseReturnFocus          inputFocus
+	sessionApprovals                     map[string][]*ApprovalRequest
+	sessionApprovalResolutions           map[string][]*ApprovalResolution
+	contentRaw                           string
+	contentEsc                           bool
+	contentRenderRaw                     bool
+	contentBlocks                        []ChatBlock
+	contentBlockMetaByID                 map[string]ChatBlockMetaPresentation
+	contentBlockSpans                    []renderedBlockSpan
+	reasoningExpanded                    map[string]bool
+	renderedText                         string
+	renderedLines                        []string
+	renderedPlain                        []string
+	contentVersion                       int
+	renderVersion                        int
+	renderedForWidth                     int
+	renderedForContent                   int
+	renderedForSelection                 int
+	renderedForHighlightStart            int
+	renderedForHighlightEnd              int
+	renderedForThemeID                   string
+	renderedForTimestampMode             ChatTimestampMode
+	renderedForRelativeBucket            int64
+	renderGeneration                     int
+	lastRenderRequested                  viewportRenderSignature
+	hasLastRenderRequested               bool
+	searchQuery                          string
+	searchMatches                        []int
+	searchIndex                          int
+	searchVersion                        int
+	messageSelectActive                  bool
+	messageSelectIndex                   int
+	highlight                            highlightCoordinator
+	highlightAdapter                     *modelHighlightAdapter
+	sectionOffsets                       []int
+	sectionVersion                       int
+	transcriptCache                      map[string][]ChatBlock
+	pendingSessionKey                    string
+	sessionProjectionSeq                 int
+	sessionProjectionLatest              map[string]int
+	historyWindowBySessionKey            map[string]int
+	historyTraverseInFlight              map[string]int
+	historyTraverseExhausted             map[string]bool
+	snapshotHistoryBackfillRequested     map[string]bool
+	pendingTranscriptSnapshotRetryCount  map[string]int
+	loading                              bool
+	loadingKey                           string
+	loader                               spinner.Model
+	pendingMouseCmd                      tea.Cmd
+	lastSidebarWheelAt                   time.Time
+	sidebarDragging                      bool
+	splitDraggingTarget                  splitDragTarget
+	splitDraggingPanelMode               sidePanelMode
+	splitDraggingChanged                 bool
+	lastSessionMetaRefreshAt             time.Time
+	lastSessionMetaSyncAt                time.Time
+	sessionMetaRefreshPending            bool
+	sessionMetaSyncPending               bool
+	streamRenderScheduler                RenderScheduler
+	asyncViewportRendering               bool
+	asyncViewportRenderer                *asyncViewportRenderer
+	pendingComposeOptionTarget           composeOptionKind
+	pendingComposeOptionFor              string
+	composeInterruptInFlightSessionID    string
+	composeInterruptEligibilityPolicy    ComposeInterruptEligibilityPolicy
+	composeInterruptSignalProbe          ComposeInterruptSignalProbe
+	composeInterruptCapabilityProbe      ComposeInterruptCapabilityProbe
+	composeControlActionDispatcher       ComposeControlActionDispatcher
+	menu                                 *MenuController
+	hotkeys                              *HotkeyRenderer
+	keybindings                          *Keybindings
+	contextMenu                          *ContextMenuController
+	confirm                              *ConfirmController
+	recents                              recentsDomain
+	recentsSelectedSessionID             string
+	recentsExpandedSessions              map[string]bool
+	recentsReplySessionID                string
+	recentsPreviews                      map[string]recentsPreview
+	recentsCompletionWatching            map[string]string
+	newSession                           *newSessionTarget
+	pendingSelectID                      string
+	selectSeq                            int
+	sendSeq                              int
+	pendingSends                         map[int]pendingSend
+	optimisticSends                      map[int]optimisticSendEntry
+	composeHistory                       map[string]*composeHistoryState
+	composeDrafts                        map[string]string
+	noteDrafts                           map[string]string
+	requestActivity                      requestActivity
+	transcriptHealthBySession            map[string]transcriptStreamHealthState
+	requestScopes                        map[string]requestScope
+	tickFn                               func() tea.Cmd
+	pendingConfirm                       confirmAction
+	pendingSelectionAction               selectionAction
+	scrollOnLoad                         bool
+	notes                                []*types.Note
+	notesByScope                         map[types.NoteScope][]*types.Note
+	notesFilters                         notesFilterState
+	notesScope                           noteScopeTarget
+	notesReturnMode                      uiMode
+	notesPanelOpen                       bool
+	notesPanelVisible                    bool
+	notesPanelWidth                      int
+	notesPanelMainWidth                  int
+	debugPanelVisible                    bool
+	debugPanelWidth                      int
+	debugPanelMainWidth                  int
+	contextPanelVisible                  bool
+	contextPanelWidth                    int
+	contextPanelMainWidth                int
+	sidePanelModePolicy                  SidePanelModePolicy
+	threadContextMetricsService          ThreadContextMetricsService
+	debugPanel                           debugPanelView
+	debugPanelPresenter                  debugPanelPresenter
+	debugPanelBlocksRenderer             debugPanelBlocksRenderer
+	debugPanelInteractionService         debugPanelInteractionService
+	debugPanelBlocks                     []ChatBlock
+	debugPanelSpans                      []renderedBlockSpan
+	debugPanelMetaByID                   map[string]ChatBlockMetaPresentation
+	debugPanelCopyByID                   map[string]string
+	debugPanelExpandedByID               map[string]bool
+	debugPanelLoading                    bool
+	debugPanelRefreshPending             bool
+	debugPanelProjectionPolicy           DebugPanelProjectionPolicy
+	debugPanelProjectionCoordinator      debugPanelProjectionCoordinator
+	debugPanelRefreshPolicy              DebugPanelRefreshPolicy
+	debugStreamSubscriptionService       DebugStreamSubscriptionService
+	viewportCommandRouter                ViewportCommandRouter
+	notesPanelPendingScopes              map[types.NoteScope]struct{}
+	notesPanelLoadErrors                 int
+	notesPanelBlocks                     []ChatBlock
+	notesPanelSpans                      []renderedBlockSpan
+	notesPanelViewport                   viewport.Model
+	noteMoveNoteID                       string
+	noteMoveReturnMode                   uiMode
+	guidedWorkflow                       *GuidedWorkflowUIController
+	uiLatency                            *uiLatencyTracker
+	selectionLoadPolicy                  SessionSelectionLoadPolicy
+	historyLoadPolicy                    SessionHistoryLoadPolicy
+	sessionBootstrapPolicy               SessionBootstrapPolicy
+	sessionBootstrapCoordinator          SessionBootstrapCoordinator
+	inputFramePolicy                     InputFramePolicy
+	guidedWorkflowReflowPolicy           GuidedWorkflowReflowPolicy
+	guidedWorkflowStateTransitionGateway GuidedWorkflowStateTransitionGateway
+	recentsCompletionPolicy              RecentsCompletionPolicy
+	recentsCompletionSignalPolicy        RecentsCompletionSignalPolicy
+	sessionApprovalRefreshPolicy         SessionApprovalRefreshPolicy
+	sessionReloadPolicy                  SessionReloadDecisionPolicy
+	sessionReloadCoalescer               SessionReloadCoalescer
+	sessionCapabilityModeResolver        SessionCapabilityModeResolver
+	sidebarSortPolicy                    SidebarSortPolicy
+	sortStripHintPolicy                  SortStripHintPolicy
+	sortStripVisibilityPolicy            SortStripVisibilityPolicy
+	sidebarSelectionRangeAnchorPolicy    SidebarSelectionRangeAnchorPolicy
+	sidebarSelectionIntentPolicy         SidebarSelectionIntentPolicy
+	sidebarSelectionService              SidebarSelectionService
+	sidebarThreadClassificationPolicy    SidebarThreadClassificationPolicy
+	sidebarExpansionIntentPolicy         SidebarExpansionIntentPolicy
+	sidebarExpansionService              SidebarExpansionService
+	sidebarUpdatePolicy                  SidebarUpdatePolicy
+	sessionProjectionPolicy              SessionProjectionPolicy
+	sessionProjectionPostProcessor       SessionProjectionPostProcessor
+	approvalStateService                 ApprovalStateService
+	transcriptComposer                   TranscriptComposer
+	optimisticOverlayService             OptimisticOverlayService
+	optimisticReconcilePolicy            OptimisticReconcilePolicy
+	failedOptimisticRetentionPolicy      FailedOptimisticRetentionPolicy
+	transcriptSignalClassifier           TranscriptSignalClassifier
+	streamHealthPolicy                   StreamHealthPolicy
+	transcriptRecoveryScheduler          TranscriptRecoveryScheduler
+	transcriptAttachmentCoordinator      TranscriptAttachmentCoordinator
+	transcriptRecoveryCoordinator        TranscriptRecoveryCoordinator
+	transcriptRenderProjector            TranscriptRenderProjector
+	transcriptFollowStrategyRegistry     TranscriptFollowStrategyRegistry
+	sidebarProjectionBuilder             SidebarProjectionBuilder
+	sidebarProjectionInvalidationPolicy  SidebarProjectionInvalidationPolicy
+	sidebarProjectionRevision            uint64
+	sidebarProjectionApplied             uint64
+	renderPipeline                       RenderPipeline
+	overlayComposer                      OverlayComposer
+	overlayBlockJoiner                   BlockJoiner
+	transientOverlayProviders            []TransientOverlayProvider
+	timestampMode                        ChatTimestampMode
+	clockNow                             time.Time
+	reasoningSnapshotHash                uint64
+	reasoningSnapshotHas                 bool
+	reasoningSnapshotCollapsed           bool
+	selectionHistory                     SelectionHistory
+	selectionOriginPolicy                SelectionOriginPolicy
+	selectionFocusPolicy                 SelectionFocusPolicy
+	selectionTransitionService           SelectionTransitionService
+	guidedWorkflowStartService           GuidedWorkflowStartService
+	selectionActivationService           SelectionActivationService
+	selectionEnterActionService          SelectionEnterActionService
+	selectionOperationPlanner            SelectionOperationPlanner
+	selectionConfirmationPresenter       SelectionConfirmationPresenter
+	selectionOperationExecutor           SelectionOperationExecutor
+	selectionCopyPayloadBuilder          SelectionCopyPayloadBuilder
+	themeID                              string
+	themePreferenceStore                 ThemePreferenceStore
+	settingsMenu                         *SettingsMenuController
+	settingsMenuPresenter                SettingsMenuPresenter
+	settingsMenuEscPolicy                SettingsMenuEscPolicy
+	settingsMenuHotkeyCatalog            SettingsMenuHotkeyCatalog
+	pendingWorkflowTurnFocus             *workflowTurnFocusRequest
+	pendingGuidedWorkflowSessionLookup   *guidedWorkflowSessionLookupRequest
+	transcriptBoundary                   *transcriptBoundaryObserver
+	sessionTranscriptCapabilities        map[string]transcriptdomain.CapabilityEnvelope
+	transcriptSessionTraces              map[string][]transcriptSessionTraceEntry
 }
 
 type newSessionTarget struct {
@@ -646,6 +648,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		historyLoadPolicy:                   defaultSessionHistoryLoadPolicy{},
 		sessionBootstrapPolicy:              defaultSessionBootstrapPolicy{},
 		inputFramePolicy:                    NewDefaultInputFramePolicy(),
+		guidedWorkflowReflowPolicy:          defaultGuidedWorkflowReflowPolicy{},
 		recentsCompletionPolicy:             providerCapabilitiesRecentsCompletionPolicy{},
 		recentsCompletionSignalPolicy:       transcriptEventRecentsCompletionSignalPolicy{},
 		sessionApprovalRefreshPolicy:        defaultSessionApprovalRefreshPolicy{},
@@ -1148,13 +1151,7 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	if m.sidebar != nil {
 		m.sidebar.SetSize(layout.sidebarWidth, contentHeight)
 	}
-	extraLines := 0
-	if inputLines := m.modeInputLineCount(); inputLines > 0 {
-		extraLines = inputLines + 1
-	}
-	vpHeight := max(1, contentHeight-1-extraLines)
 	m.viewport.SetWidth(contentWidth)
-	m.viewport.SetHeight(vpHeight)
 	if panelMode == sidePanelModeNotes && layout.panelVisible {
 		m.notesPanelViewport.SetWidth(layout.panelWidth)
 		m.notesPanelViewport.SetHeight(max(1, contentHeight-1))
@@ -1227,6 +1224,12 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	if m.recentsReplyInput != nil {
 		m.recentsReplyInput.Resize(mainViewportWidth)
 	}
+	extraLines := 0
+	if inputLines := m.modeInputLineCount(); inputLines > 0 {
+		extraLines = inputLines + 1
+	}
+	vpHeight := max(1, contentHeight-1-extraLines)
+	m.viewport.SetHeight(vpHeight)
 	if m.mode == uiModeGuidedWorkflow {
 		m.renderGuidedWorkflowContent()
 	}
@@ -1916,8 +1919,7 @@ func (m *Model) dismissWorkflowRunLocally(runID string) bool {
 	m.upsertWorkflowRun(run)
 	m.addDismissedMissingWorkflowRunID(runID)
 	if m.guidedWorkflow != nil && strings.TrimSpace(m.guidedWorkflow.RunID()) == runID {
-		m.guidedWorkflow.SetRun(run)
-		m.renderGuidedWorkflowContent()
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(run)
 	}
 	m.applySidebarItemsIfDirty()
 	return true
@@ -2749,6 +2751,7 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 	}
 	if changed {
 		blocks := m.transcriptStream.Blocks()
+		previous := m.currentBlocks()
 		if sessionID != "" {
 			blocks = m.transcriptRenderProjectorOrDefault().Project(TranscriptRenderProjectionInput{
 				SessionID:   sessionID,
@@ -2763,8 +2766,12 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 			})
 		}
 		if m.transcriptViewportVisible() {
-			m.applyBlocksNoRender(blocks)
-			m.requestStreamRender(now)
+			if m.shouldImmediatelyRenderTranscriptTransition(previous, blocks) {
+				m.applyBlocksWithRenderPreference(blocks, true)
+			} else {
+				m.applyBlocksNoRender(blocks)
+				m.requestStreamRender(now)
+			}
 			if sessionID != "" {
 				m.noteRequestVisibleUpdate(sessionID)
 			}
@@ -3038,7 +3045,8 @@ func (m *Model) setSnapshotBlocks(blocks []ChatBlock) {
 	if m.stream != nil {
 		m.stream.SetSnapshot(nil)
 	}
-	m.applyBlocks(blocks)
+	previous := m.currentBlocks()
+	m.applyBlocksWithRenderPreference(blocks, m.shouldImmediatelyRenderTranscriptTransition(previous, blocks))
 }
 
 func (m *Model) applyLinesNoRender(lines []string, escape bool) {
@@ -3058,7 +3066,15 @@ func (m *Model) applyLinesNoRender(lines []string, escape bool) {
 }
 
 func (m *Model) applyBlocks(blocks []ChatBlock) {
+	m.applyBlocksWithRenderPreference(blocks, false)
+}
+
+func (m *Model) applyBlocksWithRenderPreference(blocks []ChatBlock, immediate bool) {
 	m.applyBlocksNoRenderWithMeta(blocks, nil)
+	if immediate {
+		m.renderViewportSync()
+		return
+	}
 	m.renderViewport()
 }
 
@@ -3069,6 +3085,16 @@ func (m *Model) applyBlocksNoRender(blocks []ChatBlock) {
 func (m *Model) applyBlocksWithMeta(blocks []ChatBlock, metaByBlockID map[string]ChatBlockMetaPresentation) {
 	m.applyBlocksNoRenderWithMeta(blocks, metaByBlockID)
 	m.renderViewport()
+}
+
+func (m *Model) shouldImmediatelyRenderTranscriptTransition(previous, next []ChatBlock) bool {
+	if m == nil || len(next) == 0 {
+		return false
+	}
+	if m.loading {
+		return true
+	}
+	return len(previous) == 0
 }
 
 func (m *Model) applyBlocksNoRenderWithMeta(blocks []ChatBlock, metaByBlockID map[string]ChatBlockMetaPresentation) {
@@ -3219,6 +3245,14 @@ func (m *Model) setContentANSIText(text string) {
 }
 
 func (m *Model) renderViewport() {
+	m.renderViewportWithMode(false)
+}
+
+func (m *Model) renderViewportSync() {
+	m.renderViewportWithMode(true)
+}
+
+func (m *Model) renderViewportWithMode(forceSync bool) {
 	if m.viewport.Width() <= 0 {
 		return
 	}
@@ -3250,7 +3284,7 @@ func (m *Model) renderViewport() {
 	}
 	appliedNow := false
 	if m.needsViewportRender(signature) {
-		if !m.hasLastRenderRequested || !m.lastRenderRequested.Equal(signature) {
+		if forceSync || !m.hasLastRenderRequested || !m.lastRenderRequested.Equal(signature) {
 			m.renderGeneration++
 			m.lastRenderRequested = signature
 			m.hasLastRenderRequested = true
@@ -3271,7 +3305,7 @@ func (m *Model) renderViewport() {
 				TimestampMode: mode,
 				TimestampNow:  now,
 			}
-			if m.asyncViewportRendering && req.Blocks != nil {
+			if !forceSync && m.asyncViewportRendering && req.Blocks != nil {
 				m.scheduleViewportRender(req, signature, m.renderGeneration)
 			} else {
 				m.applyViewportRenderResult(signature, m.renderGeneration, m.renderRequest(req))
@@ -3408,8 +3442,9 @@ func (m *Model) appendUserMessageLocal(provider, text string) int {
 	if strings.EqualFold(provider, "claude") {
 		return -1
 	}
-	blocks, headerIndex := m.transcriptComposerOrDefault().AppendOptimisticUser(m.currentBlocks(), text)
-	m.applyBlocks(blocks)
+	previous := m.currentBlocks()
+	blocks, headerIndex := m.transcriptComposerOrDefault().AppendOptimisticUser(previous, text)
+	m.applyBlocksWithRenderPreference(blocks, m.shouldImmediatelyRenderTranscriptTransition(previous, blocks))
 	if key := m.selectedKey(); key != "" {
 		m.transcriptCache[key] = blocks
 	}

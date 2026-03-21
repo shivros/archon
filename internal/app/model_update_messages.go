@@ -30,7 +30,6 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.run != nil {
 			m.upsertWorkflowRun(msg.run)
 			m.applySidebarItemsIfDirty()
-			m.guidedWorkflow.SetRun(msg.run)
 			runID = strings.TrimSpace(msg.run.ID)
 		}
 		if runID == "" {
@@ -40,7 +39,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.setStatusMessage("starting guided workflow run")
-		m.renderGuidedWorkflowContent()
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(msg.run)
 		return true, startWorkflowRunCmd(m.guidedWorkflowAPI, runID)
 	case workflowRunStartedMsg:
 		if m.guidedWorkflow == nil {
@@ -54,13 +53,12 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirty()
-		m.guidedWorkflow.SetRun(msg.run)
 		if msg.run != nil && msg.run.Status == guidedworkflows.WorkflowRunStatusQueued {
 			m.setStatusInfo("guided workflow queued: waiting for dependencies")
 		} else {
 			m.setStatusInfo("guided workflow running")
 		}
-		m.renderGuidedWorkflowContent()
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(msg.run)
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
 		if runID == "" {
 			return true, nil
@@ -82,8 +80,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if m.guidedWorkflow == nil {
 			return true, fetchWorkflowRunsCmd(m.guidedWorkflowAPI, m.showDismissed)
 		}
-		m.guidedWorkflow.SetRun(msg.run)
-		m.renderGuidedWorkflowContent()
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(msg.run)
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
 		if runID == "" {
 			return true, nil
@@ -102,9 +99,8 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirty()
-		m.guidedWorkflow.SetRun(msg.run)
 		m.setStatusInfo("guided workflow resumed")
-		m.renderGuidedWorkflowContent()
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(msg.run)
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
 		if runID == "" {
 			return true, nil
@@ -119,8 +115,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		if msg.run != nil {
 			m.upsertWorkflowRun(msg.run)
 			if m.guidedWorkflow != nil && strings.TrimSpace(m.guidedWorkflow.RunID()) == strings.TrimSpace(msg.run.ID) {
-				m.guidedWorkflow.SetRun(msg.run)
-				m.renderGuidedWorkflowContent()
+				m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(msg.run)
 			}
 		}
 		m.applySidebarItemsIfDirty()
@@ -162,7 +157,6 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirtyWithReason(sidebarApplyReasonBackground)
 		if shouldApplySnapshot {
-			m.guidedWorkflow.SetSnapshot(msg.run, msg.timeline)
 			if msg.run != nil && (msg.run.DismissedAt == nil || m.showDismissed) {
 				switch msg.run.Status {
 				case guidedworkflows.WorkflowRunStatusPaused:
@@ -179,7 +173,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 					}
 				}
 			}
-			m.renderGuidedWorkflowContent()
+			m.guidedWorkflowStateTransitionGatewayOrDefault().ApplySnapshot(msg.run, msg.timeline)
 		}
 		return true, appStateSaveCmd
 	case workflowRunDecisionMsg:
@@ -194,8 +188,7 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.upsertWorkflowRun(msg.run)
 		m.applySidebarItemsIfDirty()
-		m.guidedWorkflow.SetRun(msg.run)
-		m.renderGuidedWorkflowContent()
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(msg.run)
 		runID := strings.TrimSpace(m.guidedWorkflow.RunID())
 		if runID == "" {
 			return true, nil

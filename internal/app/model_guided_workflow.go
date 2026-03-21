@@ -83,10 +83,9 @@ func (m *Model) openGuidedWorkflowFromSidebar(item *sidebarItem) tea.Cmd {
 	})
 	m.enterGuidedWorkflow(context)
 	if m.guidedWorkflow != nil {
-		m.guidedWorkflow.SetRun(item.workflow)
+		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(item.workflow)
 	}
 	m.setStatusMessage("opened guided workflow " + runID)
-	m.renderGuidedWorkflowContent()
 	return fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
 }
 
@@ -105,7 +104,7 @@ func (m *Model) renderWorkflowPreview(item *sidebarItem) {
 	if m.guidedWorkflow == nil {
 		m.guidedWorkflow = NewGuidedWorkflowUIController()
 	}
-	m.guidedWorkflow.SetRun(run)
+	m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyPreview(run)
 	pickerWidth := max(minViewportWidth, m.viewport.Width())
 	pickerHeight := clamp(m.viewport.Height()/2, 6, 10)
 	m.guidedWorkflow.SetTemplatePickerSize(pickerWidth, pickerHeight)

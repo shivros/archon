@@ -2130,6 +2130,132 @@ func TestGuidedWorkflowFailedSummaryResumeUsesEditedMessage(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowSnapshotToFailedSummaryReflowsResumeInputPanel(t *testing.T) {
+	now := time.Date(2026, 2, 22, 14, 10, 0, 0, time.UTC)
+	running := newWorkflowRunFixture("gwf-failed-transition", guidedworkflows.WorkflowRunStatusRunning, now)
+	failed := newWorkflowRunFixture("gwf-failed-transition", guidedworkflows.WorkflowRunStatusFailed, now.Add(10*time.Second))
+	failed.LastError = "workflow run interrupted by daemon restart"
+	completedAt := now.Add(11 * time.Second)
+	failed.CompletedAt = &completedAt
+
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
+	m.resize(100, 24)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(running)
+	m.renderGuidedWorkflowContent()
+	liveViewportHeight := m.viewport.Height()
+
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: failed})
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || !m.guidedWorkflow.CanResumeFailedRun() {
+		t.Fatalf("expected failed run summary to allow resume")
+	}
+	if got := m.modeInputLineCount(); got <= 0 {
+		t.Fatalf("expected resume input lines to be reserved, got %d", got)
+	}
+	if got := m.viewport.Height(); got >= liveViewportHeight {
+		t.Fatalf("expected viewport height to shrink for failed summary resume input: live=%d summary=%d", liveViewportHeight, got)
+	}
+
+	visibleLines := 1 + m.viewport.Height() + 1 + m.modeInputLineCount()
+	maxContentLines := m.height - 1
+	if visibleLines > maxContentLines {
+		t.Fatalf("expected failed summary layout to fit viewport; visible=%d max=%d", visibleLines, maxContentLines)
+	}
+}
+
+func TestOpenFailedWorkflowFromSidebarReflowsResumeInputPanel(t *testing.T) {
+	now := time.Date(2026, 2, 22, 14, 20, 0, 0, time.UTC)
+	failed := newWorkflowRunFixture("gwf-open-failed", guidedworkflows.WorkflowRunStatusFailed, now)
+	failed.LastError = "workflow run interrupted by daemon restart"
+	completedAt := now.Add(2 * time.Second)
+	failed.CompletedAt = &completedAt
+
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{failed}
+	m.applySidebarItems()
+	m.resize(100, 24)
+
+	var workflowItem *sidebarItem
+	for _, item := range m.sidebar.Items() {
+		entry, ok := item.(*sidebarItem)
+		if !ok || entry == nil || entry.kind != sidebarWorkflow {
+			continue
+		}
+		if entry.workflowRunID() == failed.ID {
+			workflowItem = entry
+			break
+		}
+	}
+	if workflowItem == nil {
+		t.Fatalf("expected failed workflow item in sidebar")
+	}
+
+	if cmd := m.openGuidedWorkflowFromSidebar(workflowItem); cmd == nil {
+		t.Fatalf("expected workflow snapshot fetch command")
+	}
+	if m.mode != uiModeGuidedWorkflow {
+		t.Fatalf("expected guided workflow mode after opening failed workflow, got %v", m.mode)
+	}
+	if m.guidedWorkflow == nil || !m.guidedWorkflow.CanResumeFailedRun() {
+		t.Fatalf("expected failed workflow summary with resume support")
+	}
+	if got := m.modeInputLineCount(); got <= 0 {
+		t.Fatalf("expected resume input lines to be reserved, got %d", got)
+	}
+
+	visibleLines := 1 + m.viewport.Height() + 1 + m.modeInputLineCount()
+	maxContentLines := m.height - 1
+	if visibleLines > maxContentLines {
+		t.Fatalf("expected opened failed workflow layout to fit viewport; visible=%d max=%d", visibleLines, maxContentLines)
+	}
+}
+
+func TestGuidedWorkflowFailedSummaryResizeReflowsAfterInputWrapGrowth(t *testing.T) {
+	now := time.Date(2026, 2, 22, 14, 30, 0, 0, time.UTC)
+	failed := newWorkflowRunFixture("gwf-failed-resize", guidedworkflows.WorkflowRunStatusFailed, now)
+	failed.LastError = "workflow run interrupted by daemon restart"
+	completedAt := now.Add(4 * time.Second)
+	failed.CompletedAt = &completedAt
+
+	m := newPhase0ModelWithSession("codex")
+	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
+	m.resize(120, 40)
+	if m.guidedWorkflow == nil {
+		t.Fatalf("expected guided workflow controller")
+	}
+	m.guidedWorkflow.SetRun(failed)
+	updated, _ := m.Update(workflowRunSnapshotMsg{run: failed})
+	m = asModel(t, updated)
+	if m.guidedWorkflowResumeInput == nil {
+		t.Fatalf("expected resume input")
+	}
+
+	longResume := strings.Repeat("Continue from the last successful step and verify all follow-up checks. ", 2)
+	m.guidedWorkflowResumeInput.SetValue(longResume)
+	m.syncGuidedWorkflowResumeInput()
+	m.renderGuidedWorkflowContent()
+	beforeLines := m.modeInputLineCount()
+	if beforeLines <= 0 {
+		t.Fatalf("expected resume input lines before resize, got %d", beforeLines)
+	}
+
+	m.resize(64, 18)
+	afterLines := m.modeInputLineCount()
+	if afterLines <= beforeLines {
+		t.Fatalf("expected wrapped resume input to reserve more lines after narrow resize: before=%d after=%d", beforeLines, afterLines)
+	}
+
+	visibleLines := 1 + m.viewport.Height() + 1 + m.modeInputLineCount()
+	maxContentLines := m.height - 1
+	if visibleLines > maxContentLines {
+		t.Fatalf("expected failed summary resize layout to fit viewport; visible=%d max=%d", visibleLines, maxContentLines)
+	}
+}
+
 func TestSelectingWorkflowSidebarNodeOpensGuidedWorkflowView(t *testing.T) {
 	now := time.Date(2026, 2, 17, 13, 30, 0, 0, time.UTC)
 	run := newWorkflowRunFixture("gwf-sidebar", guidedworkflows.WorkflowRunStatusRunning, now)
