@@ -4711,7 +4711,9 @@ func (m *Model) enterRenameForSelection() {
 }
 
 func (m *Model) enterDismissOrDeleteForSelection() {
-	action, err := resolveDismissOrDeleteSelectionActionForItems(m.selectedItemsOrFocused())
+	action, err := m.resolveSidebarSelectionAction(func(items []*sidebarItem) (selectionAction, error) {
+		return resolveDismissOrDeleteSelectionActionForItems(items)
+	})
 	if err != nil {
 		m.setValidationStatus(err.Error())
 		return
@@ -4720,7 +4722,9 @@ func (m *Model) enterDismissOrDeleteForSelection() {
 }
 
 func (m *Model) enterInterruptOrStopForSelection() {
-	action, err := resolveInterruptOrStopSelectionAction(m, m.selectedItemsOrFocused())
+	action, err := m.resolveSidebarSelectionAction(func(items []*sidebarItem) (selectionAction, error) {
+		return resolveInterruptOrStopSelectionAction(m, items)
+	})
 	if err != nil {
 		m.setValidationStatus(err.Error())
 		return
@@ -4729,12 +4733,38 @@ func (m *Model) enterInterruptOrStopForSelection() {
 }
 
 func (m *Model) enterKillForSelection() {
-	action, err := resolveKillSelectionAction(m, m.selectedItemsOrFocused())
+	action, err := m.resolveSidebarSelectionAction(func(items []*sidebarItem) (selectionAction, error) {
+		return resolveKillSelectionAction(m, items)
+	})
 	if err != nil {
 		m.setValidationStatus(err.Error())
 		return
 	}
 	m.openSelectionActionConfirm(action)
+}
+
+func (m *Model) resolveSidebarSelectionAction(resolve func([]*sidebarItem) (selectionAction, error)) (selectionAction, error) {
+	if resolve == nil {
+		return nil, nil
+	}
+	items := m.selectedItemsOrFocused()
+	action, err := resolve(items)
+	if err == nil || m == nil || m.sidebar == nil || !m.sidebar.HasSelectedKeys() {
+		return action, err
+	}
+	focused := m.selectedItem()
+	if focused == nil {
+		return action, err
+	}
+	focusedKey := strings.TrimSpace(focused.key())
+	if focusedKey == "" || m.sidebar.IsKeySelected(focusedKey) {
+		return action, err
+	}
+	fallbackAction, fallbackErr := resolve([]*sidebarItem{focused})
+	if fallbackErr == nil {
+		return fallbackAction, nil
+	}
+	return action, err
 }
 
 func (m *Model) enterEditWorkspace(id string) {

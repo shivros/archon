@@ -442,6 +442,50 @@ func TestInterruptHotkeyConfirmExecutesBatchAndClearsSelection(t *testing.T) {
 	}
 }
 
+func TestInterruptHotkeyFallsBackToFocusedActionableItemWhenMarkedSelectionIsStale(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Title: "Exited", Status: types.SessionStatusExited},
+		{ID: "s2", Title: "Running", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Exited"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", Title: "Running"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to focus s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to focus s2")
+	}
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('i'))
+	if !handled {
+		t.Fatalf("expected interrupt hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected confirmation flow (no immediate async command)")
+	}
+	action, ok := m.pendingSelectionAction.(selectionBatchAction)
+	if !ok {
+		t.Fatalf("expected selectionBatchAction, got %T", m.pendingSelectionAction)
+	}
+	if len(action.operations) != 1 {
+		t.Fatalf("expected one interrupt operation, got %d", len(action.operations))
+	}
+	if action.operations[0].kind != selectionOperationInterruptSession {
+		t.Fatalf("expected interrupt operation, got %v", action.operations[0].kind)
+	}
+	if action.operations[0].sessionID != "s2" {
+		t.Fatalf("expected focused running session s2 to be interrupted, got %q", action.operations[0].sessionID)
+	}
+}
+
 func TestSelectionBatchCancelClearsSidebarSelectionSet(t *testing.T) {
 	m := NewModel(nil)
 	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
@@ -531,6 +575,50 @@ func TestKillHotkeyConfirmExecutesActionableSubsetAndClearsSelection(t *testing.
 	}
 	if m.sidebar.HasSelectedKeys() {
 		t.Fatalf("expected multi-selection to clear after confirm")
+	}
+}
+
+func TestKillHotkeyFallsBackToFocusedActionableItemWhenMarkedSelectionIsStale(t *testing.T) {
+	m := NewModel(nil)
+	m.workspaces = []*types.Workspace{{ID: "ws1", Name: "Workspace", RepoPath: "/tmp/ws1"}}
+	m.worktrees = map[string][]*types.Worktree{}
+	m.sessions = []*types.Session{
+		{ID: "s1", Title: "Exited", Status: types.SessionStatusExited},
+		{ID: "s2", Title: "Running", Status: types.SessionStatusRunning},
+	}
+	m.sessionMeta = map[string]*types.SessionMeta{
+		"s1": {SessionID: "s1", WorkspaceID: "ws1", Title: "Exited"},
+		"s2": {SessionID: "s2", WorkspaceID: "ws1", Title: "Running"},
+	}
+	m.sidebar.Apply(m.workspaces, m.worktrees, m.sessions, nil, m.sessionMeta, "", "", false)
+
+	if !m.sidebar.SelectBySessionID("s1") {
+		t.Fatalf("expected to focus s1")
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.sidebar.SelectBySessionID("s2") {
+		t.Fatalf("expected to focus s2")
+	}
+
+	handled, cmd := m.reduceSessionLifecycleKeys(keyRune('x'))
+	if !handled {
+		t.Fatalf("expected kill hotkey to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected confirmation flow (no immediate async command)")
+	}
+	action, ok := m.pendingSelectionAction.(selectionBatchAction)
+	if !ok {
+		t.Fatalf("expected selectionBatchAction, got %T", m.pendingSelectionAction)
+	}
+	if len(action.operations) != 1 {
+		t.Fatalf("expected one kill operation, got %d", len(action.operations))
+	}
+	if action.operations[0].kind != selectionOperationKillSession {
+		t.Fatalf("expected kill operation, got %v", action.operations[0].kind)
+	}
+	if action.operations[0].sessionID != "s2" {
+		t.Fatalf("expected focused running session s2 to be killed, got %q", action.operations[0].sessionID)
 	}
 }
 
