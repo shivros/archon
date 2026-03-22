@@ -299,6 +299,28 @@ func TestTranscriptEventFromCodexEventLiveNoiseIgnored(t *testing.T) {
 	}
 }
 
+func TestTranscriptEventFromCodexEventItemCompletedMarksFinal(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/completed",
+		Params: json.RawMessage(`{
+			"threadId":"thread-1",
+			"turnId":"turn-1",
+			"item":{
+				"type":"agentMessage",
+				"id":"msg_1",
+				"text":"final answer"
+			}
+		}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("12"), event)
+	if got.Kind != transcriptdomain.TranscriptEventDelta || len(got.Delta) != 1 {
+		t.Fatalf("expected completed item delta, got %#v", got)
+	}
+	if got.Delta[0].Meta["final"] != true {
+		t.Fatalf("expected completed item to mark finalized metadata, got %#v", got.Delta[0].Meta)
+	}
+}
+
 func TestBlockFromItem(t *testing.T) {
 	block, ok := BlockFromItem(map[string]any{
 		"id":   "m1",

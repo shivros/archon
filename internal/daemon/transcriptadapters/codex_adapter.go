@@ -240,6 +240,12 @@ func blockFromCodexEventItem(method string, raw json.RawMessage, extractor Trans
 		}
 	}
 	mergeTranscriptBlockMeta(&block, transcriptMetaFromCodexEventParams(params))
+	if strings.EqualFold(strings.TrimSpace(method), "item/completed") {
+		if block.Meta == nil {
+			block.Meta = map[string]any{}
+		}
+		block.Meta["final"] = true
+	}
 	ensureTranscriptBlockIdentityMeta(&block)
 	return block, true
 }
