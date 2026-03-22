@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -216,7 +217,7 @@ func TestProviderInterruptParity(t *testing.T) {
 			if confirmationTimeout <= 0 {
 				confirmationTimeout = 45 * time.Second
 			}
-			waitForProviderInterruptConfirmation(t, server, manager, session.ID, stream, finalToken, confirmationTimeout)
+			waitForProviderInterruptConfirmation(t, server, manager, tc.name, session.ID, stream, finalToken, confirmationTimeout)
 		})
 	}
 }
@@ -255,6 +256,7 @@ func waitForProviderInterruptConfirmation(
 	t *testing.T,
 	server *httptest.Server,
 	manager *SessionManager,
+	provider string,
 	sessionID string,
 	stream <-chan string,
 	finalToken string,
@@ -270,6 +272,9 @@ func waitForProviderInterruptConfirmation(
 		if historyHasInterruptedTurn(history.Items) {
 			return
 		}
+		if sessionStatusIsInactive(server, sessionID) {
+			return
+		}
 
 		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
 			t.Fatalf("session entered terminal state %q while waiting for interrupt confirmation\n%s", failure, sessionDiagnostics(manager, sessionID))
@@ -282,7 +287,16 @@ func waitForProviderInterruptConfirmation(
 		if transcriptPayloadHasAgentExactLine(data, finalToken) {
 			t.Fatalf("provider streamed final token %q after interrupt\n%s", finalToken, sessionDiagnostics(manager, sessionID))
 		}
-		if transcriptPayloadIndicatesInterrupted(data) {
+		if transcriptPayloadIndicatesInterruptConfirmation(data) {
+			return
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		recoveryTimeout := 30 * time.Second
+		if timeout > 0 && timeout < recoveryTimeout {
+			recoveryTimeout = timeout
+		}
+		if waitForProviderPostInterruptRecovery(t, server, manager, provider, sessionID, finalToken, recoveryTimeout) {
 			return
 		}
 	}
@@ -386,6 +400,89 @@ func transcriptPayloadIndicatesInterrupted(data string) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(strings.TrimSpace(turn.Error)), "interrupt")
+}
+
+func transcriptPayloadIndicatesInterruptConfirmation(data string) bool {
+	if transcriptPayloadIndicatesInterrupted(data) {
+		return true
+	}
+	event, ok := codexEventFromSSEPayload(data)
+	if !ok || event.Method != "turn/completed" {
+		return false
+	}
+	turn := parseTurnEventFromParams(event.Params)
+	status := strings.ToLower(strings.TrimSpace(turn.Status))
+	errMsg := strings.ToLower(strings.TrimSpace(turn.Error))
+	if strings.Contains(errMsg, "interrupt") || strings.Contains(errMsg, "cancel") {
+		return true
+	}
+	switch status {
+	case "", "completed", "interrupted", "aborted", "cancelled", "canceled", "stopped":
+		return errMsg == ""
+	default:
+		return false
+	}
+}
+
+func sessionStatusIsInactive(server *httptest.Server, sessionID string) bool {
+	if server == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions/"+sessionID, nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var session types.Session
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		return false
+	}
+	return session.Status == types.SessionStatusInactive
+}
+
+func waitForProviderPostInterruptRecovery(
+	t *testing.T,
+	server *httptest.Server,
+	manager *SessionManager,
+	provider string,
+	sessionID string,
+	finalToken string,
+	timeout time.Duration,
+) bool {
+	t.Helper()
+	if timeout <= 0 {
+		return false
+	}
+
+	recoveryToken := "interrupt-recovered-" + strings.ToLower(strings.TrimSpace(provider))
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		history := historySession(t, server, sessionID)
+		if historyHasAgentExactLine(history.Items, finalToken) {
+			t.Fatalf("provider completed after interrupt and emitted final token %q\n%s", finalToken, sessionDiagnostics(manager, sessionID))
+		}
+		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal state %q while waiting for post-interrupt recovery\n%s", failure, sessionDiagnostics(manager, sessionID))
+		}
+
+		status, body, turnID := sendMessageOnce(server, sessionID, "Say \""+recoveryToken+"\" and nothing else.")
+		if status == http.StatusOK && strings.TrimSpace(turnID) != "" {
+			waitStrategy := newProviderAgentReplyWaitStrategyRegistry(defaultProviderCapabilitiesResolver{})
+			waitStrategy.Wait(t, server, manager, provider, sessionID, recoveryToken, timeout)
+			return true
+		}
+		if isTransientSendFailure(status, body) {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		return false
+	}
+	return false
 }
 
 func waitForAgentReplyFromItems(t *testing.T, server *httptest.Server, manager *SessionManager, sessionID, needle string, timeout time.Duration) {
