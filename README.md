@@ -39,7 +39,7 @@ Run hooks manually:
 prek run --all-files
 ```
 
-The hook set includes a guard against reintroducing deprecated guided-workflow contract fields (for example `selected_policy_sensitivity`) in non-test Go code.
+The hook set includes a guard against reintroducing deprecated guided-workflow contract fields in non-test Go code.
 
 ## Session Provider Badges
 Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD]`, `[OPN]`). You can override badge prefix/color per provider by setting `provider_badges` in `~/.archon/state.json`:
@@ -253,6 +253,12 @@ Per-step runtime overrides (`runtime_options`) are optional on each workflow ste
 - when present, step overrides take priority over the session's current runtime options
 - when omitted, the step inherits whatever runtime options are currently active on the session
 
+Optional phase-end judges can be configured on any phase:
+
+- add a `judge` object with a custom `prompt`
+- the judge runs after that phase completes and before the next phase starts
+- the judge must answer with JSON and Archon pauses the workflow with a decision-needed notification when the judge rejects the phase or returns invalid output
+
 Example `workflow_templates.json` (custom replacement file):
 
 ```json
@@ -268,6 +274,9 @@ Example `workflow_templates.json` (custom replacement file):
         {
           "id": "phase_1_discovery",
           "name": "Discovery",
+          "judge": {
+            "prompt": "Review the discovery phase. Pass only if the plan is specific, prioritized, and grounded in evidence from the repository. Fail if important unknowns remain unresolved."
+          },
           "steps": [
             {
               "id": "step_1_inventory",
