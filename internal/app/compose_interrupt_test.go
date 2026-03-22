@@ -9,6 +9,7 @@ import (
 	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 func newComposeInterruptTestModel(provider string) *Model {
@@ -56,18 +57,25 @@ func TestComposeControlsLineShowsInterruptForActiveRequest(t *testing.T) {
 	m.startRequestActivity("s1", "codex")
 
 	line := m.composeControlsLine()
-	if !strings.Contains(line, "[Interrupt]") {
+	if !strings.Contains(xansi.Strip(line), "Interrupt") {
 		t.Fatalf("expected interrupt control in compose footer, got %q", line)
+	}
+	if strings.Contains(xansi.Strip(line), "[Interrupt]") {
+		t.Fatalf("expected styled interrupt button in compose footer, got %q", line)
 	}
 	span, ok := findComposeSpan(m.composeControlSpans(), composeControlActionInterruptTurn)
 	if !ok {
 		t.Fatalf("expected interrupt control span")
 	}
-	if span.start < 0 || span.end < span.start || span.end >= len(line) {
-		t.Fatalf("invalid interrupt span %#v for line length %d", span, len(line))
+	if width := xansi.StringWidth(line); span.start < 0 || span.end < span.start || span.end >= width {
+		t.Fatalf("invalid interrupt span %#v for line width %d", span, width)
 	}
-	if got := line[span.start : span.end+1]; got != "[Interrupt]" {
-		t.Fatalf("expected interrupt span text, got %q", got)
+	segment := xansi.Strip(xansi.Cut(line, span.start, span.end+1))
+	if strings.TrimSpace(segment) != "Interrupt" {
+		t.Fatalf("expected interrupt span text, got %q", segment)
+	}
+	if xansi.StringWidth(segment) <= len("Interrupt") {
+		t.Fatalf("expected padded interrupt span, got %q", segment)
 	}
 }
 
@@ -86,8 +94,11 @@ func TestComposeControlsLineShowsInterruptingWhileRequestInFlight(t *testing.T) 
 	m.composeInterruptInFlightSessionID = "s1"
 
 	line := m.composeControlsLine()
-	if !strings.Contains(line, "[Interrupting...]") {
+	if !strings.Contains(xansi.Strip(line), "Interrupting...") {
 		t.Fatalf("expected in-flight interrupt label, got %q", line)
+	}
+	if strings.Contains(xansi.Strip(line), "[Interrupting...]") {
+		t.Fatalf("expected styled in-flight interrupt label, got %q", line)
 	}
 }
 

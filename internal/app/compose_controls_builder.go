@@ -1,6 +1,10 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	xansi "github.com/charmbracelet/x/ansi"
+)
 
 type ComposeControlDescriptor struct {
 	action composeControlAction
@@ -55,7 +59,7 @@ func (defaultComposeControlsBuilder) Build(input ComposeControlsBuildInput) Comp
 		}
 		start := col
 		b.WriteString(label)
-		col += len(label)
+		col += xansi.StringWidth(label)
 		spans = append(spans, composeControlSpan{
 			action: control.action,
 			kind:   control.kind,
@@ -66,42 +70,62 @@ func (defaultComposeControlsBuilder) Build(input ComposeControlsBuildInput) Comp
 	line := b.String()
 	interrupt := normalizeComposeInterruptDescriptor(input.Interrupt)
 	if interrupt != nil {
-		button := "[" + interrupt.label + "]"
+		button := renderComposeInterruptButton(interrupt.label)
+		buttonWidth := xansi.StringWidth(button)
 		start := 0
+		lineWidth := xansi.StringWidth(line)
 		if input.Width > 0 {
 			if line == "" {
-				if input.Width > len(button) {
-					line = strings.Repeat(" ", input.Width-len(button)) + button
-					start = input.Width - len(button)
+				if input.Width > buttonWidth {
+					start = input.Width - buttonWidth
+					line = strings.Repeat(" ", start) + button
 				} else {
 					line = button
 				}
-			} else if len(line)+2+len(button) <= input.Width {
-				spaces := input.Width - len(line) - len(button)
+			} else if lineWidth+2+buttonWidth <= input.Width {
+				spaces := input.Width - lineWidth - buttonWidth
 				if spaces < 2 {
 					spaces = 2
 				}
+				start = lineWidth + spaces
 				line += strings.Repeat(" ", spaces) + button
-				start = len(line) - len(button)
 			} else {
+				start = lineWidth + 2
 				line += "  " + button
-				start = len(line) - len(button)
 			}
 		} else {
 			if line != "" {
 				line += "  "
 			}
-			start = len(line)
+			start = xansi.StringWidth(line)
 			line += button
 		}
 		spans = append(spans, composeControlSpan{
 			action: composeControlActionInterruptTurn,
 			kind:   composeOptionNone,
 			start:  start,
-			end:    start + len(button) - 1,
+			end:    start + buttonWidth - 1,
 		})
 	}
 	return ComposeControlsBuildOutput{Line: line, Spans: spans}
+}
+
+func renderComposeInterruptButton(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	style := toastErrorStyle.
+		Copy().
+		Bold(true).
+		Padding(0, 1)
+	if strings.EqualFold(label, "Interrupting...") {
+		style = toastWarningStyle.
+			Copy().
+			Bold(true).
+			Padding(0, 1)
+	}
+	return style.Render(label)
 }
 
 func sanitizeComposeControlDescriptors(controls []ComposeControlDescriptor) []ComposeControlDescriptor {

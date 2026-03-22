@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 type stubComposeControlsBuilder struct {
@@ -59,11 +61,14 @@ func TestDefaultComposeControlsBuilderBuildsControlsAndInterrupt(t *testing.T) {
 	if !strings.Contains(out.Line, "[Model: gpt-5]") {
 		t.Fatalf("expected active model control in output line, got %q", out.Line)
 	}
-	if !strings.HasSuffix(out.Line, "[Interrupt]") {
-		t.Fatalf("expected interrupt button suffix, got %q", out.Line)
+	if strings.Contains(xansi.Strip(out.Line), "[Interrupt]") {
+		t.Fatalf("expected styled interrupt button, got %q", out.Line)
 	}
-	if len(out.Line) != 70 {
-		t.Fatalf("expected width-aligned line length 70, got %d", len(out.Line))
+	if !strings.Contains(xansi.Strip(out.Line), "Interrupt") {
+		t.Fatalf("expected interrupt label in output line, got %q", out.Line)
+	}
+	if got := xansi.StringWidth(out.Line); got != 70 {
+		t.Fatalf("expected width-aligned line width 70, got %d", got)
 	}
 	if len(out.Spans) != 3 {
 		t.Fatalf("expected 3 control spans, got %d", len(out.Spans))
@@ -72,8 +77,12 @@ func TestDefaultComposeControlsBuilderBuildsControlsAndInterrupt(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected interrupt span")
 	}
-	if got := out.Line[interrupt.start : interrupt.end+1]; got != "[Interrupt]" {
-		t.Fatalf("unexpected interrupt span text %q", got)
+	segment := xansi.Strip(xansi.Cut(out.Line, interrupt.start, interrupt.end+1))
+	if strings.TrimSpace(segment) != "Interrupt" {
+		t.Fatalf("unexpected interrupt span text %q", segment)
+	}
+	if xansi.StringWidth(segment) <= len("Interrupt") {
+		t.Fatalf("expected padded interrupt button span, got %q", segment)
 	}
 }
 
@@ -84,7 +93,7 @@ func TestDefaultComposeControlsBuilderBuildsInterruptOnly(t *testing.T) {
 		Width:     24,
 	})
 
-	if got := strings.TrimSpace(out.Line); got != "[Interrupt]" {
+	if got := strings.TrimSpace(xansi.Strip(out.Line)); got != "Interrupt" {
 		t.Fatalf("expected interrupt-only line, got %q", out.Line)
 	}
 	if len(out.Spans) != 1 || out.Spans[0].action != composeControlActionInterruptTurn {
@@ -119,7 +128,7 @@ func TestDefaultComposeControlsBuilderInterruptKeepsLabelWhenWidthTooSmall(t *te
 		Width:     4,
 	})
 
-	if out.Line != "[Interrupt]" {
+	if strings.TrimSpace(xansi.Strip(out.Line)) != "Interrupt" {
 		t.Fatalf("expected full interrupt label without truncation, got %q", out.Line)
 	}
 	if len(out.Spans) != 1 || out.Spans[0].start != 0 {
