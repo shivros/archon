@@ -90,7 +90,7 @@ func (defaultTranscriptIngestor) ApplySnapshot(state TranscriptIngestState, snap
 	if !authoritative && !isTranscriptRevisionNewer(snapshot.Revision, state.Revision) {
 		return TranscriptSnapshotApplyResult{State: state, Changed: false, Applied: false}
 	}
-	blocks := transcriptBlocksToChatBlocks(snapshot.Blocks)
+	blocks := renderableTranscriptBlocksToChatBlocks(snapshot.Blocks)
 	changed := !chatBlocksEqual(blocks, state.Blocks) || strings.TrimSpace(snapshot.Revision.String()) != strings.TrimSpace(state.Revision.String())
 	return TranscriptSnapshotApplyResult{
 		State: TranscriptIngestState{
@@ -142,7 +142,7 @@ func (ingestor defaultTranscriptIngestor) ApplyEvent(state TranscriptIngestState
 			result.Signal = true
 			return result
 		}
-		nextBlocks := transcriptBlocksToChatBlocks(event.Replace.Blocks)
+		nextBlocks := renderableTranscriptBlocksToChatBlocks(event.Replace.Blocks)
 		result.Changed = !chatBlocksEqual(nextBlocks, state.Blocks)
 		result.State.Blocks = nextBlocks
 		result.State.Revision = event.Revision
@@ -295,7 +295,7 @@ func applyTranscriptDeltaWithFinalizationDedupe(
 	if !changed {
 		return out, false, dedupeHits
 	}
-	out = coalesceAdjacentTranscriptChatBlocks(out)
+	out = finalizeRenderableTranscriptChatBlocks(out)
 	return out, true, dedupeHits
 }
 

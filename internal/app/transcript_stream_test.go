@@ -226,6 +226,64 @@ func TestTranscriptStreamControllerCoalescesAdjacentAssistantDeltasForSameMessag
 	}
 }
 
+func TestTranscriptStreamControllerPreservesWhitespaceOnlyAssistantDeltas(t *testing.T) {
+	controller := NewTranscriptStreamController(16)
+	ch := make(chan transcriptdomain.TranscriptEvent, 6)
+	controller.SetStream(ch, nil)
+
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "Here's"},
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("2"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: " "},
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("3"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "the plan"},
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("4"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "\n\n"},
+		},
+	}
+	ch <- transcriptdomain.TranscriptEvent{
+		Kind:     transcriptdomain.TranscriptEventDelta,
+		Revision: transcriptdomain.MustParseRevisionToken("5"),
+		Delta: []transcriptdomain.Block{
+			{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "Rules:"},
+		},
+	}
+
+	changed, closed, signal, _ := controller.ConsumeTick()
+	if closed {
+		t.Fatalf("expected open stream")
+	}
+	if !changed || !signal {
+		t.Fatalf("expected whitespace-preserving deltas to update transcript state")
+	}
+
+	blocks := controller.Blocks()
+	if len(blocks) != 1 {
+		t.Fatalf("expected one coalesced assistant block, got %#v", blocks)
+	}
+	if blocks[0].Text != "Here's the plan\n\nRules:" {
+		t.Fatalf("expected whitespace-only deltas to be preserved, got %#v", blocks[0])
+	}
+}
+
 func TestTranscriptStreamControllerFinalizedMessageSupersetDedupesPriorDeltas(t *testing.T) {
 	controller := NewTranscriptStreamController(16)
 	ch := make(chan transcriptdomain.TranscriptEvent, 4)

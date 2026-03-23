@@ -63,9 +63,9 @@ func TestTranscriptBlocksToChatBlocksMapsRolesAndMetadata(t *testing.T) {
 	}
 }
 
-func TestTranscriptBlocksToChatBlocksSkipsEmptyText(t *testing.T) {
+func TestTranscriptBlocksToChatBlocksSkipsExactEmptyText(t *testing.T) {
 	blocks := transcriptBlocksToChatBlocks([]transcriptdomain.Block{
-		{Kind: "assistant_message", Role: "assistant", Text: "   "},
+		{Kind: "assistant_message", Role: "assistant", Text: ""},
 		{Kind: "assistant_message", Role: "assistant", Text: "ok"},
 	})
 	if len(blocks) != 1 || blocks[0].Text != "ok" {
@@ -87,6 +87,22 @@ func TestTranscriptBlocksToChatBlocksCoalescesAdjacentAssistantFragmentsWithSame
 	}
 	if blocks[1].Text != "separate" {
 		t.Fatalf("expected second message to remain separate, got %#v", blocks[1])
+	}
+}
+
+func TestTranscriptBlocksToChatBlocksPreservesWhitespaceOnlyFragmentsWithinMessage(t *testing.T) {
+	blocks := transcriptBlocksToChatBlocks([]transcriptdomain.Block{
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "Here's"},
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: " "},
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "the plan"},
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "\n\n"},
+		{ID: "msg-1", Kind: "assistant_delta", Role: "assistant", Text: "Rules:"},
+	})
+	if len(blocks) != 1 {
+		t.Fatalf("expected whitespace fragments to coalesce into one block, got %#v", blocks)
+	}
+	if blocks[0].Text != "Here's the plan\n\nRules:" {
+		t.Fatalf("expected whitespace fragments to be preserved, got %#v", blocks[0])
 	}
 }
 

@@ -20,3 +20,20 @@ func firstNonEmptyExtracted(extractor TranscriptTextExtractor, values ...any) st
 	}
 	return ""
 }
+
+func firstPresentExtracted(extractor TranscriptTextExtractor, values ...any) (string, bool) {
+	if extractor == nil {
+		return "", false
+	}
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		text := transcriptdomain.PreserveText(extractor.Extract(value))
+		if text == "" {
+			continue
+		}
+		return text, true
+	}
+	return "", false
+}

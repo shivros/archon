@@ -181,12 +181,12 @@ func deltaBlockFromCodexEventMethod(method string, raw json.RawMessage, extracto
 	if extractor == nil {
 		extractor = newCodexTranscriptTextExtractor()
 	}
-	text := firstNonEmptyExtracted(extractor,
+	text, ok := firstPresentExtracted(extractor,
 		params["delta"],
 		params["text"],
 		params["content"],
 	)
-	if transcriptdomain.IsSemanticallyEmpty(text) {
+	if !ok {
 		return transcriptdomain.Block{}, false
 	}
 	lowerMethod := strings.ToLower(strings.TrimSpace(method))
@@ -284,12 +284,12 @@ func blockFromItemWithExtractor(item map[string]any, extractor TranscriptTextExt
 	if extractor == nil {
 		extractor = newCodexTranscriptTextExtractor()
 	}
-	text := firstNonEmptyExtracted(extractor,
+	text, ok := firstPresentExtracted(extractor,
 		item["text"],
 		item["delta"],
 		item["content"],
 	)
-	if transcriptdomain.IsSemanticallyEmpty(text) {
+	if !ok {
 		text = firstNonEmptyExtracted(extractor,
 			item["content"],
 			item["message"],

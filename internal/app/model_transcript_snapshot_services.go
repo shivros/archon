@@ -146,7 +146,7 @@ func (m *Model) applyTranscriptSnapshotPayload(msg transcriptSnapshotMsg, source
 	if authoritative {
 		m.transcriptRecoveryCoordinatorOrDefault().MarkRecovered(msg.id)
 	}
-	blocks = transcriptBlocksToChatBlocks(msg.snapshot.Blocks)
+	blocks = renderableTranscriptBlocksToChatBlocks(msg.snapshot.Blocks)
 	if m.transcriptStream != nil {
 		blocks = m.transcriptStream.Blocks()
 	}

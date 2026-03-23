@@ -67,7 +67,7 @@ func ValidateEvent(event TranscriptEvent) error {
 			return fmt.Errorf("delta event must include at least one block")
 		}
 		for i, block := range event.Delta {
-			if err := ValidateBlock(block); err != nil {
+			if err := ValidateDeltaBlock(block); err != nil {
 				return fmt.Errorf("delta block[%d]: %w", i, err)
 			}
 		}
@@ -178,6 +178,16 @@ func ValidateBlock(block Block) error {
 		return fmt.Errorf("block kind is required")
 	}
 	if strings.TrimSpace(block.Text) == "" {
+		return fmt.Errorf("block text is required")
+	}
+	return nil
+}
+
+func ValidateDeltaBlock(block Block) error {
+	if strings.TrimSpace(block.Kind) == "" {
+		return fmt.Errorf("block kind is required")
+	}
+	if block.Text == "" {
 		return fmt.Errorf("block text is required")
 	}
 	return nil

@@ -15,7 +15,7 @@ func transcriptBlocksToChatBlocks(blocks []transcriptdomain.Block) []ChatBlock {
 	}
 	out := make([]ChatBlock, 0, len(blocks))
 	for _, block := range blocks {
-		if transcriptdomain.IsSemanticallyEmpty(block.Text) {
+		if block.Text == "" {
 			continue
 		}
 		role := transcriptBlockRole(block)
@@ -37,6 +37,10 @@ func transcriptBlocksToChatBlocks(blocks []transcriptdomain.Block) []ChatBlock {
 	return coalesceAdjacentTranscriptChatBlocks(out)
 }
 
+func renderableTranscriptBlocksToChatBlocks(blocks []transcriptdomain.Block) []ChatBlock {
+	return filterRenderableTranscriptChatBlocks(transcriptBlocksToChatBlocks(blocks))
+}
+
 func coalesceAdjacentTranscriptChatBlocks(blocks []ChatBlock) []ChatBlock {
 	if len(blocks) < 2 {
 		return blocks
@@ -49,7 +53,7 @@ func coalesceAdjacentTranscriptChatBlocks(blocks []ChatBlock) []ChatBlock {
 		}
 		last := &out[len(out)-1]
 		if shouldCoalesceTranscriptChatBlock(*last, block) {
-			last.Text = concatAdjacentAgentText(last.Text, block.Text)
+			last.Text = concatAdjacentTranscriptText(last.Text, block.Text)
 			if last.CreatedAt.IsZero() && !block.CreatedAt.IsZero() {
 				last.CreatedAt = block.CreatedAt
 			}
@@ -73,15 +77,43 @@ func shouldCoalesceTranscriptChatBlock(current, next ChatBlock) bool {
 	if current.Role != ChatRoleAgent && current.Role != ChatRoleReasoning {
 		return false
 	}
-	if transcriptdomain.IsSemanticallyEmpty(current.Text) || transcriptdomain.IsSemanticallyEmpty(next.Text) {
-		return false
-	}
 	currentID := strings.TrimSpace(current.ID)
 	nextID := strings.TrimSpace(next.ID)
 	if currentID == "" || nextID == "" || currentID != nextID {
 		return false
 	}
 	return true
+}
+
+func concatAdjacentTranscriptText(current, next string) string {
+	if current == "" {
+		return next
+	}
+	if next == "" {
+		return current
+	}
+	if strings.TrimSpace(current) == "" || strings.TrimSpace(next) == "" {
+		return current + next
+	}
+	return concatAdjacentAgentText(current, next)
+}
+
+func finalizeRenderableTranscriptChatBlocks(blocks []ChatBlock) []ChatBlock {
+	return filterRenderableTranscriptChatBlocks(coalesceAdjacentTranscriptChatBlocks(blocks))
+}
+
+func filterRenderableTranscriptChatBlocks(blocks []ChatBlock) []ChatBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]ChatBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if transcriptdomain.IsSemanticallyEmpty(block.Text) {
+			continue
+		}
+		out = append(out, block)
+	}
+	return out
 }
 
 func transcriptBlockRole(block transcriptdomain.Block) ChatRole {

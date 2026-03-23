@@ -287,8 +287,14 @@ func TestValidateBlockAndStreamStatus(t *testing.T) {
 	if err := ValidateBlock(Block{Kind: "assistant"}); err == nil {
 		t.Fatal("expected missing block text error")
 	}
+	if err := ValidateBlock(Block{Kind: "assistant", Text: " \n"}); err == nil {
+		t.Fatal("expected whitespace-only snapshot block text error")
+	}
 	if err := ValidateBlock(Block{Text: "hi"}); err == nil {
 		t.Fatal("expected missing block kind error")
+	}
+	if err := ValidateDeltaBlock(Block{Kind: "assistant", Text: " \n"}); err != nil {
+		t.Fatalf("expected whitespace-only delta block text to remain valid, got %v", err)
 	}
 	if err := ValidateStreamStatus(StreamStatusReady); err != nil {
 		t.Fatalf("valid stream status rejected: %v", err)

@@ -150,6 +150,20 @@ func TestTranscriptEventFromCodexEventAgentMessageDeltaPreservesWhitespace(t *te
 	}
 }
 
+func TestTranscriptEventFromCodexEventAgentMessageDeltaAllowsWhitespaceOnlyChunk(t *testing.T) {
+	event := types.CodexEvent{
+		Method: "item/agentMessage/delta",
+		Params: json.RawMessage(`{"itemId":"msg_1","delta":"\n\n"}`),
+	}
+	got := TranscriptEventFromCodexEvent("s1", "codex", transcriptdomain.MustParseRevisionToken("11"), event)
+	if got.Kind != transcriptdomain.TranscriptEventDelta || len(got.Delta) != 1 {
+		t.Fatalf("expected whitespace-only delta event to be retained, got %#v", got)
+	}
+	if got.Delta[0].Text != "\n\n" {
+		t.Fatalf("expected whitespace-only delta payload to be preserved, got %#v", got.Delta[0])
+	}
+}
+
 func TestDeltaBlockFromCodexEventMethodReasoningVariant(t *testing.T) {
 	block, ok := deltaBlockFromCodexEventMethod("item/reasoning/delta", json.RawMessage(`{"itemId":"r_1","delta":"thinking"}`), nil)
 	if !ok {
