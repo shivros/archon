@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"fmt"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -46,8 +45,7 @@ func (p ProviderNotificationProfile) timeout() time.Duration {
 
 func (p ProviderNotificationProfile) waitForTurnCompletion(
 	t *testing.T,
-	server *httptest.Server,
-	manager *SessionManager,
+	env *notificationIntegrationEnvironment,
 	sessionID string,
 	expectedTurnID string,
 	timeout time.Duration,
@@ -56,7 +54,7 @@ func (p ProviderNotificationProfile) waitForTurnCompletion(
 	if p.waitForTurnCompletionFn == nil {
 		t.Fatalf("provider %q has no turn-completion waiter", p.name())
 	}
-	return p.waitForTurnCompletionFn(t, server, manager, sessionID, expectedTurnID, timeout)
+	return p.waitForTurnCompletionFn(t, env, sessionID, expectedTurnID, timeout)
 }
 
 func (p ProviderNotificationProfile) normalizeExpectedTurnStatus(status string) string {

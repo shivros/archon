@@ -1,10 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"control/internal/providers"
+	"control/internal/types"
 )
 
 const providerNotificationPollInterval = 50 * time.Millisecond
@@ -16,8 +20,7 @@ type providerTurnCompletionResult struct {
 
 type providerTurnCompletionWaiter func(
 	t *testing.T,
-	server *httptest.Server,
-	manager *SessionManager,
+	env *notificationIntegrationEnvironment,
 	sessionID string,
 	expectedTurnID string,
 	timeout time.Duration,
@@ -42,6 +45,8 @@ func newProviderTurnCompletionWaitStrategyRegistry(resolver providerCapabilities
 	return providerTurnCompletionWaitStrategyRegistry{
 		resolver: resolver,
 		waiters: map[string]providerTurnCompletionWaiter{
+			"codex":   waitForProviderTurnCompletionFromLiveState,
+			"claude":  waitForProviderTurnCompletionFromLiveState,
 			"events":  waitForProviderTurnCompletionFromTranscript,
 			"history": waitForProviderTurnCompletionFromHistory,
 		},
@@ -50,6 +55,9 @@ func newProviderTurnCompletionWaitStrategyRegistry(resolver providerCapabilities
 }
 
 func (r providerTurnCompletionWaitStrategyRegistry) Waiter(provider string) providerTurnCompletionWaiter {
+	if waiter := r.waiters[providers.Normalize(provider)]; waiter != nil {
+		return waiter
+	}
 	key := "history"
 	if r.resolver != nil && r.resolver.Capabilities(provider).SupportsEvents {
 		key = "events"
@@ -66,29 +74,31 @@ func (r providerTurnCompletionWaitStrategyRegistry) Waiter(provider string) prov
 
 func waitForProviderTurnCompletionFromTranscript(
 	t *testing.T,
-	server *httptest.Server,
-	manager *SessionManager,
+	env *notificationIntegrationEnvironment,
 	sessionID string,
 	expectedTurnID string,
 	timeout time.Duration,
 ) providerTurnCompletionResult {
 	t.Helper()
-	if result, ok := findTurnCompletionInHistory(t, server, sessionID, expectedTurnID); ok {
+	if env == nil {
+		t.Fatalf("notification integration environment is required")
+	}
+	if result, ok := findTurnCompletionInHistory(t, env.server, sessionID, expectedTurnID); ok {
 		return result
 	}
 
-	stream, closeFn := openSSE(t, server, "/v1/sessions/"+sessionID+"/transcript/stream?follow=1")
+	stream, closeFn := openSSE(t, env.server, "/v1/sessions/"+sessionID+"/transcript/stream?follow=1")
 	defer closeFn()
 
-	failures, stopFailures := startSessionTurnFailureMonitor(server, sessionID)
+	failures, stopFailures := startSessionTurnFailureMonitor(env.server, sessionID)
 	defer stopFailures()
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
-			t.Fatalf("session entered terminal failure state while waiting for turn completion: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+		if failure := sessionTerminalFailure(env.server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state while waiting for turn completion: %s\n%s", failure, sessionDiagnostics(env.manager, sessionID))
 		}
-		if result, ok := findTurnCompletionInHistory(t, server, sessionID, expectedTurnID); ok {
+		if result, ok := findTurnCompletionInHistory(t, env.server, sessionID, expectedTurnID); ok {
 			return result
 		}
 
@@ -102,7 +112,7 @@ func waitForProviderTurnCompletionFromTranscript(
 		}
 		data, failure, ok := waitForSSEDataWithFailure(stream, failures, waitWindow)
 		if strings.TrimSpace(failure) != "" {
-			t.Fatalf("provider turn failed before completion event: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+			t.Fatalf("provider turn failed before completion event: %s\n%s", failure, sessionDiagnostics(env.manager, sessionID))
 		}
 		if !ok {
 			time.Sleep(providerNotificationPollInterval)
@@ -127,41 +137,101 @@ func waitForProviderTurnCompletionFromTranscript(
 			Status: strings.TrimSpace(turn.Status),
 		}
 	}
-	t.Fatalf("timeout waiting for turn completion (expected_turn_id=%q)\n%s", strings.TrimSpace(expectedTurnID), sessionDiagnostics(manager, sessionID))
+	t.Fatalf("timeout waiting for turn completion (expected_turn_id=%q)\n%s", strings.TrimSpace(expectedTurnID), sessionDiagnostics(env.manager, sessionID))
 	return providerTurnCompletionResult{}
 }
 
 func waitForProviderTurnCompletionFromHistory(
 	t *testing.T,
-	server *httptest.Server,
-	manager *SessionManager,
+	env *notificationIntegrationEnvironment,
 	sessionID string,
 	expectedTurnID string,
 	timeout time.Duration,
 ) providerTurnCompletionResult {
 	t.Helper()
-	failures, stopFailures := startSessionTurnFailureMonitor(server, sessionID)
+	if env == nil {
+		t.Fatalf("notification integration environment is required")
+	}
+	failures, stopFailures := startSessionTurnFailureMonitor(env.server, sessionID)
 	defer stopFailures()
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if failure := sessionTerminalFailure(server, sessionID); failure != "" {
-			t.Fatalf("session entered terminal failure state while waiting for turn completion: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+		if failure := sessionTerminalFailure(env.server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state while waiting for turn completion: %s\n%s", failure, sessionDiagnostics(env.manager, sessionID))
 		}
 		select {
 		case failure, ok := <-failures:
 			if ok && strings.TrimSpace(failure) != "" {
-				t.Fatalf("provider turn failed before completion event: %s\n%s", failure, sessionDiagnostics(manager, sessionID))
+				t.Fatalf("provider turn failed before completion event: %s\n%s", failure, sessionDiagnostics(env.manager, sessionID))
 			}
 		default:
 		}
-		if result, ok := findTurnCompletionInHistory(t, server, sessionID, expectedTurnID); ok {
+		if result, ok := findTurnCompletionInHistory(t, env.server, sessionID, expectedTurnID); ok {
 			return result
 		}
 		time.Sleep(providerNotificationPollInterval)
 	}
-	t.Fatalf("timeout waiting for turn completion (expected_turn_id=%q)\n%s", strings.TrimSpace(expectedTurnID), sessionDiagnostics(manager, sessionID))
+	t.Fatalf("timeout waiting for turn completion (expected_turn_id=%q)\n%s", strings.TrimSpace(expectedTurnID), sessionDiagnostics(env.manager, sessionID))
 	return providerTurnCompletionResult{}
+}
+
+func waitForProviderTurnCompletionFromLiveState(
+	t *testing.T,
+	env *notificationIntegrationEnvironment,
+	sessionID string,
+	expectedTurnID string,
+	timeout time.Duration,
+) providerTurnCompletionResult {
+	t.Helper()
+	if env == nil {
+		t.Fatalf("notification integration environment is required")
+	}
+
+	deadline := time.Now().Add(timeout)
+	sawExpectedActive := false
+	for time.Now().Before(deadline) {
+		if failure := sessionTerminalFailure(env.server, sessionID); failure != "" {
+			t.Fatalf("session entered terminal failure state while waiting for live turn completion: %s\n%s", failure, sessionDiagnostics(env.manager, sessionID))
+		}
+		if result, ok := findTurnCompletionInHistory(t, env.server, sessionID, expectedTurnID); ok {
+			return result
+		}
+		activeTurnID, ok := activeTurnIDFromLiveSession(env, sessionID)
+		if ok {
+			if strings.TrimSpace(activeTurnID) == strings.TrimSpace(expectedTurnID) {
+				sawExpectedActive = true
+			}
+			if strings.TrimSpace(activeTurnID) == "" || (sawExpectedActive && strings.TrimSpace(activeTurnID) != strings.TrimSpace(expectedTurnID)) {
+				return providerTurnCompletionResult{TurnID: strings.TrimSpace(expectedTurnID)}
+			}
+		}
+		time.Sleep(providerNotificationPollInterval)
+	}
+
+	t.Fatalf("timeout waiting for live turn completion (expected_turn_id=%q)\n%s", strings.TrimSpace(expectedTurnID), sessionDiagnostics(env.manager, sessionID))
+	return providerTurnCompletionResult{}
+}
+
+func activeTurnIDFromLiveSession(env *notificationIntegrationEnvironment, sessionID string) (string, bool) {
+	if env == nil || env.manager == nil || env.live == nil || strings.TrimSpace(sessionID) == "" {
+		return "", false
+	}
+	session, ok := env.manager.GetSession(sessionID)
+	if !ok || session == nil {
+		return "", false
+	}
+	var meta *types.SessionMeta
+	if env.stores != nil && env.stores.SessionMeta != nil {
+		if stored, found, err := env.stores.SessionMeta.Get(context.Background(), sessionID); err == nil && found {
+			meta = stored
+		}
+	}
+	ls, err := env.live.ensure(context.Background(), session, meta)
+	if err != nil || ls == nil {
+		return "", false
+	}
+	return strings.TrimSpace(ls.ActiveTurnID()), true
 }
 
 func findTurnCompletionInHistory(

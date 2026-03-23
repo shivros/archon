@@ -9,9 +9,24 @@ import (
 	"control/internal/store"
 )
 
+type notificationIntegrationEnvironment struct {
+	server   *httptest.Server
+	manager  *SessionManager
+	stores   *Stores
+	live     *CompositeLiveManager
+	recorder NotificationRecorder
+}
+
+func (e *notificationIntegrationEnvironment) Close() {
+	if e == nil || e.server == nil {
+		return
+	}
+	e.server.Close()
+}
+
 // newNotificationIntegrationServer builds an integration server with
 // notification capture wired through manager + live providers.
-func newNotificationIntegrationServer(t *testing.T) (*httptest.Server, *SessionManager, *Stores, NotificationRecorder) {
+func newNotificationIntegrationServer(t *testing.T) *notificationIntegrationEnvironment {
 	t.Helper()
 
 	base := newDaemonIntegrationTempDir(t, "notification-server-*")
@@ -68,5 +83,11 @@ func newNotificationIntegrationServer(t *testing.T) (*httptest.Server, *SessionM
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux)
 	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
-	return server, manager, stores, recorder
+	return &notificationIntegrationEnvironment{
+		server:   server,
+		manager:  manager,
+		stores:   stores,
+		live:     compositeLive,
+		recorder: recorder,
+	}
 }

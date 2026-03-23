@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -22,7 +21,7 @@ func TestProviderNotificationProfileForTestCaseUsesResolverWaiter(t *testing.T) 
 	t.Parallel()
 	waitCalls := 0
 	resolver := &stubProviderTurnWaitStrategyResolver{
-		waiter: func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+		waiter: func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 			waitCalls++
 			return providerTurnCompletionResult{TurnID: "turn-1", Status: "completed"}
 		},
@@ -32,7 +31,7 @@ func TestProviderNotificationProfileForTestCaseUsesResolverWaiter(t *testing.T) 
 	if resolver.calls != 1 || resolver.providerName != "codex" {
 		t.Fatalf("expected resolver to be used for provider codex, calls=%d provider=%q", resolver.calls, resolver.providerName)
 	}
-	result := profile.waitForTurnCompletion(t, nil, nil, "sess", "turn-1", time.Second)
+	result := profile.waitForTurnCompletion(t, nil, "sess", "turn-1", time.Second)
 	if waitCalls != 1 {
 		t.Fatalf("expected waiter to be invoked once, got %d", waitCalls)
 	}

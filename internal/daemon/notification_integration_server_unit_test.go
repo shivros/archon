@@ -9,19 +9,19 @@ import (
 
 func TestNewNotificationIntegrationServerWiresRecorder(t *testing.T) {
 	t.Parallel()
-	server, manager, stores, recorder := newNotificationIntegrationServer(t)
-	defer server.Close()
+	env := newNotificationIntegrationServer(t)
+	defer env.Close()
 
-	if server == nil || manager == nil || stores == nil || recorder == nil {
+	if env == nil || env.server == nil || env.manager == nil || env.stores == nil || env.live == nil || env.recorder == nil {
 		t.Fatalf("expected non-nil server wiring components")
 	}
-	if got := listSessions(t, server); len(got.Sessions) != 0 {
+	if got := listSessions(t, env.server); len(got.Sessions) != 0 {
 		t.Fatalf("expected empty sessions list on new integration server")
 	}
 
-	manager.mu.Lock()
-	notifier := manager.notifier
-	manager.mu.Unlock()
+	env.manager.mu.Lock()
+	notifier := env.manager.notifier
+	env.manager.mu.Unlock()
 	if notifier == nil {
 		t.Fatalf("expected manager notifier to be wired")
 	}
@@ -38,7 +38,7 @@ func TestNewNotificationIntegrationServerWiresRecorder(t *testing.T) {
 		Provider:  "codex",
 		TurnID:    "turn-smoke",
 	})
-	if _, ok := recorder.WaitForMatch(target, newProviderNotificationMatchPolicy(), time.Second); !ok {
+	if _, ok := env.recorder.WaitForMatch(target, newProviderNotificationMatchPolicy(), time.Second); !ok {
 		t.Fatalf("expected published event to reach integration recorder")
 	}
 }

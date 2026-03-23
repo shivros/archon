@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -29,18 +28,18 @@ func TestProviderTurnCompletionWaitStrategyRegistrySelectsEventsWaiter(t *testin
 			},
 		},
 		waiters: map[string]providerTurnCompletionWaiter{
-			"events": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+			"events": func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 				eventsCalls++
 				return providerTurnCompletionResult{}
 			},
-			"history": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+			"history": func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 				historyCalls++
 				return providerTurnCompletionResult{}
 			},
 		},
 	}
 
-	registry.Waiter("opencode")(t, nil, nil, "sess-1", "turn-1", time.Second)
+	registry.Waiter("opencode")(t, nil, "sess-1", "turn-1", time.Second)
 	if eventsCalls != 1 {
 		t.Fatalf("expected events waiter call, got %d", eventsCalls)
 	}
@@ -59,18 +58,18 @@ func TestProviderTurnCompletionWaitStrategyRegistrySelectsHistoryWaiter(t *testi
 			},
 		},
 		waiters: map[string]providerTurnCompletionWaiter{
-			"events": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+			"events": func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 				eventsCalls++
 				return providerTurnCompletionResult{}
 			},
-			"history": func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+			"history": func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 				historyCalls++
 				return providerTurnCompletionResult{}
 			},
 		},
 	}
 
-	registry.Waiter("claude")(t, nil, nil, "sess-1", "turn-1", time.Second)
+	registry.Waiter("claude")(t, nil, "sess-1", "turn-1", time.Second)
 	if historyCalls != 1 {
 		t.Fatalf("expected history waiter call, got %d", historyCalls)
 	}
@@ -90,34 +89,34 @@ func TestProviderTurnCompletionWaitStrategyRegistryUsesFallbackWhenEventsWaiterM
 		waiters: map[string]providerTurnCompletionWaiter{
 			"events": nil,
 		},
-		fallbackWaiter: func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+		fallbackWaiter: func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 			fallbackCalls++
 			return providerTurnCompletionResult{}
 		},
 	}
 
-	registry.Waiter("opencode")(t, nil, nil, "sess-1", "turn-1", time.Second)
+	registry.Waiter("opencode")(t, nil, "sess-1", "turn-1", time.Second)
 	if fallbackCalls != 1 {
 		t.Fatalf("expected fallback waiter call, got %d", fallbackCalls)
 	}
 }
 
 func TestNewProviderTurnCompletionWaitStrategyRegistryDefaultsResolver(t *testing.T) {
-	var eventsCalls int
+	var codexCalls int
 	registry := newProviderTurnCompletionWaitStrategyRegistry(nil)
-	registry.waiters["events"] = func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
-		eventsCalls++
+	registry.waiters["codex"] = func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
+		codexCalls++
 		return providerTurnCompletionResult{}
 	}
-	registry.waiters["history"] = func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+	registry.waiters["history"] = func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 		return providerTurnCompletionResult{}
 	}
-	registry.fallbackWaiter = func(*testing.T, *httptest.Server, *SessionManager, string, string, time.Duration) providerTurnCompletionResult {
+	registry.fallbackWaiter = func(*testing.T, *notificationIntegrationEnvironment, string, string, time.Duration) providerTurnCompletionResult {
 		return providerTurnCompletionResult{}
 	}
 
-	registry.Waiter("codex")(t, nil, nil, "sess-1", "turn-1", time.Second)
-	if eventsCalls != 1 {
-		t.Fatalf("expected default resolver to route codex to events waiter, got %d", eventsCalls)
+	registry.Waiter("codex")(t, nil, "sess-1", "turn-1", time.Second)
+	if codexCalls != 1 {
+		t.Fatalf("expected default resolver to route codex to provider-specific waiter, got %d", codexCalls)
 	}
 }

@@ -20,11 +20,11 @@ func TestProviderTurnCompletedNotification(t *testing.T) {
 			profile.require(t)
 
 			repoDir, runtimeOpts := profile.setup(t)
-			server, manager, _, recorder := newNotificationIntegrationServer(t)
-			defer server.Close()
+			env := newNotificationIntegrationServer(t)
+			defer env.Close()
 
-			ws := createWorkspace(t, server, repoDir)
-			session := startSession(t, server, StartSessionRequest{
+			ws := createWorkspace(t, env.server, repoDir)
+			session := startSession(t, env.server, StartSessionRequest{
 				Provider:       profile.name(),
 				WorkspaceID:    ws.ID,
 				RuntimeOptions: runtimeOpts,
@@ -34,18 +34,18 @@ func TestProviderTurnCompletedNotification(t *testing.T) {
 			}
 
 			timeout := providerNotificationTimeout(profile)
-			turnID := sendMessageWithRetry(t, server, session.ID, "Say \"ok\" and nothing else.", timeout)
+			turnID := sendMessageWithRetry(t, env.server, session.ID, "Say \"ok\" and nothing else.", timeout)
 			if strings.TrimSpace(turnID) == "" {
 				t.Fatalf("turn id missing from send")
 			}
 
-			completion := profile.waitForTurnCompletion(t, server, manager, session.ID, turnID, timeout)
+			completion := profile.waitForTurnCompletion(t, env, session.ID, turnID, timeout)
 			if strings.TrimSpace(completion.TurnID) == "" {
-				t.Fatalf("provider completion returned empty turn id (expected=%q)\n%s", turnID, sessionDiagnostics(manager, session.ID))
+				t.Fatalf("provider completion returned empty turn id (expected=%q)\n%s", turnID, sessionDiagnostics(env.manager, session.ID))
 			}
 			if strings.TrimSpace(completion.TurnID) != strings.TrimSpace(turnID) {
 				t.Fatalf("provider completion turn id mismatch got=%q want=%q\n%s",
-					completion.TurnID, turnID, sessionDiagnostics(manager, session.ID))
+					completion.TurnID, turnID, sessionDiagnostics(env.manager, session.ID))
 			}
 
 			target := NotificationMatchTarget{
@@ -54,16 +54,16 @@ func TestProviderTurnCompletedNotification(t *testing.T) {
 				Provider:  profile.name(),
 				TurnID:    completion.TurnID,
 			}
-			event, ok := recorder.WaitForMatch(target, matchPolicy, timeout)
+			event, ok := env.recorder.WaitForMatch(target, matchPolicy, timeout)
 			if !ok {
 				t.Fatalf("timeout waiting for turn-completed notification (target=%+v events=%s)\n%s",
-					target, notificationEventsDebugString(recorder.Snapshot()), sessionDiagnostics(manager, session.ID))
+					target, notificationEventsDebugString(env.recorder.Snapshot()), sessionDiagnostics(env.manager, session.ID))
 			}
 
-			matched := recorder.MatchingEvents(target, matchPolicy)
+			matched := env.recorder.MatchingEvents(target, matchPolicy)
 			if len(matched) != 1 {
 				t.Fatalf("expected exactly one matching notification, got %d (target=%+v all=%s)\n%s",
-					len(matched), target, notificationEventsDebugString(recorder.Snapshot()), sessionDiagnostics(manager, session.ID))
+					len(matched), target, notificationEventsDebugString(env.recorder.Snapshot()), sessionDiagnostics(env.manager, session.ID))
 			}
 
 			if event.Trigger != types.NotificationTriggerTurnCompleted {
