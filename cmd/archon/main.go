@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -21,10 +22,12 @@ Commands:
   kill     kill a session
   tail     show recent session output
   ui       run terminal UI (placeholder)
+  version  print CLI build metadata
   help     show help
 
 Flags:
   -h, --help   show help
+  -v, --version   show version
 
 Daemon flags:
   --background    run in background (logs to file)
@@ -38,31 +41,66 @@ Examples:
   archon tail <id> --lines 200
 `
 
+var rootCommandAliases = map[string]string{
+	"-h":        "help",
+	"--help":    "help",
+	"-v":        "version",
+	"--version": "version",
+}
+
 func printUsage() {
-	fmt.Fprint(os.Stderr, usageText)
+	printUsageTo(os.Stderr)
+}
+
+func resolveRootCommandName(value string) string {
+	if alias, ok := rootCommandAliases[value]; ok {
+		return alias
+	}
+	return value
 }
 
 func main() {
-	args := os.Args[1:]
-	if len(args) == 0 {
-		printUsage()
-		return
-	}
-
 	wiring := defaultCommandWiring(os.Stdout, os.Stderr)
-	commands := buildCommands(wiring)
+	exitCode := runCLI(os.Args[1:], wiring)
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
 
-	switch args[0] {
-	case "-h", "--help", "help":
-		printUsage()
-		return
+func runCLI(args []string, wiring commandWiring) int {
+	return runCLIWithCommands(args, wiring, buildCommands(wiring))
+}
+
+func runCLIWithCommands(args []string, wiring commandWiring, commands map[string]commandRunner) int {
+	stderr := wiring.stderr
+	if stderr == nil {
+		stderr = os.Stderr
 	}
 
-	runner, ok := commands[args[0]]
+	if len(args) == 0 {
+		printUsageTo(stderr)
+		return 0
+	}
+
+	commandName := resolveRootCommandName(args[0])
+	if commandName == "help" {
+		printUsageTo(stderr)
+		return 0
+	}
+
+	runner, ok := commands[commandName]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
-		printUsage()
-		os.Exit(2)
+		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n\n", args[0])
+		printUsageTo(stderr)
+		return 2
 	}
-	exitOnErr(args[0], runner.Run(args[1:]), wiring.stderr)
+	if err := runner.Run(args[1:]); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s error: %v\n", commandName, err)
+		return 1
+	}
+	return 0
+}
+
+func printUsageTo(output io.Writer) {
+	_, _ = fmt.Fprint(output, usageText)
 }

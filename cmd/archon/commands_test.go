@@ -200,6 +200,95 @@ func TestUICommandIgnoresVersionMismatchWhenFlagSet(t *testing.T) {
 	}
 }
 
+func TestVersionCommandPrintsBuildMetadata(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := NewVersionCommandWithDependencies(
+		stdout,
+		stderr,
+		staticBuildMetadataProvider{
+			metadata: buildMetadata{
+				Version:   "v-test",
+				Commit:    "abc123",
+				BuildDate: "2026-03-23T00:00:00Z",
+			},
+		},
+		textVersionFormatter{},
+	)
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected version command to succeed, got %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "version: v-test") {
+		t.Fatalf("expected version output, got %q", out)
+	}
+	if !strings.Contains(out, "commit: abc123") {
+		t.Fatalf("expected commit output, got %q", out)
+	}
+	if !strings.Contains(out, "build_date: 2026-03-23T00:00:00Z") {
+		t.Fatalf("expected build_date output, got %q", out)
+	}
+}
+
+func TestVersionCommandUsesInjectedFormatter(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := NewVersionCommandWithDependencies(
+		stdout,
+		stderr,
+		staticBuildMetadataProvider{
+			metadata: buildMetadata{
+				Version: "v-custom",
+			},
+		},
+		staticVersionFormatter{output: "custom-format\n"},
+	)
+	if err := cmd.Run(nil); err != nil {
+		t.Fatalf("expected version command to succeed, got %v", err)
+	}
+	if got := stdout.String(); got != "custom-format\n" {
+		t.Fatalf("expected formatter output, got %q", got)
+	}
+}
+
+func TestNewVersionCommandWithDependenciesDefaultsNilCollaborators(t *testing.T) {
+	cmd := NewVersionCommandWithDependencies(&bytes.Buffer{}, &bytes.Buffer{}, nil, nil)
+	if cmd.metadataProvider == nil {
+		t.Fatalf("expected default metadata provider")
+	}
+	if cmd.formatter == nil {
+		t.Fatalf("expected default formatter")
+	}
+}
+
+func TestVersionCommandRejectsUnknownFlag(t *testing.T) {
+	cmd := NewVersionCommandWithDependencies(
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		staticBuildMetadataProvider{},
+		textVersionFormatter{},
+	)
+	if err := cmd.Run([]string{"--not-a-flag"}); err == nil {
+		t.Fatalf("expected unknown flag to fail")
+	}
+}
+
+func TestVersionCommandPropagatesWriteError(t *testing.T) {
+	cmd := NewVersionCommandWithDependencies(
+		errorWriter{},
+		&bytes.Buffer{},
+		staticBuildMetadataProvider{
+			metadata: buildMetadata{
+				Version: "v-test",
+			},
+		},
+		textVersionFormatter{},
+	)
+	if err := cmd.Run(nil); err == nil {
+		t.Fatalf("expected write failure to be returned")
+	}
+}
+
 func TestStartCommandRequiresProvider(t *testing.T) {
 	cmd := NewStartCommand(&bytes.Buffer{}, &bytes.Buffer{}, fixedSessionFactory(&fakeCommandClient{}))
 	err := cmd.Run(nil)
@@ -1003,7 +1092,7 @@ func TestBuildCommandsIncludesConfig(t *testing.T) {
 		version:            "v-test",
 	}
 	commands := buildCommands(wiring)
-	required := []string{"daemon", "config", "login", "whoami", "logout", "ps", "start", "kill", "tail", "ui"}
+	required := []string{"daemon", "config", "login", "whoami", "logout", "ps", "start", "kill", "tail", "ui", "version"}
 	for _, name := range required {
 		if commands[name] == nil {
 			t.Fatalf("expected %q command to be present", name)
@@ -1011,6 +1100,9 @@ func TestBuildCommandsIncludesConfig(t *testing.T) {
 	}
 	if _, ok := commands["config"].(*ConfigCommand); !ok {
 		t.Fatalf("expected config command type")
+	}
+	if _, ok := commands["version"].(*VersionCommand); !ok {
+		t.Fatalf("expected version command type")
 	}
 }
 
@@ -1206,4 +1298,20 @@ func fixedDaemonAdminFactory(client daemonAdminClient) daemonAdminClientFactory 
 	return func() (daemonAdminClient, error) {
 		return client, nil
 	}
+}
+
+type staticBuildMetadataProvider struct {
+	metadata buildMetadata
+}
+
+func (p staticBuildMetadataProvider) Snapshot() buildMetadata {
+	return p.metadata
+}
+
+type staticVersionFormatter struct {
+	output string
+}
+
+func (f staticVersionFormatter) Format(buildMetadata) string {
+	return f.output
 }

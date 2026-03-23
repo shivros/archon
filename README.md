@@ -41,6 +41,33 @@ prek run --all-files
 
 The hook set includes a guard against reintroducing deprecated guided-workflow contract fields in non-test Go code.
 
+### Local Build
+
+Preferred local build output is `dist/archon`:
+
+```bash
+make build
+./dist/archon version
+```
+
+Build metadata is injected through ldflags:
+
+- `VERSION` (default: `dev`)
+- `COMMIT` (default: current git short SHA when available)
+- `BUILD_DATE` (default: current UTC RFC3339 timestamp)
+
+Example:
+
+```bash
+make build VERSION=v0.1.0 COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
+
+If you still need the historical repo-root binary path, use:
+
+```bash
+make build-legacy
+```
+
 ## Session Provider Badges
 Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD]`, `[OPN]`). You can override badge prefix/color per provider by setting `provider_badges` in `~/.archon/state.json`:
 

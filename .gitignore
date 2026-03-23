@@ -5,6 +5,13 @@
 coverage.out
 *.cover
 archon
+dist/
+!cmd/archon/
+cmd/archon/*
+!cmd/archon/build_metadata.go
+!cmd/archon/command_version.go
+!cmd/archon/build_metadata_test.go
+!cmd/archon/main_test.go
 
 # Playwright CLI
 .playwright-cli/
