@@ -2,6 +2,9 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -241,8 +244,38 @@ func findTurnCompletionInHistory(
 	expectedTurnID string,
 ) (providerTurnCompletionResult, bool) {
 	t.Helper()
-	history := historySession(t, server, sessionID)
+	history, ok := historySessionAllowingPending(t, server, sessionID)
+	if !ok {
+		return providerTurnCompletionResult{}, false
+	}
 	return findTurnCompletionInHistoryItems(history.Items, expectedTurnID)
+}
+
+func historySessionAllowingPending(t *testing.T, server *httptest.Server, id string) (itemsResponse, bool) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions/"+id+"/history?lines=50", nil)
+	req.Header.Set("Authorization", "Bearer token")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("history session: %v", err)
+	}
+	defer closeTestCloser(t, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		bodyText := strings.TrimSpace(string(body))
+		if resp.StatusCode == http.StatusInternalServerError && strings.Contains(strings.ToLower(bodyText), "transcript_history_pending") {
+			return itemsResponse{}, false
+		}
+		t.Fatalf("unexpected status: %d: %s", resp.StatusCode, bodyText)
+	}
+
+	var payload itemsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	return payload, true
 }
 
 func findTurnCompletionInHistoryItems(items []map[string]any, expectedTurnID string) (providerTurnCompletionResult, bool) {

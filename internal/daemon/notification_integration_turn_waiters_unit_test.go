@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -118,5 +121,50 @@ func TestNewProviderTurnCompletionWaitStrategyRegistryDefaultsResolver(t *testin
 	registry.Waiter("codex")(t, nil, "sess-1", "turn-1", time.Second)
 	if codexCalls != 1 {
 		t.Fatalf("expected default resolver to route codex to provider-specific waiter, got %d", codexCalls)
+	}
+}
+
+func TestHistorySessionAllowingPendingReturnsFalseWhenHistoryPending(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"code":"transcript_history_pending","error":"transcript history pending"}`))
+	}))
+	defer server.Close()
+
+	_, ok := historySessionAllowingPending(t, server, "sess-pending")
+	if ok {
+		t.Fatalf("expected pending history response to return ok=false")
+	}
+}
+
+func TestHistorySessionAllowingPendingReturnsPayloadOnSuccess(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method %q", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(itemsResponse{
+			Items: []map[string]any{
+				{
+					"type":        "turnCompletion",
+					"turn_id":     "turn-1",
+					"turn_status": "completed",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	payload, ok := historySessionAllowingPending(t, server, "sess-ok")
+	if !ok {
+		t.Fatalf("expected successful history response")
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("expected one history item, got %d", len(payload.Items))
+	}
+	if payload.Items[0]["turn_id"] != "turn-1" {
+		t.Fatalf("unexpected history payload: %#v", payload.Items[0])
 	}
 }
