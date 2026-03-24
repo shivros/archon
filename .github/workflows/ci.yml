@@ -66,6 +66,10 @@ jobs:
         shell: bash
         run: scripts/check_release_workflow_contract.sh
 
+      - name: Build/release docs contract checks
+        shell: bash
+        run: scripts/check_docs_build_release_contract.sh
+
       - name: Workflow contract checker tests
         shell: bash
         run: scripts/test_workflow_contract_checkers.sh
@@ -93,6 +97,10 @@ jobs:
       - name: Release publish script contract tests
         shell: bash
         run: scripts/test_publish_github_release_contracts.sh
+
+      - name: Build/release docs contract tests
+        shell: bash
+        run: scripts/test_docs_build_release_contracts.sh
 
       - name: Lint workflow syntax and semantics
         shell: bash

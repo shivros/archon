@@ -41,84 +41,22 @@ prek run --all-files
 
 The hook set includes a guard against reintroducing deprecated guided-workflow contract fields in non-test Go code.
 
-### Local Build
+### Build & Release
 
-Preferred local build output is `dist/archon`:
+Quick local build (output: `dist/archon`):
 
 ```bash
 make build
 ./dist/archon version
 ```
 
-Build metadata is injected through ldflags:
+Build metadata is injected via ldflags:
 
-- `VERSION` (default: `dev`)
-- `COMMIT` (default: current git short SHA when available)
-- `BUILD_DATE` (default: current UTC RFC3339 timestamp)
+- `VERSION` (default `dev`)
+- `COMMIT` (default current git short SHA when available)
+- `BUILD_DATE` (default current UTC RFC3339 timestamp)
 
-Example:
-
-```bash
-make build VERSION=v0.1.0 COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-```
-
-If you still need the historical repo-root binary path, use:
-
-```bash
-make build-legacy
-```
-
-### Manual Artifact Builds (GitHub Actions)
-
-Maintainers can trigger a manual cross-platform artifact build from GitHub Actions:
-
-- Workflow: `Build Artifacts (Manual)`
-- Trigger: `workflow_dispatch` only
-- Inputs:
-  - `ref` (branch/tag/SHA to build)
-  - `version` (embedded build version label)
-  - `artifact_suffix` (optional, e.g. `rc1`)
-
-The workflow produces downloadable archives plus checksums for:
-
-- linux/amd64
-- linux/arm64
-- darwin/amd64
-- darwin/arm64
-- windows/amd64
-- windows/arm64
-
-Archive naming follows:
-
-- `archon_<version><suffix>_<goos>_<goarch>.tar.gz` (linux/darwin)
-- `archon_<version><suffix>_<goos>_<goarch>.zip` (windows)
-
-Implementation contracts:
-
-- Target matrix is centrally defined by `scripts/release_targets.sh` and reused by manual build/release workflows.
-- Input validation is centralized in `scripts/validate_artifact_inputs.sh`.
-
-### Manual GitHub Release Publishing
-
-Maintainers can publish a GitHub Release from an existing tag using the manual workflow:
-
-- Workflow: `Release (Manual)`
-- Trigger: `workflow_dispatch` only
-- Inputs:
-  - `tag` (required existing git tag, e.g. `v1.2.3`)
-  - `artifact_suffix` (optional, e.g. `rc1`)
-  - `draft` (default: `true`)
-  - `prerelease` (default: `false`)
-  - `release_notes` (optional explicit notes; empty uses auto-generated notes on create)
-
-Maintainer steps:
-
-1. Create and push the release tag (for example `git tag v1.2.3 && git push origin v1.2.3`).
-2. Run `Release (Manual)` in GitHub Actions and provide inputs.
-3. Review the draft release (or published release if `draft=false`), including attached archives and checksums.
-4. Publish the draft when ready.
-
-Release publishing orchestration lives in `scripts/publish_github_release.sh` to keep workflow YAML thin and testable.
+Maintainer operational guidance (CI scope, manual artifact builds, manual release publishing, and end-to-end runbook flow) is authoritative in [docs/maintainer-build-release-runbook.md](docs/maintainer-build-release-runbook.md).
 
 ## Session Provider Badges
 Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD]`, `[OPN]`). You can override badge prefix/color per provider by setting `provider_badges` in `~/.archon/state.json`:
