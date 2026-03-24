@@ -68,6 +68,31 @@ If you still need the historical repo-root binary path, use:
 make build-legacy
 ```
 
+### Manual Artifact Builds (GitHub Actions)
+
+Maintainers can trigger a manual cross-platform artifact build from GitHub Actions:
+
+- Workflow: `Build Artifacts (Manual)`
+- Trigger: `workflow_dispatch` only
+- Inputs:
+  - `ref` (branch/tag/SHA to build)
+  - `version` (embedded build version label)
+  - `artifact_suffix` (optional, e.g. `rc1`)
+
+The workflow produces downloadable archives plus checksums for:
+
+- linux/amd64
+- linux/arm64
+- darwin/amd64
+- darwin/arm64
+- windows/amd64
+- windows/arm64
+
+Archive naming follows:
+
+- `archon_<version><suffix>_<goos>_<goarch>.tar.gz` (linux/darwin)
+- `archon_<version><suffix>_<goos>_<goarch>.zip` (windows)
+
 ## Session Provider Badges
 Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD]`, `[OPN]`). You can override badge prefix/color per provider by setting `provider_badges` in `~/.archon/state.json`:
 

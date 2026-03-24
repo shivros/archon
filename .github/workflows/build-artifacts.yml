@@ -1,0 +1,134 @@
+name: Build Artifacts (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (branch, tag, or commit SHA)"
+        required: true
+        default: "main"
+        type: string
+      version:
+        description: "Version label embedded in binaries and artifact names (e.g. v1.2.3)"
+        required: true
+        default: "dev"
+        type: string
+      artifact_suffix:
+        description: "Optional artifact suffix (e.g. rc1)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-artifacts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate manual inputs
+        id: inputs
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          suffix="${{ inputs.artifact_suffix }}"
+
+          if [[ ! "${version}" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "Invalid version input '${version}'. Allowed chars: [0-9A-Za-z._-]" >&2
+            exit 1
+          fi
+          if [[ -n "${suffix}" && ! "${suffix}" =~ ^[0-9A-Za-z._-]+$ ]]; then
+            echo "Invalid artifact_suffix '${suffix}'. Allowed chars: [0-9A-Za-z._-]" >&2
+            exit 1
+          fi
+
+          normalized_suffix=""
+          if [[ -n "${suffix}" ]]; then
+            normalized_suffix="-${suffix}"
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "suffix=${normalized_suffix}" >> "${GITHUB_OUTPUT}"
+
+      - name: Compute build metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "commit=$(git rev-parse --short HEAD)" >> "${GITHUB_OUTPUT}"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
+
+      - name: Build artifact archive
+        id: build_artifact
+        shell: bash
+        run: |
+          scripts/build_artifact.sh \
+            --goos "${{ matrix.goos }}" \
+            --goarch "${{ matrix.goarch }}" \
+            --version "${{ steps.inputs.outputs.version }}" \
+            --suffix "${{ steps.inputs.outputs.suffix }}" \
+            --commit "${{ steps.meta.outputs.commit }}" \
+            --build-date "${{ steps.meta.outputs.build_date }}" \
+            --output-dir dist/artifacts
+
+      - name: Upload artifact archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build_artifact.outputs.artifact_name }}
+          path: |
+            ${{ steps.build_artifact.outputs.artifact_archive }}
+            ${{ steps.build_artifact.outputs.artifact_checksum }}
+          if-no-files-found: error
+
+  checksums:
+    name: Aggregate Checksums
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download all artifact files
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/artifacts
+
+      - name: Build aggregate SHA256SUMS
+        shell: bash
+        run: |
+          find dist/artifacts -type f -name '*.sha256' -print0 | sort -z | xargs -0 cat > dist/artifacts/SHA256SUMS.txt
+          test -s dist/artifacts/SHA256SUMS.txt
+
+      - name: Upload aggregate checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/artifacts/SHA256SUMS.txt

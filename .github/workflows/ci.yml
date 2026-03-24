@@ -58,9 +58,17 @@ jobs:
         shell: bash
         run: scripts/check_ci_workflow_contract.sh
 
+      - name: Build artifacts workflow contract checks
+        shell: bash
+        run: scripts/check_build_artifacts_workflow_contract.sh
+
       - name: CI script contract tests
         shell: bash
         run: scripts/test_ci_contracts.sh
+
+      - name: Build artifact script contract tests
+        shell: bash
+        run: scripts/test_build_artifact_contracts.sh
 
       - name: Lint workflow syntax and semantics
         shell: bash
