@@ -146,6 +146,37 @@ Where artifacts appear:
 - Attached to the GitHub Release.
 - Also available as workflow run artifacts.
 
+## Optional Tag Preparation Helper
+
+Helper script: `scripts/prepare_release_tag.sh`
+
+Why use it:
+
+- validates release tag format before you cut a tag
+- enforces clean working tree checks
+- prevents accidental local/remote tag collisions
+- prints the exact next manual workflow step
+
+Common usage:
+
+```bash
+# preflight checks only
+scripts/prepare_release_tag.sh --tag v1.2.3
+
+# create local tag
+scripts/prepare_release_tag.sh --tag v1.2.3 --create
+
+# create and push tag
+scripts/prepare_release_tag.sh --tag v1.2.3 --create --push
+```
+
+Notes:
+
+- `--check-only` performs validation only (default mode when `--create` and `--push` are omitted).
+- `--push` requires `--create`.
+- Use `--dry-run` to preview commands without mutating git state.
+- Use `--skip-remote-check` only when you intentionally want to bypass remote collision checks.
+
 ## Maintainer Flow (Commit to Release)
 
 1. Merge the desired changes into the branch/tag source.

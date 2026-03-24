@@ -55,27 +55,48 @@ require_line_in_file() {
 }
 
 require_line_in_file "${readme_file}" "### Build & Release"
-require_line_in_file "${readme_file}" "[docs/maintainer-build-release-runbook.md](docs/maintainer-build-release-runbook.md)"
+require_line_in_file "${readme_file}" "docs/maintainer-build-release-runbook.md"
 require_line_in_file "${readme_file}" "Maintainer operational guidance"
 
+require_line_in_file "${runbook_file}" "# Maintainer Build and Release Runbook"
 require_line_in_file "${runbook_file}" "authoritative maintainer procedure"
-require_line_in_file "${runbook_file}" 'Workflow: `CI` (`.github/workflows/ci.yml`)'
-require_line_in_file "${runbook_file}" 'Workflow: `Build Artifacts (Manual)` (`.github/workflows/build-artifacts.yml`)'
-require_line_in_file "${runbook_file}" 'Workflow: `Release (Manual)` (`.github/workflows/release.yml`)'
-require_line_in_file "${runbook_file}" '- `workflow_dispatch` only'
-require_line_in_file "${runbook_file}" '- `ref` (branch, tag, or commit SHA to build)'
-require_line_in_file "${runbook_file}" '- `version` (embedded version label and artifact naming value)'
-require_line_in_file "${runbook_file}" '- `tag` (required existing git tag, example `v1.2.3`)'
-require_line_in_file "${runbook_file}" '- `draft` (`true` or `false`)'
-require_line_in_file "${runbook_file}" '- `prerelease` (`true` or `false`)'
-require_line_in_file "${runbook_file}" '- `release_notes` (optional explicit notes; empty uses generated notes on create)'
-require_line_in_file "${runbook_file}" '- `linux/amd64`'
-require_line_in_file "${runbook_file}" '- `linux/arm64`'
-require_line_in_file "${runbook_file}" '- `darwin/amd64`'
-require_line_in_file "${runbook_file}" '- `darwin/arm64`'
-require_line_in_file "${runbook_file}" '- `windows/amd64`'
-require_line_in_file "${runbook_file}" '- `windows/arm64`'
+require_line_in_file "${runbook_file}" "## Supported Release Targets"
+require_line_in_file "${runbook_file}" "## CI Validation Scope"
+require_line_in_file "${runbook_file}" "## Manual Artifact Build"
+require_line_in_file "${runbook_file}" "## Manual GitHub Release Publish"
+require_line_in_file "${runbook_file}" "## Optional Tag Preparation Helper"
+require_line_in_file "${runbook_file}" "## Maintainer Flow (Commit to Release)"
+
+require_line_in_file "${runbook_file}" 'Workflow: `CI`'
+require_line_in_file "${runbook_file}" 'Workflow: `Build Artifacts (Manual)`'
+require_line_in_file "${runbook_file}" 'Workflow: `Release (Manual)`'
+require_line_in_file "${runbook_file}" '.github/workflows/ci.yml'
+require_line_in_file "${runbook_file}" '.github/workflows/build-artifacts.yml'
+require_line_in_file "${runbook_file}" '.github/workflows/release.yml'
+require_line_in_file "${runbook_file}" '`workflow_dispatch` only'
+
+require_line_in_file "${runbook_file}" '`ref`'
+require_line_in_file "${runbook_file}" '`version`'
+require_line_in_file "${runbook_file}" '`artifact_suffix`'
+require_line_in_file "${runbook_file}" '`tag`'
+require_line_in_file "${runbook_file}" '`draft`'
+require_line_in_file "${runbook_file}" '`prerelease`'
+require_line_in_file "${runbook_file}" '`release_notes`'
+
+require_line_in_file "${runbook_file}" '`linux/amd64`'
+require_line_in_file "${runbook_file}" '`linux/arm64`'
+require_line_in_file "${runbook_file}" '`darwin/amd64`'
+require_line_in_file "${runbook_file}" '`darwin/arm64`'
+require_line_in_file "${runbook_file}" '`windows/amd64`'
+require_line_in_file "${runbook_file}" '`windows/arm64`'
 require_line_in_file "${runbook_file}" '`scripts/release_targets.sh`'
-require_line_in_file "${runbook_file}" "- No automatic release publishing on push or tag creation."
+
+require_line_in_file "${runbook_file}" '`scripts/prepare_release_tag.sh`'
+require_line_in_file "${runbook_file}" '`--check-only`'
+require_line_in_file "${runbook_file}" '`--create`'
+require_line_in_file "${runbook_file}" '`--push`'
+require_line_in_file "${runbook_file}" '`--dry-run`'
+require_line_in_file "${runbook_file}" "Releases are manual only."
+require_line_in_file "${runbook_file}" "No automatic release publishing on push or tag creation."
 
 echo "check_docs_build_release_contract: ok"
