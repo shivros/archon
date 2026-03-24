@@ -1,0 +1,192 @@
+name: Release (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to release (e.g. v1.2.3)"
+        required: true
+        type: string
+      artifact_suffix:
+        description: "Optional artifact suffix (e.g. rc1)"
+        required: false
+        default: ""
+        type: string
+      draft:
+        description: "Create/update release as draft"
+        required: true
+        default: true
+        type: boolean
+      prerelease:
+        description: "Mark release as prerelease"
+        required: true
+        default: false
+        type: boolean
+      release_notes:
+        description: "Optional explicit release notes (leave empty to auto-generate on create)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-release-${{ github.workflow }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  define-matrix:
+    name: Define Release Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target matrix
+        id: matrix
+        shell: bash
+        run: scripts/release_targets.sh --output-key matrix
+
+  prepare:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.inputs.outputs.tag }}
+      version: ${{ steps.inputs.outputs.version }}
+      suffix: ${{ steps.inputs.outputs.suffix }}
+      commit: ${{ steps.meta.outputs.commit }}
+      build_date: ${{ steps.meta.outputs.build_date }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release inputs
+        id: inputs
+        shell: bash
+        run: |
+          scripts/validate_release_inputs.sh \
+            --tag "${{ inputs.tag }}" \
+            --suffix "${{ inputs.artifact_suffix }}"
+
+      - name: Resolve tag metadata
+        id: meta
+        shell: bash
+        run: |
+          tag="${{ steps.inputs.outputs.tag }}"
+          if ! git show-ref --tags --verify --quiet "refs/tags/${tag}"; then
+            echo "Tag '${tag}' does not exist in repository." >&2
+            exit 1
+          fi
+
+          full_commit="$(git rev-parse "refs/tags/${tag}^{commit}")"
+          short_commit="$(git rev-parse --short=12 "${full_commit}")"
+          build_date="$(git show -s --format=%cI "${full_commit}")"
+
+          echo "commit=${short_commit}" >> "${GITHUB_OUTPUT}"
+          echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs:
+      - define-matrix
+      - prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build artifact archive
+        id: build_artifact
+        shell: bash
+        run: |
+          scripts/build_artifact.sh \
+            --goos "${{ matrix.goos }}" \
+            --goarch "${{ matrix.goarch }}" \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --suffix "${{ needs.prepare.outputs.suffix }}" \
+            --commit "${{ needs.prepare.outputs.commit }}" \
+            --build-date "${{ needs.prepare.outputs.build_date }}" \
+            --output-dir dist/release-artifacts
+
+      - name: Upload artifact archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build_artifact.outputs.artifact_name }}
+          path: |
+            ${{ steps.build_artifact.outputs.artifact_archive }}
+            ${{ steps.build_artifact.outputs.artifact_checksum }}
+          if-no-files-found: error
+
+  checksums:
+    name: Aggregate Checksums
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download all artifact files
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release-artifacts
+
+      - name: Build aggregate SHA256SUMS
+        shell: bash
+        run: |
+          find dist/release-artifacts -type f -name '*.sha256' -print0 | sort -z | xargs -0 cat > dist/release-artifacts/SHA256SUMS.txt
+          test -s dist/release-artifacts/SHA256SUMS.txt
+
+      - name: Upload aggregate checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/release-artifacts/SHA256SUMS.txt
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - checksums
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release-artifacts
+
+      - name: Verify GitHub CLI availability
+        shell: bash
+        run: gh --version
+
+      - name: Create or update release
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          scripts/publish_github_release.sh \
+            --tag "${{ needs.prepare.outputs.tag }}" \
+            --assets-dir dist/release-artifacts \
+            --draft "${{ inputs.draft }}" \
+            --prerelease "${{ inputs.prerelease }}" \
+            --notes "${{ inputs.release_notes }}"
+
+      - name: Release summary
+        shell: bash
+        run: |
+          echo "Release URL: ${{ steps.publish.outputs.release_url }}"

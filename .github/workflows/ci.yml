@@ -62,6 +62,14 @@ jobs:
         shell: bash
         run: scripts/check_build_artifacts_workflow_contract.sh
 
+      - name: Release workflow contract checks
+        shell: bash
+        run: scripts/check_release_workflow_contract.sh
+
+      - name: Workflow contract checker tests
+        shell: bash
+        run: scripts/test_workflow_contract_checkers.sh
+
       - name: CI script contract tests
         shell: bash
         run: scripts/test_ci_contracts.sh
@@ -70,11 +78,27 @@ jobs:
         shell: bash
         run: scripts/test_build_artifact_contracts.sh
 
+      - name: Shared artifact input validator contract tests
+        shell: bash
+        run: scripts/test_validate_artifact_inputs_contracts.sh
+
+      - name: Release input script contract tests
+        shell: bash
+        run: scripts/test_validate_release_inputs_contracts.sh
+
+      - name: Release target matrix contract tests
+        shell: bash
+        run: scripts/test_release_targets_contracts.sh
+
+      - name: Release publish script contract tests
+        shell: bash
+        run: scripts/test_publish_github_release_contracts.sh
+
       - name: Lint workflow syntax and semantics
         shell: bash
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
-          "$(go env GOPATH)/bin/actionlint" .github/workflows/ci.yml
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
 
       - name: Go race tests (core packages)
         shell: bash

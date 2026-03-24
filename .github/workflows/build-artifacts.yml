@@ -27,25 +27,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  define-matrix:
+    name: Define Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target matrix
+        id: matrix
+        shell: bash
+        run: scripts/release_targets.sh --output-key matrix
+
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
+    needs: define-matrix
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
+      matrix: ${{ fromJson(needs.define-matrix.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,25 +64,9 @@ jobs:
         id: inputs
         shell: bash
         run: |
-          version="${{ inputs.version }}"
-          suffix="${{ inputs.artifact_suffix }}"
-
-          if [[ ! "${version}" =~ ^[0-9A-Za-z._-]+$ ]]; then
-            echo "Invalid version input '${version}'. Allowed chars: [0-9A-Za-z._-]" >&2
-            exit 1
-          fi
-          if [[ -n "${suffix}" && ! "${suffix}" =~ ^[0-9A-Za-z._-]+$ ]]; then
-            echo "Invalid artifact_suffix '${suffix}'. Allowed chars: [0-9A-Za-z._-]" >&2
-            exit 1
-          fi
-
-          normalized_suffix=""
-          if [[ -n "${suffix}" ]]; then
-            normalized_suffix="-${suffix}"
-          fi
-
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "suffix=${normalized_suffix}" >> "${GITHUB_OUTPUT}"
+          scripts/validate_artifact_inputs.sh \
+            --version "${{ inputs.version }}" \
+            --suffix "${{ inputs.artifact_suffix }}"
 
       - name: Compute build metadata
         id: meta
