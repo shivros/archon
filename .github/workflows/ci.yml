@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-matrix:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Baseline CI checks
+        shell: bash
+        run: scripts/ci_baseline.sh
+
+  linux-quality:
+    name: Linux Quality + Race
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Quality checks
+        shell: bash
+        run: scripts/ci_quality.sh
+
+      - name: CI workflow contract checks
+        shell: bash
+        run: scripts/check_ci_workflow_contract.sh
+
+      - name: CI script contract tests
+        shell: bash
+        run: scripts/test_ci_contracts.sh
+
+      - name: Lint workflow syntax and semantics
+        shell: bash
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.8
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/ci.yml
+
+      - name: Go race tests (core packages)
+        shell: bash
+        run: scripts/ci_race.sh
