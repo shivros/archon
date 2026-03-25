@@ -1243,31 +1243,6 @@ func filterVisibleSessions(sessions []*types.Session, meta map[string]*types.Ses
 	return out
 }
 
-func workflowRunStatusText(run *guidedworkflows.WorkflowRun) string {
-	if run == nil {
-		return ""
-	}
-	if run.DismissedAt != nil {
-		return "dismissed"
-	}
-	switch run.Status {
-	case guidedworkflows.WorkflowRunStatusCreated:
-		return "created"
-	case guidedworkflows.WorkflowRunStatusRunning:
-		return "running"
-	case guidedworkflows.WorkflowRunStatusPaused:
-		return "paused"
-	case guidedworkflows.WorkflowRunStatusStopped:
-		return "stopped"
-	case guidedworkflows.WorkflowRunStatusCompleted:
-		return "completed"
-	case guidedworkflows.WorkflowRunStatusFailed:
-		return "failed"
-	default:
-		return strings.TrimSpace(string(run.Status))
-	}
-}
-
 func sortSessionsDesc(sessions []*types.Session) []*types.Session {
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)

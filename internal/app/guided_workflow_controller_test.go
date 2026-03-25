@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"control/internal/guidedworkflows"
 
@@ -292,21 +293,39 @@ func TestGuidedWorkflowControllerTurnLinkTargets(t *testing.T) {
 	}
 }
 
-func TestGuidedWorkflowStatusTextHelpersIncludeStoppedStates(t *testing.T) {
-	if got := runStatusText(guidedworkflows.WorkflowRunStatusStopped); got != "stopped" {
-		t.Fatalf("expected stopped run status text, got %q", got)
+func TestGuidedWorkflowStatusTextHelpersIncludeExplicitRunStates(t *testing.T) {
+	if got := workflowRunDetailedStatusText(nil); got != "" {
+		t.Fatalf("expected empty detailed status text for nil run, got %q", got)
 	}
-	if got := runStatusText(guidedworkflows.WorkflowRunStatusRunning); got != "running" {
-		t.Fatalf("expected running run status text, got %q", got)
+	cases := []struct {
+		status guidedworkflows.WorkflowRunStatus
+		want   string
+	}{
+		{status: guidedworkflows.WorkflowRunStatusCreated, want: "created"},
+		{status: guidedworkflows.WorkflowRunStatusQueued, want: "queued (waiting for dependencies)"},
+		{status: guidedworkflows.WorkflowRunStatusRunning, want: "running"},
+		{status: guidedworkflows.WorkflowRunStatusPaused, want: "paused (decision needed)"},
+		{status: guidedworkflows.WorkflowRunStatusStopped, want: "stopped"},
+		{status: guidedworkflows.WorkflowRunStatusCompleted, want: "completed"},
+		{status: guidedworkflows.WorkflowRunStatusFailed, want: "failed"},
 	}
-	if got := runStatusText(guidedworkflows.WorkflowRunStatusQueued); got != "queued (waiting for dependencies)" {
-		t.Fatalf("expected queued run status text, got %q", got)
+	for _, tc := range cases {
+		run := &guidedworkflows.WorkflowRun{Status: tc.status}
+		if got := workflowRunDetailedStatusText(run); got != tc.want {
+			t.Fatalf("status %q: expected %q, got %q", tc.status, tc.want, got)
+		}
 	}
-	if got := runStatusText(guidedworkflows.WorkflowRunStatusPaused); got != "paused (decision needed)" {
-		t.Fatalf("expected paused run status text, got %q", got)
-	}
-	if got := runStatusText(guidedworkflows.WorkflowRunStatus(" custom ")); got != "custom" {
+	if got := workflowRunDetailedStatusText(&guidedworkflows.WorkflowRun{
+		Status: guidedworkflows.WorkflowRunStatus(" custom "),
+	}); got != "custom" {
 		t.Fatalf("expected trimmed fallback run status, got %q", got)
+	}
+	dismissedRun := &guidedworkflows.WorkflowRun{
+		Status:      guidedworkflows.WorkflowRunStatusCompleted,
+		DismissedAt: ptrTime(time.Now().UTC()),
+	}
+	if got := workflowRunDetailedStatusText(dismissedRun); got != "dismissed" {
+		t.Fatalf("expected dismissed run label to take precedence, got %q", got)
 	}
 	if got := stepStatusPrefix(guidedworkflows.StepRunStatusStopped); got != "[s]" {
 		t.Fatalf("expected stopped step prefix [s], got %q", got)
@@ -325,6 +344,49 @@ func TestGuidedWorkflowStatusTextHelpersIncludeStoppedStates(t *testing.T) {
 	}
 	if got := phaseStatusPrefix(guidedworkflows.PhaseRunStatusPending); got != "[ ]" {
 		t.Fatalf("expected pending phase prefix [ ], got %q", got)
+	}
+}
+
+func TestGuidedWorkflowControllerRenderLiveUsesDetailedWorkflowStatusLabels(t *testing.T) {
+	cases := []struct {
+		name   string
+		status guidedworkflows.WorkflowRunStatus
+		want   string
+	}{
+		{name: "queued", status: guidedworkflows.WorkflowRunStatusQueued, want: "Status: queued (waiting for dependencies)"},
+		{name: "paused", status: guidedworkflows.WorkflowRunStatusPaused, want: "Status: paused (decision needed)"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			controller := NewGuidedWorkflowUIController()
+			controller.SetRun(&guidedworkflows.WorkflowRun{
+				ID:           "gwf-1",
+				Status:       tc.status,
+				TemplateName: "SOLID",
+				Phases:       []guidedworkflows.PhaseRun{},
+			})
+
+			live := controller.renderLive()
+			if !strings.Contains(live, tc.want) {
+				t.Fatalf("expected live view to include %q, got %q", tc.want, live)
+			}
+		})
+	}
+}
+
+func TestGuidedWorkflowControllerRenderSummaryUsesDetailedWorkflowStatusLabels(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	controller.SetRun(&guidedworkflows.WorkflowRun{
+		ID:           "gwf-1",
+		Status:       guidedworkflows.WorkflowRunStatusCompleted,
+		TemplateName: "SOLID",
+		Phases:       []guidedworkflows.PhaseRun{},
+	})
+
+	summary := controller.renderSummary()
+	if !strings.Contains(summary, "Final status: completed") {
+		t.Fatalf("expected summary to include completed status label, got %q", summary)
 	}
 }
 

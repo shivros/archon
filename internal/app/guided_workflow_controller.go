@@ -1195,7 +1195,7 @@ func (c *GuidedWorkflowUIController) renderLive() string {
 		"",
 		"### Run Overview",
 		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(pending)")),
-		fmt.Sprintf("- Status: %s", runStatusText(run.Status)),
+		fmt.Sprintf("- Status: %s", workflowRunDetailedStatusText(run)),
 		fmt.Sprintf("- Template: %s", valueOrFallback(run.TemplateName, run.TemplateID)),
 		fmt.Sprintf("- Original prompt: %s", c.renderWorkflowPrompt(run)),
 		fmt.Sprintf("- Checkpoint style: %s", valueOrFallback(run.CheckpointStyle, guidedworkflows.DefaultCheckpointStyle)),
@@ -1253,7 +1253,7 @@ func (c *GuidedWorkflowUIController) renderSummary() string {
 		"",
 		"### Outcome",
 		fmt.Sprintf("- Run: %s", valueOrFallback(run.ID, "(unknown)")),
-		fmt.Sprintf("- Final status: %s", runStatusText(run.Status)),
+		fmt.Sprintf("- Final status: %s", workflowRunDetailedStatusText(run)),
 		fmt.Sprintf("- Completed steps: %d/%d", completedSteps, totalSteps),
 		fmt.Sprintf("- Decisions requested: %d", len(run.CheckpointDecisions)),
 	)
@@ -1765,27 +1765,6 @@ func (c *GuidedWorkflowUIController) decisionExplanation() string {
 		return "continued because " + base
 	default:
 		return base
-	}
-}
-
-func runStatusText(status guidedworkflows.WorkflowRunStatus) string {
-	switch status {
-	case guidedworkflows.WorkflowRunStatusCreated:
-		return "created"
-	case guidedworkflows.WorkflowRunStatusQueued:
-		return "queued (waiting for dependencies)"
-	case guidedworkflows.WorkflowRunStatusRunning:
-		return "running"
-	case guidedworkflows.WorkflowRunStatusPaused:
-		return "paused (decision needed)"
-	case guidedworkflows.WorkflowRunStatusStopped:
-		return "stopped"
-	case guidedworkflows.WorkflowRunStatusCompleted:
-		return "completed"
-	case guidedworkflows.WorkflowRunStatusFailed:
-		return "failed"
-	default:
-		return strings.TrimSpace(string(status))
 	}
 }
 

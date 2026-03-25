@@ -1463,9 +1463,9 @@ func waitForHistoryItems(t *testing.T, api *client.Client, sessionID string, tim
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-		history, err := api.History(ctx, sessionID, 200)
-		cancel()
+		historyCtx, historyCancel := context.WithTimeout(context.Background(), 6*time.Second)
+		history, err := api.History(historyCtx, sessionID, 200)
+		historyCancel()
 		if err == nil && len(history.Items) > 0 {
 			return
 		}
@@ -1487,8 +1487,24 @@ func waitForHistoryAgent(t *testing.T, api *client.Client, sessionID, needle str
 	var lastErr error
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-		history, err := api.History(ctx, sessionID, 200)
+		session, sessionErr := api.GetSession(ctx, sessionID)
 		cancel()
+		if sessionErr == nil && session != nil {
+			switch session.Status {
+			case types.SessionStatusFailed, types.SessionStatusKilled:
+				if code := session.ExitCode; code != nil {
+					t.Fatalf("session entered terminal status %s before history agent text %q (exit_code=%d)", session.Status, needle, *code)
+				}
+				t.Fatalf("session entered terminal status %s before history agent text %q", session.Status, needle)
+			}
+		} else if sessionErr != nil {
+			lastErr = sessionErr
+			t.Logf("session poll error: %v", sessionErr)
+		}
+
+		historyCtx, historyCancel := context.WithTimeout(context.Background(), 6*time.Second)
+		history, err := api.History(historyCtx, sessionID, 200)
+		historyCancel()
 		if err == nil && historyHasAgentText(history.Items, needle) {
 			return
 		}

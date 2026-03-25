@@ -357,7 +357,7 @@ func TestBuildSidebarItemsWorkflowDismissedToggle(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunStatusTextIncludesStoppedAndDismissed(t *testing.T) {
+func TestWorkflowRunStatusTextIncludesQueuedPausedCompletedStoppedAndDismissed(t *testing.T) {
 	if got := workflowRunStatusText(nil); got != "" {
 		t.Fatalf("expected empty status for nil workflow run, got %q", got)
 	}
@@ -367,6 +367,7 @@ func TestWorkflowRunStatusTextIncludesStoppedAndDismissed(t *testing.T) {
 		want   string
 	}{
 		{status: guidedworkflows.WorkflowRunStatusCreated, want: "created"},
+		{status: guidedworkflows.WorkflowRunStatusQueued, want: "queued"},
 		{status: guidedworkflows.WorkflowRunStatusRunning, want: "running"},
 		{status: guidedworkflows.WorkflowRunStatusPaused, want: "paused"},
 		{status: guidedworkflows.WorkflowRunStatusStopped, want: "stopped"},
@@ -461,6 +462,68 @@ func TestSidebarDelegateRenderWorkflowOmitsRunID(t *testing.T) {
 	}
 	if !strings.Contains(plain, activeDot+" [WFL] SOLID Phase Delivery • running") {
 		t.Fatalf("expected workflow row to show running indicator, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowUsesCompactQueuedLabel(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind: sidebarWorkflow,
+		workflow: &guidedworkflows.WorkflowRun{
+			ID:           "gwf-789",
+			TemplateName: "Dependency Follow-up",
+			Status:       guidedworkflows.WorkflowRunStatusQueued,
+		},
+		collapsible: true,
+		expanded:    true,
+		depth:       1,
+	})
+	plain := xansi.Strip(buf.String())
+	if !strings.Contains(plain, inactiveDot+" [WFL] Dependency Follow-up • queued") {
+		t.Fatalf("expected workflow row to use compact queued label, got %q", plain)
+	}
+	if strings.Contains(plain, "waiting for dependencies") {
+		t.Fatalf("expected sidebar queued label to remain compact, got %q", plain)
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowUsesCompactPausedAndCompletedLabels(t *testing.T) {
+	cases := []struct {
+		name   string
+		status guidedworkflows.WorkflowRunStatus
+		want   string
+	}{
+		{name: "paused", status: guidedworkflows.WorkflowRunStatusPaused, want: inactiveDot + " [WFL] Dependency Follow-up • paused"},
+		{name: "completed", status: guidedworkflows.WorkflowRunStatusCompleted, want: inactiveDot + " [WFL] Dependency Follow-up • completed"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			delegate := &sidebarDelegate{}
+			model := list.New(nil, delegate, 120, 1)
+			var buf bytes.Buffer
+			delegate.Render(&buf, model, 0, &sidebarItem{
+				kind: sidebarWorkflow,
+				workflow: &guidedworkflows.WorkflowRun{
+					ID:           "gwf-790",
+					TemplateName: "Dependency Follow-up",
+					Status:       tc.status,
+				},
+				collapsible: true,
+				expanded:    true,
+				depth:       1,
+			})
+
+			plain := xansi.Strip(buf.String())
+			if !strings.Contains(plain, tc.want) {
+				t.Fatalf("expected workflow row to include %q, got %q", tc.want, plain)
+			}
+			if strings.Contains(plain, "decision needed") || strings.Contains(plain, "waiting for dependencies") {
+				t.Fatalf("expected sidebar status label to remain compact, got %q", plain)
+			}
+		})
 	}
 }
 
