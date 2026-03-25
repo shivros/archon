@@ -460,7 +460,7 @@ func TestSidebarDelegateRenderWorkflowOmitsRunID(t *testing.T) {
 	if strings.Contains(plain, "gwf-123") {
 		t.Fatalf("expected workflow row to hide run id, got %q", plain)
 	}
-	if !strings.Contains(plain, activeDot+" [WFL] SOLID Phase Delivery • running") {
+	if !strings.Contains(plain, workflowRunningMark+" [WFL] SOLID Phase Delivery • running") {
 		t.Fatalf("expected workflow row to show running indicator, got %q", plain)
 	}
 }
@@ -481,7 +481,7 @@ func TestSidebarDelegateRenderWorkflowUsesCompactQueuedLabel(t *testing.T) {
 		depth:       1,
 	})
 	plain := xansi.Strip(buf.String())
-	if !strings.Contains(plain, inactiveDot+" [WFL] Dependency Follow-up • queued") {
+	if !strings.Contains(plain, workflowPendingMark+" [WFL] Dependency Follow-up • queued") {
 		t.Fatalf("expected workflow row to use compact queued label, got %q", plain)
 	}
 	if strings.Contains(plain, "waiting for dependencies") {
@@ -489,14 +489,16 @@ func TestSidebarDelegateRenderWorkflowUsesCompactQueuedLabel(t *testing.T) {
 	}
 }
 
-func TestSidebarDelegateRenderWorkflowUsesCompactPausedAndCompletedLabels(t *testing.T) {
+func TestSidebarDelegateRenderWorkflowUsesCompactStatusLabels(t *testing.T) {
 	cases := []struct {
 		name   string
 		status guidedworkflows.WorkflowRunStatus
 		want   string
 	}{
-		{name: "paused", status: guidedworkflows.WorkflowRunStatusPaused, want: inactiveDot + " [WFL] Dependency Follow-up • paused"},
-		{name: "completed", status: guidedworkflows.WorkflowRunStatusCompleted, want: inactiveDot + " [WFL] Dependency Follow-up • completed"},
+		{name: "paused", status: guidedworkflows.WorkflowRunStatusPaused, want: workflowPendingMark + " [WFL] Dependency Follow-up • paused"},
+		{name: "completed", status: guidedworkflows.WorkflowRunStatusCompleted, want: workflowCompletedMark + " [WFL] Dependency Follow-up • completed"},
+		{name: "failed", status: guidedworkflows.WorkflowRunStatusFailed, want: workflowFailedMark + " [WFL] Dependency Follow-up • failed"},
+		{name: "stopped", status: guidedworkflows.WorkflowRunStatusStopped, want: workflowStoppedMark + " [WFL] Dependency Follow-up • stopped"},
 	}
 
 	for _, tc := range cases {
@@ -524,6 +526,30 @@ func TestSidebarDelegateRenderWorkflowUsesCompactPausedAndCompletedLabels(t *tes
 				t.Fatalf("expected sidebar status label to remain compact, got %q", plain)
 			}
 		})
+	}
+}
+
+func TestSidebarDelegateRenderWorkflowPreservesIndicatorAtNarrowWidth(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 24, 1)
+	var buf bytes.Buffer
+	delegate.Render(&buf, model, 0, &sidebarItem{
+		kind: sidebarWorkflow,
+		workflow: &guidedworkflows.WorkflowRun{
+			ID:           "gwf-901",
+			TemplateName: "Long workflow title that should truncate safely",
+			Status:       guidedworkflows.WorkflowRunStatusCompleted,
+		},
+		collapsible: true,
+		expanded:    false,
+		depth:       1,
+	})
+	plain := xansi.Strip(buf.String())
+	if !strings.Contains(plain, workflowCompletedMark+" [WFL]") {
+		t.Fatalf("expected completed marker and workflow tag before truncation, got %q", plain)
+	}
+	if gotWidth := xansi.StringWidth(plain); gotWidth != 24 {
+		t.Fatalf("expected rendered workflow row width 24, got %d (%q)", gotWidth, plain)
 	}
 }
 
@@ -570,7 +596,7 @@ func TestSidebarDelegateRenderWorkflowShowsDismissedIndicator(t *testing.T) {
 		depth:       1,
 	})
 	plain := xansi.Strip(buf.String())
-	if !strings.Contains(plain, dismissedDot+" [WFL] SOLID Phase Delivery • dismissed") {
+	if !strings.Contains(plain, workflowDismissedMark+" [WFL] SOLID Phase Delivery • dismissed") {
 		t.Fatalf("expected workflow row to show dismissed indicator, got %q", plain)
 	}
 }
@@ -591,7 +617,7 @@ func TestSidebarDelegateRenderWorkflowPlaceholderRow(t *testing.T) {
 	if strings.Contains(plain, "gwf-missing") {
 		t.Fatalf("expected workflow placeholder row to hide run id, got %q", plain)
 	}
-	if !strings.Contains(plain, inactiveDot+" [WFL] Guided Workflow") {
+	if !strings.Contains(plain, workflowPendingMark+" [WFL] Guided Workflow") {
 		t.Fatalf("expected placeholder row to use inactive indicator and default title, got %q", plain)
 	}
 	if strings.Contains(plain, "• ") {
@@ -635,22 +661,35 @@ func TestSidebarIndicatorForRowStateMapping(t *testing.T) {
 	}
 }
 
-func TestSidebarWorkflowRowStatePrecedence(t *testing.T) {
-	if got := workflowRowState(nil); got != sidebarRowStateInactive {
-		t.Fatalf("expected nil workflow to be inactive, got %v", got)
-	}
-	running := &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusRunning}
-	if got := workflowRowState(running); got != sidebarRowStateActive {
-		t.Fatalf("expected running workflow to be active, got %v", got)
-	}
-	paused := &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusPaused}
-	if got := workflowRowState(paused); got != sidebarRowStateInactive {
-		t.Fatalf("expected paused workflow without dismissal to be inactive, got %v", got)
-	}
+func TestSidebarWorkflowRunIndicatorMappingAndPrecedence(t *testing.T) {
 	now := time.Now().UTC()
-	running.DismissedAt = &now
-	if got := workflowRowState(running); got != sidebarRowStateDismissed {
-		t.Fatalf("expected dismissed workflow to take precedence, got %v", got)
+	cases := []struct {
+		name string
+		run  *guidedworkflows.WorkflowRun
+		want string
+	}{
+		{name: "nil", run: nil, want: workflowPendingMark},
+		{name: "created", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusCreated}, want: workflowPendingMark},
+		{name: "queued", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusQueued}, want: workflowPendingMark},
+		{name: "running", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusRunning}, want: workflowRunningMark},
+		{name: "paused", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusPaused}, want: workflowPendingMark},
+		{name: "stopped", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusStopped}, want: workflowStoppedMark},
+		{name: "completed", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusCompleted}, want: workflowCompletedMark},
+		{name: "failed", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusFailed}, want: workflowFailedMark},
+		{name: "unknown", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatus("custom")}, want: workflowPendingMark},
+		{
+			name: "dismissed precedence",
+			run: &guidedworkflows.WorkflowRun{
+				Status:      guidedworkflows.WorkflowRunStatusRunning,
+				DismissedAt: &now,
+			},
+			want: workflowDismissedMark,
+		},
+	}
+	for _, tc := range cases {
+		if got := workflowRunIndicator(tc.run); got != tc.want {
+			t.Fatalf("%s: expected %q, got %q", tc.name, tc.want, got)
+		}
 	}
 }
 
@@ -702,6 +741,71 @@ func TestSidebarSessionRowStatePrecedence(t *testing.T) {
 	meta := &types.SessionMeta{DismissedAt: &now}
 	if got := sessionRowState(running, meta); got != sidebarRowStateDismissed {
 		t.Fatalf("expected dismissed session to take precedence, got %v", got)
+	}
+}
+
+func TestSidebarDelegateRenderSessionRowsKeepDotIndicators(t *testing.T) {
+	delegate := &sidebarDelegate{}
+	model := list.New(nil, delegate, 120, 1)
+	now := time.Now().UTC()
+	cases := []struct {
+		name    string
+		status  types.SessionStatus
+		meta    *types.SessionMeta
+		prefix  string
+		depth   int
+		session string
+	}{
+		{
+			name:    "running uses active dot",
+			status:  types.SessionStatusRunning,
+			meta:    &types.SessionMeta{SessionID: "s1"},
+			prefix:  "   " + activeDot + " ",
+			depth:   1,
+			session: "s1",
+		},
+		{
+			name:    "inactive uses inactive dot",
+			status:  types.SessionStatusInactive,
+			meta:    &types.SessionMeta{SessionID: "s2"},
+			prefix:  "   " + inactiveDot + " ",
+			depth:   1,
+			session: "s2",
+		},
+		{
+			name:   "dismissed uses dismissed dot",
+			status: types.SessionStatusRunning,
+			meta: &types.SessionMeta{
+				SessionID:   "s3",
+				DismissedAt: &now,
+			},
+			prefix:  "   " + dismissedDot + " ",
+			depth:   1,
+			session: "s3",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			delegate.Render(&buf, model, 0, &sidebarItem{
+				kind: sidebarSession,
+				session: &types.Session{
+					ID:        tc.session,
+					Provider:  "codex",
+					Status:    tc.status,
+					CreatedAt: now.Add(-5 * time.Minute),
+				},
+				meta:  tc.meta,
+				depth: tc.depth,
+			})
+			plain := xansi.Strip(buf.String())
+			if !strings.HasPrefix(plain, tc.prefix) {
+				t.Fatalf("expected session row prefix %q, got %q", tc.prefix, plain)
+			}
+			if strings.Contains(plain, "[WFL]") || strings.Contains(plain, workflowPendingMark) || strings.Contains(plain, workflowCompletedMark) {
+				t.Fatalf("expected session row to keep dot indicators only, got %q", plain)
+			}
+		})
 	}
 }
 

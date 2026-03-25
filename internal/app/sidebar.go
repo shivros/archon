@@ -25,6 +25,12 @@ const (
 	activeDot              = "●"
 	dismissedDot           = "x"
 	inactiveDot            = " "
+	workflowPendingMark    = "[ ]"
+	workflowRunningMark    = "[>]"
+	workflowCompletedMark  = "[x]"
+	workflowFailedMark     = "[!]"
+	workflowStoppedMark    = "[s]"
+	workflowDismissedMark  = "[d]"
 )
 
 var defaultProviderBadgePrefixes = map[string]string{
@@ -385,7 +391,7 @@ func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, is
 		}
 	}
 	indent := strings.Repeat("  ", max(0, entry.depth))
-	line := truncateToWidth(indent+marker+" "+indicatorForRowState(workflowRowState(entry.workflow))+" [WFL] "+label, maxWidth)
+	line := truncateToWidth(indent+marker+" "+workflowRunIndicator(entry.workflow)+" [WFL] "+label, maxWidth)
 	line = padToWidth(line, maxWidth)
 	return sidebarSelectStyle(worktreeStyle, isSelected, isMarked, isHighlighted).Render(line)
 }
@@ -401,17 +407,21 @@ func indicatorForRowState(state sidebarRowState) string {
 	}
 }
 
-func workflowRowState(run *guidedworkflows.WorkflowRun) sidebarRowState {
-	if run == nil {
-		return sidebarRowStateInactive
+func workflowRunIndicator(run *guidedworkflows.WorkflowRun) string {
+	switch workflowRunSemanticStateForRun(run) {
+	case workflowRunStateDismissed:
+		return workflowDismissedMark
+	case workflowRunStateRunning:
+		return workflowRunningMark
+	case workflowRunStateCompleted:
+		return workflowCompletedMark
+	case workflowRunStateFailed:
+		return workflowFailedMark
+	case workflowRunStateStopped:
+		return workflowStoppedMark
+	default:
+		return workflowPendingMark
 	}
-	if run.DismissedAt != nil {
-		return sidebarRowStateDismissed
-	}
-	if run.Status == guidedworkflows.WorkflowRunStatusRunning {
-		return sidebarRowStateActive
-	}
-	return sidebarRowStateInactive
 }
 
 func sessionRowState(session *types.Session, meta *types.SessionMeta) sidebarRowState {

@@ -6,31 +6,47 @@ import (
 	"control/internal/guidedworkflows"
 )
 
+type workflowRunSemanticState int
+
+const (
+	workflowRunStateUnknown workflowRunSemanticState = iota
+	workflowRunStateDismissed
+	workflowRunStateCreated
+	workflowRunStateQueued
+	workflowRunStateRunning
+	workflowRunStatePaused
+	workflowRunStateStopped
+	workflowRunStateCompleted
+	workflowRunStateFailed
+)
+
 type workflowRunStatusPresentation struct {
-	labels map[guidedworkflows.WorkflowRunStatus]string
+	labels map[workflowRunSemanticState]string
 }
 
 var (
 	workflowRunCompactStatusPresentation = workflowRunStatusPresentation{
-		labels: map[guidedworkflows.WorkflowRunStatus]string{
-			guidedworkflows.WorkflowRunStatusCreated:   "created",
-			guidedworkflows.WorkflowRunStatusQueued:    "queued",
-			guidedworkflows.WorkflowRunStatusRunning:   "running",
-			guidedworkflows.WorkflowRunStatusPaused:    "paused",
-			guidedworkflows.WorkflowRunStatusStopped:   "stopped",
-			guidedworkflows.WorkflowRunStatusCompleted: "completed",
-			guidedworkflows.WorkflowRunStatusFailed:    "failed",
+		labels: map[workflowRunSemanticState]string{
+			workflowRunStateDismissed: "dismissed",
+			workflowRunStateCreated:   "created",
+			workflowRunStateQueued:    "queued",
+			workflowRunStateRunning:   "running",
+			workflowRunStatePaused:    "paused",
+			workflowRunStateStopped:   "stopped",
+			workflowRunStateCompleted: "completed",
+			workflowRunStateFailed:    "failed",
 		},
 	}
 	workflowRunDetailedStatusPresentation = workflowRunStatusPresentation{
-		labels: map[guidedworkflows.WorkflowRunStatus]string{
-			guidedworkflows.WorkflowRunStatusCreated:   "created",
-			guidedworkflows.WorkflowRunStatusQueued:    "queued (waiting for dependencies)",
-			guidedworkflows.WorkflowRunStatusRunning:   "running",
-			guidedworkflows.WorkflowRunStatusPaused:    "paused (decision needed)",
-			guidedworkflows.WorkflowRunStatusStopped:   "stopped",
-			guidedworkflows.WorkflowRunStatusCompleted: "completed",
-			guidedworkflows.WorkflowRunStatusFailed:    "failed",
+		labels: map[workflowRunSemanticState]string{
+			workflowRunStateDismissed: "dismissed",
+			workflowRunStateCreated:   "created",
+			workflowRunStateQueued:    "queued (waiting for dependencies)",
+			workflowRunStateRunning:   "running",
+			workflowRunStatePaused:    "paused (decision needed)",
+			workflowRunStateStopped:   "stopped",
+			workflowRunStateCompleted: "completed",
+			workflowRunStateFailed:    "failed",
 		},
 	}
 )
@@ -47,11 +63,36 @@ func workflowRunStatusLabel(run *guidedworkflows.WorkflowRun, presentation workf
 	if run == nil {
 		return ""
 	}
-	if run.DismissedAt != nil {
-		return "dismissed"
-	}
-	if label, ok := presentation.labels[run.Status]; ok {
+	state := workflowRunSemanticStateForRun(run)
+	if label, ok := presentation.labels[state]; ok {
 		return label
 	}
 	return strings.TrimSpace(string(run.Status))
+}
+
+func workflowRunSemanticStateForRun(run *guidedworkflows.WorkflowRun) workflowRunSemanticState {
+	if run == nil {
+		return workflowRunStateUnknown
+	}
+	if run.DismissedAt != nil {
+		return workflowRunStateDismissed
+	}
+	switch run.Status {
+	case guidedworkflows.WorkflowRunStatusCreated:
+		return workflowRunStateCreated
+	case guidedworkflows.WorkflowRunStatusQueued:
+		return workflowRunStateQueued
+	case guidedworkflows.WorkflowRunStatusRunning:
+		return workflowRunStateRunning
+	case guidedworkflows.WorkflowRunStatusPaused:
+		return workflowRunStatePaused
+	case guidedworkflows.WorkflowRunStatusStopped:
+		return workflowRunStateStopped
+	case guidedworkflows.WorkflowRunStatusCompleted:
+		return workflowRunStateCompleted
+	case guidedworkflows.WorkflowRunStatusFailed:
+		return workflowRunStateFailed
+	default:
+		return workflowRunStateUnknown
+	}
 }
