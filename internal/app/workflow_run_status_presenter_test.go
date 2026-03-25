@@ -51,10 +51,18 @@ func TestWorkflowRunStatusPresentationsCoverExpectedSemanticStates(t *testing.T)
 		workflowRunStateFailed,
 	}
 	presentations := []struct {
-		name   string
-		labels map[workflowRunSemanticState]string
+		name       string
+		labels     map[workflowRunSemanticState]string
+		allowEmpty map[workflowRunSemanticState]struct{}
 	}{
-		{name: "compact", labels: workflowRunCompactStatusPresentation.labels},
+		{
+			name:   "sidebar",
+			labels: workflowRunSidebarStatusPresentation.labels,
+			allowEmpty: map[workflowRunSemanticState]struct{}{
+				workflowRunStateRunning:   {},
+				workflowRunStateCompleted: {},
+			},
+		},
 		{name: "detailed", labels: workflowRunDetailedStatusPresentation.labels},
 	}
 	for _, presentation := range presentations {
@@ -64,11 +72,37 @@ func TestWorkflowRunStatusPresentationsCoverExpectedSemanticStates(t *testing.T)
 				t.Fatalf("%s presentation missing label for semantic state %v", presentation.name, state)
 			}
 			if label == "" {
+				if _, ok := presentation.allowEmpty[state]; ok {
+					continue
+				}
 				t.Fatalf("%s presentation has empty label for semantic state %v", presentation.name, state)
 			}
 		}
 		if _, ok := presentation.labels[workflowRunStateUnknown]; ok {
 			t.Fatalf("%s presentation should not define a label for unknown semantic state", presentation.name)
 		}
+	}
+}
+
+func TestWorkflowRunSidebarStatusPresentationUsesExplicitCompactLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		run  *guidedworkflows.WorkflowRun
+		want string
+	}{
+		{name: "created", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusCreated}, want: "new"},
+		{name: "queued", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusQueued}, want: "waiting"},
+		{name: "running intentionally hidden", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusRunning}, want: ""},
+		{name: "paused", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusPaused}, want: "paused"},
+		{name: "stopped", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusStopped}, want: "stopped"},
+		{name: "completed intentionally hidden", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusCompleted}, want: ""},
+		{name: "failed", run: &guidedworkflows.WorkflowRun{Status: guidedworkflows.WorkflowRunStatusFailed}, want: "failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workflowRunStatusLabel(tc.run, workflowRunSidebarStatusPresentation); got != tc.want {
+				t.Fatalf("expected sidebar status label %q, got %q", tc.want, got)
+			}
+		})
 	}
 }

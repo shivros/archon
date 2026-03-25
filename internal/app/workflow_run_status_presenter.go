@@ -25,15 +25,15 @@ type workflowRunStatusPresentation struct {
 }
 
 var (
-	workflowRunCompactStatusPresentation = workflowRunStatusPresentation{
+	workflowRunSidebarStatusPresentation = workflowRunStatusPresentation{
 		labels: map[workflowRunSemanticState]string{
 			workflowRunStateDismissed: "dismissed",
-			workflowRunStateCreated:   "created",
-			workflowRunStateQueued:    "queued",
-			workflowRunStateRunning:   "running",
+			workflowRunStateCreated:   "new",
+			workflowRunStateQueued:    "waiting",
+			workflowRunStateRunning:   "",
 			workflowRunStatePaused:    "paused",
 			workflowRunStateStopped:   "stopped",
-			workflowRunStateCompleted: "completed",
+			workflowRunStateCompleted: "",
 			workflowRunStateFailed:    "failed",
 		},
 	}
@@ -51,8 +51,8 @@ var (
 	}
 )
 
-func workflowRunStatusText(run *guidedworkflows.WorkflowRun) string {
-	return workflowRunStatusLabel(run, workflowRunCompactStatusPresentation)
+func workflowRunSidebarStatusText(run *guidedworkflows.WorkflowRun) string {
+	return workflowRunStatusLabel(run, workflowRunSidebarStatusPresentation)
 }
 
 func workflowRunDetailedStatusText(run *guidedworkflows.WorkflowRun) string {

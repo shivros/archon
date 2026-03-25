@@ -125,7 +125,7 @@ func (s *sidebarItem) Description() string {
 	case sidebarSession:
 		return formatSince(sessionLastActive(s.session, s.meta))
 	case sidebarWorkflow:
-		return workflowRunStatusText(s.workflow)
+		return workflowRunSidebarStatusText(s.workflow)
 	default:
 		return ""
 	}
@@ -378,7 +378,7 @@ func (d *sidebarDelegate) renderWorktreeRow(entry *sidebarItem, maxWidth int, is
 
 func (d *sidebarDelegate) renderWorkflowRow(entry *sidebarItem, maxWidth int, isSelected, isMarked, isHighlighted bool) string {
 	label := entry.Title()
-	statusText := workflowRunStatusText(entry.workflow)
+	statusText := workflowRunSidebarStatusText(entry.workflow)
 	if strings.TrimSpace(statusText) != "" {
 		label = fmt.Sprintf("%s • %s", label, statusText)
 	}
