@@ -1,74 +1,245 @@
 {
   "version": 1,
+  "definitions": {
+    "prompts": {
+      "test_flow_step_1": "Take this number and multiply it by 2. Respond only with the result. If I didn't say a number, then say 8.",
+      "test_flow_step_2": "Take the number you gave me and add 5 to it. Return the new number.",
+      "phase_plan": "Please write up an end-to-end, SOLID-compliant plan for this work. No feature flags or progressive rollout. We are in the 'move fast, break things' phase of this product.",
+      "implementation_proceed": "Sounds good. Please proceed with implementation.",
+      "implementation_end_to_end": "Please implement this plan from end-to-end.",
+      "implementation_simple": "Please proceed with implementation.",
+      "solid_audit": "Please audit your work for compliance with SOLID principles.",
+      "mitigation_plan": "Please write a SOLID-compliant plan for addressing the issues identified.",
+      "test_gap_audit": "Please audit your work for gaps in test coverage. If no coverage tooling is available, check manually. Suggest a plan for fixing the gaps.",
+      "quality_checks": "Please run all relevant tests and quality checks. Run them iteratively, attempt to fix any issues that are fixable, then run the commands again to verify they are fixed. If you face any issues that are not reasonably fixable, document them and let me know.",
+      "playwright": "Could you try to use the playwright-cli skill to validate the behavior yourself?\n\nPlease take screenshots to prove the behavior and save them in a folder called .playwright-cli/validation. Make the folder if it doesn't exist.\n\nIf you need test credentials, use the credential tooling already configured in your environment. If you need email access, use the mail tooling already configured in your environment.",
+      "commit": "Please commit your work. Only commit your own work - do not commit any unrelated changes. If you had to stash any unrelated changes to proceed with your work, please restore them after committing. Please keep your commits compliant with Conventional Commit structure (https://www.conventionalcommits.org/en/v1.0.0/)"
+    },
+    "steps": {
+      "test_flow_step_1": {
+        "id": "step_1",
+        "name": "step 1",
+        "prompt_ref": "test_flow_step_1"
+      },
+      "test_flow_step_2": {
+        "id": "step_2",
+        "name": "step 2",
+        "prompt_ref": "test_flow_step_2"
+      },
+      "phase_plan": {
+        "id": "phase_plan",
+        "name": "phase plan",
+        "prompt_ref": "phase_plan",
+        "runtime_options": {
+          "reasoning": "extra_high"
+        }
+      },
+      "implementation_proceed": {
+        "id": "implementation",
+        "name": "implementation",
+        "prompt_ref": "implementation_proceed"
+      },
+      "implementation_end_to_end": {
+        "id": "implementation",
+        "name": "implementation",
+        "prompt_ref": "implementation_end_to_end"
+      },
+      "implementation_simple": {
+        "id": "implementation",
+        "name": "implementation",
+        "prompt_ref": "implementation_simple"
+      },
+      "solid_audit": {
+        "id": "solid_audit",
+        "name": "SOLID audit",
+        "prompt_ref": "solid_audit"
+      },
+      "mitigation_plan": {
+        "id": "mitigation_plan",
+        "name": "mitigation plan",
+        "prompt_ref": "mitigation_plan",
+        "runtime_options": {
+          "reasoning": "extra_high"
+        }
+      },
+      "mitigation_implementation": {
+        "id": "mitigation_implementation",
+        "name": "mitigation implementation",
+        "prompt_ref": "implementation_proceed"
+      },
+      "test_gap_audit": {
+        "id": "test_gap_audit",
+        "name": "test gap audit",
+        "prompt_ref": "test_gap_audit"
+      },
+      "test_implementation": {
+        "id": "test_implementation",
+        "name": "test implementation",
+        "prompt_ref": "implementation_proceed"
+      },
+      "quality_checks": {
+        "id": "quality_checks",
+        "name": "quality checks",
+        "prompt_ref": "quality_checks"
+      },
+      "playwright": {
+        "id": "playwright",
+        "name": "playwright",
+        "prompt_ref": "playwright"
+      },
+      "commit": {
+        "id": "commit",
+        "name": "commit",
+        "prompt_ref": "commit",
+        "runtime_options": {
+          "reasoning": "medium"
+        }
+      }
+    },
+    "phase_templates": {
+      "test_flow": {
+        "id": "test",
+        "name": "test",
+        "step_refs": [
+          "test_flow_step_1",
+          "test_flow_step_2"
+        ]
+      },
+      "solid_delivery": {
+        "id": "phase_delivery",
+        "name": "Delivery Phase",
+        "step_refs": [
+          "phase_plan",
+          "implementation_proceed",
+          "solid_audit",
+          "mitigation_plan",
+          "mitigation_implementation",
+          "test_gap_audit",
+          "test_implementation",
+          "quality_checks",
+          "commit"
+        ]
+      },
+      "solid_delivery_playwright": {
+        "id": "phase_delivery",
+        "name": "Delivery Phase",
+        "step_refs": [
+          "phase_plan",
+          "implementation_proceed",
+          "solid_audit",
+          "mitigation_plan",
+          "mitigation_implementation",
+          "test_gap_audit",
+          "test_implementation",
+          "quality_checks",
+          "playwright",
+          "commit"
+        ]
+      },
+      "implement_plan": {
+        "id": "phase_delivery",
+        "name": "Delivery Phase",
+        "step_refs": [
+          "implementation_end_to_end",
+          "solid_audit",
+          "mitigation_plan",
+          "mitigation_implementation",
+          "test_gap_audit",
+          "test_implementation",
+          "quality_checks",
+          "commit"
+        ]
+      },
+      "implement_plan_playwright": {
+        "id": "phase_delivery",
+        "name": "Delivery Phase",
+        "step_refs": [
+          "implementation_end_to_end",
+          "solid_audit",
+          "mitigation_plan",
+          "mitigation_implementation",
+          "test_gap_audit",
+          "test_implementation",
+          "quality_checks",
+          "playwright",
+          "commit"
+        ]
+      },
+      "implement_simple_task": {
+        "id": "simple_task",
+        "name": "Implement Simple Task",
+        "step_refs": [
+          "implementation_simple",
+          "quality_checks",
+          "commit"
+        ]
+      }
+    }
+  },
   "templates": [
     {
-      "id": "solid_phase_delivery",
-      "name": "SOLID Phase Delivery",
-      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
-      "default_access_level": "on_request",
+      "id": "test_flow",
+      "name": "Test Flow - say a number",
+      "description": "For testing workflows without breaking shit or taking too long.",
+      "default_access_level": "read_only",
       "phases": [
         {
-          "id": "phase_delivery",
-          "name": "Delivery Phase",
-          "steps": [
-            {
-              "id": "phase_plan",
-              "name": "phase plan",
-              "prompt": "Please write up an end-to-end, SOLID-compliant plan for this work; a plan I can give to my AI CLI LLM agent locally to implement? I want to be able to paste it in phases - 1 at a time so I can review the work incrementally. And make the instructions somewhat flexible, since the local agent has a lot more context and may need to make pragmatic adjustments.",
-              "runtime_options": {
-                "model": "gpt-5.3-codex",
-                "reasoning": "extra_high"
-              }
-            },
-            {
-              "id": "implementation",
-              "name": "implementation",
-              "prompt": "Sounds good. Please proceed with implementation.",
-              "runtime_options": {
-                "model": "gpt-5.2-codex",
-                "reasoning": "high"
-              }
-            },
-            {
-              "id": "solid_audit",
-              "name": "SOLID audit",
-              "prompt": "Please audit your work for compliance with SOLID principles."
-            },
-            {
-              "id": "mitigation_plan",
-              "name": "mitigation plan",
-              "prompt": "Please write a SOLID-compliant plan for addressing the issues you called out"
-            },
-            {
-              "id": "mitigation_implementation",
-              "name": "mitigation implementation",
-              "prompt": "Sounds good. Please proceed with implementation."
-            },
-            {
-              "id": "test_gap_audit",
-              "name": "test gap audit",
-              "prompt": "Please audit your work for gaps in test coverage. If no coverage tooling is available, check manually."
-            },
-            {
-              "id": "test_implementation",
-              "name": "test implementation",
-              "prompt": "Sounds good. Please proceed with implementation."
-            },
-            {
-              "id": "quality_checks",
-              "name": "quality checks",
-              "prompt": "Please run all relevant tests and quality checks. Run them iteratively, attempt to fix any issues that are fixable, then run the commands again to verify they are fixed. If you face any issues that are not reasonably fixable, document them and let me know."
-            },
-            {
-              "id": "commit",
-              "name": "commit",
-              "prompt": "Please commit your work. Please keep your commits compliant with Conventional Commit structure (https://www.conventionalcommits.org/en/v1.0.0/)",
-              "runtime_options": {
-                "model": "gpt-5.3-codex-spark",
-                "reasoning": "low"
-              }
-            }
-          ]
+          "phase_template_ref": "test_flow"
+        }
+      ]
+    },
+    {
+      "id": "solid_phase_delivery",
+      "name": "Feature/Bug",
+      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+      "default_access_level": "full_access",
+      "phases": [
+        {
+          "phase_template_ref": "solid_delivery"
+        }
+      ]
+    },
+    {
+      "id": "solid_feature_bug_playwright",
+      "name": "Feature/Bug & Playwright",
+      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+      "default_access_level": "full_access",
+      "phases": [
+        {
+          "phase_template_ref": "solid_delivery_playwright"
+        }
+      ]
+    },
+    {
+      "id": "implement_plan",
+      "name": "Implement My Plan",
+      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+      "default_access_level": "full_access",
+      "phases": [
+        {
+          "phase_template_ref": "implement_plan"
+        }
+      ]
+    },
+    {
+      "id": "implement_plan_playwright",
+      "name": "Implement My Plan & Use Playwright",
+      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+      "default_access_level": "full_access",
+      "phases": [
+        {
+          "phase_template_ref": "implement_plan_playwright"
+        }
+      ]
+    },
+    {
+      "id": "implement_simple_task",
+      "name": "Implement Simple Task",
+      "description": "Phased delivery loop with SOLID-focused audits and mitigation steps.",
+      "default_access_level": "full_access",
+      "phases": [
+        {
+          "phase_template_ref": "implement_simple_task"
         }
       ]
     }

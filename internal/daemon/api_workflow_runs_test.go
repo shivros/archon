@@ -947,7 +947,7 @@ func TestWorkflowRunEndpointsCreateLogsEffectiveDispatchDefaults(t *testing.T) {
 	if !strings.Contains(logs, "effective_reasoning=high") {
 		t.Fatalf("expected effective reasoning in run creation log, got %q", logs)
 	}
-	if !strings.Contains(logs, "effective_access=on_request") {
+	if !strings.Contains(logs, "effective_access=full_access") {
 		t.Fatalf("expected template access precedence in run creation log, got %q", logs)
 	}
 }

@@ -1015,9 +1015,16 @@ func TestConfigCommandScopeWorkflowTemplatesDefaultUsesRepoDefaults(t *testing.T
 	if len(templates) == 0 {
 		t.Fatalf("expected repo defaults in workflow_templates --default output")
 	}
-	first, _ := templates[0].(map[string]any)
-	if first["id"] != "solid_phase_delivery" {
-		t.Fatalf("unexpected default workflow template id: %#v", first["id"])
+	found := false
+	for _, raw := range templates {
+		template, _ := raw.(map[string]any)
+		if template["id"] == "solid_phase_delivery" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected solid_phase_delivery in default workflow templates, got %#v", templates)
 	}
 }
 
