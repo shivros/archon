@@ -18,6 +18,7 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
    - `/v1/sessions/:id/tail?follow=1` for log stream chunks
    - `/v1/sessions/:id/transcript` for provider-agnostic transcript snapshots
    - `/v1/sessions/:id/transcript/stream?follow=1` for provider-agnostic transcript events
+   - `/v1/file-searches` and `/v1/file-searches/:id/events?follow=1` for provider-agnostic compose file search
 5. `internal/daemon/api.go` handles HTTP transport/routing and delegates to services (`SessionService`, workspace/state services).
 6. `SessionService` and `SessionManager` orchestrate provider adapters:
    - codex provider (`provider_codex.go`)
@@ -44,6 +45,8 @@ UI (internal/app) -> typed HTTP/SSE client (internal/client)
 - Streaming state in UI is consumed via:
   - `StreamController` (log chunks),
   - `TranscriptStreamController` (unified transcript stream).
+- Compose `@` file autocomplete is request/response-oriented in the UI, but backed by the same provider-agnostic file-search contract across app, client, daemon, and provider adapters.
+- V1 compose insertion is textual only (`@path/to/file`), not a structured provider payload.
 - Persistent app/session metadata is stored by daemon-backed stores in `internal/store` and retrieved by the UI through snapshot calls (`sessions`, `history`, `approvals`, app state).
 - UI keeps a transcript cache keyed by sidebar selection so switching sessions is fast while still reconciling with history snapshots.
 

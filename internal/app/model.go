@@ -105,6 +105,7 @@ type Model struct {
 	fileLinkOpener                       FileLinkOpener
 	mouseGesturePolicy                   MouseGesturePolicy
 	pickerPasteNormalizer                PickerPasteNormalizer
+	composeFileSearchContextResolver     composeFileSearchContextResolver
 	sidebar                              *SidebarController
 	viewport                             viewport.Model
 	mode                                 uiMode
@@ -4924,10 +4925,7 @@ func (m *Model) enterCompose(sessionID string) {
 	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
-	if m.composeFileSearch != nil {
-		m.cancelRequestScope(requestScopeComposeFileSearch)
-		m.composeFileSearch.Reset()
-	}
+	m.resetComposeFileSearch()
 	label := m.selectedSessionLabel()
 	if m.compose != nil {
 		m.compose.Enter(sessionID, label)
@@ -4958,13 +4956,10 @@ func (m *Model) exitCompose(status string) {
 		before: func() {
 			m.cancelRequestScope(requestScopeSessionStart)
 			m.cancelRequestScope(requestScopeSessionInterrupt)
-			m.cancelRequestScope(requestScopeComposeFileSearch)
 			m.saveCurrentComposeDraft()
 			m.clearPendingComposeOptionRequest()
 			m.closeComposeOptionPicker()
-			if m.composeFileSearch != nil {
-				m.composeFileSearch.Reset()
-			}
+			m.resetComposeFileSearch()
 			m.composeInterruptInFlightSessionID = ""
 			if m.compose != nil {
 				m.compose.Exit()

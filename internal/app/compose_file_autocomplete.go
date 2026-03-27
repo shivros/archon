@@ -3,7 +3,6 @@ package app
 import (
 	"strings"
 
-	"control/internal/providers"
 	"control/internal/types"
 
 	tea "charm.land/bubbletea/v2"
@@ -190,43 +189,12 @@ func (m *Model) composeFileSearchServiceOrDefault() composeFileSearchService {
 }
 
 func (m *Model) composeFileSearchSupported() bool {
-	if m == nil {
-		return false
-	}
-	provider := strings.TrimSpace(m.composeProvider())
-	if provider == "" {
-		return false
-	}
-	if sessionID := strings.TrimSpace(m.composeSessionID()); sessionID != "" {
-		if capabilities, ok := m.sessionTranscriptCapabilitiesForSession(sessionID); ok && capabilities != nil {
-			return capabilities.SupportsFileSearch
-		}
-	}
-	return providers.CapabilitiesFor(provider).SupportsFileSearch
+	return m.composeFileSearchContextResolverOrDefault().ResolveComposeFileSearchContext(m).Supported
 }
 
 func (m *Model) composeFileSearchScope() (types.FileSearchScope, bool) {
-	if m == nil {
-		return types.FileSearchScope{}, false
-	}
-	provider := strings.TrimSpace(m.composeProvider())
-	if provider == "" {
-		return types.FileSearchScope{}, false
-	}
-	if sessionID := strings.TrimSpace(m.composeSessionID()); sessionID != "" {
-		return types.FileSearchScope{
-			Provider:  provider,
-			SessionID: sessionID,
-		}, true
-	}
-	if m.newSession != nil {
-		return types.FileSearchScope{
-			Provider:    provider,
-			WorkspaceID: strings.TrimSpace(m.newSession.workspaceID),
-			WorktreeID:  strings.TrimSpace(m.newSession.worktreeID),
-		}, true
-	}
-	return types.FileSearchScope{}, false
+	ctx := m.composeFileSearchContextResolverOrDefault().ResolveComposeFileSearchContext(m)
+	return ctx.Scope, ctx.HasScope
 }
 
 func (m *Model) composeFileSearchPopupPlacement() (string, int, int) {
@@ -246,6 +214,17 @@ func (m *Model) composeFileSearchPopupPlacement() (string, int, int) {
 	return view, m.resolveMouseLayout().rightStart, row
 }
 
+func (m *Model) resetComposeFileSearch() string {
+	controller := m.composeFileSearchController()
+	if m == nil || controller == nil {
+		return ""
+	}
+	m.cancelRequestScope(requestScopeComposeFileSearch)
+	searchID := controller.SearchID()
+	controller.Reset()
+	return searchID
+}
+
 func (m *Model) syncComposeFileSearchAfterInput() tea.Cmd {
 	controller := m.composeFileSearchController()
 	if m == nil || controller == nil || m.mode != uiModeCompose || m.chatInput == nil {
@@ -256,22 +235,18 @@ func (m *Model) syncComposeFileSearchAfterInput() tea.Cmd {
 		return nil
 	}
 	if !m.composeFileSearchSupported() {
-		controller.Reset()
-		m.cancelRequestScope(requestScopeComposeFileSearch)
+		m.resetComposeFileSearch()
 		return nil
 	}
 	if _, ok := m.composeFileSearchScope(); !ok {
-		controller.Reset()
-		m.cancelRequestScope(requestScopeComposeFileSearch)
+		m.resetComposeFileSearch()
 		return nil
 	}
 	previous, previousOK := controller.Fragment()
 	fragment, ok := activeComposeFileSearchFragment(m.chatInput.Value(), m.chatInput.CursorRuneIndex())
 	controller.SetFragment(fragment, ok)
 	if !ok {
-		m.cancelRequestScope(requestScopeComposeFileSearch)
-		searchID := controller.SearchID()
-		controller.Reset()
+		searchID := m.resetComposeFileSearch()
 		return closeComposeFileSearchServiceCmd(m.composeFileSearchServiceOrDefault(), searchID)
 	}
 	if fragment.Query == "" && controller.SearchID() == "" {
@@ -313,13 +288,10 @@ func (m *Model) applyComposeFileSearchSelection() tea.Cmd {
 }
 
 func (m *Model) closeComposeFileSearchCmd() tea.Cmd {
-	controller := m.composeFileSearchController()
-	if m == nil || controller == nil {
+	if m == nil {
 		return nil
 	}
-	m.cancelRequestScope(requestScopeComposeFileSearch)
-	searchID := controller.SearchID()
-	controller.Reset()
+	searchID := m.resetComposeFileSearch()
 	return closeComposeFileSearchServiceCmd(m.composeFileSearchServiceOrDefault(), searchID)
 }
 

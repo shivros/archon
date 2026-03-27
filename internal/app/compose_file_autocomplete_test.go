@@ -32,6 +32,14 @@ type composeFileSearchAPITestStub struct {
 	updateHook func(id, query string, ch chan types.FileSearchEvent)
 }
 
+type stubComposeFileSearchContextResolver struct {
+	ctx composeFileSearchContext
+}
+
+func (s stubComposeFileSearchContextResolver) ResolveComposeFileSearchContext(*Model) composeFileSearchContext {
+	return s.ctx
+}
+
 func newComposeFileSearchAPITestStub() *composeFileSearchAPITestStub {
 	return &composeFileSearchAPITestStub{
 		events:     map[string]chan types.FileSearchEvent{},
@@ -301,6 +309,96 @@ func TestComposeFileSearchUsesNewSessionScope(t *testing.T) {
 	}
 }
 
+func TestDefaultComposeFileSearchContextResolverExistingAndNewSession(t *testing.T) {
+	t.Run("existing session uses transcript capabilities", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		m.setSessionTranscriptCapabilities("s1", transcriptdomain.CapabilityEnvelope{SupportsFileSearch: false})
+		m.enterCompose("s1")
+
+		ctx := m.composeFileSearchContextResolverOrDefault().ResolveComposeFileSearchContext(&m)
+		if ctx.Supported {
+			t.Fatalf("expected transcript capabilities to disable support")
+		}
+		if !ctx.HasScope || ctx.Scope.SessionID != "s1" || ctx.Scope.Provider != "codex" {
+			t.Fatalf("unexpected session compose scope: %#v", ctx)
+		}
+	})
+
+	t.Run("new session resolves workspace scope", func(t *testing.T) {
+		m := NewModel(nil)
+		m.newSession = &newSessionTarget{provider: "codex", workspaceID: "ws1", worktreeID: "wt1"}
+
+		ctx := m.composeFileSearchContextResolverOrDefault().ResolveComposeFileSearchContext(&m)
+		if !ctx.Supported {
+			t.Fatalf("expected codex provider support")
+		}
+		if !ctx.HasScope || ctx.Scope.WorkspaceID != "ws1" || ctx.Scope.WorktreeID != "wt1" || ctx.Scope.Provider != "codex" {
+			t.Fatalf("unexpected new-session scope: %#v", ctx)
+		}
+	})
+}
+
+func TestComposeFileSearchContextResolverOptionOverridesDefault(t *testing.T) {
+	m := NewModel(nil, WithComposeFileSearchContextResolver(stubComposeFileSearchContextResolver{
+		ctx: composeFileSearchContext{
+			Supported: true,
+			HasScope:  true,
+			Scope: types.FileSearchScope{
+				Provider:  "codex",
+				SessionID: "override",
+			},
+		},
+	}))
+
+	if !m.composeFileSearchSupported() {
+		t.Fatalf("expected injected resolver support")
+	}
+	scope, ok := m.composeFileSearchScope()
+	if !ok {
+		t.Fatalf("expected injected resolver scope")
+	}
+	if scope.SessionID != "override" || scope.Provider != "codex" {
+		t.Fatalf("unexpected injected scope: %#v", scope)
+	}
+}
+
+func TestDefaultComposeFileSearchContextResolverEdgeCases(t *testing.T) {
+	resolver := defaultComposeFileSearchContextResolver{}
+
+	t.Run("nil model", func(t *testing.T) {
+		ctx := resolver.ResolveComposeFileSearchContext(nil)
+		if ctx != (composeFileSearchContext{}) {
+			t.Fatalf("expected zero context for nil model, got %#v", ctx)
+		}
+	})
+
+	t.Run("blank provider", func(t *testing.T) {
+		m := NewModel(nil)
+		ctx := resolver.ResolveComposeFileSearchContext(&m)
+		if ctx != (composeFileSearchContext{}) {
+			t.Fatalf("expected zero context without provider, got %#v", ctx)
+		}
+	})
+
+	t.Run("provider without compose scope", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		ctx := resolver.ResolveComposeFileSearchContext(&m)
+		if !ctx.Supported {
+			t.Fatalf("expected selected-session provider support")
+		}
+		if ctx.HasScope {
+			t.Fatalf("did not expect compose scope outside compose/new-session context, got %#v", ctx)
+		}
+	})
+}
+
+func TestComposeFileSearchContextResolverOptionNilFallsBackToDefault(t *testing.T) {
+	m := NewModel(nil, WithComposeFileSearchContextResolver(nil))
+	if got := m.composeFileSearchContextResolverOrDefault(); got == nil {
+		t.Fatalf("expected default resolver when option is nil")
+	}
+}
+
 func TestDefaultComposeFileSearchServiceClassifiesUnsupportedError(t *testing.T) {
 	api := newComposeFileSearchAPITestStub()
 	api.startErr = &client.APIError{
@@ -328,6 +426,18 @@ func TestComposeFileSearchMentionTextFallsBackToPath(t *testing.T) {
 	candidate := types.FileSearchCandidate{Path: "/repo/main.go"}
 	if got := composeFileSearchMentionText(candidate); got != "@/repo/main.go" {
 		t.Fatalf("unexpected mention text: %q", got)
+	}
+}
+
+func TestComposeFileSearchTriggerBoundaryRecognizesWhitespaceAndDelimiters(t *testing.T) {
+	if !isComposeFileSearchTriggerBoundary(' ') {
+		t.Fatalf("expected whitespace to be a trigger boundary")
+	}
+	if !isComposeFileSearchTriggerBoundary('(') {
+		t.Fatalf("expected opening delimiter to be a trigger boundary")
+	}
+	if isComposeFileSearchTriggerBoundary('a') {
+		t.Fatalf("did not expect letters to be trigger boundaries")
 	}
 }
 
@@ -504,6 +614,32 @@ func TestCloseComposeFileSearchServiceCmdInvokesClose(t *testing.T) {
 	if len(api.closeCalls) != 1 || api.closeCalls[0] != "fs-1" {
 		t.Fatalf("expected close call for fs-1, got %#v", api.closeCalls)
 	}
+}
+
+func TestResetAndCloseComposeFileSearchEdgeCases(t *testing.T) {
+	t.Run("nil model returns no command", func(t *testing.T) {
+		var m *Model
+		if got := m.resetComposeFileSearch(); got != "" {
+			t.Fatalf("expected empty search id for nil model, got %q", got)
+		}
+		if cmd := m.closeComposeFileSearchCmd(); cmd != nil {
+			t.Fatalf("expected nil close command for nil model")
+		}
+	})
+
+	t.Run("blank search id closes quietly", func(t *testing.T) {
+		m := NewModel(nil)
+		if m.composeFileSearch == nil {
+			t.Fatalf("expected compose file search controller")
+		}
+		m.composeFileSearch.SetSearchID("   ")
+		if got := m.resetComposeFileSearch(); got != "" {
+			t.Fatalf("expected blank search id after reset, got %q", got)
+		}
+		if cmd := m.closeComposeFileSearchCmd(); cmd != nil {
+			t.Fatalf("expected no close command without search id")
+		}
+	})
 }
 
 func TestComposeFileSearchPopupPlacementAndUnsupportedClose(t *testing.T) {

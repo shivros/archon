@@ -19,12 +19,28 @@ Codex is the primary and most thoroughly tested provider. Support for other prov
 | **Approvals** | Full | - | Partial |
 | **Interrupt** | Full | - | Full |
 | **Session Resume** | Full | Full | Full |
+| **Compose File Autocomplete (`@...`)** | Full | - | Full |
 | **Guided Workflows** | Full | Full | - |
 | **Notifications** | Full | Partial | Partial |
 
 **Full** = well-tested and reliable, **Partial** = works but incomplete or lightly tested, **-** = not supported.
 
 Gemini and Custom providers have basic exec-only support and no feature parity yet.
+
+## Compose File Autocomplete
+
+Compose supports `@`-triggered file autocomplete through one provider-agnostic file-search interface.
+
+- V1 inserts plain-text mentions such as `@pkg/main.go`.
+- The UI stays provider-agnostic; provider-specific search behavior lives behind daemon/provider adapters.
+- Current support is available for `codex`, `opencode`, and `kilocode`.
+- Unsupported providers keep `@` as plain text and do not open the picker.
+
+Implementation details vary by provider:
+
+- Codex uses its app-server fuzzy file search support.
+- OpenCode and Kilo Code use their server-side file search endpoints.
+- Results are normalized before they reach the app layer so compose behavior stays consistent.
 
 ## Development
 This repo uses `prek` (a Rust pre-commit runner) with a standard `.pre-commit-config.yaml`.
