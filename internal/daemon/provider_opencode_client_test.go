@@ -294,15 +294,60 @@ func TestOpenCodeClientSearchFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOpenCodeClient: %v", err)
 	}
-	results, err := client.SearchFiles(context.Background(), "main", directory)
+	results, err := client.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "main",
+		Directory: directory,
+		Limit:     7,
+	})
 	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if got, want := strings.TrimSpace(seenRawQuery), "query=main&limit=7&directory=%2Ftmp%2Fopencode-worktree"; got != want {
+		t.Fatalf("unexpected raw query: got %q want %q", got, want)
+	}
+	if len(results) != 2 || results[0] != "src/main.go" || results[1] != "README.md" {
+		t.Fatalf("unexpected search results: %#v", results)
+	}
+}
+
+func TestOpenCodeClientSearchFilesOmitsNonPositiveLimit(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	var seenRawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/find/file" {
+			seenRawQuery = r.URL.RawQuery
+			writeJSON(w, http.StatusOK, []string{"src/main.go"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	if _, err := client.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "main",
+		Directory: directory,
+		Limit:     0,
+	}); err != nil {
 		t.Fatalf("SearchFiles: %v", err)
 	}
 	if got, want := strings.TrimSpace(seenRawQuery), "query=main&directory=%2Ftmp%2Fopencode-worktree"; got != want {
 		t.Fatalf("unexpected raw query: got %q want %q", got, want)
 	}
-	if len(results) != 2 || results[0] != "src/main.go" || results[1] != "README.md" {
-		t.Fatalf("unexpected search results: %#v", results)
+}
+
+func TestOpenCodeClientSearchFilesRequiresService(t *testing.T) {
+	client := &openCodeClient{}
+	_, err := client.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "main",
+		Directory: "/tmp/opencode-worktree",
+		Limit:     3,
+	})
+	if err == nil || !strings.Contains(err.Error(), "file search service is required") {
+		t.Fatalf("expected missing service error, got %v", err)
 	}
 }
 

@@ -106,16 +106,19 @@ func newOpenCodeEventService(baseURL, username, token string, transport http.Rou
 	}
 }
 
-func (s *openCodeFileSearchService) SearchFiles(ctx context.Context, query, directory string) ([]string, error) {
+func (s *openCodeFileSearchService) SearchFiles(ctx context.Context, req openCodeFileSearchRequest) ([]string, error) {
+	req = normalizeOpenCodeFileSearchRequest(req)
 	if s == nil || s.requester == nil {
 		return nil, errors.New("requester is required")
 	}
-	query = strings.TrimSpace(query)
-	if query == "" {
+	if req.Query == "" {
 		return nil, nil
 	}
-	path := "/find/file?query=" + url.QueryEscape(query)
-	path = appendOpenCodeDirectoryQuery(path, directory)
+	path := "/find/file?query=" + url.QueryEscape(req.Query)
+	if req.Limit > 0 {
+		path += "&limit=" + strconv.Itoa(req.Limit)
+	}
+	path = appendOpenCodeDirectoryQuery(path, req.Directory)
 	var results []string
 	if err := s.requester.doJSON(ctx, http.MethodGet, path, nil, &results); err != nil {
 		return nil, err

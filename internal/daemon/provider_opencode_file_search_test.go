@@ -3,6 +3,11 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,29 +127,32 @@ func TestPreferFileSearchCandidateUsesDisplayPathTieBreak(t *testing.T) {
 }
 
 type stubOpenCodeFileSearcher struct {
-	searchFunc func(ctx context.Context, query, directory string) ([]string, error)
+	searchFunc func(ctx context.Context, req openCodeFileSearchRequest) ([]string, error)
 }
 
-func (s stubOpenCodeFileSearcher) SearchFiles(ctx context.Context, query, directory string) ([]string, error) {
+func (s stubOpenCodeFileSearcher) SearchFiles(ctx context.Context, req openCodeFileSearchRequest) ([]string, error) {
 	if s.searchFunc == nil {
 		return nil, nil
 	}
-	return s.searchFunc(ctx, query, directory)
+	return s.searchFunc(ctx, req)
 }
 
 func TestOpenCodeFileSearchExecutorSearchesRootsAndNormalizes(t *testing.T) {
 	executor := newOpenCodeFileSearchExecutor(stubOpenCodeFileSearcher{
-		searchFunc: func(_ context.Context, query, directory string) ([]string, error) {
-			if query != "foo" {
-				t.Fatalf("unexpected query: %q", query)
+		searchFunc: func(_ context.Context, req openCodeFileSearchRequest) ([]string, error) {
+			if req.Query != "foo" {
+				t.Fatalf("unexpected query: %q", req.Query)
 			}
-			switch directory {
+			if req.Limit != 10 {
+				t.Fatalf("unexpected limit: %d", req.Limit)
+			}
+			switch req.Directory {
 			case "/repo/app":
 				return []string{"foo.go"}, nil
 			case "/repo/backend":
 				return []string{"api/foo_service.go"}, nil
 			default:
-				t.Fatalf("unexpected directory: %q", directory)
+				t.Fatalf("unexpected directory: %q", req.Directory)
 				return nil, nil
 			}
 		},
@@ -161,7 +169,28 @@ func TestOpenCodeFileSearchExecutorSearchesRootsAndNormalizes(t *testing.T) {
 	}
 }
 
+func TestOpenCodeFileSearchExecutorFinalResultsStillRespectLimit(t *testing.T) {
+	executor := newOpenCodeFileSearchExecutor(stubOpenCodeFileSearcher{
+		searchFunc: func(_ context.Context, req openCodeFileSearchRequest) ([]string, error) {
+			if req.Limit != 2 {
+				t.Fatalf("unexpected limit: %d", req.Limit)
+			}
+			return []string{"main.go", "main_test.go", "cmd/main.go"}, nil
+		},
+	}, defaultFileSearchCandidateNormalizer{})
+	candidates, err := executor.Search(context.Background(), "main", []FileSearchRoot{
+		{Path: "/repo/app", DisplayBase: "/repo/app", Primary: true},
+	}, 2)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates after normalization limit, got %#v", candidates)
+	}
+}
+
 func TestOpenCodeFileSearchRuntimeUpdateEmitsResults(t *testing.T) {
+	nextLimit := 3
 	runtime := &openCodeFileSearchRuntime{
 		providerName: "opencode",
 		rootResolver: stubFileSearchRootResolver{roots: []FileSearchRoot{
@@ -169,11 +198,11 @@ func TestOpenCodeFileSearchRuntimeUpdateEmitsResults(t *testing.T) {
 		}},
 		searcherFactory: stubOpenCodeFileSearchClientFactory{
 			searcher: stubOpenCodeFileSearcher{
-				searchFunc: func(_ context.Context, query, directory string) ([]string, error) {
-					if query != "main" || directory != "/repo/app" {
-						t.Fatalf("unexpected search request query=%q directory=%q", query, directory)
+				searchFunc: func(_ context.Context, req openCodeFileSearchRequest) ([]string, error) {
+					if req.Query != "main" || req.Directory != "/repo/app" || req.Limit != nextLimit {
+						t.Fatalf("unexpected search request %#v", req)
 					}
-					return []string{"src/main.go"}, nil
+					return []string{"src/main.go", "src/main_test.go", "cmd/main.go"}, nil
 				},
 			},
 		},
@@ -192,16 +221,16 @@ func TestOpenCodeFileSearchRuntimeUpdateEmitsResults(t *testing.T) {
 		},
 	}
 
-	updated, err := runtime.Update(context.Background(), types.FileSearchUpdateRequest{})
+	updated, err := runtime.Update(context.Background(), types.FileSearchUpdateRequest{Limit: &nextLimit})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if updated.Query != "main" {
+	if updated.Query != "main" || updated.Limit != nextLimit {
 		t.Fatalf("expected query to be preserved, got %#v", updated)
 	}
 	select {
 	case event := <-runtime.events:
-		if event.Kind != types.FileSearchEventResults || len(event.Candidates) != 1 {
+		if event.Kind != types.FileSearchEventResults || len(event.Candidates) != nextLimit {
 			t.Fatalf("unexpected event: %#v", event)
 		}
 	case <-time.After(time.Second):
@@ -215,9 +244,9 @@ func TestOpenCodeFileSearchProviderStartAndRuntimeLifecycle(t *testing.T) {
 	}}).(*openCodeFileSearchProvider)
 	provider.searcherFactory = stubOpenCodeFileSearchClientFactory{
 		searcher: stubOpenCodeFileSearcher{
-			searchFunc: func(_ context.Context, query, directory string) ([]string, error) {
-				if query != "main" || directory != "/repo/app" {
-					t.Fatalf("unexpected search request query=%q directory=%q", query, directory)
+			searchFunc: func(_ context.Context, req openCodeFileSearchRequest) ([]string, error) {
+				if req.Query != "main" || req.Directory != "/repo/app" || req.Limit != 10 {
+					t.Fatalf("unexpected search request %#v", req)
 				}
 				return []string{"main.go"}, nil
 			},
@@ -260,7 +289,7 @@ func TestOpenCodeFileSearchProviderStartReturnsUnavailableOnSearchFailure(t *tes
 		}},
 		searcherFactory: stubOpenCodeFileSearchClientFactory{
 			searcher: stubOpenCodeFileSearcher{
-				searchFunc: func(context.Context, string, string) ([]string, error) {
+				searchFunc: func(context.Context, openCodeFileSearchRequest) ([]string, error) {
 					return nil, &openCodeRequestError{Method: "GET", Path: "/find/file", StatusCode: 500, Message: "boom"}
 				},
 			},
@@ -290,7 +319,7 @@ func TestOpenCodeFileSearchProviderStartMapsUnsupportedEndpoint(t *testing.T) {
 		}},
 		searcherFactory: stubOpenCodeFileSearchClientFactory{
 			searcher: stubOpenCodeFileSearcher{
-				searchFunc: func(context.Context, string, string) ([]string, error) {
+				searchFunc: func(context.Context, openCodeFileSearchRequest) ([]string, error) {
 					return nil, &openCodeRequestError{Method: "GET", Path: "/find/file", StatusCode: 404, Message: "missing"}
 				},
 			},
@@ -318,7 +347,7 @@ func TestOpenCodeFileSearchRuntimeAllowsEmptyQueryWithoutCallingProvider(t *test
 		}},
 		searcherFactory: stubOpenCodeFileSearchClientFactory{
 			searcher: stubOpenCodeFileSearcher{
-				searchFunc: func(context.Context, string, string) ([]string, error) {
+				searchFunc: func(context.Context, openCodeFileSearchRequest) ([]string, error) {
 					return nil, errors.New("provider should not be called for empty query")
 				},
 			},
@@ -338,9 +367,47 @@ func TestOpenCodeFileSearchRuntimeAllowsEmptyQueryWithoutCallingProvider(t *test
 	}
 }
 
+func TestOpenCodeFileSearchRuntimeDefaultsLimitBeforeCallingSearcher(t *testing.T) {
+	runtime := &openCodeFileSearchRuntime{
+		providerName: "opencode",
+		rootResolver: stubFileSearchRootResolver{roots: []FileSearchRoot{
+			{Path: "/repo/app", DisplayBase: "/repo/app", Primary: true},
+		}},
+		searcherFactory: stubOpenCodeFileSearchClientFactory{
+			searcher: stubOpenCodeFileSearcher{
+				searchFunc: func(_ context.Context, req openCodeFileSearchRequest) ([]string, error) {
+					if req.Limit != defaultFileSearchLimit {
+						t.Fatalf("expected default limit %d, got %d", defaultFileSearchLimit, req.Limit)
+					}
+					return []string{"src/main.go"}, nil
+				},
+			},
+		},
+		normalizer: defaultFileSearchCandidateNormalizer{},
+		searchID:   "fs-1",
+		createdAt:  time.Now().UTC(),
+		events:     make(chan types.FileSearchEvent, 4),
+	}
+
+	session, results, err := runtime.search(context.Background(), types.FileSearchScope{Provider: "opencode", Cwd: "/repo/app"}, "main", 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if session == nil || session.Limit != defaultFileSearchLimit {
+		t.Fatalf("expected session limit %d, got %#v", defaultFileSearchLimit, session)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %#v", results)
+	}
+}
+
 func TestRecoveringOpenCodeFileSearcherNilClient(t *testing.T) {
 	searcher := &recoveringOpenCodeFileSearcher{}
-	_, err := searcher.SearchFiles(context.Background(), "foo", "/repo")
+	_, err := searcher.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "foo",
+		Directory: "/repo",
+		Limit:     5,
+	})
 	serviceErr, ok := err.(*ServiceError)
 	if !ok || serviceErr.Kind != ServiceErrorUnavailable {
 		t.Fatalf("unexpected error: %#v", err)
@@ -358,10 +425,92 @@ func TestRecoveringOpenCodeFileSearcherReturnsNonRetryableError(t *testing.T) {
 			}},
 		},
 	}
-	_, err := searcher.SearchFiles(context.Background(), "foo", "/repo")
+	_, err := searcher.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "foo",
+		Directory: "/repo",
+		Limit:     5,
+	})
 	var reqErr *openCodeRequestError
 	if !errors.As(err, &reqErr) || reqErr.StatusCode != 400 {
 		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestRecoveringOpenCodeFileSearcherRetryPreservesRequest(t *testing.T) {
+	t.Cleanup(resetOpenCodeAutoStartStateForTest)
+	origStart := startOpenCodeServeProcess
+	origProbe := probeOpenCodeServer
+	origWait := waitForOpenCodeServerReady
+	origFallback := pickOpenCodeFallbackPortFn
+	t.Cleanup(func() {
+		startOpenCodeServeProcess = origStart
+		probeOpenCodeServer = origProbe
+		waitForOpenCodeServerReady = origWait
+		pickOpenCodeFallbackPortFn = origFallback
+	})
+
+	var seenRawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/find/file" {
+			http.NotFound(w, r)
+			return
+		}
+		seenRawQuery = r.URL.RawQuery
+		writeJSON(w, http.StatusOK, []string{"src/main.go"})
+	}))
+	defer server.Close()
+
+	portIdx := strings.LastIndex(server.URL, ":")
+	if portIdx < 0 || portIdx+1 >= len(server.URL) {
+		t.Fatalf("unexpected server url: %q", server.URL)
+	}
+	fallbackPort := server.URL[portIdx+1:]
+
+	tmpDir := t.TempDir()
+	cmdPath := filepath.Join(tmpDir, "opencode")
+	if err := os.WriteFile(cmdPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	startOpenCodeServeProcess = func(_ string, args []string, _ []string, _ ProviderBaseSink) error {
+		if len(args) >= 5 && args[4] == fallbackPort {
+			return nil
+		}
+		return errors.New("primary unavailable")
+	}
+	probeOpenCodeServer = func(string) error { return errors.New("unreachable") }
+	waitForOpenCodeServerReady = func(string, time.Duration) error { return nil }
+	pickOpenCodeFallbackPortFn = func(string) (string, error) { return fallbackPort, nil }
+	resetOpenCodeAutoStartStateForTest()
+
+	searcher := &recoveringOpenCodeFileSearcher{
+		provider: "opencode",
+		client: &openCodeClient{
+			baseURL: "http://127.0.0.1:49123",
+			token:   "token-123",
+			timeout: time.Second,
+			fileSearchSvc: &openCodeFileSearchService{requester: stubOpenCodeJSONRequester{
+				doJSONFunc: func(context.Context, string, string, any, any) error {
+					return &openCodeRequestError{Method: "GET", Path: "/find/file", StatusCode: 503, Message: "unreachable"}
+				},
+			}},
+		},
+	}
+
+	results, err := searcher.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "  main  ",
+		Directory: " /tmp/opencode-worktree ",
+		Limit:     5,
+	})
+	if err != nil {
+		t.Fatalf("SearchFiles retry: %v", err)
+	}
+	if len(results) != 1 || results[0] != "src/main.go" {
+		t.Fatalf("unexpected results: %#v", results)
+	}
+	if got, want := strings.TrimSpace(seenRawQuery), "query=main&limit=5&directory=%2Ftmp%2Fopencode-worktree"; got != want {
+		t.Fatalf("unexpected retried raw query: got %q want %q", got, want)
 	}
 }
 

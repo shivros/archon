@@ -454,11 +454,11 @@ func (c *openCodeClient) RequestPermission(ctx context.Context, sessionID string
 	return c.permissionSvc.RequestPermission(ctx, sessionID, permission, directory)
 }
 
-func (c *openCodeClient) SearchFiles(ctx context.Context, query, directory string) ([]string, error) {
+func (c *openCodeClient) SearchFiles(ctx context.Context, req openCodeFileSearchRequest) ([]string, error) {
 	if c == nil || c.fileSearchSvc == nil {
 		return nil, errors.New("file search service is required")
 	}
-	return c.fileSearchSvc.SearchFiles(ctx, query, directory)
+	return c.fileSearchSvc.SearchFiles(ctx, req)
 }
 
 func (c *openCodeClient) SubscribeSessionEvents(ctx context.Context, sessionID, directory string) (<-chan types.CodexEvent, func(), error) {

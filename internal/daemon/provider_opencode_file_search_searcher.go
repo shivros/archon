@@ -7,7 +7,7 @@ import (
 )
 
 type openCodeFileSearcher interface {
-	SearchFiles(ctx context.Context, query, directory string) ([]string, error)
+	SearchFiles(ctx context.Context, req openCodeFileSearchRequest) ([]string, error)
 }
 
 type openCodeFileSearcherFactory interface {
@@ -39,11 +39,12 @@ type recoveringOpenCodeFileSearcher struct {
 	client   *openCodeClient
 }
 
-func (s *recoveringOpenCodeFileSearcher) SearchFiles(ctx context.Context, query, directory string) ([]string, error) {
+func (s *recoveringOpenCodeFileSearcher) SearchFiles(ctx context.Context, req openCodeFileSearchRequest) ([]string, error) {
+	req = normalizeOpenCodeFileSearchRequest(req)
 	if s == nil || s.client == nil {
 		return nil, unavailableError("file search client is not available", nil)
 	}
-	results, err := s.client.SearchFiles(ctx, query, directory)
+	results, err := s.client.SearchFiles(ctx, req)
 	if err == nil {
 		return results, nil
 	}
@@ -59,5 +60,5 @@ func (s *recoveringOpenCodeFileSearcher) SearchFiles(ctx context.Context, query,
 		return nil, switchErr
 	}
 	s.client = switchedClient
-	return s.client.SearchFiles(ctx, query, directory)
+	return s.client.SearchFiles(ctx, req)
 }

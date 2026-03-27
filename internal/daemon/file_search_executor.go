@@ -33,7 +33,11 @@ func (e openCodeFileSearchExecutor) Search(ctx context.Context, query string, ro
 	}
 	rawResults := make(map[string][]string, len(roots))
 	for _, root := range roots {
-		paths, err := e.searcher.SearchFiles(ctx, query, root.Path)
+		paths, err := e.searcher.SearchFiles(ctx, openCodeFileSearchRequest{
+			Query:     query,
+			Directory: root.Path,
+			Limit:     limit,
+		})
 		if err != nil {
 			return nil, err
 		}

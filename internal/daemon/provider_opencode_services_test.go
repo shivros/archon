@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +105,81 @@ func TestOpenCodeDoEventStreamRequestTimeout(t *testing.T) {
 	}
 	if resp != nil {
 		t.Fatalf("expected nil response on timeout, got %#v", resp)
+	}
+}
+
+func TestOpenCodeFileSearchServiceSearchFilesNormalizesRequestAndFiltersResults(t *testing.T) {
+	var seenMethod, seenPath string
+	service := newOpenCodeFileSearchService(stubOpenCodeJSONRequester{
+		doJSONFunc: func(_ context.Context, method, path string, _ any, out any) error {
+			seenMethod = method
+			seenPath = path
+			results, ok := out.(*[]string)
+			if !ok {
+				t.Fatalf("expected *[]string out, got %T", out)
+			}
+			*results = []string{"src/main.go", "", " README.md "}
+			return nil
+		},
+	})
+
+	results, err := service.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "  main  ",
+		Directory: " /tmp/opencode-worktree ",
+		Limit:     4,
+	})
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if seenMethod != http.MethodGet {
+		t.Fatalf("unexpected method: %q", seenMethod)
+	}
+	if seenPath != "/find/file?query=main&limit=4&directory=%2Ftmp%2Fopencode-worktree" {
+		t.Fatalf("unexpected path: %q", seenPath)
+	}
+	if !reflect.DeepEqual(results, []string{"src/main.go", "README.md"}) {
+		t.Fatalf("unexpected results: %#v", results)
+	}
+}
+
+func TestOpenCodeFileSearchServiceSearchFilesSkipsRequesterForBlankQueryAndOmitsNonPositiveLimit(t *testing.T) {
+	calls := 0
+	service := newOpenCodeFileSearchService(stubOpenCodeJSONRequester{
+		doJSONFunc: func(_ context.Context, _ string, path string, _ any, out any) error {
+			calls++
+			if path != "/find/file?query=main&directory=%2Ftmp%2Fopencode-worktree" {
+				t.Fatalf("unexpected path: %q", path)
+			}
+			results := out.(*[]string)
+			*results = []string{"src/main.go"}
+			return nil
+		},
+	})
+
+	results, err := service.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     "   ",
+		Directory: " /tmp/opencode-worktree ",
+		Limit:     5,
+	})
+	if err != nil {
+		t.Fatalf("SearchFiles blank query: %v", err)
+	}
+	if len(results) != 0 || calls != 0 {
+		t.Fatalf("expected blank query to skip requester, results=%#v calls=%d", results, calls)
+	}
+
+	results, err = service.SearchFiles(context.Background(), openCodeFileSearchRequest{
+		Query:     " main ",
+		Directory: " /tmp/opencode-worktree ",
+		Limit:     0,
+	})
+	if err != nil {
+		t.Fatalf("SearchFiles non-positive limit: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one requester call, got %d", calls)
+	}
+	if !reflect.DeepEqual(results, []string{"src/main.go"}) {
+		t.Fatalf("unexpected results: %#v", results)
 	}
 }
