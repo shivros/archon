@@ -6,6 +6,8 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/health", a.Health)
 	mux.HandleFunc("/v1/sessions", a.Sessions)
 	mux.HandleFunc("/v1/sessions/", a.SessionByID)
+	mux.HandleFunc("/v1/file-searches", a.FileSearchesEndpoint)
+	mux.HandleFunc("/v1/file-searches/", a.FileSearchByID)
 	mux.HandleFunc("/v1/providers/", a.ProviderByName)
 	mux.HandleFunc("/v1/workspaces", a.Workspaces)
 	mux.HandleFunc("/v1/workspaces/", a.WorkspaceByID)

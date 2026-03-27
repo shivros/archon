@@ -159,6 +159,7 @@ func CapabilityEnvelopeFromProvider(provider string) transcriptdomain.Capability
 		SupportsEvents:                 caps.SupportsEvents,
 		SupportsApprovals:              caps.SupportsApprovals,
 		SupportsInterrupt:              caps.SupportsInterrupt,
+		SupportsFileSearch:             caps.SupportsFileSearch,
 		NoProcess:                      caps.NoProcess,
 	}
 }

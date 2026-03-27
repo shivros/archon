@@ -157,6 +157,9 @@ func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
 	if !caps.SupportsGuidedWorkflowDispatch || !caps.SupportsEvents || !caps.SupportsApprovals || !caps.SupportsInterrupt {
 		t.Fatalf("unexpected codex capabilities: %#v", caps)
 	}
+	if caps.SupportsFileSearch {
+		t.Fatalf("expected file search support to remain disabled until provider implementations exist")
+	}
 }
 
 func TestProviderRegistryBootstrapProfileForKnown(t *testing.T) {

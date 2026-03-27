@@ -259,6 +259,121 @@ func TestTranscriptStreamEscapesAfterRevisionQuery(t *testing.T) {
 	}
 }
 
+func TestFileSearchEventsParsesEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("follow") != "1" {
+			t.Fatalf("expected follow query parameter")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		event := types.FileSearchEvent{
+			Kind:     types.FileSearchEventResults,
+			SearchID: "fs-1",
+			Provider: "codex",
+			Scope:    types.FileSearchScope{Provider: "codex", SessionID: "s1"},
+			Query:    "main",
+			Status:   types.FileSearchStatusActive,
+			Limit:    5,
+			Candidates: []types.FileSearchCandidate{
+				{Path: "main.go", DisplayPath: "./main.go"},
+			},
+		}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write(append([]byte("data: "), data...))
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ch, stop, err := c.FileSearchEvents(ctx, "fs-1")
+	if err != nil {
+		t.Fatalf("FileSearchEvents: %v", err)
+	}
+	defer stop()
+	select {
+	case event := <-ch:
+		if event.Kind != types.FileSearchEventResults || len(event.Candidates) != 1 || event.Candidates[0].Path != "main.go" {
+			t.Fatalf("unexpected file search event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for file search event")
+	}
+}
+
+func TestFileSearchEventsReturnsAPIErrorOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"file search is not supported for provider","code":"file_search_unsupported"}`))
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := c.FileSearchEvents(ctx, "fs-1"); err == nil {
+		t.Fatalf("expected non-2xx error")
+	}
+}
+
+func TestFileSearchEventsRejectBlankID(t *testing.T) {
+	c := &Client{baseURL: "http://example.test", token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := c.FileSearchEvents(ctx, "   "); err == nil {
+		t.Fatalf("expected blank id to fail")
+	}
+}
+
+func TestFileSearchEventsSkipsMalformedPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {bad json}\n\n"))
+		event := types.FileSearchEvent{
+			Kind:     types.FileSearchEventResults,
+			SearchID: "fs-1",
+			Provider: "codex",
+			Status:   types.FileSearchStatusActive,
+			Candidates: []types.FileSearchCandidate{
+				{Path: "main.go"},
+			},
+		}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write(append([]byte("data: "), data...))
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, token: "token"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ch, stop, err := c.FileSearchEvents(ctx, "fs-1")
+	if err != nil {
+		t.Fatalf("FileSearchEvents: %v", err)
+	}
+	defer stop()
+	select {
+	case event := <-ch:
+		if event.SearchID != "fs-1" || len(event.Candidates) != 1 || event.Candidates[0].Path != "main.go" {
+			t.Fatalf("unexpected event after malformed payload: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for file search event")
+	}
+}
+
 func TestTranscriptStreamSkipsMalformedPayload(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

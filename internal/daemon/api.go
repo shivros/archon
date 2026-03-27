@@ -35,6 +35,7 @@ type API struct {
 	WorkflowRunStop           WorkflowRunStopCoordinator
 	TitleGeneration           TitleGenerationQueue
 	MetadataEvents            MetadataEventStreamService
+	FileSearches              FileSearchService
 	Logger                    logging.Logger
 }
 
@@ -110,6 +111,13 @@ type WorkflowRunRenameRequest struct {
 
 type MetadataEventStreamService interface {
 	Subscribe(afterRevision string) (<-chan types.MetadataEvent, func(), error)
+}
+
+type FileSearchService interface {
+	Start(ctx context.Context, req types.FileSearchStartRequest) (*types.FileSearchSession, error)
+	Update(ctx context.Context, id string, req types.FileSearchUpdateRequest) (*types.FileSearchSession, error)
+	Close(ctx context.Context, id string) error
+	Subscribe(ctx context.Context, id string) (<-chan types.FileSearchEvent, func(), error)
 }
 
 type GuidedWorkflowRunService interface {
@@ -256,6 +264,13 @@ func (a *API) workflowDispatchDefaults() guidedWorkflowDispatchDefaults {
 		return guidedWorkflowDispatchDefaults{}
 	}
 	return a.WorkflowDispatchDefaults
+}
+
+func (a *API) fileSearchService() FileSearchService {
+	if a == nil {
+		return nil
+	}
+	return a.FileSearches
 }
 
 func (a *API) workflowSessionVisibilityService() WorkflowRunSessionVisibilityService {

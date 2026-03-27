@@ -90,6 +90,9 @@ type TailItemsResponse struct {
 	Items []map[string]any `json:"items"`
 }
 
+type StartFileSearchRequest = types.FileSearchStartRequest
+type UpdateFileSearchRequest = types.FileSearchUpdateRequest
+
 type TranscriptSnapshotResponse = transcriptdomain.TranscriptSnapshot
 
 type TranscriptEventResponse = transcriptdomain.TranscriptEvent

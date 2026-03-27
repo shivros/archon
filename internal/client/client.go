@@ -174,6 +174,36 @@ func (c *Client) GetProviderOptions(ctx context.Context, provider string) (*type
 	return resp.Options, nil
 }
 
+func (c *Client) StartFileSearch(ctx context.Context, req types.FileSearchStartRequest) (*types.FileSearchSession, error) {
+	var resp types.FileSearchSession
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/file-searches", req, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) UpdateFileSearch(ctx context.Context, id string, req types.FileSearchUpdateRequest) (*types.FileSearchSession, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("file search id is required")
+	}
+	var resp types.FileSearchSession
+	path := fmt.Sprintf("/v1/file-searches/%s", id)
+	if err := c.doJSON(ctx, http.MethodPatch, path, req, true, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *Client) CloseFileSearch(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("file search id is required")
+	}
+	path := fmt.Sprintf("/v1/file-searches/%s", id)
+	return c.doJSON(ctx, http.MethodDelete, path, nil, true, nil)
+}
+
 func (c *Client) ListWorkspaces(ctx context.Context) ([]*types.Workspace, error) {
 	var resp WorkspacesResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/workspaces", nil, true, &resp); err != nil {

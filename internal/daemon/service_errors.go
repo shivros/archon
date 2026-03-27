@@ -44,6 +44,10 @@ func invalidError(message string, err error) *ServiceError {
 	return &ServiceError{Kind: ServiceErrorInvalid, Message: message, Err: err}
 }
 
+func invalidErrorWithCode(message, code string, err error) *ServiceError {
+	return &ServiceError{Kind: ServiceErrorInvalid, Code: code, Message: message, Err: err}
+}
+
 func notFoundError(message string, err error) *ServiceError {
 	return &ServiceError{Kind: ServiceErrorNotFound, Message: message, Err: err}
 }

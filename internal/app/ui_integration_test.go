@@ -21,6 +21,7 @@ import (
 
 	"control/internal/client"
 	"control/internal/daemon"
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/guidedworkflows"
 	"control/internal/logging"
 	"control/internal/store"
@@ -81,7 +82,7 @@ func TestUICodexStreamingExistingSession(t *testing.T) {
 	}
 
 	logPhase("wait_history_initial")
-	waitForHistoryItems(t, api, session.ID, codexIntegrationTimeout())
+	waitForHistoryItems(t, server, api, session.ID, codexIntegrationTimeout())
 
 	model := NewModel(api)
 	model.tickFn = func() tea.Cmd { return nil }
@@ -143,8 +144,8 @@ func TestUIClaudeStreamingExistingSession(t *testing.T) {
 	}
 
 	logPhase("wait_history_initial")
-	waitForHistoryItems(t, api, session.ID, claudeIntegrationTimeout())
-	waitForHistoryAgent(t, api, session.ID, "ok", claudeIntegrationTimeout())
+	waitForHistoryItems(t, server, api, session.ID, claudeIntegrationTimeout())
+	waitForHistoryAgent(t, server, api, session.ID, "ok", claudeIntegrationTimeout())
 
 	model := NewModel(api)
 	model.tickFn = func() tea.Cmd { return nil }
@@ -281,7 +282,7 @@ func TestUICodexStreamingResumeSession(t *testing.T) {
 	}
 
 	logPhase("wait_history_initial")
-	waitForHistoryItems(t, api, session.ID, codexIntegrationTimeout())
+	waitForHistoryItems(t, server, api, session.ID, codexIntegrationTimeout())
 
 	model := NewModel(api)
 	model.tickFn = func() tea.Cmd { return nil }
@@ -395,8 +396,8 @@ func TestUIClaudeStreamingResumeSession(t *testing.T) {
 	}
 
 	logPhase("wait_history_initial")
-	waitForHistoryItems(t, api, session.ID, claudeIntegrationTimeout())
-	waitForHistoryAgent(t, api, session.ID, "ok", claudeIntegrationTimeout())
+	waitForHistoryItems(t, server, api, session.ID, claudeIntegrationTimeout())
+	waitForHistoryAgent(t, server, api, session.ID, "ok", claudeIntegrationTimeout())
 
 	model := NewModel(api)
 	model.tickFn = func() tea.Cmd { return nil }
@@ -1458,15 +1459,27 @@ func sidebarHasSession(model *Model, sessionID string) bool {
 	return false
 }
 
-func waitForHistoryItems(t *testing.T, api *client.Client, sessionID string, timeout time.Duration) {
+func waitForHistoryItems(t *testing.T, server *httptest.Server, api *client.Client, sessionID string, timeout time.Duration) {
 	t.Helper()
+	failures, stopFailures := startUISessionTurnFailureMonitor(server, sessionID)
+	defer stopFailures()
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		select {
+		case failure, ok := <-failures:
+			if ok && strings.TrimSpace(failure) != "" {
+				t.Fatalf("provider turn failed before history items were ready: %s", failure)
+			}
+		default:
+		}
 		historyCtx, historyCancel := context.WithTimeout(context.Background(), 6*time.Second)
 		history, err := api.History(historyCtx, sessionID, 200)
 		historyCancel()
 		if err == nil && len(history.Items) > 0 {
+			if failure := historyTurnFailureMessage(history.Items); failure != "" {
+				t.Fatalf("session produced failed turn before history items were ready: %s", failure)
+			}
 			return
 		}
 		if err != nil {
@@ -1481,11 +1494,20 @@ func waitForHistoryItems(t *testing.T, api *client.Client, sessionID string, tim
 	t.Fatalf("timeout waiting for history items")
 }
 
-func waitForHistoryAgent(t *testing.T, api *client.Client, sessionID, needle string, timeout time.Duration) {
+func waitForHistoryAgent(t *testing.T, server *httptest.Server, api *client.Client, sessionID, needle string, timeout time.Duration) {
 	t.Helper()
+	failures, stopFailures := startUISessionTurnFailureMonitor(server, sessionID)
+	defer stopFailures()
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		select {
+		case failure, ok := <-failures:
+			if ok && strings.TrimSpace(failure) != "" {
+				t.Fatalf("provider turn failed before history agent text %q: %s", needle, failure)
+			}
+		default:
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		session, sessionErr := api.GetSession(ctx, sessionID)
 		cancel()
@@ -1507,6 +1529,11 @@ func waitForHistoryAgent(t *testing.T, api *client.Client, sessionID, needle str
 		historyCancel()
 		if err == nil && historyHasAgentText(history.Items, needle) {
 			return
+		}
+		if err == nil {
+			if failure := historyTurnFailureMessage(history.Items); failure != "" {
+				t.Fatalf("session produced failed turn before history agent text %q: %s", needle, failure)
+			}
 		}
 		if err != nil {
 			lastErr = err
@@ -1540,6 +1567,93 @@ func historyHasAgentText(items []map[string]any, needle string) bool {
 		}
 	}
 	return false
+}
+
+func historyTurnFailureMessage(items []map[string]any) string {
+	for _, item := range items {
+		if !strings.EqualFold(strings.TrimSpace(asString(item["type"])), "turnCompletion") {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(asString(item["turn_status"])))
+		errMsg := strings.TrimSpace(asString(item["turn_error"]))
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(asString(item["error"]))
+		}
+		switch status {
+		case "failed", "error", "abandoned":
+			if errMsg != "" {
+				return "turn " + status + ": " + errMsg
+			}
+			return "turn " + status
+		}
+	}
+	return ""
+}
+
+func startUISessionTurnFailureMonitor(server *httptest.Server, sessionID string) (<-chan string, func()) {
+	failures := make(chan string, 8)
+	closeFn := func() { close(failures) }
+	if server == nil || strings.TrimSpace(sessionID) == "" {
+		return failures, closeFn
+	}
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/sessions/"+sessionID+"/transcript/stream?follow=1", nil)
+	req.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return failures, closeFn
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return failures, closeFn
+	}
+
+	stop := sync.OnceFunc(func() {
+		_ = resp.Body.Close()
+		close(failures)
+	})
+	go func() {
+		defer stop()
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if payload == "" {
+				continue
+			}
+			var event transcriptdomain.TranscriptEvent
+			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+				continue
+			}
+			if failure := uiTurnFailureFromTranscriptEvent(event); failure != "" {
+				select {
+				case failures <- failure:
+				default:
+				}
+			}
+		}
+	}()
+	return failures, stop
+}
+
+func uiTurnFailureFromTranscriptEvent(event transcriptdomain.TranscriptEvent) string {
+	switch event.Kind {
+	case transcriptdomain.TranscriptEventTurnFailed:
+		if event.Turn != nil {
+			if msg := strings.TrimSpace(event.Turn.Error); msg != "" {
+				return "turn failed: " + msg
+			}
+		}
+		return "turn failed"
+	case transcriptdomain.TranscriptEventStreamStatus:
+		if event.StreamStatus == transcriptdomain.StreamStatusError {
+			return "stream error"
+		}
+	}
+	return ""
 }
 
 func extractHistoryText(item map[string]any) string {

@@ -24,6 +24,7 @@ func TestGoldenTranscriptSnapshot(t *testing.T) {
 			SupportsEvents:                 true,
 			SupportsApprovals:              true,
 			SupportsInterrupt:              true,
+			SupportsFileSearch:             false,
 		},
 	}
 	assertGoldenJSON(t, "snapshot.golden.json", snapshot)

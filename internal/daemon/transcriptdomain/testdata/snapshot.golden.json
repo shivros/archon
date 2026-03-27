@@ -26,6 +26,7 @@
     "supports_events": true,
     "supports_approvals": true,
     "supports_interrupt": true,
+    "supports_file_search": false,
     "no_process": false
   }
 }

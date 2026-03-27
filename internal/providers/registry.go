@@ -8,6 +8,7 @@ type Capabilities struct {
 	SupportsEvents                 bool
 	SupportsApprovals              bool
 	SupportsInterrupt              bool
+	SupportsFileSearch             bool
 	NoProcess                      bool
 }
 

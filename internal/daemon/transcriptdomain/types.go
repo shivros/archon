@@ -56,6 +56,7 @@ type CapabilityEnvelope struct {
 	SupportsEvents                 bool `json:"supports_events"`
 	SupportsApprovals              bool `json:"supports_approvals"`
 	SupportsInterrupt              bool `json:"supports_interrupt"`
+	SupportsFileSearch             bool `json:"supports_file_search"`
 	NoProcess                      bool `json:"no_process"`
 }
 

@@ -202,6 +202,29 @@ type SessionInterruptAPI interface {
 	InterruptSession(ctx context.Context, id string) error
 }
 
+type FileSearchStartAPI interface {
+	StartFileSearch(ctx context.Context, req client.StartFileSearchRequest) (*types.FileSearchSession, error)
+}
+
+type FileSearchUpdateAPI interface {
+	UpdateFileSearch(ctx context.Context, id string, req client.UpdateFileSearchRequest) (*types.FileSearchSession, error)
+}
+
+type FileSearchCloseAPI interface {
+	CloseFileSearch(ctx context.Context, id string) error
+}
+
+type FileSearchEventsAPI interface {
+	FileSearchEvents(ctx context.Context, id string) (<-chan types.FileSearchEvent, func(), error)
+}
+
+type FileSearchAPI interface {
+	FileSearchStartAPI
+	FileSearchUpdateAPI
+	FileSearchCloseAPI
+	FileSearchEventsAPI
+}
+
 type WorkspaceSessionStartAPI interface {
 	StartWorkspaceSession(ctx context.Context, workspaceID, worktreeID string, req client.StartSessionRequest) (*types.Session, error)
 }
@@ -388,6 +411,22 @@ func (a *ClientAPI) ListSessionsWithMetaRefreshWithOptions(ctx context.Context, 
 
 func (a *ClientAPI) GetProviderOptions(ctx context.Context, provider string) (*types.ProviderOptionCatalog, error) {
 	return a.client.GetProviderOptions(ctx, provider)
+}
+
+func (a *ClientAPI) StartFileSearch(ctx context.Context, req client.StartFileSearchRequest) (*types.FileSearchSession, error) {
+	return a.client.StartFileSearch(ctx, req)
+}
+
+func (a *ClientAPI) UpdateFileSearch(ctx context.Context, id string, req client.UpdateFileSearchRequest) (*types.FileSearchSession, error) {
+	return a.client.UpdateFileSearch(ctx, id, req)
+}
+
+func (a *ClientAPI) CloseFileSearch(ctx context.Context, id string) error {
+	return a.client.CloseFileSearch(ctx, id)
+}
+
+func (a *ClientAPI) FileSearchEvents(ctx context.Context, id string) (<-chan types.FileSearchEvent, func(), error) {
+	return a.client.FileSearchEvents(ctx, id)
 }
 
 func (a *ClientAPI) TailItems(ctx context.Context, id string, lines int) (*client.TailItemsResponse, error) {
