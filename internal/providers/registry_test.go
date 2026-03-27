@@ -173,6 +173,11 @@ func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
 	if !kilocodeCaps.SupportsFileSearch {
 		t.Fatalf("expected kilocode file search support to be enabled")
 	}
+
+	claudeCaps := CapabilitiesFor("claude")
+	if claudeCaps.SupportsFileSearch {
+		t.Fatalf("expected claude file search support to be disabled")
+	}
 }
 
 func TestProviderRegistryBootstrapProfileForKnown(t *testing.T) {
@@ -182,5 +187,26 @@ func TestProviderRegistryBootstrapProfileForKnown(t *testing.T) {
 	}
 	if profile.SessionStartTranscript != TranscriptBootstrapModeDeferSnapshot {
 		t.Fatalf("expected deferred session-start transcript bootstrap, got %#v", profile)
+	}
+}
+
+func TestProviderRegistryBootstrapProfileForUnknownUsesDefaults(t *testing.T) {
+	profile := BootstrapProfileFor("unknown-provider")
+	if profile != defaultBootstrapProfile() {
+		t.Fatalf("expected default bootstrap profile, got %#v", profile)
+	}
+}
+
+func TestProviderRegistryBuildByNameSkipsBlankNames(t *testing.T) {
+	byName := buildByName([]Definition{
+		{Name: " codex "},
+		{Name: "   "},
+		{Name: ""},
+	})
+	if len(byName) != 1 {
+		t.Fatalf("expected only one named definition, got %#v", byName)
+	}
+	if _, ok := byName["codex"]; !ok {
+		t.Fatalf("expected normalized codex definition in map, got %#v", byName)
 	}
 }

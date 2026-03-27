@@ -309,6 +309,40 @@ func TestComposeFileSearchUsesNewSessionScope(t *testing.T) {
 	}
 }
 
+func TestComposeFileSearchUnsupportedProviderKeepsPlainTextForNewSession(t *testing.T) {
+	m := NewModel(nil, WithComposeFileSearchContextResolver(stubComposeFileSearchContextResolver{
+		ctx: composeFileSearchContext{
+			Supported: false,
+			HasScope:  true,
+			Scope: types.FileSearchScope{
+				Provider:    "codex",
+				WorkspaceID: "ws1",
+				WorktreeID:  "wt1",
+			},
+		},
+	}))
+	api := newComposeFileSearchAPITestStub()
+	m.fileSearchAPI = api
+	m.newSession = &newSessionTarget{workspaceID: "ws1", worktreeID: "wt1"}
+	_ = m.applyProviderSelection("codex")
+
+	nextModel, _ := m.Update(tea.KeyPressMsg{Code: '@', Text: "@"})
+	m = asModel(t, nextModel)
+	nextModel, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
+	m = asModel(t, nextModel)
+	runModelCmd(t, &m, cmd)
+
+	if m.composeFileSearch != nil && m.composeFileSearch.Open() {
+		t.Fatalf("did not expect popup for unsupported new-session provider")
+	}
+	if len(api.startCalls) != 0 || len(api.updateCalls) != 0 {
+		t.Fatalf("did not expect backend file search calls for unsupported provider")
+	}
+	if got := m.chatInput.Value(); got != "@m" {
+		t.Fatalf("expected plain text to remain, got %q", got)
+	}
+}
+
 func TestDefaultComposeFileSearchContextResolverExistingAndNewSession(t *testing.T) {
 	t.Run("existing session uses transcript capabilities", func(t *testing.T) {
 		m := newPhase0ModelWithSession("codex")
@@ -770,4 +804,105 @@ func TestComposeFileSearchDebounceCmdEmitsMessage(t *testing.T) {
 	if msg.Seq != 3 {
 		t.Fatalf("unexpected debounce seq: %d", msg.Seq)
 	}
+}
+
+func TestSyncComposeFileSearchAfterInputBranches(t *testing.T) {
+	t.Run("option picker open closes popup without querying", func(t *testing.T) {
+		m := NewModel(nil)
+		api := newComposeFileSearchAPITestStub()
+		m.fileSearchAPI = api
+		m.newSession = &newSessionTarget{workspaceID: "ws1", worktreeID: "wt1"}
+		_ = m.applyProviderSelection("codex")
+		if !m.openComposeOptionPicker(composeOptionModel) {
+			t.Fatalf("expected compose option picker to open")
+		}
+		m.chatInput.SetValue("@ma")
+		m.chatInput.MoveCursorToRuneIndex(len([]rune("@ma")))
+		m.composeFileSearch.SetCandidates([]types.FileSearchCandidate{{Path: "/repo/main.go", DisplayPath: "main.go"}})
+
+		if cmd := m.syncComposeFileSearchAfterInput(); cmd != nil {
+			t.Fatalf("expected no command while option picker is open")
+		}
+		if m.composeFileSearch.Open() {
+			t.Fatalf("expected file search popup to close while option picker is open")
+		}
+		if len(api.startCalls) != 0 || len(api.updateCalls) != 0 {
+			t.Fatalf("did not expect backend file search calls while option picker is open")
+		}
+	})
+
+	t.Run("unchanged fragment returns no command", func(t *testing.T) {
+		m := NewModel(nil)
+		m.newSession = &newSessionTarget{workspaceID: "ws1", worktreeID: "wt1"}
+		_ = m.applyProviderSelection("codex")
+		m.chatInput.SetValue("@ma")
+		m.chatInput.MoveCursorToRuneIndex(len([]rune("@ma")))
+		fragment, ok := activeComposeFileSearchFragment(m.chatInput.Value(), m.chatInput.CursorRuneIndex())
+		if !ok {
+			t.Fatalf("expected active fragment")
+		}
+		m.composeFileSearch.SetFragment(fragment, true)
+
+		if cmd := m.syncComposeFileSearchAfterInput(); cmd != nil {
+			t.Fatalf("expected no command for unchanged fragment")
+		}
+		if m.composeFileSearch.RequestSeq() != 0 {
+			t.Fatalf("expected request sequence to remain unchanged, got %d", m.composeFileSearch.RequestSeq())
+		}
+	})
+}
+
+func TestComposeFileSearchSelectionAndResultMismatchBranches(t *testing.T) {
+	t.Run("selection closes quietly when candidate lookup fails", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		m.enterCompose("s1")
+		m.chatInput.SetValue("@ma")
+		m.chatInput.MoveCursorToRuneIndex(len([]rune("@ma")))
+		fragment, ok := activeComposeFileSearchFragment(m.chatInput.Value(), m.chatInput.CursorRuneIndex())
+		if !ok {
+			t.Fatalf("expected active fragment")
+		}
+		controller := m.composeFileSearchController()
+		controller.SetFragment(fragment, true)
+		controller.SetCandidates([]types.FileSearchCandidate{{Path: "/repo/main.go", DisplayPath: "main.go"}})
+		delete(controller.candidates, "/repo/main.go")
+
+		if cmd := m.applyComposeFileSearchSelection(); cmd != nil {
+			t.Fatalf("expected no command when selection cannot resolve candidate")
+		}
+		if controller.Open() {
+			t.Fatalf("expected popup to close when selection candidate is missing")
+		}
+	})
+
+	t.Run("result mismatch still preserves search id", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		m.enterCompose("s1")
+		m.chatInput.SetValue("@ma")
+		m.chatInput.MoveCursorToRuneIndex(len([]rune("@ma")))
+		fragment, ok := activeComposeFileSearchFragment(m.chatInput.Value(), m.chatInput.CursorRuneIndex())
+		if !ok {
+			t.Fatalf("expected active fragment")
+		}
+		controller := m.composeFileSearchController()
+		controller.SetFragment(fragment, true)
+		controller.NextRequestSeq()
+
+		if cmd := m.applyComposeFileSearchResults(composeFileSearchResultsMsg{
+			Seq:   controller.RequestSeq(),
+			Query: "other",
+			Result: composeFileSearchQueryResult{
+				SearchID:   "fs-1",
+				Candidates: []types.FileSearchCandidate{{Path: "/repo/main.go", DisplayPath: "main.go"}},
+			},
+		}); cmd != nil {
+			t.Fatalf("expected mismatched fragment result to return no command")
+		}
+		if got := controller.SearchID(); got != "fs-1" {
+			t.Fatalf("expected search id to still be recorded, got %q", got)
+		}
+		if controller.Open() {
+			t.Fatalf("did not expect popup to open for mismatched result")
+		}
+	})
 }

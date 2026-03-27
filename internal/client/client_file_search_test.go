@@ -61,12 +61,18 @@ func TestClientStartFileSearch(t *testing.T) {
 }
 
 func TestClientUpdateAndCloseFileSearch(t *testing.T) {
-	var calls []string
+	var (
+		calls     []string
+		patchBody UpdateFileSearchRequest
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case http.MethodPatch:
+			if err := json.NewDecoder(r.Body).Decode(&patchBody); err != nil {
+				t.Fatalf("decode patch request: %v", err)
+			}
 			_ = json.NewEncoder(w).Encode(types.FileSearchSession{
 				ID:       "fs-1",
 				Provider: "codex",
@@ -98,6 +104,9 @@ func TestClientUpdateAndCloseFileSearch(t *testing.T) {
 	}
 	if search == nil || search.Query != "main.go" || search.Limit != 9 {
 		t.Fatalf("unexpected updated search: %#v", search)
+	}
+	if patchBody.Query == nil || *patchBody.Query != "main.go" || patchBody.Limit == nil || *patchBody.Limit != 9 {
+		t.Fatalf("unexpected update request body: %#v", patchBody)
 	}
 	if err := c.CloseFileSearch(context.Background(), "fs-1"); err != nil {
 		t.Fatalf("CloseFileSearch error: %v", err)

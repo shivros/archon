@@ -126,9 +126,11 @@ func TestAPIFileSearchEventsRequireFollow(t *testing.T) {
 func TestAPIFileSearchEndpointCreatePatchDeleteSuccess(t *testing.T) {
 	query := "main"
 	updateQuery := "main.go"
+	startLimit := 5
+	updateLimit := 9
 	service := &stubHandlerFileSearchService{
-		startResp:  &types.FileSearchSession{ID: "fs-1", Provider: "codex", Query: query, Status: types.FileSearchStatusActive},
-		updateResp: &types.FileSearchSession{ID: "fs-1", Provider: "codex", Query: updateQuery, Status: types.FileSearchStatusActive},
+		startResp:  &types.FileSearchSession{ID: "fs-1", Provider: "codex", Query: query, Limit: startLimit, Status: types.FileSearchStatusActive},
+		updateResp: &types.FileSearchSession{ID: "fs-1", Provider: "codex", Query: updateQuery, Limit: updateLimit, Status: types.FileSearchStatusActive},
 	}
 	api := &API{Version: "test", FileSearches: service}
 	mux := http.NewServeMux()
@@ -136,7 +138,7 @@ func TestAPIFileSearchEndpointCreatePatchDeleteSuccess(t *testing.T) {
 	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
 	defer server.Close()
 
-	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/file-searches", bytes.NewBufferString(`{"scope":{"provider":"codex"},"query":"main"}`))
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/file-searches", bytes.NewBufferString(`{"scope":{"provider":"codex"},"query":"main","limit":5}`))
 	createReq.Header.Set("Authorization", "Bearer token")
 	createReq.Header.Set("Content-Type", "application/json")
 	createResp, err := http.DefaultClient.Do(createReq)
@@ -147,11 +149,11 @@ func TestAPIFileSearchEndpointCreatePatchDeleteSuccess(t *testing.T) {
 	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createResp.StatusCode)
 	}
-	if service.startReq == nil || service.startReq.Query != "main" || service.startReq.Scope.Provider != "codex" {
+	if service.startReq == nil || service.startReq.Query != "main" || service.startReq.Limit != startLimit || service.startReq.Scope.Provider != "codex" {
 		t.Fatalf("unexpected start request: %#v", service.startReq)
 	}
 
-	patchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/file-searches/fs-1", bytes.NewBufferString(`{"query":"main.go"}`))
+	patchReq, _ := http.NewRequest(http.MethodPatch, server.URL+"/v1/file-searches/fs-1", bytes.NewBufferString(`{"query":"main.go","limit":9}`))
 	patchReq.Header.Set("Authorization", "Bearer token")
 	patchReq.Header.Set("Content-Type", "application/json")
 	patchResp, err := http.DefaultClient.Do(patchReq)
@@ -162,7 +164,7 @@ func TestAPIFileSearchEndpointCreatePatchDeleteSuccess(t *testing.T) {
 	if patchResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", patchResp.StatusCode)
 	}
-	if service.updateID != "fs-1" || service.updateReq == nil || service.updateReq.Query == nil || *service.updateReq.Query != "main.go" {
+	if service.updateID != "fs-1" || service.updateReq == nil || service.updateReq.Query == nil || *service.updateReq.Query != "main.go" || service.updateReq.Limit == nil || *service.updateReq.Limit != updateLimit {
 		t.Fatalf("unexpected update call: id=%q req=%#v", service.updateID, service.updateReq)
 	}
 
