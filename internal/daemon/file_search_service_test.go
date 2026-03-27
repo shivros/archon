@@ -261,7 +261,7 @@ func TestFileSearchServiceStartReturnsUnsupportedForProviderWithoutCapability(t 
 	service := NewFileSearchService(nil, logging.Nop())
 
 	_, err := service.Start(context.Background(), types.FileSearchStartRequest{
-		Scope: types.FileSearchScope{Provider: "codex"},
+		Scope: types.FileSearchScope{Provider: "claude"},
 		Query: "main",
 	})
 	serviceErr, ok := err.(*ServiceError)
@@ -277,7 +277,7 @@ func TestFileSearchServiceStartResolvesSessionScopeBeforeCapabilityCheck(t *test
 	scopeResolver := NewDaemonFileSearchScopeResolver(nil, &Stores{
 		Sessions: fileSearchStubSessionIndexStore{
 			record: &types.SessionRecord{
-				Session: &types.Session{ID: "sess-1", Provider: "codex", Cwd: "/repo"},
+				Session: &types.Session{ID: "sess-1", Provider: "claude", Cwd: "/repo"},
 			},
 		},
 		SessionMeta: fileSearchStubSessionMetaStore{

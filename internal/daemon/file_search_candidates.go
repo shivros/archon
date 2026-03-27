@@ -50,20 +50,7 @@ func (defaultFileSearchCandidateNormalizer) Normalize(query string, roots []File
 	for _, entry := range merged {
 		entries = append(entries, entry)
 	}
-	sort.SliceStable(entries, func(i, j int) bool {
-		left := entries[i]
-		right := entries[j]
-		if left.candidate.Score != right.candidate.Score {
-			return left.candidate.Score > right.candidate.Score
-		}
-		if left.primary != right.primary {
-			return left.primary
-		}
-		if left.candidate.DisplayPath != right.candidate.DisplayPath {
-			return left.candidate.DisplayPath < right.candidate.DisplayPath
-		}
-		return left.candidate.Path < right.candidate.Path
-	})
+	sortFileSearchCandidates(entries)
 	if limit > 0 && len(entries) > limit {
 		entries = entries[:limit]
 	}
@@ -80,11 +67,23 @@ type scoredFileSearchCandidate struct {
 }
 
 func normalizeFileSearchCandidate(rawPath string, root FileSearchRoot, query string) (scoredFileSearchCandidate, bool) {
+	candidate, ok := normalizedFileSearchCandidate(rawPath, root)
+	if !ok {
+		return scoredFileSearchCandidate{}, false
+	}
+	candidate.Score = scoreFileSearchCandidate(query, candidate.DisplayPath, candidate.Path)
+	return scoredFileSearchCandidate{
+		candidate: candidate,
+		primary:   root.Primary,
+	}, true
+}
+
+func normalizedFileSearchCandidate(rawPath string, root FileSearchRoot) (types.FileSearchCandidate, bool) {
 	rawPath = strings.TrimSpace(rawPath)
 	root.Path = filepath.Clean(strings.TrimSpace(root.Path))
 	root.DisplayBase = filepath.Clean(strings.TrimSpace(root.DisplayBase))
 	if rawPath == "" || root.Path == "" {
-		return scoredFileSearchCandidate{}, false
+		return types.FileSearchCandidate{}, false
 	}
 
 	absolutePath := rawPath
@@ -106,16 +105,11 @@ func normalizeFileSearchCandidate(rawPath string, root FileSearchRoot, query str
 	if directory == "." {
 		directory = ""
 	}
-	candidate := types.FileSearchCandidate{
+	return types.FileSearchCandidate{
 		Path:        absolutePath,
 		DisplayPath: displayPath,
 		Directory:   directory,
 		Kind:        "file",
-		Score:       scoreFileSearchCandidate(query, displayPath, absolutePath),
-	}
-	return scoredFileSearchCandidate{
-		candidate: candidate,
-		primary:   root.Primary,
 	}, true
 }
 
@@ -161,4 +155,21 @@ func preferFileSearchCandidate(left, right scoredFileSearchCandidate) bool {
 		return left.candidate.DisplayPath < right.candidate.DisplayPath
 	}
 	return left.candidate.Path < right.candidate.Path
+}
+
+func sortFileSearchCandidates(entries []scoredFileSearchCandidate) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := entries[i]
+		right := entries[j]
+		if left.candidate.Score != right.candidate.Score {
+			return left.candidate.Score > right.candidate.Score
+		}
+		if left.primary != right.primary {
+			return left.primary
+		}
+		if left.candidate.DisplayPath != right.candidate.DisplayPath {
+			return left.candidate.DisplayPath < right.candidate.DisplayPath
+		}
+		return left.candidate.Path < right.candidate.Path
+	})
 }

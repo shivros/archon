@@ -46,6 +46,18 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+type codexRPCError struct {
+	Code    int
+	Message string
+}
+
+func (e *codexRPCError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message)
+}
+
 type requestInfo struct {
 	method string
 	start  time.Time
@@ -102,6 +114,10 @@ type codexReasoningEffortDef struct {
 }
 
 func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logging.Logger) (*codexAppServer, error) {
+	return startCodexAppServerWithOptions(ctx, cwd, codexHome, logger, codexInitializeOptions{})
+}
+
+func startCodexAppServerWithOptions(ctx context.Context, cwd, codexHome string, logger logging.Logger, initOpts codexInitializeOptions) (*codexAppServer, error) {
 	if logger == nil {
 		logger = logging.Nop()
 	}
@@ -153,7 +169,7 @@ func startCodexAppServer(ctx context.Context, cwd, codexHome string, logger logg
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := client.initialize(ctx); err != nil {
+	if err := client.initializeWithOptions(ctx, initOpts); err != nil {
 		client.Close()
 		return nil, err
 	}
@@ -194,13 +210,16 @@ func (c *codexAppServer) Requests() <-chan rpcMessage {
 }
 
 func (c *codexAppServer) initialize(ctx context.Context) error {
-	params := map[string]any{
-		"clientInfo": map[string]any{
-			"name":    "archon",
-			"title":   "Archon",
-			"version": "dev",
-		},
-	}
+	return c.initializeWithOptions(ctx, codexInitializeOptions{})
+}
+
+func (c *codexAppServer) initializeWithOptions(ctx context.Context, opts codexInitializeOptions) error {
+	params := codexInitializeParams(codexInitializeOptions{
+		ClientName:      defaultCodexInitializeString(opts.ClientName, "archon"),
+		ClientTitle:     defaultCodexInitializeString(opts.ClientTitle, "Archon"),
+		ClientVersion:   defaultCodexInitializeString(opts.ClientVersion, "dev"),
+		ExperimentalAPI: opts.ExperimentalAPI,
+	})
 	if err := c.request(ctx, "initialize", params, nil); err != nil {
 		return err
 	}
@@ -247,6 +266,47 @@ func (c *codexAppServer) ListModels(ctx context.Context, cursor *string, limit i
 		return nil, err
 	}
 	return &result, nil
+}
+
+type codexFuzzyFileSearchResponse struct {
+	Files []codexFuzzyFileSearchResult `json:"files"`
+}
+
+type codexFuzzyFileSearchResult struct {
+	FileName string `json:"file_name"`
+	Indices  []int  `json:"indices,omitempty"`
+	Path     string `json:"path"`
+	Root     string `json:"root"`
+	Score    int    `json:"score"`
+}
+
+func (c *codexAppServer) FuzzyFileSearch(ctx context.Context, query string, roots []string) (*codexFuzzyFileSearchResponse, error) {
+	params := map[string]any{
+		"query": strings.TrimSpace(query),
+		"roots": codexFuzzyFileSearchRoots(roots),
+	}
+	var result codexFuzzyFileSearchResponse
+	if err := c.request(ctx, "fuzzyFileSearch", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func codexFuzzyFileSearchRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	return out
 }
 
 func (c *codexAppServer) ResumeThread(ctx context.Context, threadID string) error {
@@ -440,7 +500,7 @@ func (c *codexAppServer) request(ctx context.Context, method string, params any,
 						logging.F("message", msg.Error.Message),
 					)
 				}
-				return fmt.Errorf("rpc error %d: %s", msg.Error.Code, msg.Error.Message)
+				return &codexRPCError{Code: msg.Error.Code, Message: msg.Error.Message}
 			}
 			if out != nil && len(msg.Result) > 0 {
 				if err := json.Unmarshal(msg.Result, out); err != nil {

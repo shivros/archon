@@ -291,13 +291,11 @@ func extractCommandOutputDelta(raw json.RawMessage) (string, string) {
 }
 
 func (c *codexController) initialize(ctx context.Context) error {
-	_, err := c.request(ctx, "initialize", map[string]any{
-		"clientInfo": map[string]string{
-			"name":    "archon_cli",
-			"title":   "Archon CLI",
-			"version": "0.0.0",
-		},
-	})
+	_, err := c.request(ctx, "initialize", codexInitializeParams(codexInitializeOptions{
+		ClientName:    "archon_cli",
+		ClientTitle:   "Archon CLI",
+		ClientVersion: "0.0.0",
+	}))
 	if err != nil {
 		return err
 	}

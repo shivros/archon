@@ -42,6 +42,7 @@ var registry = []Definition{
 			SupportsEvents:                 true,
 			SupportsApprovals:              true,
 			SupportsInterrupt:              true,
+			SupportsFileSearch:             true,
 		},
 		Bootstrap: BootstrapProfile{
 			HistoryConsistency:     HistoryConsistencyEventuallyConsistent,

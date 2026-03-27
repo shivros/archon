@@ -71,7 +71,7 @@ func TestAPIFileSearchEndpointReturnsUnsupportedProviderError(t *testing.T) {
 	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
 	defer server.Close()
 
-	body := bytes.NewBufferString(`{"scope":{"provider":"codex"},"query":"main"}`)
+	body := bytes.NewBufferString(`{"scope":{"provider":"claude"},"query":"main"}`)
 	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/file-searches", body)
 	req.Header.Set("Authorization", "Bearer token")
 	req.Header.Set("Content-Type", "application/json")

@@ -22,6 +22,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsEvents:                 true,
 				SupportsApprovals:              true,
 				SupportsInterrupt:              true,
+				SupportsFileSearch:             true,
 			},
 			bootstrap: BootstrapProfile{
 				HistoryConsistency:     HistoryConsistencyEventuallyConsistent,
@@ -159,8 +160,8 @@ func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
 	if !caps.SupportsGuidedWorkflowDispatch || !caps.SupportsEvents || !caps.SupportsApprovals || !caps.SupportsInterrupt {
 		t.Fatalf("unexpected codex capabilities: %#v", caps)
 	}
-	if caps.SupportsFileSearch {
-		t.Fatalf("expected codex file search support to remain disabled")
+	if !caps.SupportsFileSearch {
+		t.Fatalf("expected codex file search support to be enabled")
 	}
 
 	opencodeCaps := CapabilitiesFor("opencode")

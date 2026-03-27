@@ -223,7 +223,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.FileSearches = NewFileSearchService(
 		NewDaemonFileSearchScopeResolver(d.manager, d.stores),
 		d.logger,
-		WithFileSearchRuntimeRegistry(newDaemonFileSearchRuntimeRegistry(d.stores, nil)),
+		WithFileSearchRuntimeRegistry(newDaemonFileSearchRuntimeRegistry(d.stores, nil, d.logger)),
 	)
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
