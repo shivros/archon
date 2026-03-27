@@ -22,6 +22,7 @@ type fileSearchHubEntry struct {
 	runtime        FileSearchRuntime
 	subscribers    map[int]chan types.FileSearchEvent
 	nextSubscriber int
+	replay         *fileSearchReplayState
 }
 
 type memoryFileSearchHub struct {
@@ -42,6 +43,7 @@ func (h *memoryFileSearchHub) Register(searchID string, session *types.FileSearc
 		session:     cloneFileSearchSession(session),
 		runtime:     runtime,
 		subscribers: map[int]chan types.FileSearchEvent{},
+		replay:      newFileSearchReplayState(),
 	}
 	return nil
 }
@@ -64,13 +66,18 @@ func (h *memoryFileSearchHub) Publish(searchID string, session *types.FileSearch
 		return errFileSearchHubNotFound
 	}
 	entry.session = cloneFileSearchSession(session)
-	subscribers := entrySubscriberChannels(entry)
+	if entry.replay == nil {
+		entry.replay = newFileSearchReplayState()
+	}
+	entry.replay.Apply(entry.session, event)
+	broadcastFileSearchEvent(entrySubscriberChannels(entry), event)
+	subscribers := []chan types.FileSearchEvent(nil)
 	if terminal {
+		subscribers = entryDetachSubscriberChannels(entry)
 		delete(h.entries, searchID)
 	}
 	h.mu.Unlock()
 
-	broadcastFileSearchEvent(subscribers, event)
 	if terminal {
 		closeFileSearchSubscribers(subscribers)
 	}
@@ -91,6 +98,12 @@ func (h *memoryFileSearchHub) Subscribe(ctx context.Context, id string) (<-chan 
 	subID := entry.nextSubscriber
 	ch := make(chan types.FileSearchEvent, 32)
 	entry.subscribers[subID] = ch
+	if replay := replayableFileSearchEvent(entry); replay != nil {
+		select {
+		case ch <- *replay:
+		default:
+		}
+	}
 	h.mu.Unlock()
 
 	cancel := func() {
@@ -135,4 +148,22 @@ func entrySubscriberChannels(entry *fileSearchHubEntry) []chan types.FileSearchE
 		}
 	}
 	return channels
+}
+
+func entryDetachSubscriberChannels(entry *fileSearchHubEntry) []chan types.FileSearchEvent {
+	channels := entrySubscriberChannels(entry)
+	if entry != nil {
+		entry.subscribers = map[int]chan types.FileSearchEvent{}
+	}
+	return channels
+}
+
+func replayableFileSearchEvent(entry *fileSearchHubEntry) *types.FileSearchEvent {
+	if entry == nil {
+		return nil
+	}
+	if entry.replay == nil {
+		return nil
+	}
+	return entry.replay.ReplayEvent(entry.session)
 }

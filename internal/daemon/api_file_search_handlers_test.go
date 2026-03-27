@@ -1,15 +1,20 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"control/internal/apicode"
 	"control/internal/logging"
+	"control/internal/providers"
 	"control/internal/types"
 )
 
@@ -246,4 +251,168 @@ func TestAPIFileSearchEventsStreamSuccess(t *testing.T) {
 	if !bytes.Contains(body.Bytes(), []byte(`"kind":"file_search.results"`)) {
 		t.Fatalf("expected streamed event payload, got %q", body.String())
 	}
+}
+
+func TestAPIFileSearchEventsLateSubscriberReceivesInitialResults(t *testing.T) {
+	hub := newNotifyingFileSearchHub(NewMemoryFileSearchHub())
+	service := NewFileSearchService(
+		nil,
+		logging.Nop(),
+		WithFileSearchCapabilityResolver(stubFileSearchCapabilityResolver{
+			caps: map[string]providers.Capabilities{
+				"stub": {SupportsFileSearch: true},
+			},
+		}),
+		WithFileSearchIDGenerator(stubFileSearchIDGenerator{id: "fs-1"}),
+		WithFileSearchProviderRegistry(NewFileSearchProviderRegistry(map[string]FileSearchProvider{
+			"stub": fileSearchProviderFunc(func(_ context.Context, req FileSearchProviderStartRequest) (FileSearchRuntime, error) {
+				session := &types.FileSearchSession{
+					ID:        req.SearchID,
+					Provider:  req.Provider,
+					Scope:     req.Scope,
+					Query:     req.Query,
+					Limit:     req.Limit,
+					Status:    types.FileSearchStatusActive,
+					CreatedAt: req.CreatedAt,
+				}
+				runtime := &stubFileSearchRuntime{
+					session: session,
+					events:  make(chan types.FileSearchEvent, 8),
+				}
+				occurredAt := time.Now().UTC()
+				runtime.events <- buildFileSearchEvent(types.FileSearchEventStarted, session, nil, "", occurredAt)
+				runtime.events <- buildFileSearchEvent(types.FileSearchEventResults, session, []types.FileSearchCandidate{
+					{Path: "main.go", DisplayPath: "./main.go"},
+				}, "", occurredAt)
+				return runtime, nil
+			}),
+		})),
+		WithFileSearchHub(hub),
+	)
+
+	api := &API{Version: "test", FileSearches: service}
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/file-searches", bytes.NewBufferString(`{"scope":{"provider":"stub","workspace_id":"ws-1"},"query":"main","limit":5}`))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create file search: %v", err)
+	}
+	defer closeTestCloser(t, createResp.Body)
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", createResp.StatusCode)
+	}
+
+	waitForFileSearchEventKind(t, hub.published, types.FileSearchEventResults)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	streamReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/file-searches/fs-1/events?follow=1", nil)
+	streamReq.Header.Set("Authorization", "Bearer token")
+	resp, err := http.DefaultClient.Do(streamReq)
+	if err != nil {
+		t.Fatalf("stream file search events: %v", err)
+	}
+	defer closeTestCloser(t, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	event, err := readFirstFileSearchSSEEvent(resp.Body)
+	if err != nil {
+		t.Fatalf("read first sse event: %v", err)
+	}
+	if event.Kind != types.FileSearchEventResults || event.Query != "main" || len(event.Candidates) != 1 || event.Candidates[0].Path != "main.go" {
+		t.Fatalf("unexpected replayed sse event: %#v", event)
+	}
+}
+
+func TestAPIFileSearchEventsReturnsNotFoundAfterClose(t *testing.T) {
+	service := NewFileSearchService(
+		nil,
+		logging.Nop(),
+		WithFileSearchCapabilityResolver(stubFileSearchCapabilityResolver{
+			caps: map[string]providers.Capabilities{
+				"stub": {SupportsFileSearch: true},
+			},
+		}),
+		WithFileSearchIDGenerator(stubFileSearchIDGenerator{id: "fs-1"}),
+		WithFileSearchProviderRegistry(NewFileSearchProviderRegistry(map[string]FileSearchProvider{
+			"stub": &stubFileSearchProvider{
+				runtime: &stubFileSearchRuntime{
+					events: make(chan types.FileSearchEvent, 8),
+				},
+			},
+		})),
+	)
+
+	api := &API{Version: "test", FileSearches: service}
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux)
+	server := httptest.NewServer(TokenAuthMiddleware("token", mux))
+	defer server.Close()
+
+	createReq, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/file-searches", bytes.NewBufferString(`{"scope":{"provider":"stub"},"query":"main"}`))
+	createReq.Header.Set("Authorization", "Bearer token")
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp, err := http.DefaultClient.Do(createReq)
+	if err != nil {
+		t.Fatalf("create file search: %v", err)
+	}
+	defer closeTestCloser(t, createResp.Body)
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", createResp.StatusCode)
+	}
+
+	deleteReq, _ := http.NewRequest(http.MethodDelete, server.URL+"/v1/file-searches/fs-1", nil)
+	deleteReq.Header.Set("Authorization", "Bearer token")
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("delete file search: %v", err)
+	}
+	defer closeTestCloser(t, deleteResp.Body)
+	if deleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", deleteResp.StatusCode)
+	}
+
+	eventsReq, _ := http.NewRequest(http.MethodGet, server.URL+"/v1/file-searches/fs-1/events?follow=1", nil)
+	eventsReq.Header.Set("Authorization", "Bearer token")
+	eventsResp, err := http.DefaultClient.Do(eventsReq)
+	if err != nil {
+		t.Fatalf("get events after close: %v", err)
+	}
+	defer closeTestCloser(t, eventsResp.Body)
+	if eventsResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", eventsResp.StatusCode)
+	}
+}
+
+func readFirstFileSearchSSEEvent(body io.Reader) (types.FileSearchEvent, error) {
+	scanner := bufio.NewScanner(body)
+	var payload bytes.Buffer
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if payload.Len() == 0 {
+				continue
+			}
+			var event types.FileSearchEvent
+			if err := json.Unmarshal(payload.Bytes(), &event); err != nil {
+				return types.FileSearchEvent{}, err
+			}
+			return event, nil
+		}
+		if strings.HasPrefix(line, "data:") {
+			payload.WriteString(strings.TrimSpace(line[len("data:"):]))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return types.FileSearchEvent{}, err
+	}
+	return types.FileSearchEvent{}, context.DeadlineExceeded
 }

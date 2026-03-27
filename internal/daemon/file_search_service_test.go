@@ -181,6 +181,32 @@ func (h *fakeFileSearchHub) Subscribe(_ context.Context, _ string) (<-chan types
 	return h.eventCh, func() { h.cancelCount++ }, nil
 }
 
+type notifyingFileSearchHub struct {
+	FileSearchHub
+	published chan types.FileSearchEvent
+}
+
+func newNotifyingFileSearchHub(base FileSearchHub) *notifyingFileSearchHub {
+	if base == nil {
+		base = NewMemoryFileSearchHub()
+	}
+	return &notifyingFileSearchHub{
+		FileSearchHub: base,
+		published:     make(chan types.FileSearchEvent, 32),
+	}
+}
+
+func (h *notifyingFileSearchHub) Publish(searchID string, session *types.FileSearchSession, event types.FileSearchEvent, terminal bool) error {
+	if err := h.FileSearchHub.Publish(searchID, session, event, terminal); err != nil {
+		return err
+	}
+	select {
+	case h.published <- event:
+	default:
+	}
+	return nil
+}
+
 type errSessionIndexStore struct{ err error }
 
 func (s errSessionIndexStore) ListRecords(context.Context) ([]*types.SessionRecord, error) {
@@ -400,6 +426,156 @@ func TestFileSearchServiceOrchestratesStubProviderRuntime(t *testing.T) {
 	}
 }
 
+func TestFileSearchServiceStartWithQueryLateSubscribeReceivesInitialResults(t *testing.T) {
+	hub := newNotifyingFileSearchHub(NewMemoryFileSearchHub())
+	service := NewFileSearchService(
+		nil,
+		logging.Nop(),
+		WithFileSearchCapabilityResolver(stubFileSearchCapabilityResolver{
+			caps: map[string]providers.Capabilities{
+				"stub": {SupportsFileSearch: true},
+			},
+		}),
+		WithFileSearchIDGenerator(stubFileSearchIDGenerator{id: "fs-1"}),
+		WithFileSearchProviderRegistry(NewFileSearchProviderRegistry(map[string]FileSearchProvider{
+			"stub": fileSearchProviderFunc(func(_ context.Context, req FileSearchProviderStartRequest) (FileSearchRuntime, error) {
+				session := &types.FileSearchSession{
+					ID:        req.SearchID,
+					Provider:  req.Provider,
+					Scope:     req.Scope,
+					Query:     req.Query,
+					Limit:     req.Limit,
+					Status:    types.FileSearchStatusActive,
+					CreatedAt: req.CreatedAt,
+				}
+				runtime := &stubFileSearchRuntime{
+					session: session,
+					events:  make(chan types.FileSearchEvent, 8),
+				}
+				occurredAt := time.Now().UTC()
+				runtime.events <- buildFileSearchEvent(types.FileSearchEventStarted, session, nil, "", occurredAt)
+				runtime.events <- buildFileSearchEvent(types.FileSearchEventResults, session, []types.FileSearchCandidate{
+					{Path: "main.go", DisplayPath: "./main.go"},
+				}, "", occurredAt)
+				return runtime, nil
+			}),
+		})),
+		WithFileSearchHub(hub),
+	)
+
+	search, err := service.Start(context.Background(), types.FileSearchStartRequest{
+		Scope: types.FileSearchScope{Provider: "stub", WorkspaceID: "ws-1"},
+		Query: "main",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	waitForFileSearchEventKind(t, hub.published, types.FileSearchEventResults)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	events, stop, err := service.Subscribe(ctx, search.ID)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer stop()
+
+	select {
+	case event := <-events:
+		if event.Kind != types.FileSearchEventResults || event.Query != "main" || len(event.Candidates) != 1 || event.Candidates[0].Path != "main.go" {
+			t.Fatalf("unexpected replayed event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for replayed results event")
+	}
+}
+
+func TestFileSearchServiceUpdateLateSubscribeReplaysResultsOverUpdated(t *testing.T) {
+	provider := &stubFileSearchProvider{
+		runtime: &stubFileSearchRuntime{
+			events: make(chan types.FileSearchEvent, 8),
+		},
+	}
+	hub := newNotifyingFileSearchHub(NewMemoryFileSearchHub())
+	service := NewFileSearchService(
+		nil,
+		logging.Nop(),
+		WithFileSearchCapabilityResolver(stubFileSearchCapabilityResolver{
+			caps: map[string]providers.Capabilities{
+				"stub": {SupportsFileSearch: true},
+			},
+		}),
+		WithFileSearchIDGenerator(stubFileSearchIDGenerator{id: "fs-1"}),
+		WithFileSearchProviderRegistry(NewFileSearchProviderRegistry(map[string]FileSearchProvider{
+			"stub": provider,
+		})),
+		WithFileSearchHub(hub),
+	)
+
+	search, err := service.Start(context.Background(), types.FileSearchStartRequest{
+		Scope: types.FileSearchScope{Provider: "stub", WorkspaceID: "ws-1"},
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	query := "main.go"
+	limit := 9
+	provider.runtime.session = &types.FileSearchSession{
+		ID:        search.ID,
+		Provider:  "stub",
+		Scope:     types.FileSearchScope{Provider: "stub", WorkspaceID: "ws-1"},
+		Query:     "",
+		Limit:     5,
+		Status:    types.FileSearchStatusActive,
+		CreatedAt: search.CreatedAt,
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = service.Update(context.Background(), search.ID, types.FileSearchUpdateRequest{
+			Query: &query,
+			Limit: &limit,
+		})
+	}()
+
+	waitForFileSearchEventKind(t, hub.published, types.FileSearchEventUpdated)
+	provider.runtime.events <- types.FileSearchEvent{
+		Kind:     types.FileSearchEventResults,
+		SearchID: search.ID,
+		Provider: "stub",
+		Scope:    types.FileSearchScope{Provider: "stub", WorkspaceID: "ws-1"},
+		Query:    query,
+		Limit:    limit,
+		Status:   types.FileSearchStatusActive,
+		Candidates: []types.FileSearchCandidate{
+			{Path: "main.go", DisplayPath: "./main.go"},
+		},
+	}
+	waitForFileSearchEventKind(t, hub.published, types.FileSearchEventResults)
+	<-done
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	events, stop, err := service.Subscribe(ctx, search.ID)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer stop()
+
+	select {
+	case event := <-events:
+		if event.Kind != types.FileSearchEventResults || event.Query != query || len(event.Candidates) != 1 || event.Candidates[0].Path != "main.go" {
+			t.Fatalf("unexpected replayed event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for replayed results event")
+	}
+}
+
 func TestFileSearchServiceStartReturnsUnavailableWhenRegistryMissingProvider(t *testing.T) {
 	service := NewFileSearchService(
 		nil,
@@ -556,6 +732,21 @@ func TestFileSearchServiceSubscribeMapsHubNotFound(t *testing.T) {
 	service := NewFileSearchService(nil, logging.Nop(), WithFileSearchHub(&fakeFileSearchHub{subscribeErr: errFileSearchHubNotFound}))
 	if _, _, err := service.Subscribe(context.Background(), "fs-1"); err == nil {
 		t.Fatalf("expected not found error")
+	}
+}
+
+func waitForFileSearchEventKind(t *testing.T, ch <-chan types.FileSearchEvent, kind types.FileSearchEventKind) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case event := <-ch:
+			if event.Kind == kind {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for event kind %q", kind)
+		}
 	}
 }
 
