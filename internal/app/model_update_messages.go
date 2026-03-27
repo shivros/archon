@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -548,85 +549,21 @@ func (m *Model) asyncSessionProjectionCmd(
 		return nil
 	}
 	token := sessionProjectionToken(key, id)
-	seq := m.nextSessionProjectionSeq(token, policy.MaxTrackedProjectionTokens())
-	return projectSessionBlocksCmd(source, id, key, provider, rules, items, previous, approvals, resolutions, seq)
-}
-
-func (m *Model) nextSessionProjectionSeq(token string, maxTracked int) int {
-	if m == nil || strings.TrimSpace(token) == "" {
-		return 0
-	}
-	if m.sessionProjectionLatest == nil {
-		m.sessionProjectionLatest = map[string]int{}
-	}
-	m.sessionProjectionSeq++
-	m.sessionProjectionLatest[token] = m.sessionProjectionSeq
-	m.pruneSessionProjectionTokens(maxTracked)
-	return m.sessionProjectionSeq
-}
-
-func (m *Model) pruneSessionProjectionTokens(maxTracked int) {
-	if m == nil || maxTracked <= 0 || len(m.sessionProjectionLatest) <= maxTracked {
-		return
-	}
-	excess := len(m.sessionProjectionLatest) - maxTracked
-	for excess > 0 {
-		oldestToken := ""
-		oldestSeq := 0
-		for token, seq := range m.sessionProjectionLatest {
-			if oldestToken == "" || seq < oldestSeq {
-				oldestToken = token
-				oldestSeq = seq
-			}
-		}
-		if oldestToken == "" {
-			return
-		}
-		delete(m.sessionProjectionLatest, oldestToken)
-		excess--
-	}
-}
-
-func (m *Model) isCurrentSessionProjection(key, id string, seq int) bool {
-	if m == nil || seq <= 0 {
-		return true
-	}
-	token := sessionProjectionToken(key, id)
-	if token == "" || m.sessionProjectionLatest == nil {
-		return false
-	}
-	latest, ok := m.sessionProjectionLatest[token]
-	if !ok {
-		return false
-	}
-	return seq == latest
-}
-
-func (m *Model) hasPendingSessionProjection(key, id string) bool {
-	if m == nil || m.sessionProjectionLatest == nil {
-		return false
-	}
-	token := sessionProjectionToken(key, id)
-	if token == "" {
-		return false
-	}
-	_, ok := m.sessionProjectionLatest[token]
-	return ok
-}
-
-func (m *Model) consumeSessionProjectionToken(key, id string, seq int) {
-	if m == nil || seq <= 0 || m.sessionProjectionLatest == nil {
-		return
-	}
-	token := sessionProjectionToken(key, id)
-	if token == "" {
-		return
-	}
-	latest, ok := m.sessionProjectionLatest[token]
-	if !ok || latest != seq {
-		return
-	}
-	delete(m.sessionProjectionLatest, token)
+	ctx, seq := m.sessionProjectionCoordinatorOrDefault().Schedule(token, m.requestScopeContext(requestScopeSessionLoad))
+	return projectSessionBlocksCmd(
+		ctx,
+		m.sessionBlockProjectorOrDefault(),
+		source,
+		id,
+		key,
+		provider,
+		rules,
+		items,
+		previous,
+		approvals,
+		resolutions,
+		seq,
+	)
 }
 
 func sessionProjectionToken(key, id string) string {
@@ -642,6 +579,8 @@ func sessionProjectionToken(key, id string) string {
 }
 
 func projectSessionBlocksCmd(
+	ctx context.Context,
+	projector SessionBlockProjector,
 	source sessionProjectionSource,
 	id, key, provider string,
 	rules sessionBlockProjectionRules,
@@ -656,7 +595,17 @@ func projectSessionBlocksCmd(
 	approvalsCopy := normalizeApprovalRequests(approvals)
 	resolutionsCopy := normalizeApprovalResolutions(resolutions)
 	return func() tea.Msg {
-		blocks := projectSessionBlocksFromItems(provider, rules, itemsCopy, previousCopy, approvalsCopy, resolutionsCopy)
+		if projector == nil {
+			projector = defaultSessionBlockProjector{}
+		}
+		blocks, err := projector.ProjectSessionBlocks(ctx, SessionBlockProjectionInput{
+			Provider:    provider,
+			Rules:       rules,
+			Items:       itemsCopy,
+			Previous:    previousCopy,
+			Approvals:   approvalsCopy,
+			Resolutions: resolutionsCopy,
+		})
 		return sessionBlocksProjectedMsg{
 			source:        source,
 			id:            id,
@@ -664,6 +613,7 @@ func projectSessionBlocksCmd(
 			provider:      provider,
 			blocks:        blocks,
 			projectionSeq: seq,
+			err:           err,
 		}
 	}
 }
@@ -1008,9 +958,22 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 	case transcriptSnapshotMsg:
 		return true, m.applyTranscriptSnapshotMsg(msg)
 	case sessionBlocksProjectedMsg:
-		if !m.isCurrentSessionProjection(msg.key, msg.id, msg.projectionSeq) {
+		token := sessionProjectionToken(msg.key, msg.id)
+		coordinator := m.sessionProjectionCoordinatorOrDefault()
+		current := coordinator.IsCurrent(token, msg.projectionSeq)
+		if msg.err != nil {
+			if current {
+				coordinator.Consume(token, msg.projectionSeq)
+			}
+			if isCanceledRequestError(msg.err) {
+				return true, nil
+			}
+			m.setBackgroundError("session projection error: " + msg.err.Error())
+			return true, nil
+		}
+		if !current {
 			m.recordTranscriptBoundaryMetric(newStaleRevisionDropMetric(
-				classifyProjectionDropReason(msg.key, msg.id, msg.projectionSeq, m.sessionProjectionLatest),
+				classifyProjectionDropReason(msg.key, msg.id, msg.projectionSeq, coordinator.LatestByToken()),
 				transcriptSourceSessionBlocksProject,
 				msg.id,
 				msg.provider,
@@ -1018,7 +981,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		m.applySessionProjection(msg.source, msg.id, msg.key, msg.blocks)
-		m.consumeSessionProjectionToken(msg.key, msg.id, msg.projectionSeq)
+		coordinator.Consume(token, msg.projectionSeq)
 		return true, nil
 	case debugPanelProjectedMsg:
 		m.applyDebugPanelProjection(msg)
@@ -1049,7 +1012,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		} else if currentAgents > 0 {
 			return true, nil
 		}
-		if m.hasPendingSessionProjection(msg.key, msg.id) {
+		if m.sessionProjectionCoordinatorOrDefault().HasPending(sessionProjectionToken(msg.key, msg.id)) {
 			return true, historyPollCmd(msg.id, msg.key, msg.attempt+1, historyPollDelay, msg.minAgents)
 		}
 		provider := m.providerForSessionID(msg.id)
@@ -1487,17 +1450,74 @@ func projectSessionBlocksFromItems(
 	approvals []*ApprovalRequest,
 	resolutions []*ApprovalResolution,
 ) []ChatBlock {
-	blocks := itemsToBlocks(items)
+	blocks, _ := projectSessionBlocksFromItemsWithContext(
+		context.Background(),
+		provider,
+		rules,
+		items,
+		previous,
+		approvals,
+		resolutions,
+	)
+	return blocks
+}
+
+const projectionCancellationCheckInterval = 32
+
+func projectionContextCheckNeeded(index int) bool {
+	return index%projectionCancellationCheckInterval == 0
+}
+
+func projectionContextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+func projectSessionBlocksFromItemsWithContext(
+	ctx context.Context,
+	provider string,
+	rules sessionBlockProjectionRules,
+	items []map[string]any,
+	previous []ChatBlock,
+	approvals []*ApprovalRequest,
+	resolutions []*ApprovalResolution,
+) ([]ChatBlock, error) {
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
+	blocks, err := itemsToBlocksWithContext(ctx, items)
+	if err != nil {
+		return nil, err
+	}
 	if rules.CoalesceReasoning {
-		blocks = coalesceAdjacentReasoningBlocks(blocks)
+		blocks, err = coalesceAdjacentReasoningBlocksWithContext(ctx, blocks)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if rules.SupportsApprovals {
 		approvals = filterApprovalRequestsForProvider(provider, approvals)
 		resolutions = filterApprovalResolutionsForProvider(provider, resolutions)
-		blocks = mergeApprovalBlocks(blocks, approvals, resolutions)
-		blocks = preserveApprovalPositions(previous, blocks)
+		blocks, err = mergeApprovalBlocksWithContext(ctx, blocks, approvals, resolutions)
+		if err != nil {
+			return nil, err
+		}
+		blocks, err = preserveApprovalPositionsWithContext(ctx, previous, blocks)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return blocks
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
+	return blocks, nil
 }
 
 func (m *Model) activeStreamTargetID() string {

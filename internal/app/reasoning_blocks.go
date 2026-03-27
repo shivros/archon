@@ -1,13 +1,29 @@
 package app
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 func coalesceAdjacentReasoningBlocks(blocks []ChatBlock) []ChatBlock {
+	coalesced, _ := coalesceAdjacentReasoningBlocksWithContext(context.Background(), blocks)
+	return coalesced
+}
+
+func coalesceAdjacentReasoningBlocksWithContext(ctx context.Context, blocks []ChatBlock) ([]ChatBlock, error) {
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
 	if len(blocks) <= 1 {
-		return blocks
+		return blocks, nil
 	}
 	result := make([]ChatBlock, 0, len(blocks))
-	for _, block := range blocks {
+	for i, block := range blocks {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		text := strings.TrimSpace(block.Text)
 		if len(result) == 0 || block.Role != ChatRoleReasoning || result[len(result)-1].Role != ChatRoleReasoning {
 			result = append(result, block)
@@ -30,5 +46,8 @@ func coalesceAdjacentReasoningBlocks(blocks []ChatBlock) []ChatBlock {
 		}
 		last.Text = lastText + "\n\n" + text
 	}
-	return result
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

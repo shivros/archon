@@ -56,10 +56,23 @@ func WithSessionProjectionPolicy(policy SessionProjectionPolicy) ModelOption {
 			return
 		}
 		if policy == nil {
-			m.sessionProjectionPolicy = defaultSessionProjectionPolicy{}
-			return
+			policy = defaultSessionProjectionPolicy{}
 		}
 		m.sessionProjectionPolicy = policy
+		m.sessionProjectionCoordinator = NewDefaultSessionProjectionCoordinator(policy, nil)
+	}
+}
+
+func WithSessionProjectionCoordinator(coordinator sessionProjectionCoordinator) ModelOption {
+	return func(m *Model) {
+		if m == nil {
+			return
+		}
+		if coordinator == nil {
+			m.sessionProjectionCoordinator = NewDefaultSessionProjectionCoordinator(m.sessionProjectionPolicyOrDefault(), nil)
+			return
+		}
+		m.sessionProjectionCoordinator = coordinator
 	}
 }
 

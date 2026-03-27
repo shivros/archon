@@ -226,8 +226,6 @@ type Model struct {
 	sectionVersion                       int
 	transcriptCache                      map[string][]ChatBlock
 	pendingSessionKey                    string
-	sessionProjectionSeq                 int
-	sessionProjectionLatest              map[string]int
 	historyWindowBySessionKey            map[string]int
 	historyTraverseInFlight              map[string]int
 	historyTraverseExhausted             map[string]bool
@@ -351,7 +349,9 @@ type Model struct {
 	sidebarExpansionService              SidebarExpansionService
 	sidebarUpdatePolicy                  SidebarUpdatePolicy
 	sessionProjectionPolicy              SessionProjectionPolicy
+	sessionProjectionCoordinator         sessionProjectionCoordinator
 	sessionProjectionPostProcessor       SessionProjectionPostProcessor
+	sessionBlockProjector                SessionBlockProjector
 	approvalStateService                 ApprovalStateService
 	transcriptComposer                   TranscriptComposer
 	optimisticOverlayService             OptimisticOverlayService
@@ -617,7 +617,6 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		renderedForRelativeBucket:           -1,
 		sectionVersion:                      -1,
 		transcriptCache:                     map[string][]ChatBlock{},
-		sessionProjectionLatest:             map[string]int{},
 		historyWindowBySessionKey:           map[string]int{},
 		historyTraverseInFlight:             map[string]int{},
 		historyTraverseExhausted:            map[string]bool{},
@@ -677,6 +676,8 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		sidebarExpansionService:             defaultSidebarExpansionService{},
 		sidebarUpdatePolicy:                 defaultSidebarUpdatePolicy{},
 		sessionProjectionPolicy:             defaultSessionProjectionPolicy{},
+		sessionProjectionCoordinator:        NewDefaultSessionProjectionCoordinator(defaultSessionProjectionPolicy{}, nil),
+		sessionBlockProjector:               defaultSessionBlockProjector{},
 		transcriptSignalClassifier:          defaultTranscriptSignalClassifier{},
 		streamHealthPolicy:                  defaultStreamHealthPolicy{},
 		transcriptRecoveryScheduler:         defaultTranscriptRecoveryScheduler{},

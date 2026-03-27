@@ -219,8 +219,9 @@ func TestHistoryPollWaitsForPendingAsyncProjection(t *testing.T) {
 	if m.compose != nil {
 		m.compose.Enter("s1", "Session")
 	}
-	m.sessionProjectionLatest = map[string]int{
-		sessionProjectionToken("sess:s1", "s1"): 17,
+	ctx, seq := m.sessionProjectionCoordinatorOrDefault().Schedule(sessionProjectionToken("sess:s1", "s1"), context.Background())
+	if ctx == nil || seq == 0 {
+		t.Fatalf("expected pending session projection to be scheduled")
 	}
 
 	handled, cmd := m.reduceStateMessages(historyPollMsg{

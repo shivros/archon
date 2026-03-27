@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,6 +222,149 @@ func TestReduceStateMessagesIgnoresStaleSessionProjection(t *testing.T) {
 	}
 }
 
+func TestAsyncSessionProjectionCancelsSupersededWork(t *testing.T) {
+	projector := &blockingSessionBlockProjector{}
+	m := NewModel(nil,
+		WithSessionProjectionPolicy(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 4}),
+		WithSessionBlockProjector(projector),
+	)
+	m.pendingSessionKey = "sess:s1"
+	m.loadingKey = "sess:s1"
+	m.loading = true
+	m.sessions = []*types.Session{{ID: "s1", Provider: "codex"}}
+	m.replaceRequestScope(requestScopeSessionLoad)
+
+	handled, cmd1 := m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: fakeHistoryItems(1),
+	})
+	if !handled || cmd1 == nil {
+		t.Fatalf("expected first async projection command")
+	}
+
+	msg1Ch := make(chan tea.Msg, 1)
+	go func() {
+		msg1Ch <- cmd1()
+	}()
+
+	call1 := waitForProjectionCall(t, projector, 0)
+	select {
+	case <-call1.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for first projection to start")
+	}
+
+	handled, cmd2 := m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: fakeHistoryItems(2),
+	})
+	if !handled || cmd2 == nil {
+		t.Fatalf("expected second async projection command")
+	}
+
+	select {
+	case <-call1.canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected superseded projection to be canceled")
+	}
+
+	msg1 := (<-msg1Ch).(sessionBlocksProjectedMsg)
+	if !isCanceledRequestError(msg1.err) {
+		t.Fatalf("expected first projection to return canceled error, got %v", msg1.err)
+	}
+
+	msg2Ch := make(chan tea.Msg, 1)
+	go func() {
+		msg2Ch <- cmd2()
+	}()
+
+	call2 := waitForProjectionCall(t, projector, 1)
+	select {
+	case <-call2.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for second projection to start")
+	}
+	close(call2.continueCh)
+
+	msg2 := (<-msg2Ch).(sessionBlocksProjectedMsg)
+	if msg2.err != nil {
+		t.Fatalf("expected second projection to complete successfully, got %v", msg2.err)
+	}
+
+	if handled, followUp := m.reduceStateMessages(msg2); !handled || followUp != nil {
+		t.Fatalf("expected second projection result to apply without follow-up")
+	}
+	latestText := tailBlockText(m.currentBlocks())
+	if latestText == "" || !strings.Contains(latestText, "reply-001") {
+		t.Fatalf("expected latest projection output to apply, got %q", latestText)
+	}
+
+	if handled, followUp := m.reduceStateMessages(msg1); !handled || followUp != nil {
+		t.Fatalf("expected canceled stale projection message to be handled without follow-up")
+	}
+	if got := tailBlockText(m.currentBlocks()); got != latestText {
+		t.Fatalf("expected canceled superseded projection to leave latest content intact, got %q want %q", got, latestText)
+	}
+}
+
+func TestCanceledCurrentSessionProjectionClearsPendingToken(t *testing.T) {
+	projector := &blockingSessionBlockProjector{}
+	m := NewModel(nil,
+		WithSessionProjectionPolicy(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 4}),
+		WithSessionBlockProjector(projector),
+	)
+	m.pendingSessionKey = "sess:s1"
+	m.sessions = []*types.Session{{ID: "s1", Provider: "codex"}}
+	m.replaceRequestScope(requestScopeSessionLoad)
+
+	handled, cmd := m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: fakeHistoryItems(1),
+	})
+	if !handled || cmd == nil {
+		t.Fatalf("expected async projection command")
+	}
+	token := sessionProjectionToken("sess:s1", "s1")
+	if !m.sessionProjectionCoordinatorOrDefault().HasPending(token) {
+		t.Fatalf("expected pending projection before cancellation")
+	}
+
+	msgCh := make(chan tea.Msg, 1)
+	go func() {
+		msgCh <- cmd()
+	}()
+
+	call := waitForProjectionCall(t, projector, 0)
+	select {
+	case <-call.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for projection to start")
+	}
+
+	m.cancelRequestScope(requestScopeSessionLoad)
+
+	select {
+	case <-call.canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected active projection to cancel with request scope")
+	}
+
+	msg := (<-msgCh).(sessionBlocksProjectedMsg)
+	if !isCanceledRequestError(msg.err) {
+		t.Fatalf("expected canceled projection message, got %v", msg.err)
+	}
+
+	if handled, followUp := m.reduceStateMessages(msg); !handled || followUp != nil {
+		t.Fatalf("expected canceled projection message to be handled without follow-up")
+	}
+	if m.sessionProjectionCoordinatorOrDefault().HasPending(token) {
+		t.Fatalf("expected canceled current projection to release pending token")
+	}
+}
+
 type testSessionProjectionPolicy struct {
 	asyncAt   int
 	maxTokens int
@@ -258,6 +403,71 @@ func (testDebugPanelProjectionCoordinator) IsCurrent(int) bool                  
 func (testDebugPanelProjectionCoordinator) Consume(int)                                  {}
 func (testDebugPanelProjectionCoordinator) Invalidate()                                  {}
 
+type blockingSessionProjectionCall struct {
+	started    chan struct{}
+	continueCh chan struct{}
+	canceled   chan struct{}
+}
+
+type blockingSessionBlockProjector struct {
+	mu    sync.Mutex
+	calls []*blockingSessionProjectionCall
+}
+
+func (p *blockingSessionBlockProjector) ProjectSessionBlocks(ctx context.Context, input SessionBlockProjectionInput) ([]ChatBlock, error) {
+	call := &blockingSessionProjectionCall{
+		started:    make(chan struct{}),
+		continueCh: make(chan struct{}),
+		canceled:   make(chan struct{}),
+	}
+	p.mu.Lock()
+	p.calls = append(p.calls, call)
+	p.mu.Unlock()
+	close(call.started)
+	select {
+	case <-call.continueCh:
+		blocks, err := projectSessionBlocksFromItemsWithContext(
+			ctx,
+			input.Provider,
+			input.Rules,
+			input.Items,
+			input.Previous,
+			input.Approvals,
+			input.Resolutions,
+		)
+		return blocks, err
+	case <-ctx.Done():
+		close(call.canceled)
+		return nil, ctx.Err()
+	}
+}
+
+func (p *blockingSessionBlockProjector) call(index int) *blockingSessionProjectionCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if index < 0 || index >= len(p.calls) {
+		return nil
+	}
+	return p.calls[index]
+}
+
+func waitForProjectionCall(t *testing.T, projector *blockingSessionBlockProjector, index int) *blockingSessionProjectionCall {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if call := projector.call(index); call != nil {
+			return call
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for projection call %d", index)
+		case <-tick.C:
+		}
+	}
+}
+
 func TestWithSidebarUpdatePolicyConfiguresModelAndDefaultReset(t *testing.T) {
 	WithSidebarUpdatePolicy(testSidebarUpdatePolicy{allow: true})(nil)
 
@@ -286,6 +496,9 @@ func TestWithSessionProjectionPolicyConfiguresModelAndDefaultReset(t *testing.T)
 	if got := policy.MaxTrackedProjectionTokens(); got != 3 {
 		t.Fatalf("expected custom max tokens 3, got %d", got)
 	}
+	if coordinator := m.sessionProjectionCoordinatorOrDefault(); coordinator == nil {
+		t.Fatalf("expected session projection coordinator to be initialized")
+	}
 
 	WithSessionProjectionPolicy(nil)(&m)
 	defaultPolicy := m.sessionProjectionPolicyOrDefault()
@@ -294,6 +507,66 @@ func TestWithSessionProjectionPolicyConfiguresModelAndDefaultReset(t *testing.T)
 	}
 	if got := defaultPolicy.MaxTrackedProjectionTokens(); got != defaultSessionProjectionMaxTokens {
 		t.Fatalf("expected default max tokens %d, got %d", defaultSessionProjectionMaxTokens, got)
+	}
+}
+
+func TestWithSessionProjectionCoordinatorConfiguresModelAndDefaultReset(t *testing.T) {
+	WithSessionProjectionCoordinator(NewDefaultSessionProjectionCoordinator(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 1}, nil))(nil)
+
+	custom := NewDefaultSessionProjectionCoordinator(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 2}, nil)
+	m := NewModel(nil, WithSessionProjectionCoordinator(custom))
+	if m.sessionProjectionCoordinator != custom {
+		t.Fatalf("expected custom session projection coordinator to be installed")
+	}
+
+	WithSessionProjectionCoordinator(nil)(&m)
+	if m.sessionProjectionCoordinator == nil {
+		t.Fatalf("expected default session projection coordinator after nil reset")
+	}
+}
+
+func TestSessionProjectionCoordinatorOrDefaultHandlesNilModelAndCachesDefault(t *testing.T) {
+	var nilModel *Model
+	if coordinator := nilModel.sessionProjectionCoordinatorOrDefault(); coordinator == nil {
+		t.Fatalf("expected nil model to return default coordinator")
+	}
+
+	m := NewModel(nil)
+	m.sessionProjectionCoordinator = nil
+	coordinator := m.sessionProjectionCoordinatorOrDefault()
+	if coordinator == nil {
+		t.Fatalf("expected fallback coordinator")
+	}
+	if m.sessionProjectionCoordinator == nil {
+		t.Fatalf("expected fallback coordinator to be cached on model")
+	}
+}
+
+func TestWithSessionBlockProjectorConfiguresModelAndDefaultReset(t *testing.T) {
+	WithSessionBlockProjector(&blockingSessionBlockProjector{})(nil)
+
+	custom := &blockingSessionBlockProjector{}
+	m := NewModel(nil, WithSessionBlockProjector(custom))
+	if m.sessionBlockProjector != custom {
+		t.Fatalf("expected custom session block projector to be installed")
+	}
+
+	WithSessionBlockProjector(nil)(&m)
+	if _, ok := m.sessionBlockProjector.(defaultSessionBlockProjector); !ok {
+		t.Fatalf("expected default session block projector after nil reset, got %T", m.sessionBlockProjector)
+	}
+}
+
+func TestSessionBlockProjectorOrDefaultHandlesNilModelAndFallback(t *testing.T) {
+	var nilModel *Model
+	if projector := nilModel.sessionBlockProjectorOrDefault(); projector == nil {
+		t.Fatalf("expected nil model to return default session block projector")
+	}
+
+	m := NewModel(nil)
+	m.sessionBlockProjector = nil
+	if _, ok := m.sessionBlockProjectorOrDefault().(defaultSessionBlockProjector); !ok {
+		t.Fatalf("expected default projector when field is nil")
 	}
 }
 
@@ -405,10 +678,11 @@ func TestReduceStateMessagesPrunesSessionProjectionTokens(t *testing.T) {
 		}
 	}
 
-	if got := len(m.sessionProjectionLatest); got != 2 {
+	latest := m.sessionProjectionCoordinatorOrDefault().LatestByToken()
+	if got := len(latest); got != 2 {
 		t.Fatalf("expected projection token tracker to be capped at 2, got %d", got)
 	}
-	if _, ok := m.sessionProjectionLatest["key:sess:s1:a"]; ok {
+	if _, ok := latest["key:sess:s1:a"]; ok {
 		t.Fatalf("expected oldest projection token to be pruned")
 	}
 }
@@ -463,39 +737,6 @@ func TestSessionProjectionTokenPrefersKeyThenID(t *testing.T) {
 				t.Fatalf("sessionProjectionToken(%q, %q) = %q, want %q", tc.key, tc.id, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestConsumeSessionProjectionTokenRemovesOnlyMatchingLatest(t *testing.T) {
-	m := NewModel(nil)
-	m.sessionProjectionLatest = map[string]int{
-		"key:sess:s1": 7,
-		"id:s1":       3,
-	}
-
-	m.consumeSessionProjectionToken("sess:s1", "", 6)
-	if _, ok := m.sessionProjectionLatest["key:sess:s1"]; !ok {
-		t.Fatalf("expected token to remain when projection seq does not match latest")
-	}
-
-	m.consumeSessionProjectionToken("sess:s1", "", 7)
-	if _, ok := m.sessionProjectionLatest["key:sess:s1"]; ok {
-		t.Fatalf("expected matching latest key token to be consumed")
-	}
-
-	m.consumeSessionProjectionToken("", "s1", 0)
-	if _, ok := m.sessionProjectionLatest["id:s1"]; !ok {
-		t.Fatalf("expected seq<=0 to skip consumption")
-	}
-
-	m.consumeSessionProjectionToken(" ", " ", 3)
-	if _, ok := m.sessionProjectionLatest["id:s1"]; !ok {
-		t.Fatalf("expected blank token inputs to be ignored")
-	}
-
-	m.consumeSessionProjectionToken("", "s1", 3)
-	if _, ok := m.sessionProjectionLatest["id:s1"]; ok {
-		t.Fatalf("expected matching latest id token to be consumed")
 	}
 }
 
@@ -634,61 +875,6 @@ func TestShouldApplySessionProjectionToVisibleUsesActiveContext(t *testing.T) {
 	}
 	if m.shouldApplySessionProjectionToVisible("s2", "sess:s2") {
 		t.Fatalf("expected non-selected key to be ignored for visible projection")
-	}
-}
-
-func TestNextSessionProjectionSeqHandlesNilAndBlankTokens(t *testing.T) {
-	var nilModel *Model
-	if got := nilModel.nextSessionProjectionSeq("key:s1", 1); got != 0 {
-		t.Fatalf("expected nil model seq to be 0, got %d", got)
-	}
-
-	m := NewModel(nil)
-	m.sessionProjectionLatest = nil
-	if got := m.nextSessionProjectionSeq("   ", 1); got != 0 {
-		t.Fatalf("expected blank token seq to be 0, got %d", got)
-	}
-	if m.sessionProjectionLatest != nil {
-		t.Fatalf("expected blank token to avoid tracker map allocation")
-	}
-
-	seq := m.nextSessionProjectionSeq("key:a", 0)
-	if seq != 1 {
-		t.Fatalf("expected first seq to be 1, got %d", seq)
-	}
-	if got := m.sessionProjectionLatest["key:a"]; got != 1 {
-		t.Fatalf("expected token to be tracked at seq 1, got %d", got)
-	}
-}
-
-func TestIsCurrentSessionProjectionCoversGuardBranches(t *testing.T) {
-	var nilModel *Model
-	if !nilModel.isCurrentSessionProjection("sess:s1", "s1", 5) {
-		t.Fatalf("expected nil model to treat projection as current")
-	}
-
-	m := NewModel(nil)
-	if !m.isCurrentSessionProjection("sess:s1", "s1", 0) {
-		t.Fatalf("expected non-positive seq to be treated as current")
-	}
-	if m.isCurrentSessionProjection(" ", " ", 1) {
-		t.Fatalf("expected empty token to be treated as stale")
-	}
-
-	m.sessionProjectionLatest = nil
-	if m.isCurrentSessionProjection("sess:s1", "s1", 1) {
-		t.Fatalf("expected nil tracker map to treat projection as stale")
-	}
-
-	m.sessionProjectionLatest = map[string]int{"key:sess:s1": 7}
-	if m.isCurrentSessionProjection("sess:other", "s1", 7) {
-		t.Fatalf("expected unknown token to be treated as stale")
-	}
-	if m.isCurrentSessionProjection("sess:s1", "s1", 6) {
-		t.Fatalf("expected mismatched seq to be treated as stale")
-	}
-	if !m.isCurrentSessionProjection("sess:s1", "s1", 7) {
-		t.Fatalf("expected matching seq to be treated as current")
 	}
 }
 

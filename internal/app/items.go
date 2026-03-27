@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -8,11 +9,27 @@ import (
 )
 
 func itemsToBlocks(items []map[string]any) []ChatBlock {
+	blocks, _ := itemsToBlocksWithContext(context.Background(), items)
+	return blocks
+}
+
+func itemsToBlocksWithContext(ctx context.Context, items []map[string]any) ([]ChatBlock, error) {
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
 	transcript := NewChatTranscript(0)
-	for _, item := range items {
+	for i, item := range items {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		transcript.AppendItem(item)
 	}
-	return transcript.Blocks()
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
+	return transcript.Blocks(), nil
 }
 
 func extractContentText(raw any) string {

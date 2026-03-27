@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -42,7 +43,14 @@ func TestClassifyProjectionDropReason(t *testing.T) {
 func TestReduceStateMessagesRecordsStaleProjectionDropMetric(t *testing.T) {
 	sink := NewInMemoryTranscriptBoundaryMetricsSink()
 	m := NewModel(nil, WithTranscriptBoundaryMetricsSink(sink))
-	m.sessionProjectionLatest["key:sess:s1"] = 2
+	_, seq := m.sessionProjectionCoordinatorOrDefault().Schedule("key:sess:s1", context.Background())
+	if seq != 1 {
+		t.Fatalf("expected initial scheduled projection seq 1, got %d", seq)
+	}
+	_, seq = m.sessionProjectionCoordinatorOrDefault().Schedule("key:sess:s1", context.Background())
+	if seq != 2 {
+		t.Fatalf("expected superseding projection seq 2, got %d", seq)
+	}
 
 	handled, cmd := m.reduceStateMessages(sessionBlocksProjectedMsg{
 		id:            "s1",

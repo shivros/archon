@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -530,17 +531,40 @@ func approvalResolutionEqual(left, right *ApprovalResolution) bool {
 }
 
 func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolutions []*ApprovalResolution) []ChatBlock {
+	merged, _ := mergeApprovalBlocksWithContext(context.Background(), blocks, requests, resolutions)
+	return merged
+}
+
+func mergeApprovalBlocksWithContext(
+	ctx context.Context,
+	blocks []ChatBlock,
+	requests []*ApprovalRequest,
+	resolutions []*ApprovalResolution,
+) ([]ChatBlock, error) {
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
 	requests = normalizeApprovalRequests(requests)
 	resolutions = normalizeApprovalResolutions(resolutions)
 	requestByID := map[int]*ApprovalRequest{}
-	for _, req := range requests {
+	for i, req := range requests {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if req == nil || req.RequestID < 0 {
 			continue
 		}
 		requestByID[req.RequestID] = req
 	}
 	resolutionByID := map[int]*ApprovalResolution{}
-	for _, resolution := range resolutions {
+	for i, resolution := range resolutions {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if resolution == nil || resolution.RequestID < 0 {
 			continue
 		}
@@ -550,7 +574,12 @@ func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolu
 	out := make([]ChatBlock, 0, len(blocks)+len(requests)+len(resolutions))
 	consumedRequests := map[int]struct{}{}
 	consumedResolutions := map[int]struct{}{}
-	for _, block := range blocks {
+	for i, block := range blocks {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if !isApprovalRole(block.Role) {
 			out = append(out, block)
 			continue
@@ -571,7 +600,12 @@ func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolu
 		}
 		out = append(out, block)
 	}
-	for _, resolution := range resolutions {
+	for i, resolution := range resolutions {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if resolution == nil || resolution.RequestID < 0 {
 			continue
 		}
@@ -580,7 +614,12 @@ func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolu
 		}
 		out = append(out, approvalResolutionToBlock(resolution))
 	}
-	for _, req := range requests {
+	for i, req := range requests {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if req == nil || req.RequestID < 0 {
 			continue
 		}
@@ -589,16 +628,32 @@ func mergeApprovalBlocks(blocks []ChatBlock, requests []*ApprovalRequest, resolu
 		}
 		out = append(out, approvalRequestToBlock(req))
 	}
-	return out
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlock {
+	preserved, _ := preserveApprovalPositionsWithContext(context.Background(), previous, next)
+	return preserved
+}
+
+func preserveApprovalPositionsWithContext(ctx context.Context, previous []ChatBlock, next []ChatBlock) ([]ChatBlock, error) {
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
 	if len(previous) == 0 || len(next) == 0 {
-		return next
+		return next, nil
 	}
 	anchorByID := map[int]int{}
 	nonApprovalCount := 0
-	for _, block := range previous {
+	for i, block := range previous {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if !isApprovalRole(block.Role) {
 			nonApprovalCount++
 			continue
@@ -612,13 +667,18 @@ func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlo
 		}
 	}
 	if len(anchorByID) == 0 {
-		return next
+		return next, nil
 	}
 
 	nonApproval := make([]ChatBlock, 0, len(next))
 	anchored := map[int][]ChatBlock{}
 	unanchored := make([]ChatBlock, 0, len(next))
-	for _, block := range next {
+	for i, block := range next {
+		if projectionContextCheckNeeded(i) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if !isApprovalRole(block.Role) {
 			nonApproval = append(nonApproval, block)
 			continue
@@ -644,6 +704,11 @@ func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlo
 
 	out := make([]ChatBlock, 0, len(next))
 	for pos := 0; pos <= len(nonApproval); pos++ {
+		if projectionContextCheckNeeded(pos) {
+			if err := projectionContextError(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if blocks := anchored[pos]; len(blocks) > 0 {
 			out = append(out, blocks...)
 		}
@@ -654,7 +719,10 @@ func preserveApprovalPositions(previous []ChatBlock, next []ChatBlock) []ChatBlo
 	if len(unanchored) > 0 {
 		out = append(out, unanchored...)
 	}
-	return out
+	if err := projectionContextError(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func approvalRequestToBlock(req *ApprovalRequest) ChatBlock {

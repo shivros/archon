@@ -164,6 +164,7 @@ type sessionBlocksProjectedMsg struct {
 	provider      string
 	blocks        []ChatBlock
 	projectionSeq int
+	err           error
 }
 
 type debugPanelProjectedMsg struct {

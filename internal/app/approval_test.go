@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -46,6 +47,108 @@ func TestPreserveApprovalPositionsReinsertsIntoOriginalGap(t *testing.T) {
 	}
 	if got[2].RequestID != 1 || got[3].RequestID != 2 {
 		t.Fatalf("unexpected approval order: %#v", got)
+	}
+}
+
+func TestMergeApprovalBlocksWithContextMergesMatchedAndAppendsUnconsumed(t *testing.T) {
+	blocks := []ChatBlock{
+		{Role: ChatRoleUser, Text: "user one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(1), RequestID: 1, SessionID: "s1", Text: "stale request one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(2), RequestID: 2, SessionID: "s1", Text: "stale request two"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(999), RequestID: 999, SessionID: "s1", Text: "unchanged"},
+	}
+	requests := []*ApprovalRequest{
+		{RequestID: 1, SessionID: "s1", Summary: "request one"},
+		nil,
+		{RequestID: -1},
+		{RequestID: 3, SessionID: "s1", Summary: "request three"},
+	}
+	resolutions := []*ApprovalResolution{
+		{RequestID: 2, SessionID: "s1", Decision: "approved"},
+		nil,
+		{RequestID: -1},
+		{RequestID: 4, SessionID: "s1", Decision: "rejected"},
+	}
+
+	got, err := mergeApprovalBlocksWithContext(context.Background(), blocks, requests, resolutions)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("expected 6 blocks, got %#v", got)
+	}
+	if got[1].RequestID != 1 || got[1].Role != ChatRoleApproval {
+		t.Fatalf("expected request 1 to be refreshed in place, got %#v", got[1])
+	}
+	if got[2].RequestID != 2 || !strings.Contains(strings.ToLower(got[2].Text), "approved") {
+		t.Fatalf("expected resolution 2 to replace request block, got %#v", got[2])
+	}
+	if got[3].RequestID != 999 {
+		t.Fatalf("expected unmatched approval block to remain, got %#v", got[3])
+	}
+	if got[4].RequestID != 4 {
+		t.Fatalf("expected unconsumed resolution to append, got %#v", got[4])
+	}
+	if got[5].RequestID != 3 {
+		t.Fatalf("expected unconsumed request to append, got %#v", got[5])
+	}
+}
+
+func TestMergeApprovalBlocksWithContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := mergeApprovalBlocksWithContext(ctx, []ChatBlock{{Role: ChatRoleApproval, RequestID: 1}}, []*ApprovalRequest{{RequestID: 1}}, nil)
+	if !isCanceledRequestError(err) {
+		t.Fatalf("expected canceled error, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil result on cancellation, got %#v", got)
+	}
+}
+
+func TestPreserveApprovalPositionsWithContextAnchorsAndAppendsUnanchored(t *testing.T) {
+	previous := []ChatBlock{
+		{Role: ChatRoleUser, Text: "user one"},
+		{Role: ChatRoleAgent, Text: "agent one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(1), RequestID: 1, SessionID: "s1", Text: "Approval required: one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(2), RequestID: 2, SessionID: "s1", Text: "Approval required: two"},
+		{Role: ChatRoleAgent, Text: "agent two"},
+	}
+	next := []ChatBlock{
+		{Role: ChatRoleUser, Text: "user one"},
+		{Role: ChatRoleAgent, Text: "agent one"},
+		{Role: ChatRoleAgent, Text: "agent two"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(1), RequestID: 1, SessionID: "s1", Text: "Approval required: one"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(2), RequestID: 2, SessionID: "s1", Text: "Approval required: two"},
+		{Role: ChatRoleApproval, ID: approvalBlockID(7), RequestID: 7, SessionID: "s1", Text: "Approval required: seven"},
+	}
+
+	got, err := preserveApprovalPositionsWithContext(context.Background(), previous, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("expected 6 blocks, got %#v", got)
+	}
+	if got[2].RequestID != 1 || got[3].RequestID != 2 {
+		t.Fatalf("expected anchored approvals to be reinserted before trailing non-approval blocks, got %#v", got)
+	}
+	if got[len(got)-1].RequestID != 7 {
+		t.Fatalf("expected unanchored approval to append, got %#v", got)
+	}
+}
+
+func TestPreserveApprovalPositionsWithContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := preserveApprovalPositionsWithContext(ctx, []ChatBlock{{Role: ChatRoleApproval, RequestID: 1}}, []ChatBlock{{Role: ChatRoleApproval, RequestID: 1}})
+	if !isCanceledRequestError(err) {
+		t.Fatalf("expected canceled error, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil result on cancellation, got %#v", got)
 	}
 }
 
