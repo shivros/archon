@@ -91,6 +91,7 @@ const (
 type Model struct {
 	workspaceAPI                         WorkspaceAPI
 	sessionAPI                           SessionAPI
+	fileSearchAPI                        FileSearchAPI
 	metadataStreamAPI                    MetadataStreamAPI
 	sessionTranscriptAPI                 SessionTranscriptAPI
 	guidedWorkflowAPI                    GuidedWorkflowRunAPI
@@ -113,6 +114,7 @@ type Model struct {
 	providerPicker                       *ProviderPicker
 	compose                              *ComposeController
 	chatAddonController                  *ChatInputAddonController
+	composeFileSearch                    *ComposeFileAutocompleteController
 	chatInput                            *TextInput
 	guidedWorkflowPromptInput            *TextInput
 	guidedWorkflowResumeInput            *TextInput
@@ -535,6 +537,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 	model := Model{
 		workspaceAPI:                        api,
 		sessionAPI:                          api,
+		fileSearchAPI:                       api,
 		metadataStreamAPI:                   api,
 		sessionTranscriptAPI:                transcriptAPI,
 		guidedWorkflowAPI:                   api,
@@ -571,6 +574,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		providerPicker:                      NewProviderPicker(minViewportWidth, minContentHeight-1),
 		compose:                             NewComposeController(minViewportWidth),
 		chatAddonController:                 NewChatInputAddonController(chatAddon),
+		composeFileSearch:                   NewComposeFileAutocompleteController(minViewportWidth, 8),
 		chatInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		guidedWorkflowPromptInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 5, MinHeight: 4, MaxHeight: 10, AutoGrow: true}),
 		guidedWorkflowResumeInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 4, MinHeight: 3, MaxHeight: 8, AutoGrow: true}),
@@ -1205,6 +1209,9 @@ func (m *Model) resizeWithoutRender(width, height int) {
 	}
 	if m.chatAddonController != nil {
 		m.chatAddonController.setPickerSize(mainViewportWidth, 8)
+	}
+	if m.composeFileSearch != nil {
+		m.composeFileSearch.SetSize(mainViewportWidth, 8)
 	}
 	if m.chatInput != nil {
 		m.chatInput.Resize(mainViewportWidth)
@@ -3905,6 +3912,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) bool {
 	if m.reduceSidebarScrollbarLeftPressMouse(msg, layout) {
 		return true
 	}
+	if m.reduceComposeFileSearchLeftPressMouse(msg, layout) {
+		return true
+	}
 	if m.reduceComposeOptionPickerLeftPressMouse(msg, layout) {
 		return true
 	}
@@ -4914,6 +4924,10 @@ func (m *Model) enterCompose(sessionID string) {
 	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
+	if m.composeFileSearch != nil {
+		m.cancelRequestScope(requestScopeComposeFileSearch)
+		m.composeFileSearch.Reset()
+	}
 	label := m.selectedSessionLabel()
 	if m.compose != nil {
 		m.compose.Enter(sessionID, label)
@@ -4944,9 +4958,13 @@ func (m *Model) exitCompose(status string) {
 		before: func() {
 			m.cancelRequestScope(requestScopeSessionStart)
 			m.cancelRequestScope(requestScopeSessionInterrupt)
+			m.cancelRequestScope(requestScopeComposeFileSearch)
 			m.saveCurrentComposeDraft()
 			m.clearPendingComposeOptionRequest()
 			m.closeComposeOptionPicker()
+			if m.composeFileSearch != nil {
+				m.composeFileSearch.Reset()
+			}
 			m.composeInterruptInFlightSessionID = ""
 			if m.compose != nil {
 				m.compose.Exit()

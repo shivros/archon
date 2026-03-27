@@ -239,6 +239,9 @@ func (m *Model) openComposeOptionPicker(target composeOptionKind) bool {
 	if m == nil || m.chatAddonController == nil {
 		return false
 	}
+	if controller := m.composeFileSearchController(); controller != nil {
+		controller.ClosePopup()
+	}
 	return m.chatAddonController.openComposeOptionPicker(m, target)
 }
 

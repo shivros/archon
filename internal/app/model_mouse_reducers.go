@@ -80,29 +80,63 @@ func (m *Model) reduceComposeOptionPickerLeftPressMouse(msg tea.MouseMsg, _ mous
 		m.closeComposeOptionPicker()
 		return false
 	}
-	height := len(strings.Split(popup, "\n"))
-	popupWidth := blockWidth(strings.Split(popup, "\n"))
+	if pickerRow, inside := composePopupClickRow(msg, popup, popupX, row); inside {
+		if m.composeOptionPickerHandleClick(pickerRow) {
+			cmd := m.applyComposeOptionSelection(m.composeOptionPickerSelectedID())
+			m.closeComposeOptionPicker()
+			if cmd != nil {
+				m.pendingMouseCmd = cmd
+			}
+			return true
+		}
+		return true
+	}
+	m.closeComposeOptionPicker()
+	return true
+}
+
+func (m *Model) reduceComposeFileSearchLeftPressMouse(msg tea.MouseMsg, _ mouseLayout) bool {
+	if !isMouseClickMsg(msg) {
+		return false
+	}
+	controller := m.composeFileSearchController()
+	if controller == nil || !controller.Open() {
+		return false
+	}
+	popup, popupX, row := m.composeFileSearchPopupPlacement()
+	if popup == "" {
+		controller.ClosePopup()
+		return false
+	}
+	if pickerRow, inside := composePopupClickRow(msg, popup, popupX, row); inside {
+		if controller.HandleClick(pickerRow) {
+			_ = m.applyComposeFileSearchSelection()
+			return true
+		}
+		return true
+	}
+	controller.ClosePopup()
+	return true
+}
+
+func composePopupClickRow(msg tea.MouseMsg, popup string, popupX, row int) (int, bool) {
+	lines := strings.Split(popup, "\n")
+	height := len(lines)
+	if height <= 0 {
+		return 0, false
+	}
+	popupWidth := blockWidth(lines)
 	if popupWidth <= 0 {
 		popupWidth = 1
 	}
 	popupEnd := popupX + popupWidth
 	mouse := msg.Mouse()
 	inside := (mouse.X >= popupX && mouse.X < popupEnd) || (mouse.X-1 >= popupX && mouse.X-1 < popupEnd)
-	if inside {
-		if pickerRow, ok := composePickerRowForClick(mouse.Y, row, height); ok {
-			if m.composeOptionPickerHandleClick(pickerRow) {
-				cmd := m.applyComposeOptionSelection(m.composeOptionPickerSelectedID())
-				m.closeComposeOptionPicker()
-				if cmd != nil {
-					m.pendingMouseCmd = cmd
-				}
-				return true
-			}
-			return true
-		}
+	if !inside {
+		return 0, false
 	}
-	m.closeComposeOptionPicker()
-	return true
+	pickerRow, ok := composePickerRowForClick(mouse.Y, row, height)
+	return pickerRow, ok
 }
 
 func composePickerRowForClick(y, row, height int) (int, bool) {

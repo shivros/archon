@@ -99,6 +99,66 @@ func (c *TextInput) Value() string {
 	return c.input.Value()
 }
 
+func (c *TextInput) CursorRuneIndex() int {
+	if c == nil {
+		return 0
+	}
+	lines := strings.Split(c.input.Value(), "\n")
+	row := clamp(c.input.Line(), 0, max(0, len(lines)-1))
+	index := 0
+	for i := 0; i < row; i++ {
+		index += len([]rune(lines[i])) + 1
+	}
+	lineInfo := c.input.LineInfo()
+	index += lineInfo.StartColumn + lineInfo.ColumnOffset
+	return index
+}
+
+func (c *TextInput) MoveCursorToRuneIndex(target int) bool {
+	if c == nil {
+		return false
+	}
+	valueRunes := []rune(c.input.Value())
+	target = clamp(target, 0, len(valueRunes))
+	current := c.CursorRuneIndex()
+	if current == target {
+		return false
+	}
+	if current > target {
+		for range current - target {
+			c.allSelected = false
+			_ = c.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+		}
+		return true
+	}
+	for range target - current {
+		c.allSelected = false
+		_ = c.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	}
+	return true
+}
+
+func (c *TextInput) ReplaceRuneRange(start, end int, replacement string) bool {
+	if c == nil {
+		return false
+	}
+	valueRunes := []rune(c.input.Value())
+	start = clamp(start, 0, len(valueRunes))
+	end = clamp(end, start, len(valueRunes))
+	if start == end && replacement == "" {
+		return false
+	}
+	c.MoveCursorToRuneIndex(end)
+	for range end - start {
+		c.allSelected = false
+		_ = c.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	if replacement != "" {
+		_ = c.Update(tea.PasteMsg{Content: replacement})
+	}
+	return true
+}
+
 func (c *TextInput) Clear() {
 	if c == nil {
 		return

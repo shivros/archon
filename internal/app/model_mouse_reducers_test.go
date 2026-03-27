@@ -2982,6 +2982,78 @@ func TestMouseReducerComposeOptionPickerClickBelowPopupSelectsLastOption(t *test
 	}
 }
 
+func TestComposeFileSearchControllerHandleClickSelectsCandidate(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	m.chatInput.Focus()
+	m.chatInput.SetValue("@ma")
+	m.chatInput.MoveCursorToRuneIndex(len([]rune("@ma")))
+	fragment, ok := activeComposeFileSearchFragment(m.chatInput.Value(), m.chatInput.CursorRuneIndex())
+	if !ok {
+		t.Fatalf("expected active fragment")
+	}
+	controller := m.composeFileSearchController()
+	controller.SetFragment(fragment, true)
+	controller.SetCandidates([]types.FileSearchCandidate{
+		{Path: "/repo/main.go", DisplayPath: "main.go"},
+		{Path: "/repo/pkg/main_test.go", DisplayPath: "pkg/main_test.go"},
+	})
+	if !controller.HandleClick(2) {
+		t.Fatalf("expected controller click to select visible option row")
+	}
+	_ = m.applyComposeFileSearchSelection()
+	if controller.Open() {
+		t.Fatalf("expected popup to close after selection")
+	}
+	if got := m.chatInput.Value(); got != "@pkg/main_test.go " {
+		t.Fatalf("expected selected mention insertion, got %q", got)
+	}
+}
+
+func TestMouseReducerComposeFileSearchClickOutsideClosesPopup(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+	m.mode = uiModeCompose
+	m.newSession = &newSessionTarget{provider: "codex"}
+	m.chatInput.Focus()
+	m.chatInput.SetValue("@ma")
+	m.chatInput.MoveCursorToRuneIndex(len([]rune("@ma")))
+	fragment, ok := activeComposeFileSearchFragment(m.chatInput.Value(), m.chatInput.CursorRuneIndex())
+	if !ok {
+		t.Fatalf("expected active fragment")
+	}
+	controller := m.composeFileSearchController()
+	controller.SetFragment(fragment, true)
+	controller.SetCandidates([]types.FileSearchCandidate{{Path: "/repo/main.go", DisplayPath: "main.go"}})
+
+	layout := m.resolveMouseLayout()
+	handled := m.reduceComposeFileSearchLeftPressMouse(
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: 0},
+		layout,
+	)
+	if !handled {
+		t.Fatalf("expected outside click to be handled")
+	}
+	if controller.Open() {
+		t.Fatalf("expected outside click to close popup")
+	}
+}
+
+func TestComposePopupClickRowAllowsEdgeTolerance(t *testing.T) {
+	popup := "line1\nline2\nline3"
+	if row, ok := composePopupClickRow(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: 4}, popup, 10, 5); !ok || row != 0 {
+		t.Fatalf("expected click one row above popup to snap to first row, got row=%d ok=%v", row, ok)
+	}
+	if row, ok := composePopupClickRow(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: 8}, popup, 10, 5); !ok || row != 2 {
+		t.Fatalf("expected click one row below popup to snap to last row, got row=%d ok=%v", row, ok)
+	}
+	if _, ok := composePopupClickRow(tea.MouseClickMsg{Button: tea.MouseLeft, X: 2, Y: 6}, popup, 10, 5); ok {
+		t.Fatalf("expected outside click to be rejected")
+	}
+}
+
 func TestMouseReducerMenuGroupToggleIgnoresLeftRelease(t *testing.T) {
 	m := NewModel(nil)
 	m.resize(120, 40)

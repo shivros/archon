@@ -553,6 +553,9 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 		beforeInputUpdate: m.resetComposeHistoryCursor,
 		shouldPassthrough: m.shouldComposePassthrough,
 		preHandle: func(key string, msg tea.KeyMsg) (bool, tea.Cmd) {
+			if handled, cmd := m.handleComposeFileSearchKey(key); handled {
+				return true, cmd
+			}
 			if m.composeOptionPickerOpen() {
 				composePicker := composeOptionQueryPicker{model: m}
 				arbiter := newPickerKeyboardArbiter(m.keyString, m.keyMatchesCommand, m.pickerPasteNormalizer)
@@ -623,6 +626,16 @@ func (m *Model) reduceComposeInputKey(msg tea.Msg) (bool, tea.Cmd) {
 	if handled && m.consumeInputHeightChanges(m.chatInput) {
 		m.resize(m.width, m.height)
 	}
+	if !handled {
+		return handled, cmd
+	}
+	fileSearchCmd := m.syncComposeFileSearchAfterInput()
+	if fileSearchCmd != nil && cmd != nil {
+		return handled, tea.Batch(cmd, fileSearchCmd)
+	}
+	if fileSearchCmd != nil {
+		return handled, fileSearchCmd
+	}
 	return handled, cmd
 }
 
@@ -680,9 +693,17 @@ func isComposeInputCommand(command string) bool {
 }
 
 func (m *Model) cancelComposeInput() tea.Cmd {
+	closeCmd := m.closeComposeFileSearchCmd()
 	m.closeComposeOptionPicker()
 	m.exitCompose("compose canceled")
-	return m.requestAppStateSaveCmd()
+	saveCmd := m.requestAppStateSaveCmd()
+	if closeCmd != nil && saveCmd != nil {
+		return tea.Batch(closeCmd, saveCmd)
+	}
+	if closeCmd != nil {
+		return closeCmd
+	}
+	return saveCmd
 }
 
 func (m *Model) submitComposeInput(text string) tea.Cmd {
@@ -690,6 +711,7 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 		m.setValidationStatus("message is required")
 		return nil
 	}
+	closeCmd := m.closeComposeFileSearchCmd()
 	if m.newSession != nil {
 		target := m.newSession
 		if strings.TrimSpace(target.provider) == "" {
@@ -703,7 +725,11 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 		if m.chatInput != nil {
 			m.chatInput.Clear()
 		}
-		return m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text, target.runtimeOptions)
+		startCmd := m.startWorkspaceSessionCmd(target.workspaceID, target.worktreeID, target.provider, text, target.runtimeOptions)
+		if closeCmd != nil {
+			return tea.Batch(closeCmd, startCmd)
+		}
+		return startCmd
 	}
 	sessionID := m.composeSessionID()
 	if sessionID == "" {
@@ -752,6 +778,9 @@ func (m *Model) submitComposeInput(text string) tea.Cmd {
 	}
 	if saveHistoryCmd != nil {
 		cmds = append(cmds, saveHistoryCmd)
+	}
+	if closeCmd != nil {
+		cmds = append(cmds, closeCmd)
 	}
 	return tea.Batch(cmds...)
 }

@@ -38,6 +38,7 @@ func defaultTransientOverlayProviders() []TransientOverlayProvider {
 		contextMenuOverlayProvider{},
 		confirmOverlayProvider{},
 		composeOptionPickerOverlayProvider{},
+		composeFileSearchOverlayProvider{},
 		statusHistoryOverlayProvider{},
 		settingsMenuOverlayProvider{},
 		toastOverlayProvider{},
@@ -129,6 +130,19 @@ func (composeOptionPickerOverlayProvider) Build(m *Model, _ TransientOverlayCont
 		return LayerOverlay{}, false
 	}
 	popup, x, y := m.composeOptionPopupPlacement()
+	if popup == "" {
+		return LayerOverlay{}, false
+	}
+	return LayerOverlay{X: x, Y: y, Block: popup}, true
+}
+
+type composeFileSearchOverlayProvider struct{}
+
+func (composeFileSearchOverlayProvider) Build(m *Model, _ TransientOverlayContext) (LayerOverlay, bool) {
+	if m == nil {
+		return LayerOverlay{}, false
+	}
+	popup, x, y := m.composeFileSearchPopupPlacement()
 	if popup == "" {
 		return LayerOverlay{}, false
 	}

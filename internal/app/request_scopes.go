@@ -7,13 +7,14 @@ import (
 )
 
 const (
-	requestScopeSessionLoad      = "session_load"
-	requestScopeProviderOption   = "provider_options"
-	requestScopeSessionStart     = "session_start"
-	requestScopeSessionInterrupt = "session_interrupt"
-	requestScopeWorktrees        = "worktrees"
-	requestScopeDebugStream      = "debug_stream"
-	requestScopeRecentsPrefix    = "recents_watch:"
+	requestScopeSessionLoad       = "session_load"
+	requestScopeProviderOption    = "provider_options"
+	requestScopeSessionStart      = "session_start"
+	requestScopeSessionInterrupt  = "session_interrupt"
+	requestScopeComposeFileSearch = "compose_file_search"
+	requestScopeWorktrees         = "worktrees"
+	requestScopeDebugStream       = "debug_stream"
+	requestScopeRecentsPrefix     = "recents_watch:"
 )
 
 type requestScope struct {

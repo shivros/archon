@@ -16,6 +16,10 @@ import (
 
 func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
+	case composeFileSearchDebounceMsg:
+		return true, m.handleComposeFileSearchDebounce(msg)
+	case composeFileSearchResultsMsg:
+		return true, m.applyComposeFileSearchResults(msg)
 	case workflowRunCreatedMsg:
 		if m.guidedWorkflow == nil {
 			return true, nil
