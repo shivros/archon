@@ -41,8 +41,7 @@ func (m *Model) handleTranscriptSnapshotError(msg transcriptSnapshotMsg, source 
 	m.setBackgroundError("transcript snapshot error: " + msg.err.Error())
 	if msg.key != "" && msg.key == m.loadingKey {
 		m.setContentText("Error loading transcript.")
-		m.loading = false
-		m.loadingKey = ""
+		m.clearSessionLoadingState()
 	}
 	return true, m.maybeOpenTranscriptFollowAfterSnapshot(msg.id, source, "")
 }
@@ -64,8 +63,7 @@ func (m *Model) handleTranscriptSnapshotPending(msg transcriptSnapshotMsg, sourc
 	}
 	m.setBackgroundStatus("transcript history pending; retrying")
 	if msg.key != "" && msg.key == m.loadingKey {
-		m.loading = false
-		m.loadingKey = ""
+		m.clearSessionLoadingState()
 	}
 	cmds := make([]tea.Cmd, 0, 2)
 	if cmd := m.maybeOpenTranscriptFollowAfterSnapshot(msg.id, source, ""); cmd != nil {

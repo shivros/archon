@@ -219,6 +219,52 @@ func TestApplyTranscriptSnapshotMsgPendingErrorRetriesWithoutUserVisibleError(t 
 	}
 }
 
+func TestHandleTranscriptSnapshotPendingReturnsNilWhenNoRetryOrFollowAvailable(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.pendingSessionKey = "sess:s1"
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.sessionTranscriptAPI = nil
+
+	cmd := m.handleTranscriptSnapshotPending(transcriptSnapshotMsg{
+		id:  "s1",
+		key: "sess:s1",
+	}, transcriptAttachmentSourceSelectionLoad, "sess:s1")
+	if cmd != nil {
+		t.Fatalf("expected no pending follow-up command without transcript API")
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected pending handler to clear loading state for matching key")
+	}
+	if !strings.Contains(strings.ToLower(m.status), "pending") {
+		t.Fatalf("expected pending status message, got %q", m.status)
+	}
+}
+
+func TestMaybeRetryPendingTranscriptSnapshotReturnsNilForMissingInputsOrLimit(t *testing.T) {
+	msg := transcriptSnapshotMsg{id: "s1", key: "sess:s1", requestedLines: 200}
+
+	mNoAPI := newPhase0ModelWithSession("codex")
+	mNoAPI.sessionTranscriptAPI = nil
+	if cmd := mNoAPI.maybeRetryPendingTranscriptSnapshot(msg, transcriptAttachmentSourceSelectionLoad, "sess:s1"); cmd != nil {
+		t.Fatalf("expected nil retry command without transcript API")
+	}
+
+	mBlankKey := newPhase0ModelWithSession("codex")
+	if cmd := mBlankKey.maybeRetryPendingTranscriptSnapshot(msg, transcriptAttachmentSourceSelectionLoad, "   "); cmd != nil {
+		t.Fatalf("expected nil retry command for blank response key")
+	}
+
+	mLimited := newPhase0ModelWithSession("codex")
+	mLimited.pendingTranscriptSnapshotRetryCount = map[string]int{"sess:s1": transcriptHistoryPendingRetryLimit}
+	if cmd := mLimited.maybeRetryPendingTranscriptSnapshot(msg, transcriptAttachmentSourceSelectionLoad, "sess:s1"); cmd != nil {
+		t.Fatalf("expected nil retry command after reaching retry limit")
+	}
+	if got := mLimited.pendingTranscriptSnapshotRetryCount["sess:s1"]; got != transcriptHistoryPendingRetryLimit {
+		t.Fatalf("expected retry count to remain at limit, got %d", got)
+	}
+}
+
 func TestApplyTranscriptSnapshotMsgSelectionLoadOpensFollowFromSnapshotRevision(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}

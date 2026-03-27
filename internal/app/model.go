@@ -235,6 +235,8 @@ type Model struct {
 	pendingTranscriptSnapshotRetryCount  map[string]int
 	loading                              bool
 	loadingKey                           string
+	loadingRenderGeneration              int
+	loadingRenderLatencyOutcome          string
 	loader                               spinner.Model
 	pendingMouseCmd                      tea.Cmd
 	lastSidebarWheelAt                   time.Time
@@ -1424,6 +1426,7 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	id := item.session.ID
 	m.cancelRequestScope(requestScopeSessionStart)
 	m.resetStreamWithReason(transcriptResetReasonSelectionLoad)
+	m.invalidateViewportRender()
 	m.pendingApproval = nil
 	m.pendingSessionKey = token
 	if m.pendingTranscriptSnapshotRetryCount != nil {
@@ -1433,15 +1436,12 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 	m.scrollOnLoad = true
 	m.loading = true
 	m.loadingKey = token
+	m.loadingRenderGeneration = 0
 	if cached, ok := m.transcriptCache[token]; ok {
-		m.setSnapshotBlocks(cached)
+		outcome := m.setSnapshotBlocks(cached)
 		if m.sessionTranscriptAPI == nil {
-			m.loading = false
-			m.loadingKey = ""
-			m.finishUILatencyAction(uiLatencyActionSwitchSession, token, uiLatencyOutcomeCacheHit)
+			m.settleSessionLoadProjection(id, token, outcome, true, uiLatencyOutcomeCacheHit)
 		}
-	} else {
-		m.setLoadingContent()
 	}
 	initialLines := m.historyFetchLinesInitial()
 	if m.historyWindowBySessionKey == nil {
@@ -1521,18 +1521,15 @@ func (m *Model) activeTranscriptRevision() string {
 }
 
 func (m *Model) markTranscriptLoadingSignal(sessionID string) {
-	if m == nil || !m.loading {
+	m.markTranscriptLoadingSignalWithOutcome(sessionID, uiLatencyOutcomeOK)
+}
+
+func (m *Model) markTranscriptLoadingSignalWithOutcome(sessionID, latencyOutcome string) {
+	if m == nil || !m.isLoadingTarget(sessionID, "") {
 		return
 	}
-	loadingSessionID := sessionIDFromSidebarKey(m.loadingKey)
-	if loadingSessionID != "" && strings.TrimSpace(sessionID) != "" && loadingSessionID != strings.TrimSpace(sessionID) {
-		return
-	}
-	if m.loadingKey != "" {
-		m.finishUILatencyAction(uiLatencyActionSwitchSession, m.loadingKey, uiLatencyOutcomeOK)
-	}
-	m.loading = false
-	m.loadingKey = ""
+	m.finishSessionLoadLatency(latencyOutcome)
+	m.clearSessionLoadingState()
 }
 
 func (m *Model) syncSidebarExpansionChange() tea.Cmd {
@@ -2644,7 +2641,6 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 	}
 	if m.loading {
 		m.loader, _ = m.loader.Update(spinner.TickMsg{Time: now, ID: m.loader.ID()})
-		m.setLoadingContent()
 	}
 	if m.toastText != "" && !m.toastActive(now) {
 		m.clearToast()
@@ -2706,8 +2702,7 @@ func (m *Model) resetStreamWithReason(reason string) {
 	m.debugPanelLoading = false
 	m.pendingApproval = nil
 	m.pendingSessionKey = ""
-	m.loading = false
-	m.loadingKey = ""
+	m.clearSessionLoadingState()
 	m.composeInterruptInFlightSessionID = ""
 	if m.transcriptHealthBySession != nil {
 		clear(m.transcriptHealthBySession)
@@ -3049,12 +3044,11 @@ func (m *Model) worktreeRefreshWorkspaceIDs() []string {
 	return dedup
 }
 
-func (m *Model) setSnapshotBlocks(blocks []ChatBlock) {
+func (m *Model) setSnapshotBlocks(blocks []ChatBlock) viewportRenderOutcome {
 	if m.stream != nil {
 		m.stream.SetSnapshot(nil)
 	}
-	previous := m.currentBlocks()
-	m.applyBlocksWithRenderPreference(blocks, m.shouldImmediatelyRenderTranscriptTransition(previous, blocks))
+	return m.applyBlocksWithRenderPreference(blocks, false)
 }
 
 func (m *Model) applyLinesNoRender(lines []string, escape bool) {
@@ -3073,17 +3067,16 @@ func (m *Model) applyLinesNoRender(lines []string, escape bool) {
 	m.sectionVersion = -1
 }
 
-func (m *Model) applyBlocks(blocks []ChatBlock) {
-	m.applyBlocksWithRenderPreference(blocks, false)
+func (m *Model) applyBlocks(blocks []ChatBlock) viewportRenderOutcome {
+	return m.applyBlocksWithRenderPreference(blocks, false)
 }
 
-func (m *Model) applyBlocksWithRenderPreference(blocks []ChatBlock, immediate bool) {
+func (m *Model) applyBlocksWithRenderPreference(blocks []ChatBlock, immediate bool) viewportRenderOutcome {
 	m.applyBlocksNoRenderWithMeta(blocks, nil)
 	if immediate {
-		m.renderViewportSync()
-		return
+		return m.renderViewportSync()
 	}
-	m.renderViewport()
+	return m.renderViewport()
 }
 
 func (m *Model) applyBlocksNoRender(blocks []ChatBlock) {
@@ -3096,13 +3089,7 @@ func (m *Model) applyBlocksWithMeta(blocks []ChatBlock, metaByBlockID map[string
 }
 
 func (m *Model) shouldImmediatelyRenderTranscriptTransition(previous, next []ChatBlock) bool {
-	if m == nil || len(next) == 0 {
-		return false
-	}
-	if m.loading {
-		return true
-	}
-	return len(previous) == 0
+	return false
 }
 
 func (m *Model) applyBlocksNoRenderWithMeta(blocks []ChatBlock, metaByBlockID map[string]ChatBlockMetaPresentation) {
@@ -3252,17 +3239,24 @@ func (m *Model) setContentANSIText(text string) {
 	m.renderViewport()
 }
 
-func (m *Model) renderViewport() {
-	m.renderViewportWithMode(false)
+type viewportRenderOutcome struct {
+	generation     int
+	scheduledAsync bool
+	appliedSync    bool
 }
 
-func (m *Model) renderViewportSync() {
-	m.renderViewportWithMode(true)
+func (m *Model) renderViewport() viewportRenderOutcome {
+	return m.renderViewportWithMode(false)
 }
 
-func (m *Model) renderViewportWithMode(forceSync bool) {
+func (m *Model) renderViewportSync() viewportRenderOutcome {
+	return m.renderViewportWithMode(true)
+}
+
+func (m *Model) renderViewportWithMode(forceSync bool) viewportRenderOutcome {
+	outcome := viewportRenderOutcome{}
 	if m.viewport.Width() <= 0 {
-		return
+		return outcome
 	}
 	renderWidth := m.viewport.Width()
 	if !m.appState.SidebarCollapsed && renderWidth > 1 {
@@ -3315,15 +3309,20 @@ func (m *Model) renderViewportWithMode(forceSync bool) {
 			}
 			if !forceSync && m.asyncViewportRendering && req.Blocks != nil {
 				m.scheduleViewportRender(req, signature, m.renderGeneration)
+				outcome.generation = m.renderGeneration
+				outcome.scheduledAsync = true
 			} else {
 				m.applyViewportRenderResult(signature, m.renderGeneration, m.renderRequest(req))
 				appliedNow = true
+				outcome.generation = m.renderGeneration
+				outcome.appliedSync = true
 			}
 		}
 	}
 	if !appliedNow {
 		m.applyViewportContent(m.isViewportRenderCurrent(signature))
 	}
+	return outcome
 }
 
 func (m *Model) needsViewportRender(signature viewportRenderSignature) bool {
@@ -3386,6 +3385,10 @@ func (m *Model) applyViewportRenderResult(signature viewportRenderSignature, gen
 	m.renderedForTimestampMode = signature.timestampMode
 	m.renderedForRelativeBucket = signature.relativeBucket
 	m.renderVersion++
+	if generation != 0 && generation == m.loadingRenderGeneration {
+		m.finishSessionLoadLatency(m.loadingRenderLatencyOutcome)
+		m.clearSessionLoadingState()
+	}
 	m.applyViewportContent(true)
 }
 
@@ -3433,6 +3436,79 @@ func (m *Model) requestStreamRender(now time.Time) {
 	}
 }
 
+func (m *Model) invalidateViewportRender() {
+	if m == nil {
+		return
+	}
+	m.renderGeneration++
+	m.hasLastRenderRequested = false
+	m.loadingRenderGeneration = 0
+	m.loadingRenderLatencyOutcome = ""
+}
+
+func (m *Model) settleSessionLoadProjection(sessionID, key string, outcome viewportRenderOutcome, visible bool, latencyOutcome string) {
+	if m == nil || !m.isLoadingTarget(sessionID, key) {
+		return
+	}
+	if !visible {
+		m.markTranscriptLoadingSignalWithOutcome(sessionID, latencyOutcome)
+		return
+	}
+	m.trackLoadingViewportRenderOutcome(outcome, latencyOutcome)
+}
+
+func (m *Model) trackLoadingViewportRenderOutcome(outcome viewportRenderOutcome, latencyOutcome string) {
+	if m == nil || !m.loading {
+		return
+	}
+	if outcome.scheduledAsync {
+		m.loadingRenderGeneration = outcome.generation
+		m.loadingRenderLatencyOutcome = latencyOutcome
+		return
+	}
+	m.finishSessionLoadLatency(latencyOutcome)
+	m.clearSessionLoadingState()
+}
+
+func (m *Model) isLoadingTarget(sessionID, key string) bool {
+	if m == nil || !m.loading {
+		return false
+	}
+	key = strings.TrimSpace(key)
+	if key != "" && key == strings.TrimSpace(m.loadingKey) {
+		return true
+	}
+	loadingSessionID := sessionIDFromSidebarKey(m.loadingKey)
+	return loadingSessionID != "" && loadingSessionID == strings.TrimSpace(sessionID)
+}
+
+func (m *Model) finishSessionLoadLatency(outcome string) {
+	if m == nil || strings.TrimSpace(m.loadingKey) == "" {
+		return
+	}
+	m.finishSessionLoadLatencyForKey(m.loadingKey, outcome)
+}
+
+func (m *Model) finishSessionLoadLatencyForKey(key, outcome string) {
+	if m == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	if strings.TrimSpace(outcome) == "" {
+		outcome = uiLatencyOutcomeOK
+	}
+	m.finishUILatencyAction(uiLatencyActionSwitchSession, key, outcome)
+}
+
+func (m *Model) clearSessionLoadingState() {
+	if m == nil {
+		return
+	}
+	m.loading = false
+	m.loadingKey = ""
+	m.loadingRenderGeneration = 0
+	m.loadingRenderLatencyOutcome = ""
+}
+
 func (m *Model) setLoadingContent() {
 	m.setCenteredContentText(m.loader.View() + " Loading...")
 }
@@ -3450,9 +3526,8 @@ func (m *Model) appendUserMessageLocal(provider, text string) int {
 	if strings.EqualFold(provider, "claude") {
 		return -1
 	}
-	previous := m.currentBlocks()
-	blocks, headerIndex := m.transcriptComposerOrDefault().AppendOptimisticUser(previous, text)
-	m.applyBlocksWithRenderPreference(blocks, m.shouldImmediatelyRenderTranscriptTransition(previous, blocks))
+	blocks, headerIndex := m.transcriptComposerOrDefault().AppendOptimisticUser(m.currentBlocks(), text)
+	m.applyBlocksWithRenderPreference(blocks, true)
 	if key := m.selectedKey(); key != "" {
 		m.transcriptCache[key] = blocks
 	}

@@ -426,9 +426,6 @@ func (m *Model) prepareSessionItemsMessageContext(source sessionProjectionSource
 	if key != "" && key != m.pendingSessionKey {
 		return ctx, false
 	}
-	if key != "" && key == m.loadingKey {
-		m.loading = false
-	}
 	ctx.provider = m.providerForSessionID(id)
 	return ctx, true
 }
@@ -442,10 +439,10 @@ func (m *Model) handleSessionItemsMessageError(ctx sessionItemsMessageContext, e
 	}
 	m.setBackgroundError(string(ctx.source) + " error: " + err.Error())
 	if ctx.key != "" && ctx.key == m.pendingSessionKey {
-		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeError)
+		m.finishSessionLoadLatencyForKey(ctx.key, uiLatencyOutcomeError)
 	}
 	if ctx.key != "" && ctx.key == m.loadingKey {
-		m.loading = false
+		m.clearSessionLoadingState()
 		m.setContentText("Error loading history.")
 	}
 }
@@ -460,10 +457,13 @@ func (m *Model) applyLiveSessionItemsSnapshot(ctx sessionItemsMessageContext) bo
 	visibleBlocks := m.applyOptimisticOverlay(ctx.id, m.activeTranscriptBlocks())
 	if ctx.key != "" {
 		m.cacheTranscriptBlocks(ctx.key, visibleBlocks)
-		m.finishUILatencyAction(uiLatencyActionSwitchSession, ctx.key, uiLatencyOutcomeOK)
 	}
-	if m.shouldApplySessionProjectionToVisible(ctx.id, ctx.key) {
-		m.setSnapshotBlocks(visibleBlocks)
+	visible := m.shouldApplySessionProjectionToVisible(ctx.id, ctx.key)
+	if visible {
+		outcome := m.setSnapshotBlocks(visibleBlocks)
+		m.settleSessionLoadProjection(ctx.id, ctx.key, outcome, true, uiLatencyOutcomeOK)
+	} else {
+		m.settleSessionLoadProjection(ctx.id, ctx.key, viewportRenderOutcome{}, false, uiLatencyOutcomeOK)
 	}
 	m.setBackgroundStatus(string(ctx.source) + " refreshed")
 	return true
@@ -484,9 +484,13 @@ func (m *Model) projectAndApplySessionItems(ctx sessionItemsMessageContext, item
 
 func (m *Model) applySessionProjection(source sessionProjectionSource, id, key string, blocks []ChatBlock) {
 	blocks = m.applyOptimisticOverlay(id, blocks)
-	if m.shouldApplySessionProjectionToVisible(id, key) {
-		m.setSnapshotBlocks(blocks)
+	visible := m.shouldApplySessionProjectionToVisible(id, key)
+	if visible {
+		outcome := m.setSnapshotBlocks(blocks)
+		m.settleSessionLoadProjection(id, key, outcome, true, uiLatencyOutcomeOK)
 		m.noteRequestVisibleUpdate(id)
+	} else {
+		m.settleSessionLoadProjection(id, key, viewportRenderOutcome{}, false, uiLatencyOutcomeOK)
 	}
 	m.sessionProjectionPostProcessorOrDefault().PostProcessSessionProjection(m, SessionProjectionPostProcessInput{
 		Source:    source,
@@ -495,7 +499,6 @@ func (m *Model) applySessionProjection(source sessionProjectionSource, id, key s
 	})
 	if key != "" {
 		m.cacheTranscriptBlocks(key, blocks)
-		m.finishUILatencyAction(uiLatencyActionSwitchSession, key, uiLatencyOutcomeOK)
 	} else if id == m.selectedSessionID() {
 		m.cacheTranscriptBlocks(m.selectedKey(), blocks)
 	}
@@ -1208,21 +1211,18 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.cancelRequestScope(requestScopeSessionStart)
 		if msg.err != nil {
 			if isCanceledRequestError(msg.err) {
-				m.loading = false
-				m.loadingKey = ""
+				m.clearSessionLoadingState()
 				m.stopRequestActivity()
 				return true, nil
 			}
 			m.setStatusError("start session error: " + msg.err.Error())
-			m.loading = false
-			m.loadingKey = ""
+			m.clearSessionLoadingState()
 			m.stopRequestActivity()
 			return true, nil
 		}
 		if msg.session == nil || msg.session.ID == "" {
 			m.setStatusError("start session error: no session returned")
-			m.loading = false
-			m.loadingKey = ""
+			m.clearSessionLoadingState()
 			return true, nil
 		}
 		m.resetStreamWithReason(transcriptResetReasonStartSessionResponse)
@@ -1242,8 +1242,12 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		m.loading = true
 		m.loadingKey = key
+		m.loadingRenderGeneration = 0
+		m.loadingRenderLatencyOutcome = ""
 		m.scrollOnLoad = true
-		m.setLoadingContent()
+		m.invalidateViewportRender()
+		m.applyBlocksNoRender(nil)
+		m.renderViewport()
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		watchCmd := tea.Cmd(nil)
 		recentsStateSaveCmd := tea.Cmd(nil)
@@ -1562,7 +1566,6 @@ func (m *Model) applyTranscriptSnapshotMsg(msg transcriptSnapshotMsg) tea.Cmd {
 	m.setSessionTranscriptCapabilities(msg.id, msg.snapshot.Capabilities)
 	blocks = m.projectTranscriptSnapshotBlocks(msg.id, blocks)
 	m.applySessionProjection(sessionProjectionSourceHistory, msg.id, msg.key, blocks)
-	m.markTranscriptLoadingSignal(msg.id)
 	m.appendTranscriptSessionTrace(
 		msg.id,
 		"snapshot_applied source=%s revision=%s authoritative=%t",

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/viewport"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -97,6 +98,96 @@ func TestOverlayTransientViewsStatusHistoryPreservesColumnsOutsideBounds(t *test
 
 	out := m.overlayTransientViews(body)
 	assertOverlayPreservesOutsideBounds(t, body, out, block, x, y)
+}
+
+func TestRightPaneOverlayPlacementUsesSharedPaneGeometry(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(120, 40)
+
+	xCenter, yCenter, ok := m.rightPaneOverlayPlacement(39, 20, rightPaneOverlayAlignViewportCenter)
+	if !ok {
+		t.Fatalf("expected centered overlay placement")
+	}
+	xBottom, yBottom, ok := m.rightPaneOverlayPlacement(39, 20, rightPaneOverlayAlignBottom)
+	if !ok {
+		t.Fatalf("expected bottom overlay placement")
+	}
+
+	frame := m.layoutFrame()
+	if xCenter < frame.rightStart || xBottom < frame.rightStart {
+		t.Fatalf("expected overlay x to stay within right pane, center=%d bottom=%d rightStart=%d", xCenter, xBottom, frame.rightStart)
+	}
+	if yBottom != 38 {
+		t.Fatalf("expected bottom overlay to use final body row, got %d", yBottom)
+	}
+	if yCenter >= yBottom {
+		t.Fatalf("expected centered overlay row above bottom row, center=%d bottom=%d", yCenter, yBottom)
+	}
+}
+
+func TestToastOverlayReturnsFalseWithoutActiveToast(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(100, 20)
+
+	line, row, ok := m.toastOverlay(19)
+	if ok || line != "" || row != 0 {
+		t.Fatalf("expected no toast overlay without active toast, got line=%q row=%d ok=%v", line, row, ok)
+	}
+}
+
+func TestToastOverlayReturnsFalseWhenStatusHistoryOpen(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(100, 20)
+	m.showWarningToast("background toast")
+	m.statusHistoryOverlay.Open()
+
+	line, row, ok := m.toastOverlay(19)
+	if ok || line != "" || row != 0 {
+		t.Fatalf("expected status history to suppress toast overlay, got line=%q row=%d ok=%v", line, row, ok)
+	}
+}
+
+func TestLoadingOverlayReturnsFalseWhenNotLoadingOrBodyEmpty(t *testing.T) {
+	m := NewModel(nil)
+	m.resize(100, 20)
+
+	line, x, row, ok := m.loadingOverlay(19)
+	if ok || line != "" || x != 0 || row != 0 {
+		t.Fatalf("expected no loading overlay while not loading, got line=%q x=%d row=%d ok=%v", line, x, row, ok)
+	}
+
+	m.loading = true
+	line, x, row, ok = m.loadingOverlay(0)
+	if ok || line != "" || x != 0 || row != 0 {
+		t.Fatalf("expected no loading overlay for empty body, got line=%q x=%d row=%d ok=%v", line, x, row, ok)
+	}
+}
+
+func TestRightPaneOverlayPlacementFallsBackToOverlayWidthAndPanelMain(t *testing.T) {
+	m := NewModel(nil)
+	m.viewport = viewport.Model{}
+
+	x, row, ok := m.rightPaneOverlayPlacement(5, 12, rightPaneOverlayAlignBottom)
+	if !ok || x != 0 || row != 4 {
+		t.Fatalf("expected overlay-width fallback placement, got x=%d row=%d ok=%v", x, row, ok)
+	}
+
+	m.resize(120, 40)
+	m.notesPanelOpen = true
+	m.notesPanelVisible = true
+	m.notesPanelMainWidth = 30
+	m.notesPanelWidth = 20
+	frame := m.layoutFrame()
+	x, row, ok = m.rightPaneOverlayPlacement(39, 10, rightPaneOverlayAlignViewportCenter)
+	if !ok {
+		t.Fatalf("expected panel-aware placement")
+	}
+	if x >= frame.rightStart+frame.panelMain {
+		t.Fatalf("expected centered x to stay inside panel main width, got x=%d panelMain=%d", x, frame.panelMain)
+	}
+	if row <= 0 {
+		t.Fatalf("expected centered row inside body, got %d", row)
+	}
 }
 
 func testOverlayBody(width, height int) string {

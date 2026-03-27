@@ -280,9 +280,63 @@ func (m *Model) toastOverlay(bodyHeight int) (string, int, bool) {
 	if line == "" {
 		return "", 0, false
 	}
-	row := bodyHeight - 1
-	if row < 0 {
+	_, row, ok := m.rightPaneOverlayPlacement(bodyHeight, xansi.StringWidth(line), rightPaneOverlayAlignBottom)
+	if !ok {
 		return "", 0, false
 	}
 	return line, row, true
+}
+
+func (m *Model) loadingOverlay(bodyHeight int) (string, int, int, bool) {
+	if m == nil || !m.loading || bodyHeight < 1 {
+		return "", 0, 0, false
+	}
+	line := toastInfoStyle.Render(" " + m.loader.View() + " Loading... ")
+	x, row, ok := m.rightPaneOverlayPlacement(bodyHeight, xansi.StringWidth(line), rightPaneOverlayAlignViewportCenter)
+	if !ok {
+		return "", 0, 0, false
+	}
+	return line, x, row, true
+}
+
+type rightPaneOverlayAlign int
+
+const (
+	rightPaneOverlayAlignBottom rightPaneOverlayAlign = iota
+	rightPaneOverlayAlignViewportCenter
+)
+
+func (m *Model) rightPaneOverlayPlacement(bodyHeight, overlayWidth int, align rightPaneOverlayAlign) (int, int, bool) {
+	if m == nil || bodyHeight < 1 {
+		return 0, 0, false
+	}
+	frame := m.layoutFrame()
+	paneWidth := m.width - frame.rightStart
+	if frame.panelVisible && frame.panelMain > 0 {
+		paneWidth = frame.panelMain
+	}
+	if paneWidth <= 0 {
+		paneWidth = m.viewport.Width()
+	}
+	if paneWidth <= 0 {
+		paneWidth = overlayWidth
+	}
+	x := frame.rightStart
+	if overlayWidth > 0 {
+		if extra := paneWidth - overlayWidth; extra > 0 {
+			x += extra / 2
+		}
+	}
+	row := bodyHeight - 1
+	switch align {
+	case rightPaneOverlayAlignViewportCenter:
+		row = min(bodyHeight-1, max(1, bodyHeight/2))
+		if m.viewport.Height() > 0 {
+			row = min(bodyHeight-1, 1+max(0, m.viewport.Height()/2))
+		}
+	}
+	if row < 0 {
+		return 0, 0, false
+	}
+	return x, row, true
 }

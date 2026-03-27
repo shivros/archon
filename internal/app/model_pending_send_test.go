@@ -144,6 +144,62 @@ func TestApplyLiveSessionItemsSnapshotNoopForNilModel(t *testing.T) {
 	}
 }
 
+func TestApplyLiveSessionItemsSnapshotReturnsFalseWhenRequestInactive(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	key := m.selectedKey()
+	_, _ = m.transcriptStream.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Blocks: []transcriptdomain.Block{
+			{Kind: "assistant_message", Role: "assistant", Text: "live reply"},
+		},
+	})
+
+	applied := m.applyLiveSessionItemsSnapshot(sessionItemsMessageContext{
+		source: sessionProjectionSourceTail,
+		id:     "s1",
+		key:    key,
+	})
+	if applied {
+		t.Fatalf("expected inactive request activity to skip live snapshot apply")
+	}
+}
+
+func TestApplyLiveSessionItemsSnapshotClearsLoadingWhenViewportNotVisible(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	key := m.selectedKey()
+	m.loading = true
+	m.loadingKey = key
+	m.requestActivity = requestActivity{active: true, sessionID: "s1", eventCount: 1}
+	m.setSnapshotBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "existing visible"}})
+	m.mode = uiModeRecents
+
+	_, _ = m.transcriptStream.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("2"),
+		Blocks: []transcriptdomain.Block{
+			{Kind: "assistant_message", Role: "assistant", Text: "background live reply"},
+		},
+	})
+
+	applied := m.applyLiveSessionItemsSnapshot(sessionItemsMessageContext{
+		source: sessionProjectionSourceTail,
+		id:     "s1",
+		key:    key,
+	})
+	if !applied {
+		t.Fatalf("expected live snapshot refresh to apply while request is active")
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected non-visible live snapshot refresh to clear loading state")
+	}
+	if got := latestAssistantBlockText(m.currentBlocks()); got != "existing visible" {
+		t.Fatalf("expected visible transcript to remain unchanged when viewport is hidden, got %q", got)
+	}
+	cached := m.transcriptCache[key]
+	if len(cached) == 0 || latestAssistantBlockText(cached) != "background live reply" {
+		t.Fatalf("expected cache to refresh from live snapshot while hidden, got %#v", cached)
+	}
+}
+
 func TestLiveAndProjectedSnapshotsRetainThenResolveOptimisticUser(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	key := m.selectedKey()

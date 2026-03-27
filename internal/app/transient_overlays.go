@@ -1,6 +1,10 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	xansi "github.com/charmbracelet/x/ansi"
+)
 
 type TransientOverlayContext struct {
 	Body       string
@@ -39,6 +43,7 @@ func defaultTransientOverlayProviders() []TransientOverlayProvider {
 		confirmOverlayProvider{},
 		composeOptionPickerOverlayProvider{},
 		composeFileSearchOverlayProvider{},
+		loadingOverlayProvider{},
 		statusHistoryOverlayProvider{},
 		settingsMenuOverlayProvider{},
 		toastOverlayProvider{},
@@ -191,4 +196,17 @@ func (toastOverlayProvider) Build(m *Model, ctx TransientOverlayContext) (LayerO
 		return LayerOverlay{}, false
 	}
 	return LayerOverlay{X: 0, Y: row, Block: line}, true
+}
+
+type loadingOverlayProvider struct{}
+
+func (loadingOverlayProvider) Build(m *Model, ctx TransientOverlayContext) (LayerOverlay, bool) {
+	if m == nil || !m.loading {
+		return LayerOverlay{}, false
+	}
+	line, x, row, ok := m.loadingOverlay(ctx.BodyHeight)
+	if !ok || strings.TrimSpace(xansi.Strip(line)) == "" {
+		return LayerOverlay{}, false
+	}
+	return LayerOverlay{X: x, Y: row, Block: line}, true
 }

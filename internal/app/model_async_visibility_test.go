@@ -1,10 +1,14 @@
 package app
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"control/internal/daemon/transcriptdomain"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 type delayedRenderPipeline struct {
@@ -44,7 +48,7 @@ func TestAppendUserMessageLocalRendersImmediatelyWhenAsyncEnabled(t *testing.T) 
 	}
 }
 
-func TestTranscriptSnapshotRendersImmediatelyWhileLoadingWhenAsyncEnabled(t *testing.T) {
+func TestTranscriptSnapshotKeepsLoadingVisibleUntilAsyncRenderCompletesWhenAsyncEnabled(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	WithAsyncViewportRendering(true)(&m)
 	WithRenderPipeline(delayedRenderPipeline{delay: 100 * time.Millisecond})(&m)
@@ -69,10 +73,72 @@ func TestTranscriptSnapshotRendersImmediatelyWhileLoadingWhenAsyncEnabled(t *tes
 	if !handled {
 		t.Fatalf("expected transcript snapshot to be handled")
 	}
-	if m.renderVersion <= before {
-		t.Fatalf("expected loading snapshot to render immediately")
+	if m.renderVersion != before {
+		t.Fatalf("expected loading snapshot to defer viewport paint until async render completes")
 	}
 	if got := latestAssistantBlockText(m.currentBlocks()); got != "snapshot reply" {
-		t.Fatalf("expected visible assistant block, got %q", got)
+		t.Fatalf("expected projected assistant block in model state, got %q", got)
+	}
+	if !m.loading {
+		t.Fatalf("expected loading to remain visible until async render completes")
+	}
+	if plain := xansi.Strip(fmt.Sprint(m.View().Content)); !strings.Contains(plain, "Loading...") {
+		t.Fatalf("expected loading overlay while async render is pending, got %q", plain)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m.consumeCompletedViewportRender()
+		if strings.Contains(strings.ToLower(xansi.Strip(m.renderedText)), "snapshot reply") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(strings.ToLower(xansi.Strip(m.renderedText)), "snapshot reply") {
+		t.Fatalf("expected async render to eventually apply snapshot reply, got %q", m.renderedText)
+	}
+	if m.loading {
+		t.Fatalf("expected loading to clear after async render applies")
+	}
+}
+
+func TestLoadSelectedSessionUsesAsyncViewportRenderForCachedTranscript(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	WithAsyncViewportRendering(true)(&m)
+	WithRenderPipeline(delayedRenderPipeline{delay: 100 * time.Millisecond})(&m)
+	m.resize(120, 40)
+	m.setContentText("previous session")
+	item := m.selectedItem()
+	if item == nil || item.session == nil {
+		t.Fatalf("expected selected session item")
+	}
+	m.transcriptCache[item.key()] = []ChatBlock{{Role: ChatRoleAgent, Text: "cached reply"}}
+
+	before := m.renderVersion
+	_ = m.loadSelectedSession(item)
+
+	if m.renderVersion != before {
+		t.Fatalf("expected cached session load to avoid sync viewport rendering")
+	}
+	if !m.loading {
+		t.Fatalf("expected loading to stay visible while cached transcript render is pending")
+	}
+	if plain := xansi.Strip(fmt.Sprint(m.View().Content)); !strings.Contains(plain, "Loading...") {
+		t.Fatalf("expected loading overlay during cached async render, got %q", plain)
+	}
+	if strings.Contains(strings.ToLower(xansi.Strip(m.renderedText)), "cached reply") {
+		t.Fatalf("expected cached transcript not to replace viewport until async render completes")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		m.consumeCompletedViewportRender()
+		if strings.Contains(strings.ToLower(xansi.Strip(m.renderedText)), "cached reply") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(strings.ToLower(xansi.Strip(m.renderedText)), "cached reply") {
+		t.Fatalf("expected cached transcript to render asynchronously, got %q", m.renderedText)
 	}
 }

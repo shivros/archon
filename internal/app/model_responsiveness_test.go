@@ -66,8 +66,8 @@ func TestReduceStateMessagesHistoryLargePayloadDefersProjection(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected history projection to run asynchronously for large payload")
 	}
-	if m.loading {
-		t.Fatalf("expected loading state to clear before async projection result")
+	if !m.loading {
+		t.Fatalf("expected loading state to remain visible until async projection is applied")
 	}
 
 	projected, ok := cmd().(sessionBlocksProjectedMsg)
@@ -81,8 +81,105 @@ func TestReduceStateMessagesHistoryLargePayloadDefersProjection(t *testing.T) {
 	if followUp != nil {
 		t.Fatalf("expected no follow-up command for projected message")
 	}
+	if m.loading {
+		t.Fatalf("expected loading state to clear once projected transcript is applied")
+	}
 	if len(m.currentBlocks()) == 0 {
 		t.Fatalf("expected projected transcript blocks to be applied")
+	}
+}
+
+func TestIsLoadingTargetPrefersKeyThenFallsBackToSessionID(t *testing.T) {
+	m := NewModel(nil)
+	m.loading = true
+	m.loadingKey = "sess:s1"
+
+	cases := []struct {
+		name      string
+		sessionID string
+		key       string
+		want      bool
+	}{
+		{name: "matching key", sessionID: "other", key: "sess:s1", want: true},
+		{name: "fallback session id", sessionID: "s1", key: "", want: true},
+		{name: "mismatched key still falls back to session", sessionID: "s1", key: "sess:other", want: true},
+		{name: "mismatched key and session", sessionID: "other", key: "sess:other", want: false},
+		{name: "mismatched session", sessionID: "other", key: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := m.isLoadingTarget(tc.sessionID, tc.key); got != tc.want {
+				t.Fatalf("isLoadingTarget(%q, %q) = %v, want %v", tc.sessionID, tc.key, got, tc.want)
+			}
+		})
+	}
+
+	m.loading = false
+	if m.isLoadingTarget("s1", "sess:s1") {
+		t.Fatalf("expected non-loading model to reject loading target")
+	}
+}
+
+func TestMarkTranscriptLoadingSignalWithOutcomeNoopForMismatchedSession(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := NewModel(nil, WithUILatencySink(sink))
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+
+	m.markTranscriptLoadingSignalWithOutcome("s2", uiLatencyOutcomeCacheHit)
+
+	if !m.loading || m.loadingKey != "sess:s1" {
+		t.Fatalf("expected mismatched loading signal to keep loading state")
+	}
+	if got := countLatencyMetricsByName(sink.Snapshot(), uiLatencyActionSwitchSession); got != 0 {
+		t.Fatalf("expected no latency metrics for mismatched loading signal, got %d", got)
+	}
+}
+
+func TestMarkTranscriptLoadingSignalClearsLoadingWithDefaultOutcome(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := NewModel(nil, WithUILatencySink(sink))
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+
+	m.markTranscriptLoadingSignal("s1")
+
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected loading signal to clear loading state")
+	}
+	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeOK) {
+		t.Fatalf("expected default ok latency outcome after loading signal")
+	}
+}
+
+func TestFinishSessionLoadLatencyForKeyDefaultsOutcome(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := NewModel(nil, WithUILatencySink(sink))
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+
+	m.finishSessionLoadLatencyForKey("sess:s1", "")
+
+	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeOK) {
+		t.Fatalf("expected blank latency outcome to default to ok")
+	}
+}
+
+func TestSettleSessionLoadProjectionClearsLoadingWhenNotVisible(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := NewModel(nil, WithUILatencySink(sink))
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+
+	m.settleSessionLoadProjection("s1", "sess:s1", viewportRenderOutcome{}, false, "")
+
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected non-visible settlement to clear loading state")
+	}
+	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeOK) {
+		t.Fatalf("expected non-visible settlement to finish switch-session latency")
 	}
 }
 
