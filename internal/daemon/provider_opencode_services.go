@@ -56,6 +56,10 @@ type openCodePermissionService struct {
 	requester openCodeJSONRequester
 }
 
+type openCodeFileSearchService struct {
+	requester openCodeJSONRequester
+}
+
 type openCodeEventService struct {
 	baseURL   string
 	username  string
@@ -85,6 +89,10 @@ func newOpenCodePermissionService(requester openCodeJSONRequester) *openCodePerm
 	return &openCodePermissionService{requester: requester}
 }
 
+func newOpenCodeFileSearchService(requester openCodeJSONRequester) *openCodeFileSearchService {
+	return &openCodeFileSearchService{requester: requester}
+}
+
 func newOpenCodeEventService(baseURL, username, token string, transport http.RoundTripper, timeout time.Duration) *openCodeEventService {
 	if timeout <= 0 {
 		timeout = defaultOpenCodeEventConnectTimeout
@@ -96,6 +104,29 @@ func newOpenCodeEventService(baseURL, username, token string, transport http.Rou
 		transport: transport,
 		timeout:   timeout,
 	}
+}
+
+func (s *openCodeFileSearchService) SearchFiles(ctx context.Context, query, directory string) ([]string, error) {
+	if s == nil || s.requester == nil {
+		return nil, errors.New("requester is required")
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	path := "/find/file?query=" + url.QueryEscape(query)
+	path = appendOpenCodeDirectoryQuery(path, directory)
+	var results []string
+	if err := s.requester.doJSON(ctx, http.MethodGet, path, nil, &results); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(results))
+	for _, entry := range results {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out, nil
 }
 
 func (s *openCodeSessionService) CreateSession(ctx context.Context, title, directory string) (string, error) {

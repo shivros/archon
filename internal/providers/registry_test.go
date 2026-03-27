@@ -51,6 +51,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsEvents:                 true,
 				SupportsApprovals:              true,
 				SupportsInterrupt:              true,
+				SupportsFileSearch:             true,
 				NoProcess:                      true,
 			},
 			bootstrap: defaultBootstrapProfile(),
@@ -65,6 +66,7 @@ func TestProviderRegistryDefinitions(t *testing.T) {
 				SupportsEvents:                 true,
 				SupportsApprovals:              true,
 				SupportsInterrupt:              true,
+				SupportsFileSearch:             true,
 				NoProcess:                      true,
 			},
 			bootstrap: defaultBootstrapProfile(),
@@ -158,7 +160,17 @@ func TestProviderRegistryCapabilitiesForKnown(t *testing.T) {
 		t.Fatalf("unexpected codex capabilities: %#v", caps)
 	}
 	if caps.SupportsFileSearch {
-		t.Fatalf("expected file search support to remain disabled until provider implementations exist")
+		t.Fatalf("expected codex file search support to remain disabled")
+	}
+
+	opencodeCaps := CapabilitiesFor("opencode")
+	if !opencodeCaps.SupportsFileSearch {
+		t.Fatalf("expected opencode file search support to be enabled")
+	}
+
+	kilocodeCaps := CapabilitiesFor("kilocode")
+	if !kilocodeCaps.SupportsFileSearch {
+		t.Fatalf("expected kilocode file search support to be enabled")
 	}
 }
 

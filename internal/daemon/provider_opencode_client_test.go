@@ -274,6 +274,38 @@ func TestOpenCodeClientListPermissionsAndReply(t *testing.T) {
 	}
 }
 
+func TestOpenCodeClientSearchFiles(t *testing.T) {
+	const directory = "/tmp/opencode-worktree"
+	var seenRawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/find/file":
+			seenRawQuery = r.URL.RawQuery
+			writeJSON(w, http.StatusOK, []string{"src/main.go", "", " README.md "})
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+
+	client, err := newOpenCodeClient(openCodeClientConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("newOpenCodeClient: %v", err)
+	}
+	results, err := client.SearchFiles(context.Background(), "main", directory)
+	if err != nil {
+		t.Fatalf("SearchFiles: %v", err)
+	}
+	if got, want := strings.TrimSpace(seenRawQuery), "query=main&directory=%2Ftmp%2Fopencode-worktree"; got != want {
+		t.Fatalf("unexpected raw query: got %q want %q", got, want)
+	}
+	if len(results) != 2 || results[0] != "src/main.go" || results[1] != "README.md" {
+		t.Fatalf("unexpected search results: %#v", results)
+	}
+}
+
 func TestOpenCodeClientListModelsSupportsMappedModelShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/config/providers" {

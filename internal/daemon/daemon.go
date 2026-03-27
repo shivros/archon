@@ -220,7 +220,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	api.WorkflowDispatchDefaults = guidedWorkflowDispatchDefaultsFromCoreConfig(coreCfg)
 	api.TitleGeneration = titleGeneration
 	api.MetadataEvents = metadataEvents
-	api.FileSearches = NewFileSearchService(NewDaemonFileSearchScopeResolver(d.manager, d.stores), d.logger)
+	api.FileSearches = NewFileSearchService(
+		NewDaemonFileSearchScopeResolver(d.manager, d.stores),
+		d.logger,
+		WithFileSearchRuntimeRegistry(newDaemonFileSearchRuntimeRegistry(d.stores, nil)),
+	)
 	api.CodexHistoryPool = NewCodexHistoryPool(d.logger)
 	defer api.CodexHistoryPool.Close()
 	syncer := NewCodexSyncer(d.stores, d.logger)

@@ -27,6 +27,7 @@ type openCodeClient struct {
 	promptService  *openCodePromptService
 	catalogService *openCodeCatalogService
 	permissionSvc  *openCodePermissionService
+	fileSearchSvc  *openCodeFileSearchService
 	eventSvc       *openCodeEventService
 }
 
@@ -146,6 +147,7 @@ func newOpenCodeClient(cfg openCodeClientConfig) (*openCodeClient, error) {
 	client.modelResolver = openCodeDefaultRuntimeModelResolver{catalog: client.catalogService}
 	client.promptService = newOpenCodePromptService(client, client.sessionService, client)
 	client.permissionSvc = newOpenCodePermissionService(client)
+	client.fileSearchSvc = newOpenCodeFileSearchService(client)
 	client.eventSvc = newOpenCodeEventService(client.baseURL, client.username, client.token, client.httpClient.Transport, defaultOpenCodeEventConnectTimeout)
 	return client, nil
 }
@@ -450,6 +452,13 @@ func (c *openCodeClient) RequestPermission(ctx context.Context, sessionID string
 		return errors.New("permission service is required")
 	}
 	return c.permissionSvc.RequestPermission(ctx, sessionID, permission, directory)
+}
+
+func (c *openCodeClient) SearchFiles(ctx context.Context, query, directory string) ([]string, error) {
+	if c == nil || c.fileSearchSvc == nil {
+		return nil, errors.New("file search service is required")
+	}
+	return c.fileSearchSvc.SearchFiles(ctx, query, directory)
 }
 
 func (c *openCodeClient) SubscribeSessionEvents(ctx context.Context, sessionID, directory string) (<-chan types.CodexEvent, func(), error) {
