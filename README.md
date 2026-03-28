@@ -16,11 +16,11 @@ Codex is the primary and most thoroughly tested provider. Support for other prov
 | **Reasoning Levels** | Full | - | - |
 | **Access Levels** | Full | Full | - |
 | **Live Events / Streaming** | Full | Partial | Partial |
-| **Approvals** | Full | - | Partial |
-| **Interrupt** | Full | - | Full |
+| **Approvals** | Full | Partial | Partial |
+| **Interrupt** | Full | Partial | Full |
 | **Session Resume** | Full | Full | Full |
 | **Compose File Autocomplete (`@...`)** | Full | - | Full |
-| **Guided Workflows** | Full | Full | - |
+| **Guided Workflows** | Full | Full | Partial |
 | **Notifications** | Full | Partial | Partial |
 
 **Full** = well-tested and reliable, **Partial** = works but incomplete or lightly tested, **-** = not supported.
