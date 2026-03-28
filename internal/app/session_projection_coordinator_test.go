@@ -116,3 +116,40 @@ func TestDefaultSessionProjectionTrackerTreatsNonPositiveMaxAsOne(t *testing.T) 
 		t.Fatalf("expected newest token to remain tracked, got %#v", latest)
 	}
 }
+
+func TestWithSessionProjectionCoordinatorNilRebuildsCoordinatorFromPolicy(t *testing.T) {
+	m := NewModel(nil, WithSessionProjectionPolicy(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 1}))
+	custom := NewDefaultSessionProjectionCoordinator(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 4}, nil)
+	WithSessionProjectionCoordinator(custom)(&m)
+
+	WithSessionProjectionCoordinator(nil)(&m)
+
+	coordinator := m.sessionProjectionCoordinatorOrDefault()
+	if coordinator == nil {
+		t.Fatalf("expected rebuilt coordinator")
+	}
+	_, _ = coordinator.Schedule("key:a", context.Background())
+	_, _ = coordinator.Schedule("key:b", context.Background())
+	latest := coordinator.LatestByToken()
+	if got := len(latest); got != 1 {
+		t.Fatalf("expected rebuilt coordinator to honor current policy max tokens, got %d", got)
+	}
+	if _, ok := latest["key:b"]; !ok {
+		t.Fatalf("expected newest token to remain tracked, got %#v", latest)
+	}
+}
+
+func TestSessionProjectionCoordinatorOrDefaultBuildsCoordinatorFromCurrentPolicy(t *testing.T) {
+	m := NewModel(nil, WithSessionProjectionPolicy(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 1}))
+	m.sessionProjectionCoordinator = nil
+
+	coordinator := m.sessionProjectionCoordinatorOrDefault()
+	if coordinator == nil {
+		t.Fatalf("expected coordinator fallback")
+	}
+	_, _ = coordinator.Schedule("key:a", context.Background())
+	_, _ = coordinator.Schedule("key:b", context.Background())
+	if got := len(coordinator.LatestByToken()); got != 1 {
+		t.Fatalf("expected fallback coordinator to honor policy max tokens, got %d", got)
+	}
+}

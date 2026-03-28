@@ -551,7 +551,13 @@ func (m *Model) asyncSessionProjectionCmd(
 		return nil
 	}
 	policy := m.sessionProjectionPolicyOrDefault()
-	if !policy.ShouldProjectAsync(len(items)) {
+	if !policy.ShouldProjectAsync(SessionProjectionDecisionInput{
+		ItemCount:        len(items),
+		Source:           source,
+		Provider:         provider,
+		HasApprovals:     len(approvals) > 0 || len(resolutions) > 0,
+		IsFetchedPayload: true,
+	}) {
 		return nil
 	}
 	token := sessionProjectionToken(key, id)

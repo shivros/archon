@@ -3,7 +3,10 @@ package app
 import tea "charm.land/bubbletea/v2"
 
 const (
-	defaultSessionProjectionAsyncThreshold = 32
+	// Fetched session/history payloads should hand work off immediately so
+	// navigation and input stay responsive; empty payloads remain synchronous
+	// because they are trivial to apply.
+	defaultSessionProjectionAsyncThreshold = 1
 	defaultSessionProjectionMaxTokens      = 256
 	defaultDebugPanelProjectionMaxTokens   = 32
 )
@@ -44,8 +47,16 @@ func (m *Model) sidebarUpdatePolicyOrDefault() SidebarUpdatePolicy {
 }
 
 type SessionProjectionPolicy interface {
-	ShouldProjectAsync(itemCount int) bool
+	ShouldProjectAsync(input SessionProjectionDecisionInput) bool
 	MaxTrackedProjectionTokens() int
+}
+
+type SessionProjectionDecisionInput struct {
+	ItemCount        int
+	Source           sessionProjectionSource
+	Provider         string
+	HasApprovals     bool
+	IsFetchedPayload bool
 }
 
 type defaultSessionProjectionPolicy struct{}
@@ -76,8 +87,11 @@ func WithSessionProjectionCoordinator(coordinator sessionProjectionCoordinator) 
 	}
 }
 
-func (defaultSessionProjectionPolicy) ShouldProjectAsync(itemCount int) bool {
-	return itemCount >= defaultSessionProjectionAsyncThreshold
+func (defaultSessionProjectionPolicy) ShouldProjectAsync(input SessionProjectionDecisionInput) bool {
+	if !input.IsFetchedPayload {
+		return false
+	}
+	return input.ItemCount >= defaultSessionProjectionAsyncThreshold
 }
 
 func (defaultSessionProjectionPolicy) MaxTrackedProjectionTokens() int {

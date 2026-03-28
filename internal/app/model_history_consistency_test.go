@@ -39,9 +39,7 @@ func TestHistoryMsgCodexSkipsSnapshotWhileLiveEventsFlow(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 1 {
@@ -71,9 +69,7 @@ func TestHistoryMsgCodexUsesProjectedSnapshotWhenApplyingHistory(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 1 {
@@ -116,9 +112,7 @@ func TestHistoryMsgSplitsAdjacentAgentBlocksForCodex(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {
@@ -150,9 +144,7 @@ func TestHistoryMsgSplitsAdjacentAgentBlocksForItemsProvider(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {
@@ -196,9 +188,7 @@ func TestHistoryReplayDoesNotDuplicateExistingClaudeTranscript(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	handled, cmd = m.reduceStateMessages(historyMsg{
 		id:    "s1",
@@ -208,9 +198,7 @@ func TestHistoryReplayDoesNotDuplicateExistingClaudeTranscript(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected replayed history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for replayed history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {
@@ -239,9 +227,7 @@ func TestHistoryMsgCodexCoalescesAdjacentReasoningIDs(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 1 {
@@ -300,9 +286,7 @@ func TestHistoryMsgCodexKeepsApprovalsInRelativeOrder(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	expectedRoles := []ChatRole{ChatRoleUser, ChatRoleAgent, ChatRoleApproval, ChatRoleApproval, ChatRoleUser}
@@ -364,9 +348,7 @@ func TestTailMsgCodexKeepsApprovalsInRelativeOrder(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected tail message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for tail message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	expectedRoles := []ChatRole{ChatRoleUser, ChatRoleAgent, ChatRoleApproval, ChatRoleApproval, ChatRoleUser}
@@ -411,9 +393,7 @@ func TestHistoryMsgItemsProviderMergesPendingApprovals(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {
@@ -457,9 +437,7 @@ func TestHistoryMsgClaudeDoesNotMergeApprovals(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 1 {
@@ -498,9 +476,7 @@ func TestHistoryMsgClaudeMergesExitPlanApproval(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {
@@ -544,9 +520,7 @@ func TestHistoryMsgKiloCodeSplitsBackfillAssistantItemsByProviderMessageID(t *te
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for history message")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 
 	blocks := m.currentBlocks()
 	if len(blocks) != 2 {

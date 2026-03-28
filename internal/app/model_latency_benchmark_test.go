@@ -143,3 +143,76 @@ func BenchmarkModelSessionSwitchPath(b *testing.B) {
 		_ = m.onSelectionChangedWithDelay(0)
 	}
 }
+
+type benchmarkSessionProjectionPolicy struct {
+	asyncAt int
+}
+
+func (p benchmarkSessionProjectionPolicy) ShouldProjectAsync(input SessionProjectionDecisionInput) bool {
+	return input.ItemCount >= p.asyncAt
+}
+
+func (benchmarkSessionProjectionPolicy) MaxTrackedProjectionTokens() int {
+	return defaultSessionProjectionMaxTokens
+}
+
+func benchmarkHistoryItems(n int) []map[string]any {
+	items := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		items = append(items, map[string]any{
+			"type": "agentMessage",
+			"text": fmt.Sprintf("reply-%03d", i),
+		})
+	}
+	return items
+}
+
+func benchmarkHistoryProjectionModel(policy SessionProjectionPolicy) *Model {
+	opts := make([]ModelOption, 0, 1)
+	if policy != nil {
+		opts = append(opts, WithSessionProjectionPolicy(policy))
+	}
+	m := NewModel(nil, opts...)
+	m.pendingSessionKey = "sess:s1"
+	m.loadingKey = "sess:s1"
+	m.loading = true
+	m.sessions = []*types.Session{{ID: "s1", Provider: "codex"}}
+	return &m
+}
+
+func BenchmarkModelReduceStateMessagesHistoryProjection(b *testing.B) {
+	items := benchmarkHistoryItems(8)
+	cases := []struct {
+		name      string
+		policy    SessionProjectionPolicy
+		wantAsync bool
+	}{
+		{name: "async_handoff_default", policy: nil, wantAsync: true},
+		{name: "forced_sync_inline", policy: benchmarkSessionProjectionPolicy{asyncAt: 1 << 30}, wantAsync: false},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				m := benchmarkHistoryProjectionModel(tc.policy)
+				msg := historyMsg{
+					id:    "s1",
+					key:   "sess:s1",
+					items: items,
+				}
+				b.StartTimer()
+				handled, cmd := m.reduceStateMessages(msg)
+				b.StopTimer()
+				if !handled {
+					b.Fatalf("expected history message to be handled")
+				}
+				if tc.wantAsync && cmd == nil {
+					b.Fatalf("expected async projection handoff")
+				}
+				if !tc.wantAsync && cmd != nil {
+					b.Fatalf("expected synchronous projection path")
+				}
+			}
+		})
+	}
+}

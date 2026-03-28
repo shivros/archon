@@ -44,9 +44,7 @@ func TestTranscriptSnapshotHistoryParityPreservesUserTurnsAcrossProviders(t *tes
 			if !handled {
 				t.Fatalf("expected history message to be handled")
 			}
-			if cmd != nil {
-				t.Fatalf("expected no follow-up command for history parity")
-			}
+			applyProjectedSessionCmd(t, &historyModel, cmd)
 
 			snapshotModel := newPhase0ModelWithSession(tc.provider)
 			snapshotModel.enterCompose("s1")

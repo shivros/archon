@@ -50,7 +50,7 @@ func TestResolveMouseModeUsesAllMotionOnlyWhileDragging(t *testing.T) {
 	}
 }
 
-func TestReduceStateMessagesHistoryLargePayloadDefersProjection(t *testing.T) {
+func TestReduceStateMessagesHistoryModestPayloadDefersProjection(t *testing.T) {
 	m := NewModel(nil)
 	m.pendingSessionKey = "sess:s1"
 	m.loadingKey = "sess:s1"
@@ -60,13 +60,13 @@ func TestReduceStateMessagesHistoryLargePayloadDefersProjection(t *testing.T) {
 	handled, cmd := m.reduceStateMessages(historyMsg{
 		id:    "s1",
 		key:   "sess:s1",
-		items: fakeHistoryItems(defaultSessionProjectionAsyncThreshold + 1),
+		items: fakeHistoryItems(4),
 	})
 	if !handled {
 		t.Fatalf("expected history message to be handled")
 	}
 	if cmd == nil {
-		t.Fatalf("expected history projection to run asynchronously for large payload")
+		t.Fatalf("expected history projection to run asynchronously for modest payload")
 	}
 	if !m.loading {
 		t.Fatalf("expected loading state to remain visible until async projection is applied")
@@ -193,7 +193,7 @@ func TestReduceStateMessagesIgnoresStaleSessionProjection(t *testing.T) {
 	handled, cmd1 := m.reduceStateMessages(historyMsg{
 		id:    "s1",
 		key:   "sess:s1",
-		items: fakeHistoryItems(defaultSessionProjectionAsyncThreshold + 2),
+		items: fakeHistoryItems(2),
 	})
 	if !handled || cmd1 == nil {
 		t.Fatalf("expected first async projection command")
@@ -202,7 +202,7 @@ func TestReduceStateMessagesIgnoresStaleSessionProjection(t *testing.T) {
 	handled, cmd2 := m.reduceStateMessages(historyMsg{
 		id:    "s1",
 		key:   "sess:s1",
-		items: fakeHistoryItems(defaultSessionProjectionAsyncThreshold + 3),
+		items: fakeHistoryItems(3),
 	})
 	if !handled || cmd2 == nil {
 		t.Fatalf("expected second async projection command")
@@ -370,11 +370,29 @@ type testSessionProjectionPolicy struct {
 	maxTokens int
 }
 
-func (p testSessionProjectionPolicy) ShouldProjectAsync(itemCount int) bool {
-	return itemCount >= p.asyncAt
+func (p testSessionProjectionPolicy) ShouldProjectAsync(input SessionProjectionDecisionInput) bool {
+	return input.ItemCount >= p.asyncAt
 }
 
 func (p testSessionProjectionPolicy) MaxTrackedProjectionTokens() int {
+	return p.maxTokens
+}
+
+type recordingSessionProjectionPolicy struct {
+	maxTokens   int
+	shouldAsync bool
+	inputs      []SessionProjectionDecisionInput
+}
+
+func (p *recordingSessionProjectionPolicy) ShouldProjectAsync(input SessionProjectionDecisionInput) bool {
+	p.inputs = append(p.inputs, input)
+	return p.shouldAsync
+}
+
+func (p *recordingSessionProjectionPolicy) MaxTrackedProjectionTokens() int {
+	if p.maxTokens <= 0 {
+		return defaultSessionProjectionMaxTokens
+	}
 	return p.maxTokens
 }
 
@@ -490,7 +508,7 @@ func TestWithSessionProjectionPolicyConfiguresModelAndDefaultReset(t *testing.T)
 		maxTokens: 3,
 	}))
 	policy := m.sessionProjectionPolicyOrDefault()
-	if policy.ShouldProjectAsync(5) {
+	if policy.ShouldProjectAsync(SessionProjectionDecisionInput{ItemCount: 5}) {
 		t.Fatalf("expected custom projection policy to gate async projection")
 	}
 	if got := policy.MaxTrackedProjectionTokens(); got != 3 {
@@ -502,11 +520,119 @@ func TestWithSessionProjectionPolicyConfiguresModelAndDefaultReset(t *testing.T)
 
 	WithSessionProjectionPolicy(nil)(&m)
 	defaultPolicy := m.sessionProjectionPolicyOrDefault()
-	if !defaultPolicy.ShouldProjectAsync(defaultSessionProjectionAsyncThreshold) {
-		t.Fatalf("expected default projection policy after nil reset")
+	if defaultPolicy.ShouldProjectAsync(SessionProjectionDecisionInput{}) {
+		t.Fatalf("expected default projection policy to keep empty payloads synchronous")
+	}
+	if defaultPolicy.ShouldProjectAsync(SessionProjectionDecisionInput{ItemCount: 3}) {
+		t.Fatalf("expected default projection policy to keep non-fetched payloads synchronous")
+	}
+	if !defaultPolicy.ShouldProjectAsync(SessionProjectionDecisionInput{ItemCount: 1, IsFetchedPayload: true}) {
+		t.Fatalf("expected default projection policy to defer any non-empty payload")
 	}
 	if got := defaultPolicy.MaxTrackedProjectionTokens(); got != defaultSessionProjectionMaxTokens {
 		t.Fatalf("expected default max tokens %d, got %d", defaultSessionProjectionMaxTokens, got)
+	}
+}
+
+func TestAsyncSessionProjectionCmdPassesDecisionInputForFetchedPayloads(t *testing.T) {
+	policy := &recordingSessionProjectionPolicy{maxTokens: 4, shouldAsync: true}
+	m := NewModel(nil, WithSessionProjectionPolicy(policy))
+	m.pendingSessionKey = "sess:s1"
+	m.sessions = []*types.Session{{ID: "s1", Provider: "codex"}}
+	m.setApprovalsForSession("s1", []*ApprovalRequest{{
+		RequestID: 1,
+		SessionID: "s1",
+		Method:    "tool/requestUserInput",
+	}})
+
+	cases := []struct {
+		name       string
+		msg        tea.Msg
+		wantSource sessionProjectionSource
+	}{
+		{
+			name: "history",
+			msg: historyMsg{
+				id:    "s1",
+				key:   "sess:s1",
+				items: fakeHistoryItems(2),
+			},
+			wantSource: sessionProjectionSourceHistory,
+		},
+		{
+			name: "tail",
+			msg: tailMsg{
+				id:    "s1",
+				key:   "sess:s1",
+				items: fakeHistoryItems(2),
+			},
+			wantSource: sessionProjectionSourceTail,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy.inputs = nil
+			handled, cmd := m.reduceStateMessages(tc.msg)
+			if !handled {
+				t.Fatalf("expected %s message to be handled", tc.name)
+			}
+			if cmd == nil {
+				t.Fatalf("expected %s projection to go async", tc.name)
+			}
+			if got := len(policy.inputs); got != 1 {
+				t.Fatalf("expected one decision input, got %d", got)
+			}
+			input := policy.inputs[0]
+			if input.ItemCount != 2 {
+				t.Fatalf("expected item count 2, got %d", input.ItemCount)
+			}
+			if input.Source != tc.wantSource {
+				t.Fatalf("expected source %q, got %q", tc.wantSource, input.Source)
+			}
+			if input.Provider != "codex" {
+				t.Fatalf("expected provider codex, got %q", input.Provider)
+			}
+			if !input.HasApprovals {
+				t.Fatalf("expected approvals to be reflected in decision input")
+			}
+			if !input.IsFetchedPayload {
+				t.Fatalf("expected fetched payload flag to be true")
+			}
+		})
+	}
+}
+
+func TestProjectAndApplySessionItemsFallsBackToSyncWhenPolicyRejectsAsync(t *testing.T) {
+	policy := &recordingSessionProjectionPolicy{maxTokens: 4, shouldAsync: false}
+	m := NewModel(nil, WithSessionProjectionPolicy(policy))
+	m.pendingSessionKey = "sess:s1"
+	m.loadingKey = "sess:s1"
+	m.loading = true
+	m.sessions = []*types.Session{{ID: "s1", Provider: "codex"}}
+
+	handled, cmd := m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: fakeHistoryItems(2),
+	})
+	if !handled {
+		t.Fatalf("expected history message to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected forced-sync policy to keep projection inline")
+	}
+	if got := len(policy.inputs); got != 1 {
+		t.Fatalf("expected one decision input, got %d", got)
+	}
+	if !policy.inputs[0].IsFetchedPayload || policy.inputs[0].Source != sessionProjectionSourceHistory {
+		t.Fatalf("unexpected decision input %#v", policy.inputs[0])
+	}
+	if len(m.currentBlocks()) == 0 {
+		t.Fatalf("expected sync fallback to apply projected blocks immediately")
+	}
+	if m.loading {
+		t.Fatalf("expected sync fallback to settle loading")
 	}
 }
 

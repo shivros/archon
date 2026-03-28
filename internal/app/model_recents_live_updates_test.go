@@ -24,9 +24,7 @@ func TestHistoryMsgDoesNotOverwriteRecentsView(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected historyMsg to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for historyMsg")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 	if m.mode != uiModeRecents {
 		t.Fatalf("expected to remain in recents mode, got %v", m.mode)
 	}
@@ -59,9 +57,7 @@ func TestTailMsgDoesNotOverwriteRecentsView(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected tailMsg to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for tailMsg")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 	if m.mode != uiModeRecents {
 		t.Fatalf("expected to remain in recents mode, got %v", m.mode)
 	}

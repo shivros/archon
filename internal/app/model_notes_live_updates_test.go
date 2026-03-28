@@ -26,9 +26,7 @@ func TestHistoryMsgDoesNotOverwriteNotesView(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected historyMsg to be handled")
 	}
-	if cmd != nil {
-		t.Fatalf("expected no follow-up command for historyMsg")
-	}
+	applyProjectedSessionCmd(t, &m, cmd)
 	if m.mode != uiModeNotes {
 		t.Fatalf("expected to remain in notes mode, got %v", m.mode)
 	}
