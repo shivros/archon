@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,24 +21,35 @@ type composeFileSearchAPITestStub struct {
 		ID  string
 		Req client.UpdateFileSearchRequest
 	}
-	closeCalls []string
-	events     map[string]chan types.FileSearchEvent
-	candidates map[string][]types.FileSearchCandidate
-	nextID     string
-	startErr   error
-	updateErr  error
-	eventsErr  error
-	closeErr   error
-	autoEvent  bool
-	updateHook func(id, query string, ch chan types.FileSearchEvent)
+	closeCalls       []string
+	eventCalls       []string
+	eventCancelCalls []string
+	events           map[string]chan types.FileSearchEvent
+	candidates       map[string][]types.FileSearchCandidate
+	nextID           string
+	startErr         error
+	updateErr        error
+	eventsErr        error
+	closeErr         error
+	autoEvent        bool
+	updateHook       func(id, query string, ch chan types.FileSearchEvent)
 }
 
 type stubComposeFileSearchContextResolver struct {
 	ctx composeFileSearchContext
 }
 
+type syncComposeFileSearchCloser struct{}
+
 func (s stubComposeFileSearchContextResolver) ResolveComposeFileSearchContext(*Model) composeFileSearchContext {
 	return s.ctx
+}
+
+func (syncComposeFileSearchCloser) CloseAsync(service composeFileSearchService, searchID string) {
+	if service == nil || strings.TrimSpace(searchID) == "" {
+		return
+	}
+	service.Close(context.Background(), searchID)
 }
 
 func newComposeFileSearchAPITestStub() *composeFileSearchAPITestStub {
@@ -57,6 +69,17 @@ func (s *composeFileSearchAPITestStub) StartFileSearch(_ context.Context, req cl
 	id := s.nextID
 	if _, ok := s.events[id]; !ok {
 		s.events[id] = make(chan types.FileSearchEvent, 8)
+	}
+	if s.autoEvent {
+		query := req.Query
+		if strings.TrimSpace(query) != "" {
+			s.events[id] <- types.FileSearchEvent{
+				Kind:       types.FileSearchEventResults,
+				SearchID:   id,
+				Query:      query,
+				Candidates: append([]types.FileSearchCandidate(nil), s.candidates[query]...),
+			}
+		}
 	}
 	return &types.FileSearchSession{ID: id, Scope: req.Scope}, nil
 }
@@ -98,12 +121,15 @@ func (s *composeFileSearchAPITestStub) FileSearchEvents(_ context.Context, id st
 	if s.eventsErr != nil {
 		return nil, func() {}, s.eventsErr
 	}
+	s.eventCalls = append(s.eventCalls, id)
 	ch, ok := s.events[id]
 	if !ok {
 		ch = make(chan types.FileSearchEvent, 8)
 		s.events[id] = ch
 	}
-	return ch, func() {}, nil
+	return ch, func() {
+		s.eventCancelCalls = append(s.eventCancelCalls, id)
+	}, nil
 }
 
 func runModelCmd(t *testing.T, m *Model, cmd tea.Cmd) {
@@ -130,6 +156,49 @@ func pressKey(t *testing.T, m *Model, msg tea.Msg) {
 	nextModel, cmd := m.Update(msg)
 	*m = asModel(t, nextModel)
 	runModelCmd(t, m, cmd)
+}
+
+func advanceTick(t *testing.T, m *Model) {
+	t.Helper()
+	nextModel, cmd := m.Update(tickMsg(time.Now()))
+	*m = asModel(t, nextModel)
+	runModelCmdSkippingTicks(t, m, cmd)
+}
+
+func runModelCmdSkippingTicks(t *testing.T, m *Model, cmd tea.Cmd) {
+	t.Helper()
+	for cmd != nil {
+		msg := cmd()
+		if msg == nil {
+			return
+		}
+		if _, ok := msg.(tickMsg); ok {
+			return
+		}
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, batchedCmd := range batch {
+				runModelCmdSkippingTicks(t, m, batchedCmd)
+			}
+			return
+		}
+		nextModel, nextCmd := m.Update(msg)
+		*m = asModel(t, nextModel)
+		cmd = nextCmd
+	}
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !condition() {
+		t.Fatalf("condition was not satisfied within %v", timeout)
+	}
 }
 
 func TestActiveComposeFileSearchFragmentDetectsMention(t *testing.T) {
@@ -188,6 +257,7 @@ func TestComposeFileSearchKeyboardSelectionExistingSession(t *testing.T) {
 	nextModel, cmd = m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m = asModel(t, nextModel)
 	runModelCmd(t, &m, cmd)
+	advanceTick(t, &m)
 
 	if m.composeFileSearch == nil || !m.composeFileSearch.Open() {
 		t.Fatalf("expected compose file autocomplete popup to open")
@@ -201,8 +271,14 @@ func TestComposeFileSearchKeyboardSelectionExistingSession(t *testing.T) {
 	if got := api.startCalls[0].Scope.Provider; got != "codex" {
 		t.Fatalf("expected codex provider, got %q", got)
 	}
-	if len(api.updateCalls) != 1 || api.updateCalls[0].Req.Query == nil || *api.updateCalls[0].Req.Query != "ma" {
-		t.Fatalf("expected update query ma, got %#v", api.updateCalls)
+	if got := strings.TrimSpace(api.startCalls[0].Query); got != "ma" {
+		t.Fatalf("expected start query ma, got %q", got)
+	}
+	if len(api.updateCalls) != 0 {
+		t.Fatalf("expected no separate update call for first query, got %#v", api.updateCalls)
+	}
+	if len(api.eventCalls) != 1 || api.eventCalls[0] != "fs-1" {
+		t.Fatalf("expected one long-lived event subscription, got %#v", api.eventCalls)
 	}
 
 	pressKey(t, &m, tea.KeyPressMsg{Code: tea.KeyDown})
@@ -235,17 +311,25 @@ func TestComposeFileSearchEscDismissesPopup(t *testing.T) {
 	nextModel, cmd = m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m = asModel(t, nextModel)
 	runModelCmd(t, &m, cmd)
+	advanceTick(t, &m)
 	if !m.composeFileSearch.Open() {
 		t.Fatalf("expected popup to open")
 	}
 
-	pressKey(t, &m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	handled, cmd := m.handleComposeFileSearchKey("esc")
+	if !handled {
+		t.Fatalf("expected esc to be handled by file search popup")
+	}
+	runModelCmd(t, &m, cmd)
 
 	if m.composeFileSearch.Open() {
 		t.Fatalf("expected popup to close on esc")
 	}
 	if got := m.chatInput.Value(); got != "@ma" {
 		t.Fatalf("expected input to remain unchanged, got %q", got)
+	}
+	if len(api.closeCalls) != 1 || api.closeCalls[0] != "fs-1" {
+		t.Fatalf("expected esc to close active file search, got %#v", api.closeCalls)
 	}
 }
 
@@ -666,7 +750,7 @@ func TestResetAndCloseComposeFileSearchEdgeCases(t *testing.T) {
 		if m.composeFileSearch == nil {
 			t.Fatalf("expected compose file search controller")
 		}
-		m.composeFileSearch.SetSearchID("   ")
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{searchID: "   "}
 		if got := m.resetComposeFileSearch(); got != "" {
 			t.Fatalf("expected blank search id after reset, got %q", got)
 		}
@@ -690,8 +774,12 @@ func TestComposeFileSearchPopupPlacementAndUnsupportedClose(t *testing.T) {
 	controller := m.composeFileSearchController()
 	controller.SetFragment(fragment, true)
 	controller.SetCandidates([]types.FileSearchCandidate{{Path: "/repo/main.go", DisplayPath: "main.go"}})
-	controller.SetSearchID("fs-1")
-	controller.NextRequestSeq()
+	m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+		searchID:     "fs-1",
+		fragment:     fragment,
+		fragmentOpen: true,
+		requestSeq:   1,
+	}
 
 	popup, _, _ := m.composeFileSearchPopupPlacement()
 	if popup == "" {
@@ -699,7 +787,7 @@ func TestComposeFileSearchPopupPlacementAndUnsupportedClose(t *testing.T) {
 	}
 
 	cmd := m.applyComposeFileSearchResults(composeFileSearchResultsMsg{
-		Seq:   controller.RequestSeq(),
+		Seq:   m.composeFileSearchCoordinatorOrDefault().CurrentRequestSeq(),
 		Query: fragment.Query,
 		Result: composeFileSearchQueryResult{
 			SearchID:    "fs-1",
@@ -734,11 +822,15 @@ func TestComposeFileSearchResultHandlingBranches(t *testing.T) {
 	}
 	controller := m.composeFileSearchController()
 	controller.SetFragment(fragment, true)
-	controller.SetSearchID("fs-1")
-	controller.NextRequestSeq()
+	m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+		searchID:     "fs-1",
+		fragment:     fragment,
+		fragmentOpen: true,
+		requestSeq:   1,
+	}
 
 	if cmd := m.applyComposeFileSearchResults(composeFileSearchResultsMsg{
-		Seq:   controller.RequestSeq() + 1,
+		Seq:   m.composeFileSearchCoordinatorOrDefault().CurrentRequestSeq() + 1,
 		Query: fragment.Query,
 		Result: composeFileSearchQueryResult{
 			SearchID:   "fs-1",
@@ -749,7 +841,7 @@ func TestComposeFileSearchResultHandlingBranches(t *testing.T) {
 	}
 
 	cmd := m.applyComposeFileSearchResults(composeFileSearchResultsMsg{
-		Seq:   controller.RequestSeq(),
+		Seq:   m.composeFileSearchCoordinatorOrDefault().CurrentRequestSeq(),
 		Query: fragment.Query,
 		Result: composeFileSearchQueryResult{
 			SearchID: "fs-1",
@@ -841,13 +933,160 @@ func TestSyncComposeFileSearchAfterInputBranches(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected active fragment")
 		}
+		scope, ok := m.composeFileSearchScope()
+		if !ok {
+			t.Fatalf("expected compose file search scope")
+		}
 		m.composeFileSearch.SetFragment(fragment, true)
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+			fragment:     fragment,
+			fragmentOpen: true,
+			scopeKey:     composeFileSearchScopeKey(scope),
+		}
 
 		if cmd := m.syncComposeFileSearchAfterInput(); cmd != nil {
 			t.Fatalf("expected no command for unchanged fragment")
 		}
-		if m.composeFileSearch.RequestSeq() != 0 {
-			t.Fatalf("expected request sequence to remain unchanged, got %d", m.composeFileSearch.RequestSeq())
+		if m.composeFileSearchCoordinatorOrDefault().CurrentRequestSeq() != 0 {
+			t.Fatalf("expected request sequence to remain unchanged, got %d", m.composeFileSearchCoordinatorOrDefault().CurrentRequestSeq())
+		}
+	})
+}
+
+func TestComposeFileSearchKeepsPopupOpenWhileLoadingAndReusesStream(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	api := newComposeFileSearchAPITestStub()
+	api.autoEvent = false
+	api.candidates["ma"] = []types.FileSearchCandidate{
+		{Path: "/repo/main.go", DisplayPath: "main.go"},
+	}
+	api.candidates["mai"] = []types.FileSearchCandidate{
+		{Path: "/repo/main.go", DisplayPath: "main.go"},
+		{Path: "/repo/main_test.go", DisplayPath: "main_test.go"},
+	}
+	m.fileSearchAPI = api
+	m.enterCompose("s1")
+
+	pressKey(t, &m, tea.KeyPressMsg{Code: '@', Text: "@"})
+	pressKey(t, &m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	pressKey(t, &m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+
+	controller := m.composeFileSearchController()
+	if controller == nil || !controller.Open() {
+		t.Fatalf("expected popup to stay open while loading")
+	}
+	if !controller.Loading() {
+		t.Fatalf("expected loading state before streamed results arrive")
+	}
+	if len(api.startCalls) != 1 || strings.TrimSpace(api.startCalls[0].Query) != "m" {
+		t.Fatalf("expected first typed fragment to start one search session, got %#v", api.startCalls)
+	}
+	if len(api.updateCalls) != 1 || api.updateCalls[0].Req.Query == nil || *api.updateCalls[0].Req.Query != "ma" {
+		t.Fatalf("expected the second keystroke to reuse the session via update, got %#v", api.updateCalls)
+	}
+	if len(api.eventCalls) != 1 {
+		t.Fatalf("expected one stream subscription, got %#v", api.eventCalls)
+	}
+
+	api.events["fs-1"] <- types.FileSearchEvent{
+		Kind:       types.FileSearchEventResults,
+		SearchID:   "fs-1",
+		Query:      "ma",
+		Candidates: append([]types.FileSearchCandidate(nil), api.candidates["ma"]...),
+	}
+	advanceTick(t, &m)
+	if controller.Loading() {
+		t.Fatalf("expected loading to clear after matching results")
+	}
+	if !controller.Open() {
+		t.Fatalf("expected popup to remain visible after results")
+	}
+
+	pressKey(t, &m, tea.KeyPressMsg{Code: 'i', Text: "i"})
+	if !controller.Open() || !controller.Loading() {
+		t.Fatalf("expected popup to remain open with loading during query supersession")
+	}
+	if len(api.startCalls) != 1 {
+		t.Fatalf("expected stream reuse instead of a second search start, got %d starts", len(api.startCalls))
+	}
+	if len(api.updateCalls) != 2 || api.updateCalls[1].Req.Query == nil || *api.updateCalls[1].Req.Query != "mai" {
+		t.Fatalf("expected one update for superseding query, got %#v", api.updateCalls)
+	}
+	if len(api.eventCalls) != 1 {
+		t.Fatalf("expected stream subscription reuse, got %#v", api.eventCalls)
+	}
+
+	api.events["fs-1"] <- types.FileSearchEvent{
+		Kind:       types.FileSearchEventResults,
+		SearchID:   "fs-1",
+		Query:      "ma",
+		Candidates: []types.FileSearchCandidate{{Path: "/repo/stale.go", DisplayPath: "stale.go"}},
+	}
+	advanceTick(t, &m)
+	if controller.Loading() != true {
+		t.Fatalf("expected stale results to be ignored while newer query is pending")
+	}
+	selected, ok := controller.SelectedCandidate()
+	if !ok || selected.DisplayPath != "main.go" {
+		t.Fatalf("expected previous results to remain visible during loading, got %#v", selected)
+	}
+
+	api.events["fs-1"] <- types.FileSearchEvent{
+		Kind:       types.FileSearchEventResults,
+		SearchID:   "fs-1",
+		Query:      "mai",
+		Candidates: append([]types.FileSearchCandidate(nil), api.candidates["mai"]...),
+	}
+	advanceTick(t, &m)
+	if controller.Loading() {
+		t.Fatalf("expected loading to clear for newest query")
+	}
+	selected, ok = controller.SelectedCandidate()
+	if !ok || selected.DisplayPath != "main.go" {
+		t.Fatalf("expected refreshed results to apply, got %#v", selected)
+	}
+}
+
+func TestComposeFileSearchCancelsOnComposeExitAndFragmentInvalidation(t *testing.T) {
+	t.Run("compose exit closes active search", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		m.composeFileSearchCloser = syncComposeFileSearchCloser{}
+		api := newComposeFileSearchAPITestStub()
+		api.autoEvent = false
+		m.fileSearchAPI = api
+		m.enterCompose("s1")
+
+		pressKey(t, &m, tea.KeyPressMsg{Code: '@', Text: "@"})
+		pressKey(t, &m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+		pressKey(t, &m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+
+		m.exitCompose("done")
+
+		if len(api.closeCalls) != 1 || api.closeCalls[0] != "fs-1" {
+			t.Fatalf("expected compose exit to close search session, got %#v", api.closeCalls)
+		}
+		if len(api.eventCancelCalls) == 0 {
+			t.Fatalf("expected compose exit to cancel stream subscription")
+		}
+	})
+
+	t.Run("editing away from mention closes stale search", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		api := newComposeFileSearchAPITestStub()
+		api.autoEvent = false
+		m.fileSearchAPI = api
+		m.enterCompose("s1")
+
+		pressKey(t, &m, tea.KeyPressMsg{Code: '@', Text: "@"})
+		pressKey(t, &m, tea.KeyPressMsg{Code: 'm', Text: "m"})
+		pressKey(t, &m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+		pressKey(t, &m, tea.KeyPressMsg{Code: ' ', Text: " "})
+
+		if m.composeFileSearch.Open() {
+			t.Fatalf("expected popup to close after mention invalidation")
+		}
+		if len(api.closeCalls) != 1 || api.closeCalls[0] != "fs-1" {
+			t.Fatalf("expected invalidated mention to close search, got %#v", api.closeCalls)
 		}
 	})
 }
@@ -886,10 +1125,14 @@ func TestComposeFileSearchSelectionAndResultMismatchBranches(t *testing.T) {
 		}
 		controller := m.composeFileSearchController()
 		controller.SetFragment(fragment, true)
-		controller.NextRequestSeq()
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+			fragment:     fragment,
+			fragmentOpen: true,
+			requestSeq:   1,
+		}
 
 		if cmd := m.applyComposeFileSearchResults(composeFileSearchResultsMsg{
-			Seq:   controller.RequestSeq(),
+			Seq:   m.composeFileSearchCoordinatorOrDefault().CurrentRequestSeq(),
 			Query: "other",
 			Result: composeFileSearchQueryResult{
 				SearchID:   "fs-1",
@@ -898,11 +1141,120 @@ func TestComposeFileSearchSelectionAndResultMismatchBranches(t *testing.T) {
 		}); cmd != nil {
 			t.Fatalf("expected mismatched fragment result to return no command")
 		}
-		if got := controller.SearchID(); got != "fs-1" {
+		if got := m.composeFileSearchCoordinatorOrDefault().CurrentSearchID(); got != "fs-1" {
 			t.Fatalf("expected search id to still be recorded, got %q", got)
 		}
+		if candidate, ok := controller.SelectedCandidate(); ok {
+			t.Fatalf("did not expect mismatched result to populate a selectable candidate, got %#v", candidate)
+		}
+	})
+}
+
+func TestComposeFileSearchStreamAndDebounceBranches(t *testing.T) {
+	t.Run("debounce clears loading for empty query", func(t *testing.T) {
+		m := NewModel(nil)
+		m.newSession = &newSessionTarget{workspaceID: "ws1", worktreeID: "wt1"}
+		_ = m.applyProviderSelection("codex")
+		controller := m.composeFileSearchController()
+		controller.SetLoading(true)
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+			fragment:     composeFileSearchFragment{Start: 0, End: 1, Query: "   "},
+			fragmentOpen: true,
+			requestSeq:   3,
+		}
+
+		if cmd := m.handleComposeFileSearchDebounce(composeFileSearchDebounceMsg{Seq: 3}); cmd != nil {
+			t.Fatalf("expected empty-query debounce to avoid backend command")
+		}
+		if controller.Loading() {
+			t.Fatalf("expected empty-query debounce to clear loading")
+		}
+	})
+
+	t.Run("stream open mismatch closes stale stream", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		api := newComposeFileSearchAPITestStub()
+		m.fileSearchAPI = api
+		controller := m.composeFileSearchController()
+		controller.SetFragment(composeFileSearchFragment{Start: 0, End: 3, Query: "ma"}, true)
+		controller.SetLoading(true)
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+			searchID:     "fs-1",
+			fragment:     composeFileSearchFragment{Start: 0, End: 3, Query: "ma"},
+			fragmentOpen: true,
+			requestSeq:   1,
+		}
+
+		canceled := 0
+		cmd := m.applyComposeFileSearchStream(composeFileSearchStreamMsg{
+			SearchID: "fs-other",
+			Ch:       make(chan types.FileSearchEvent),
+			Cancel:   func() { canceled++ },
+		})
+		runModelCmd(t, &m, cmd)
+
+		if canceled != 1 {
+			t.Fatalf("expected mismatched stream open to cancel subscription once, got %d", canceled)
+		}
+		if len(api.closeCalls) != 1 || api.closeCalls[0] != "fs-other" {
+			t.Fatalf("expected mismatched stream open to close stale backend search, got %#v", api.closeCalls)
+		}
+	})
+
+	t.Run("stream open error closes popup and active search", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		api := newComposeFileSearchAPITestStub()
+		m.fileSearchAPI = api
+		controller := m.composeFileSearchController()
+		controller.SetFragment(composeFileSearchFragment{Start: 0, End: 3, Query: "ma"}, true)
+		controller.SetLoading(true)
+		controller.SetCandidates([]types.FileSearchCandidate{{Path: "/repo/main.go", DisplayPath: "main.go"}})
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+			searchID:     "fs-1",
+			fragment:     composeFileSearchFragment{Start: 0, End: 3, Query: "ma"},
+			fragmentOpen: true,
+			requestSeq:   1,
+		}
+
+		canceled := 0
+		cmd := m.applyComposeFileSearchStream(composeFileSearchStreamMsg{
+			SearchID: "fs-1",
+			Cancel:   func() { canceled++ },
+			Err:      errors.New("stream failed"),
+		})
+		runModelCmd(t, &m, cmd)
+
+		if canceled != 1 {
+			t.Fatalf("expected errored stream open to cancel opener once, got %d", canceled)
+		}
 		if controller.Open() {
-			t.Fatalf("did not expect popup to open for mismatched result")
+			t.Fatalf("expected errored stream open to close popup")
+		}
+		if len(api.closeCalls) != 1 || api.closeCalls[0] != "fs-1" {
+			t.Fatalf("expected errored stream open to close active backend search, got %#v", api.closeCalls)
+		}
+	})
+
+	t.Run("consume tick on closed stream clears loading", func(t *testing.T) {
+		m := newPhase0ModelWithSession("codex")
+		controller := m.composeFileSearchController()
+		controller.SetFragment(composeFileSearchFragment{Start: 0, End: 3, Query: "ma"}, true)
+		controller.SetLoading(true)
+		m.composeFileSearchCoordinator = &defaultComposeFileSearchCoordinator{
+			searchID:     "fs-1",
+			fragment:     composeFileSearchFragment{Start: 0, End: 3, Query: "ma"},
+			fragmentOpen: true,
+			requestSeq:   1,
+		}
+		ch := make(chan types.FileSearchEvent)
+		close(ch)
+		m.composeFileSearchStream.SetStream("fs-1", ch, func() {})
+
+		if cmd := m.consumeComposeFileSearchTick(); cmd != nil {
+			runModelCmd(t, &m, cmd)
+		}
+		if controller.Loading() {
+			t.Fatalf("expected closed stream tick to clear loading")
 		}
 	})
 }

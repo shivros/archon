@@ -19,6 +19,12 @@ func (m *Model) reduceMutationMessages(msg tea.Msg) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case composeFileSearchDebounceMsg:
 		return true, m.handleComposeFileSearchDebounce(msg)
+	case composeFileSearchStartedMsg:
+		return true, m.applyComposeFileSearchStarted(msg)
+	case composeFileSearchUpdatedMsg:
+		return true, m.applyComposeFileSearchUpdated(msg)
+	case composeFileSearchStreamMsg:
+		return true, m.applyComposeFileSearchStream(msg)
 	case composeFileSearchResultsMsg:
 		return true, m.applyComposeFileSearchResults(msg)
 	case workflowRunCreatedMsg:

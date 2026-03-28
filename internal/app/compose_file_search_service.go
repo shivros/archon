@@ -19,6 +19,32 @@ const (
 	composeFileSearchLimit         = 8
 )
 
+type composeFileSearchStartRequest struct {
+	Scope types.FileSearchScope
+	Query string
+	Limit int
+}
+
+type composeFileSearchStartResult struct {
+	Session     *types.FileSearchSession
+	Unsupported bool
+	Err         error
+}
+
+type composeFileSearchUpdateRequest struct {
+	SearchID string
+	Scope    types.FileSearchScope
+	Query    string
+	Limit    int
+}
+
+type composeFileSearchUpdateResult struct {
+	SearchID    string
+	Session     *types.FileSearchSession
+	Unsupported bool
+	Err         error
+}
+
 type composeFileSearchQueryRequest struct {
 	SearchID string
 	Scope    types.FileSearchScope
@@ -34,6 +60,9 @@ type composeFileSearchQueryResult struct {
 }
 
 type composeFileSearchService interface {
+	Start(ctx context.Context, req composeFileSearchStartRequest) composeFileSearchStartResult
+	Update(ctx context.Context, req composeFileSearchUpdateRequest) composeFileSearchUpdateResult
+	Events(ctx context.Context, searchID string) (<-chan types.FileSearchEvent, func(), error)
 	Query(ctx context.Context, req composeFileSearchQueryRequest) composeFileSearchQueryResult
 	Close(ctx context.Context, searchID string)
 }
@@ -46,53 +75,109 @@ func newDefaultComposeFileSearchService(api FileSearchAPI) composeFileSearchServ
 	return defaultComposeFileSearchService{api: api}
 }
 
-func (s defaultComposeFileSearchService) Query(ctx context.Context, req composeFileSearchQueryRequest) composeFileSearchQueryResult {
-	query := strings.TrimSpace(req.Query)
+func (s defaultComposeFileSearchService) Start(ctx context.Context, req composeFileSearchStartRequest) composeFileSearchStartResult {
 	if s.api == nil {
-		return composeFileSearchQueryResult{Err: errors.New("file search api unavailable")}
+		return composeFileSearchStartResult{Err: errors.New("file search api unavailable")}
 	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = composeFileSearchLimit
 	}
+	search, err := s.api.StartFileSearch(ctx, client.StartFileSearchRequest{
+		Scope: req.Scope,
+		Query: strings.TrimSpace(req.Query),
+		Limit: limit,
+	})
+	if err != nil {
+		return composeFileSearchStartResultFromError(err)
+	}
+	if search == nil || strings.TrimSpace(search.ID) == "" {
+		return composeFileSearchStartResult{Err: errors.New("file search id is required")}
+	}
+	return composeFileSearchStartResult{Session: search}
+}
 
+func (s defaultComposeFileSearchService) Update(ctx context.Context, req composeFileSearchUpdateRequest) composeFileSearchUpdateResult {
+	searchID := strings.TrimSpace(req.SearchID)
+	if s.api == nil {
+		return composeFileSearchUpdateResult{SearchID: searchID, Err: errors.New("file search api unavailable")}
+	}
+	if searchID == "" {
+		return composeFileSearchUpdateResult{Err: errors.New("file search id is required")}
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = composeFileSearchLimit
+	}
+	scope := req.Scope
+	query := strings.TrimSpace(req.Query)
+	session, err := s.api.UpdateFileSearch(ctx, searchID, client.UpdateFileSearchRequest{
+		Scope: &scope,
+		Query: &query,
+		Limit: &limit,
+	})
+	if err != nil {
+		result := composeFileSearchUpdateResultFromError(err)
+		result.SearchID = searchID
+		return result
+	}
+	return composeFileSearchUpdateResult{
+		SearchID: searchID,
+		Session:  session,
+	}
+}
+
+func (s defaultComposeFileSearchService) Events(ctx context.Context, searchID string) (<-chan types.FileSearchEvent, func(), error) {
+	searchID = strings.TrimSpace(searchID)
+	if s.api == nil {
+		return nil, func() {}, errors.New("file search api unavailable")
+	}
+	return s.api.FileSearchEvents(ctx, searchID)
+}
+
+func (s defaultComposeFileSearchService) Query(ctx context.Context, req composeFileSearchQueryRequest) composeFileSearchQueryResult {
+	query := strings.TrimSpace(req.Query)
 	searchID := strings.TrimSpace(req.SearchID)
 	if searchID == "" {
-		search, err := s.api.StartFileSearch(ctx, client.StartFileSearchRequest{
+		started := s.Start(ctx, composeFileSearchStartRequest{
 			Scope: req.Scope,
-			Limit: limit,
+			Query: "",
+			Limit: req.Limit,
 		})
-		if err != nil {
-			return composeFileSearchQueryResultFromError(err)
+		if started.Err != nil {
+			return composeFileSearchQueryResult{
+				Unsupported: started.Unsupported,
+				Err:         started.Err,
+			}
 		}
-		if search != nil {
-			searchID = strings.TrimSpace(search.ID)
+		if started.Session != nil {
+			searchID = strings.TrimSpace(started.Session.ID)
 		}
-		if searchID == "" {
-			return composeFileSearchQueryResult{Err: errors.New("file search id is required")}
-		}
+	}
+	if searchID == "" {
+		return composeFileSearchQueryResult{Err: errors.New("file search id is required")}
 	}
 	if query == "" {
 		return composeFileSearchQueryResult{SearchID: searchID}
 	}
-
-	ch, stop, err := s.api.FileSearchEvents(ctx, searchID)
+	ch, stop, err := s.Events(ctx, searchID)
 	if err != nil {
 		return composeFileSearchQueryResultFromError(err)
 	}
 	defer stop()
-
-	updateScope := req.Scope
-	updateQuery := query
-	updateLimit := limit
-	if _, err := s.api.UpdateFileSearch(ctx, searchID, client.UpdateFileSearchRequest{
-		Scope: &updateScope,
-		Query: &updateQuery,
-		Limit: &updateLimit,
-	}); err != nil {
-		return composeFileSearchQueryResultFromError(err)
+	updated := s.Update(ctx, composeFileSearchUpdateRequest{
+		SearchID: searchID,
+		Scope:    req.Scope,
+		Query:    query,
+		Limit:    req.Limit,
+	})
+	if updated.Err != nil {
+		return composeFileSearchQueryResult{
+			SearchID:    searchID,
+			Unsupported: updated.Unsupported,
+			Err:         updated.Err,
+		}
 	}
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -106,7 +191,7 @@ func (s defaultComposeFileSearchService) Query(ctx context.Context, req composeF
 			}
 			switch event.Kind {
 			case types.FileSearchEventResults:
-				if event.Query != "" && strings.TrimSpace(event.Query) != query {
+				if strings.TrimSpace(event.Query) != query {
 					continue
 				}
 				return composeFileSearchQueryResult{
@@ -133,26 +218,62 @@ func (s defaultComposeFileSearchService) Close(ctx context.Context, searchID str
 	_ = s.api.CloseFileSearch(ctx, searchID)
 }
 
+func composeFileSearchStartResultFromError(err error) composeFileSearchStartResult {
+	return composeFileSearchStartResult{
+		Unsupported: isComposeFileSearchUnsupportedError(err),
+		Err:         err,
+	}
+}
+
+func composeFileSearchUpdateResultFromError(err error) composeFileSearchUpdateResult {
+	return composeFileSearchUpdateResult{
+		Unsupported: isComposeFileSearchUnsupportedError(err),
+		Err:         err,
+	}
+}
+
 func composeFileSearchQueryResultFromError(err error) composeFileSearchQueryResult {
-	result := composeFileSearchQueryResult{Err: err}
+	return composeFileSearchQueryResult{
+		Unsupported: isComposeFileSearchUnsupportedError(err),
+		Err:         err,
+	}
+}
+
+func isComposeFileSearchUnsupportedError(err error) bool {
 	if err == nil {
-		return result
+		return false
 	}
 	var apiErr *client.APIError
-	if errors.As(err, &apiErr) && strings.EqualFold(strings.TrimSpace(apiErr.Code), apicode.ErrorCodeFileSearchUnsupported) {
-		result.Unsupported = true
-	}
-	return result
+	return errors.As(err, &apiErr) && strings.EqualFold(strings.TrimSpace(apiErr.Code), apicode.ErrorCodeFileSearchUnsupported)
 }
 
 type composeFileSearchDebounceMsg struct {
 	Seq int
 }
 
+type composeFileSearchStartedMsg struct {
+	Seq    int
+	Query  string
+	Result composeFileSearchStartResult
+}
+
+type composeFileSearchUpdatedMsg struct {
+	Seq    int
+	Query  string
+	Result composeFileSearchUpdateResult
+}
+
 type composeFileSearchResultsMsg struct {
 	Seq    int
 	Query  string
 	Result composeFileSearchQueryResult
+}
+
+type composeFileSearchStreamMsg struct {
+	SearchID string
+	Ch       <-chan types.FileSearchEvent
+	Cancel   func()
+	Err      error
 }
 
 func composeFileSearchDebounceCmd(seq int, delay time.Duration) tea.Cmd {
@@ -171,6 +292,60 @@ func closeComposeFileSearchServiceCmd(service composeFileSearchService, id strin
 		defer cancel()
 		service.Close(ctx, id)
 		return nil
+	}
+}
+
+func startComposeFileSearchCmd(
+	service composeFileSearchService,
+	req composeFileSearchStartRequest,
+	seq int,
+	parent context.Context,
+) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := commandWithTimeout(parent, composeFileSearchTimeout)
+		defer cancel()
+		return composeFileSearchStartedMsg{
+			Seq:    seq,
+			Query:  strings.TrimSpace(req.Query),
+			Result: service.Start(ctx, req),
+		}
+	}
+}
+
+func updateComposeFileSearchCmd(
+	service composeFileSearchService,
+	req composeFileSearchUpdateRequest,
+	seq int,
+	parent context.Context,
+) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := commandWithTimeout(parent, composeFileSearchTimeout)
+		defer cancel()
+		return composeFileSearchUpdatedMsg{
+			Seq:    seq,
+			Query:  strings.TrimSpace(req.Query),
+			Result: service.Update(ctx, req),
+		}
+	}
+}
+
+func openComposeFileSearchStreamCmd(
+	service composeFileSearchService,
+	searchID string,
+	parent context.Context,
+) tea.Cmd {
+	searchID = strings.TrimSpace(searchID)
+	if service == nil || searchID == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		ch, cancel, err := service.Events(commandParentContext(parent), searchID)
+		return composeFileSearchStreamMsg{
+			SearchID: searchID,
+			Ch:       ch,
+			Cancel:   cancel,
+			Err:      err,
+		}
 	}
 }
 

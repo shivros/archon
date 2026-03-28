@@ -106,6 +106,8 @@ type Model struct {
 	mouseGesturePolicy                   MouseGesturePolicy
 	pickerPasteNormalizer                PickerPasteNormalizer
 	composeFileSearchContextResolver     composeFileSearchContextResolver
+	composeFileSearchCoordinator         composeFileSearchCoordinator
+	composeFileSearchCloser              composeFileSearchCloser
 	sidebar                              *SidebarController
 	viewport                             viewport.Model
 	mode                                 uiMode
@@ -116,6 +118,7 @@ type Model struct {
 	compose                              *ComposeController
 	chatAddonController                  *ChatInputAddonController
 	composeFileSearch                    *ComposeFileAutocompleteController
+	composeFileSearchStream              *ComposeFileSearchStreamController
 	chatInput                            *TextInput
 	guidedWorkflowPromptInput            *TextInput
 	guidedWorkflowResumeInput            *TextInput
@@ -578,6 +581,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		compose:                             NewComposeController(minViewportWidth),
 		chatAddonController:                 NewChatInputAddonController(chatAddon),
 		composeFileSearch:                   NewComposeFileAutocompleteController(minViewportWidth, 8),
+		composeFileSearchStream:             NewComposeFileSearchStreamController(maxEventsPerTick),
 		chatInput:                           NewTextInput(minViewportWidth, DefaultTextInputConfig()),
 		guidedWorkflowPromptInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 5, MinHeight: 4, MaxHeight: 10, AutoGrow: true}),
 		guidedWorkflowResumeInput:           NewTextInput(minViewportWidth, TextInputConfig{Height: 4, MinHeight: 3, MaxHeight: 8, AutoGrow: true}),
@@ -2634,6 +2638,9 @@ func (m *Model) handleTick(msg tickMsg) tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	if cmd := m.consumeMetadataTick(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if cmd := m.consumeComposeFileSearchTick(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	if m.streamRenderScheduler != nil && m.streamRenderScheduler.ShouldRender(now) {
@@ -5001,7 +5008,7 @@ func (m *Model) enterCompose(sessionID string) {
 	m.clearPendingComposeOptionRequest()
 	m.mode = uiModeCompose
 	m.closeComposeOptionPicker()
-	m.resetComposeFileSearch()
+	m.composeFileSearchCloserOrDefault().CloseAsync(m.composeFileSearchServiceOrDefault(), m.resetComposeFileSearch())
 	label := m.selectedSessionLabel()
 	if m.compose != nil {
 		m.compose.Enter(sessionID, label)
@@ -5035,7 +5042,7 @@ func (m *Model) exitCompose(status string) {
 			m.saveCurrentComposeDraft()
 			m.clearPendingComposeOptionRequest()
 			m.closeComposeOptionPicker()
-			m.resetComposeFileSearch()
+			m.composeFileSearchCloserOrDefault().CloseAsync(m.composeFileSearchServiceOrDefault(), m.resetComposeFileSearch())
 			m.composeInterruptInFlightSessionID = ""
 			if m.compose != nil {
 				m.compose.Exit()
