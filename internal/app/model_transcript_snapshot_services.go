@@ -62,9 +62,6 @@ func (m *Model) handleTranscriptSnapshotPending(msg transcriptSnapshotMsg, sourc
 		return nil
 	}
 	m.setBackgroundStatus("transcript history pending; retrying")
-	if msg.key != "" && msg.key == m.loadingKey {
-		m.clearSessionLoadingState()
-	}
 	cmds := make([]tea.Cmd, 0, 2)
 	if cmd := m.maybeOpenTranscriptFollowAfterSnapshot(msg.id, source, ""); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -73,9 +70,22 @@ func (m *Model) handleTranscriptSnapshotPending(msg transcriptSnapshotMsg, sourc
 		cmds = append(cmds, cmd)
 	}
 	if len(cmds) == 0 {
+		m.settlePendingTranscriptSnapshotLoading(msg)
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) settlePendingTranscriptSnapshotLoading(msg transcriptSnapshotMsg) {
+	if m == nil {
+		return
+	}
+	if key := strings.TrimSpace(msg.key); key != "" && key == strings.TrimSpace(m.loadingKey) {
+		m.finishSessionLoadLatencyForKey(key, uiLatencyOutcomeError)
+		m.clearSessionLoadingState()
+		return
+	}
+	m.markTranscriptLoadingSignalWithOutcome(msg.id, uiLatencyOutcomeError)
 }
 
 func (m *Model) maybeRetryPendingTranscriptSnapshot(msg transcriptSnapshotMsg, source TranscriptAttachmentSource, responseKey string) tea.Cmd {

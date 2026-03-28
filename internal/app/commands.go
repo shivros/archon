@@ -639,7 +639,11 @@ func fetchRecentsPreviewCmd(api SessionHistoryAPI, id, revision string, lines in
 }
 
 func openTranscriptStreamCmd(api SessionTranscriptStreamAPI, id, afterRevision string) tea.Cmd {
-	return openTranscriptStreamCmdWithRequest(api, id, afterRevision, transcriptStreamOpenRequest{})
+	return openTranscriptStreamCmdWithContextAndRequest(api, id, afterRevision, nil, transcriptStreamOpenRequest{})
+}
+
+func openTranscriptStreamCmdWithContext(api SessionTranscriptStreamAPI, id, afterRevision string, parent context.Context) tea.Cmd {
+	return openTranscriptStreamCmdWithContextAndRequest(api, id, afterRevision, parent, transcriptStreamOpenRequest{})
 }
 
 type transcriptStreamOpenRequest struct {
@@ -648,8 +652,17 @@ type transcriptStreamOpenRequest struct {
 }
 
 func openTranscriptStreamCmdWithRequest(api SessionTranscriptStreamAPI, id, afterRevision string, request transcriptStreamOpenRequest) tea.Cmd {
+	return openTranscriptStreamCmdWithContextAndRequest(api, id, afterRevision, nil, request)
+}
+
+func openTranscriptStreamCmdWithContextAndRequest(
+	api SessionTranscriptStreamAPI,
+	id, afterRevision string,
+	parent context.Context,
+	request transcriptStreamOpenRequest,
+) tea.Cmd {
 	return func() tea.Msg {
-		ch, cancel, err := api.TranscriptStream(context.Background(), id, afterRevision)
+		ch, cancel, err := api.TranscriptStream(commandParentContext(parent), id, afterRevision)
 		return transcriptStreamMsg{
 			id:         id,
 			ch:         ch,

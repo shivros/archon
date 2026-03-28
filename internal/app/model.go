@@ -1284,14 +1284,14 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 	}
 	switch item.kind {
 	case sidebarRecentsAll, sidebarRecentsReady, sidebarRecentsRunning:
-		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		m.abortSessionLoadForNavigationAway()
 		m.enterRecentsView(item)
 		return true, false, false
 	case sidebarWorkspace:
 		if m.mode == uiModeRecents {
 			m.exitRecentsView()
 		}
-		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		m.abortSessionLoadForNavigationAway()
 		if m.mode == uiModeRecents {
 			m.exitRecentsView()
 		}
@@ -1317,7 +1317,7 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		if m.mode == uiModeRecents {
 			m.exitRecentsView()
 		}
-		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		m.abortSessionLoadForNavigationAway()
 		if m.mode == uiModeRecents {
 			m.exitRecentsView()
 		}
@@ -1337,7 +1337,7 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		m.setStatusMessage("worktree selected")
 		return true, stateChanged, false
 	case sidebarWorkflow:
-		m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+		m.abortSessionLoadForNavigationAway()
 		wsID := item.workspaceID()
 		if wsID != "" && wsID != unassignedWorkspaceID && wsID != m.appState.ActiveWorkspaceID {
 			m.appState.ActiveWorkspaceID = wsID
@@ -1359,7 +1359,7 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		return true, stateChanged, false
 	default:
 		if !item.isSession() {
-			m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+			m.abortSessionLoadForNavigationAway()
 			return true, false, false
 		}
 	}
@@ -1407,6 +1407,22 @@ func (m *Model) applySelectionState(item *sidebarItem) (handled bool, stateChang
 		stateChanged = true
 	}
 	return false, stateChanged, draftChanged
+}
+
+func (m *Model) abortSessionLoadForNavigationAway() {
+	if m == nil {
+		return
+	}
+	m.cancelUILatencyAction(uiLatencyActionSwitchSession, "")
+	if key := strings.TrimSpace(m.pendingSessionKey); key != "" {
+		if m.pendingTranscriptSnapshotRetryCount != nil {
+			delete(m.pendingTranscriptSnapshotRetryCount, key)
+		}
+	}
+	m.cancelRequestScope(requestScopeSessionLoad)
+	m.pendingSessionKey = ""
+	m.clearSessionLoadingState()
+	m.invalidateViewportRender()
 }
 
 func (m *Model) scheduleSessionLoad(item *sidebarItem, delay time.Duration) tea.Cmd {
@@ -1475,6 +1491,9 @@ func (m *Model) loadSelectedSession(item *sidebarItem) tea.Cmd {
 		TranscriptAPI: m.sessionTranscriptAPI,
 		SessionAPI:    m.sessionAPI,
 		OpenSource:    transcriptAttachmentSourceSelectionLoad,
+		OpenTranscriptCmdBuilder: func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd {
+			return m.requestTranscriptStreamOpenCmdWithContext(sessionID, afterRevision, source, "", ctx)
+		},
 	})
 	if m.appState.DebugStreamsEnabled {
 		debugCtx := m.replaceRequestScope(requestScopeDebugStream)

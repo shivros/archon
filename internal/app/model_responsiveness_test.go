@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"control/internal/daemon/transcriptdomain"
+	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
 
@@ -153,6 +154,122 @@ func TestMarkTranscriptLoadingSignalClearsLoadingWithDefaultOutcome(t *testing.T
 	}
 	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeOK) {
 		t.Fatalf("expected default ok latency outcome after loading signal")
+	}
+}
+
+func TestApplySelectionStateNonSessionAbortsPendingSessionLoad(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := NewModel(nil, WithUILatencySink(sink))
+	m.pendingSessionKey = "sess:s1"
+	m.pendingTranscriptSnapshotRetryCount = map[string]int{"sess:s1": 1}
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+	m.replaceRequestScope(requestScopeSessionLoad)
+	initialGeneration := m.renderGeneration
+
+	handled, stateChanged, _ := m.applySelectionState(&sidebarItem{
+		kind:      sidebarWorkspace,
+		workspace: &types.Workspace{ID: "ws-1", Name: "Workspace"},
+	})
+	if !handled {
+		t.Fatalf("expected workspace selection to be handled")
+	}
+	if !stateChanged {
+		t.Fatalf("expected workspace selection to update active app state")
+	}
+	if m.hasRequestScope(requestScopeSessionLoad) {
+		t.Fatalf("expected workspace selection to cancel session load scope")
+	}
+	if m.pendingSessionKey != "" {
+		t.Fatalf("expected workspace selection to clear pending session key, got %q", m.pendingSessionKey)
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected workspace selection to clear loading indicator")
+	}
+	if got := m.pendingTranscriptSnapshotRetryCount["sess:s1"]; got != 0 {
+		t.Fatalf("expected pending snapshot retry state for previous session to be cleared, got %d", got)
+	}
+	if m.renderGeneration != initialGeneration+1 {
+		t.Fatalf("expected workspace selection to invalidate viewport render generation")
+	}
+	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeCanceled) {
+		t.Fatalf("expected navigation-away selection to emit canceled switch-session latency outcome")
+	}
+}
+
+func TestApplySelectionStateNonSessionKindsAbortPendingSessionLoad(t *testing.T) {
+	cases := []struct {
+		name              string
+		item              *sidebarItem
+		expectStateChange bool
+	}{
+		{
+			name: "worktree",
+			item: &sidebarItem{
+				kind:     sidebarWorktree,
+				worktree: &types.Worktree{ID: "wt-1", WorkspaceID: "ws-1", Name: "Worktree"},
+			},
+			expectStateChange: true,
+		},
+		{
+			name: "workflow",
+			item: &sidebarItem{
+				kind: sidebarWorkflow,
+				workflow: &guidedworkflows.WorkflowRun{
+					ID:          "gwf-1",
+					WorkspaceID: "ws-2",
+					WorktreeID:  "wt-2",
+					Status:      guidedworkflows.WorkflowRunStatusRunning,
+				},
+			},
+			expectStateChange: true,
+		},
+		{
+			name:              "default non-session",
+			item:              &sidebarItem{kind: sidebarItemKind(999)},
+			expectStateChange: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := NewInMemoryUILatencySink()
+			m := NewModel(nil, WithUILatencySink(sink))
+			m.pendingSessionKey = "sess:s1"
+			m.pendingTranscriptSnapshotRetryCount = map[string]int{"sess:s1": 1}
+			m.loading = true
+			m.loadingKey = "sess:s1"
+			m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+			m.replaceRequestScope(requestScopeSessionLoad)
+			initialGeneration := m.renderGeneration
+
+			handled, stateChanged, _ := m.applySelectionState(tc.item)
+			if !handled {
+				t.Fatalf("expected selection %q to be handled", tc.name)
+			}
+			if stateChanged != tc.expectStateChange {
+				t.Fatalf("stateChanged=%v, want %v", stateChanged, tc.expectStateChange)
+			}
+			if m.hasRequestScope(requestScopeSessionLoad) {
+				t.Fatalf("expected selection %q to cancel session-load scope", tc.name)
+			}
+			if m.pendingSessionKey != "" {
+				t.Fatalf("expected selection %q to clear pending session key, got %q", tc.name, m.pendingSessionKey)
+			}
+			if m.loading || m.loadingKey != "" {
+				t.Fatalf("expected selection %q to clear loading state", tc.name)
+			}
+			if got := m.pendingTranscriptSnapshotRetryCount["sess:s1"]; got != 0 {
+				t.Fatalf("expected selection %q to clear pending snapshot retry state, got %d", tc.name, got)
+			}
+			if m.renderGeneration <= initialGeneration {
+				t.Fatalf("expected selection %q to advance viewport render generation", tc.name)
+			}
+			if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeCanceled) {
+				t.Fatalf("expected selection %q to emit canceled switch-session latency metric", tc.name)
+			}
+		})
 	}
 }
 
@@ -362,6 +479,65 @@ func TestCanceledCurrentSessionProjectionClearsPendingToken(t *testing.T) {
 	}
 	if m.sessionProjectionCoordinatorOrDefault().HasPending(token) {
 		t.Fatalf("expected canceled current projection to release pending token")
+	}
+}
+
+func TestApplySelectionStateNonSessionCancelsInFlightSessionProjection(t *testing.T) {
+	projector := &blockingSessionBlockProjector{}
+	m := NewModel(nil,
+		WithSessionProjectionPolicy(testSessionProjectionPolicy{asyncAt: 1, maxTokens: 4}),
+		WithSessionBlockProjector(projector),
+	)
+	m.pendingSessionKey = "sess:s1"
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.sessions = []*types.Session{{ID: "s1", Provider: "codex"}}
+	m.replaceRequestScope(requestScopeSessionLoad)
+
+	handled, cmd := m.reduceStateMessages(historyMsg{
+		id:    "s1",
+		key:   "sess:s1",
+		items: fakeHistoryItems(1),
+	})
+	if !handled || cmd == nil {
+		t.Fatalf("expected async projection command")
+	}
+
+	msgCh := make(chan tea.Msg, 1)
+	go func() {
+		msgCh <- cmd()
+	}()
+
+	call := waitForProjectionCall(t, projector, 0)
+	select {
+	case <-call.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for projection to start")
+	}
+
+	handled, _, _ = m.applySelectionState(&sidebarItem{kind: sidebarRecentsAll})
+	if !handled {
+		t.Fatalf("expected recents selection to be handled")
+	}
+
+	select {
+	case <-call.canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected navigation-away selection to cancel active projection")
+	}
+
+	msg := (<-msgCh).(sessionBlocksProjectedMsg)
+	if !isCanceledRequestError(msg.err) {
+		t.Fatalf("expected canceled projection message after navigation-away selection, got %v", msg.err)
+	}
+	if m.hasRequestScope(requestScopeSessionLoad) {
+		t.Fatalf("expected recents selection to remove session load request scope")
+	}
+	if m.pendingSessionKey != "" {
+		t.Fatalf("expected recents selection to clear pending session key, got %q", m.pendingSessionKey)
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected recents selection to clear loading state")
 	}
 }
 

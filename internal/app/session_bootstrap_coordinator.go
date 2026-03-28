@@ -9,29 +9,31 @@ import (
 )
 
 type SelectionLoadBootstrapInput struct {
-	Provider      string
-	Status        types.SessionStatus
-	SessionID     string
-	SessionKey    string
-	InitialLines  int
-	AfterRevision string
-	LoadContext   context.Context
-	TranscriptAPI SessionTranscriptAPI
-	SessionAPI    SessionAPI
-	OpenSource    TranscriptAttachmentSource
+	Provider                 string
+	Status                   types.SessionStatus
+	SessionID                string
+	SessionKey               string
+	InitialLines             int
+	AfterRevision            string
+	LoadContext              context.Context
+	TranscriptAPI            SessionTranscriptAPI
+	SessionAPI               SessionAPI
+	OpenSource               TranscriptAttachmentSource
+	OpenTranscriptCmdBuilder func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd
 }
 
 type SessionStartBootstrapInput struct {
-	Provider      string
-	Status        types.SessionStatus
-	SessionID     string
-	SessionKey    string
-	InitialLines  int
-	AfterRevision string
-	LoadContext   context.Context
-	TranscriptAPI SessionTranscriptAPI
-	SessionAPI    SessionAPI
-	OpenSource    TranscriptAttachmentSource
+	Provider                 string
+	Status                   types.SessionStatus
+	SessionID                string
+	SessionKey               string
+	InitialLines             int
+	AfterRevision            string
+	LoadContext              context.Context
+	TranscriptAPI            SessionTranscriptAPI
+	SessionAPI               SessionAPI
+	OpenSource               TranscriptAttachmentSource
+	OpenTranscriptCmdBuilder func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd
 }
 
 type SessionReconnectBootstrapInput struct {
@@ -79,6 +81,7 @@ func (c defaultSessionBootstrapCoordinator) BuildSelectionLoadCommands(input Sel
 		input.TranscriptAPI,
 		input.SessionAPI,
 		normalizeTranscriptAttachmentSource(input.OpenSource),
+		input.OpenTranscriptCmdBuilder,
 	)
 }
 
@@ -94,6 +97,7 @@ func (c defaultSessionBootstrapCoordinator) BuildSessionStartCommands(input Sess
 		input.TranscriptAPI,
 		input.SessionAPI,
 		normalizeTranscriptAttachmentSource(input.OpenSource),
+		input.OpenTranscriptCmdBuilder,
 	)
 }
 
@@ -133,6 +137,7 @@ func buildBootstrapCommands(
 	transcriptAPI SessionTranscriptAPI,
 	sessionAPI SessionAPI,
 	snapshotSource TranscriptAttachmentSource,
+	openTranscriptCmdBuilder func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd,
 ) []tea.Cmd {
 	cmds := make([]tea.Cmd, 0, 4)
 	if plan.FetchTranscript && transcriptAPI != nil {
@@ -148,8 +153,20 @@ func buildBootstrapCommands(
 	if plan.FetchApprovals {
 		cmds = append(cmds, fetchApprovalsCmdWithContext(sessionAPI, sessionID, loadCtx))
 	}
-	if plan.OpenTranscript && transcriptAPI != nil {
-		cmds = append(cmds, openTranscriptStreamCmd(transcriptAPI, sessionID, afterRevision))
+	if plan.OpenTranscript {
+		if openTranscriptCmdBuilder != nil {
+			if cmd := openTranscriptCmdBuilder(sessionID, afterRevision, snapshotSource); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		} else if transcriptAPI != nil {
+			cmds = append(cmds, openTranscriptStreamCmdWithContextAndRequest(
+				transcriptAPI,
+				sessionID,
+				afterRevision,
+				loadCtx,
+				transcriptStreamOpenRequest{Source: snapshotSource},
+			))
+		}
 	}
 	return cmds
 }

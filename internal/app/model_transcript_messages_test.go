@@ -199,8 +199,8 @@ func TestApplyTranscriptSnapshotMsgPendingErrorRetriesWithoutUserVisibleError(t 
 	if cmd == nil {
 		t.Fatalf("expected pending snapshot error to trigger follow-up commands")
 	}
-	if m.loading || m.loadingKey != "" {
-		t.Fatalf("expected pending snapshot error to clear loading state")
+	if !m.loading || m.loadingKey != "sess:s1" {
+		t.Fatalf("expected pending snapshot error to keep loading state visible during retries")
 	}
 	if strings.Contains(strings.ToLower(m.status), "error") {
 		t.Fatalf("expected pending snapshot error not to set an error status, got %q", m.status)
@@ -238,6 +238,56 @@ func TestHandleTranscriptSnapshotPendingReturnsNilWhenNoRetryOrFollowAvailable(t
 	}
 	if !strings.Contains(strings.ToLower(m.status), "pending") {
 		t.Fatalf("expected pending status message, got %q", m.status)
+	}
+}
+
+func TestHandleTranscriptSnapshotPendingTerminalStateFinishesLatencyWithError(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := newPhase0ModelWithSession("codex")
+	WithUILatencySink(sink)(&m)
+	m.pendingSessionKey = "sess:s1"
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+	m.sessionTranscriptAPI = nil
+
+	cmd := m.handleTranscriptSnapshotPending(transcriptSnapshotMsg{
+		id:  "s1",
+		key: "sess:s1",
+	}, transcriptAttachmentSourceSelectionLoad, "sess:s1")
+	if cmd != nil {
+		t.Fatalf("expected no pending follow-up command without transcript API")
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected terminal pending snapshot state to clear loading")
+	}
+	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeError) {
+		t.Fatalf("expected terminal pending snapshot state to finish switch-session latency with error")
+	}
+}
+
+func TestHandleTranscriptSnapshotPendingTerminalStateFallsBackToSessionIDLoadingSignal(t *testing.T) {
+	sink := NewInMemoryUILatencySink()
+	m := newPhase0ModelWithSession("codex")
+	WithUILatencySink(sink)(&m)
+	m.pendingSessionKey = "sess:s1"
+	m.loading = true
+	m.loadingKey = "sess:s1"
+	m.startUILatencyAction(uiLatencyActionSwitchSession, "sess:s1")
+	m.sessionTranscriptAPI = nil
+
+	cmd := m.handleTranscriptSnapshotPending(transcriptSnapshotMsg{
+		id:  "s1",
+		key: "sess:other",
+	}, transcriptAttachmentSourceSelectionLoad, "sess:other")
+	if cmd != nil {
+		t.Fatalf("expected no pending follow-up command without transcript API")
+	}
+	if m.loading || m.loadingKey != "" {
+		t.Fatalf("expected fallback loading-signal path to clear loading")
+	}
+	if !hasLatencyMetric(sink.Snapshot(), uiLatencyActionSwitchSession, UILatencyCategoryAction, uiLatencyOutcomeError) {
+		t.Fatalf("expected fallback loading-signal path to finish switch-session latency with error")
 	}
 }
 

@@ -1263,6 +1263,9 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 			TranscriptAPI: m.sessionTranscriptAPI,
 			SessionAPI:    m.sessionAPI,
 			OpenSource:    transcriptAttachmentSourceSessionStart,
+			OpenTranscriptCmdBuilder: func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd {
+				return m.requestTranscriptStreamOpenCmdWithContext(sessionID, afterRevision, source, "", loadCtx)
+			},
 		})...)
 		if recentsStateSaveCmd != nil {
 			cmds = append(cmds, recentsStateSaveCmd)

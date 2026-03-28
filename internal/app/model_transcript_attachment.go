@@ -1,12 +1,22 @@
 package app
 
 import (
+	"context"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) requestTranscriptStreamOpenCmd(sessionID, afterRevision string, source TranscriptAttachmentSource, reconnectSource string) tea.Cmd {
+	return m.requestTranscriptStreamOpenCmdWithContext(sessionID, afterRevision, source, reconnectSource, nil)
+}
+
+func (m *Model) requestTranscriptStreamOpenCmdWithContext(
+	sessionID, afterRevision string,
+	source TranscriptAttachmentSource,
+	reconnectSource string,
+	parent context.Context,
+) tea.Cmd {
 	if m == nil || m.sessionTranscriptAPI == nil {
 		return nil
 	}
@@ -30,10 +40,11 @@ func (m *Model) requestTranscriptStreamOpenCmd(sessionID, afterRevision string, 
 		attachment.Source,
 		attachment.AfterRevision,
 	)
-	return openTranscriptStreamCmdWithRequest(
+	return openTranscriptStreamCmdWithContextAndRequest(
 		m.sessionTranscriptAPI,
 		sessionID,
 		afterRevision,
+		parent,
 		transcriptStreamOpenRequest{
 			Source:     source,
 			Generation: attachment.Generation,

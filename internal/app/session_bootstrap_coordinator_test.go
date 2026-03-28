@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"control/internal/client"
 	"control/internal/daemon/transcriptdomain"
@@ -16,6 +19,25 @@ func (bootstrapTranscriptAPIStub) GetTranscriptSnapshot(context.Context, string,
 }
 
 func (bootstrapTranscriptAPIStub) TranscriptStream(context.Context, string, string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	ch := make(chan transcriptdomain.TranscriptEvent)
+	return ch, func() {}, nil
+}
+
+type bootstrapTranscriptContextRecorder struct {
+	streamCtx context.Context
+}
+
+func (*bootstrapTranscriptContextRecorder) GetTranscriptSnapshot(context.Context, string, int) (*client.TranscriptSnapshotResponse, error) {
+	return &client.TranscriptSnapshotResponse{}, nil
+}
+
+func (r *bootstrapTranscriptContextRecorder) TranscriptStream(ctx context.Context, _ string, _ string) (<-chan transcriptdomain.TranscriptEvent, func(), error) {
+	r.streamCtx = ctx
+	select {
+	case <-ctx.Done():
+		return nil, func() {}, ctx.Err()
+	default:
+	}
 	ch := make(chan transcriptdomain.TranscriptEvent)
 	return ch, func() {}, nil
 }
@@ -133,5 +155,108 @@ func TestSessionBootstrapCoordinatorFallbackUsesModelPolicy(t *testing.T) {
 	})
 	if len(cmds) != 1 {
 		t.Fatalf("expected fallback coordinator to honor model policy, got %d cmds", len(cmds))
+	}
+}
+
+func TestBuildBootstrapCommandsOpenTranscriptUsesLoadContext(t *testing.T) {
+	api := &bootstrapTranscriptContextRecorder{}
+	loadCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cmds := buildBootstrapCommands(
+		sessionBootstrapPlan{OpenTranscript: true},
+		"s1",
+		"sess:s1",
+		"rev-1",
+		200,
+		loadCtx,
+		api,
+		nil,
+		transcriptAttachmentSourceSelectionLoad,
+		nil,
+	)
+	if len(cmds) != 1 {
+		t.Fatalf("expected one open-transcript command, got %d", len(cmds))
+	}
+	msg, ok := cmds[0]().(transcriptStreamMsg)
+	if !ok {
+		t.Fatalf("expected transcriptStreamMsg, got %T", cmds[0]())
+	}
+	if !errors.Is(msg.err, context.Canceled) {
+		t.Fatalf("expected load-context cancellation to propagate to transcript open, got %v", msg.err)
+	}
+	if api.streamCtx != loadCtx {
+		t.Fatalf("expected transcript stream open to use session load context")
+	}
+	if msg.source != transcriptAttachmentSourceSelectionLoad {
+		t.Fatalf("expected transcript stream source %q, got %q", transcriptAttachmentSourceSelectionLoad, msg.source)
+	}
+}
+
+func TestSelectionLoadBootstrapOpenTranscriptUsesBuilder(t *testing.T) {
+	coordinator := NewDefaultSessionBootstrapCoordinator(fixedBootstrapPolicy{
+		selection: sessionBootstrapPlan{OpenTranscript: true},
+	})
+	called := false
+	cmds := coordinator.BuildSelectionLoadCommands(SelectionLoadBootstrapInput{
+		SessionID:     "s1",
+		AfterRevision: "rev-1",
+		OpenSource:    transcriptAttachmentSourceSelectionLoad,
+		OpenTranscriptCmdBuilder: func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd {
+			called = true
+			if sessionID != "s1" || afterRevision != "rev-1" || source != transcriptAttachmentSourceSelectionLoad {
+				t.Fatalf("unexpected builder args session=%q revision=%q source=%q", sessionID, afterRevision, source)
+			}
+			return func() tea.Msg {
+				return transcriptStreamMsg{id: sessionID, source: source, revision: afterRevision}
+			}
+		},
+	})
+	if !called {
+		t.Fatalf("expected selection bootstrap to invoke open transcript builder")
+	}
+	if len(cmds) != 1 {
+		t.Fatalf("expected one builder command, got %d", len(cmds))
+	}
+	msg, ok := cmds[0]().(transcriptStreamMsg)
+	if !ok {
+		t.Fatalf("expected transcriptStreamMsg, got %T", cmds[0]())
+	}
+	if msg.id != "s1" || msg.revision != "rev-1" || msg.source != transcriptAttachmentSourceSelectionLoad {
+		t.Fatalf("unexpected builder message %#v", msg)
+	}
+}
+
+func TestSessionStartBootstrapOpenTranscriptUsesBuilder(t *testing.T) {
+	coordinator := NewDefaultSessionBootstrapCoordinator(fixedBootstrapPolicy{
+		start: sessionBootstrapPlan{OpenTranscript: true},
+	})
+	called := false
+	cmds := coordinator.BuildSessionStartCommands(SessionStartBootstrapInput{
+		SessionID:     "s2",
+		AfterRevision: "rev-2",
+		OpenSource:    transcriptAttachmentSourceSessionStart,
+		OpenTranscriptCmdBuilder: func(sessionID, afterRevision string, source TranscriptAttachmentSource) tea.Cmd {
+			called = true
+			if sessionID != "s2" || afterRevision != "rev-2" || source != transcriptAttachmentSourceSessionStart {
+				t.Fatalf("unexpected builder args session=%q revision=%q source=%q", sessionID, afterRevision, source)
+			}
+			return func() tea.Msg {
+				return transcriptStreamMsg{id: sessionID, source: source, revision: afterRevision}
+			}
+		},
+	})
+	if !called {
+		t.Fatalf("expected session-start bootstrap to invoke open transcript builder")
+	}
+	if len(cmds) != 1 {
+		t.Fatalf("expected one builder command, got %d", len(cmds))
+	}
+	msg, ok := cmds[0]().(transcriptStreamMsg)
+	if !ok {
+		t.Fatalf("expected transcriptStreamMsg, got %T", cmds[0]())
+	}
+	if msg.id != "s2" || msg.revision != "rev-2" || msg.source != transcriptAttachmentSourceSessionStart {
+		t.Fatalf("unexpected builder message %#v", msg)
 	}
 }
