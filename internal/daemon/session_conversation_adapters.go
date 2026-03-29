@@ -40,6 +40,7 @@ type approvalDeps struct {
 
 type interruptDeps struct {
 	liveManager LiveManager
+	manager     *SessionManager
 }
 
 type conversationSender interface {
@@ -390,11 +391,28 @@ func (a liveManagerConversationInterrupter) Interrupt(ctx context.Context, deps 
 	if session == nil {
 		return invalidError("session is required", nil)
 	}
-	if deps.liveManager == nil {
-		return unavailableError("live manager not available", nil)
+	if deps.liveManager == nil && deps.manager == nil {
+		return unavailableError("session interrupt not available", nil)
 	}
-	if err := deps.liveManager.Interrupt(ctx, session, meta); err != nil {
-		return invalidError(err.Error(), err)
+	var liveErr error
+	if deps.liveManager != nil {
+		liveErr = deps.liveManager.Interrupt(ctx, session, meta)
+		if liveErr == nil {
+			return nil
+		}
+		if !errors.Is(liveErr, ErrNoActiveTurn) || deps.manager == nil {
+			return invalidError(liveErr.Error(), liveErr)
+		}
+	}
+	if deps.manager != nil {
+		if err := deps.manager.InterruptSession(session.ID); err == nil {
+			return nil
+		} else if liveErr == nil {
+			return invalidError(err.Error(), err)
+		}
+	}
+	if liveErr != nil {
+		return invalidError(liveErr.Error(), liveErr)
 	}
 	return nil
 }

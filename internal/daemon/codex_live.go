@@ -26,6 +26,8 @@ type codexThreadResumer interface {
 	ResumeThread(ctx context.Context, threadID string) error
 }
 
+var ErrNoActiveTurn = errors.New("no active turn")
+
 func NewCodexLiveManager(stores *Stores, logger logging.Logger) *CodexLiveManager {
 	if logger == nil {
 		logger = logging.Nop()
@@ -192,7 +194,7 @@ func (m *CodexLiveManager) Interrupt(ctx context.Context, session *types.Session
 		turnID = meta.LastTurnID
 	}
 	if turnID == "" {
-		return errors.New("no active turn")
+		return ErrNoActiveTurn
 	}
 	if err := ls.client.InterruptTurn(ctx, ls.threadID, turnID); err != nil {
 		m.logger.Error("codex_live_interrupt_error", logging.F("session_id", session.ID), logging.F("turn_id", turnID), logging.F("error", err))
@@ -343,7 +345,7 @@ func (s *codexLiveSession) Interrupt(ctx context.Context) error {
 	threadID := s.threadID
 	s.mu.Unlock()
 	if turnID == "" {
-		return errors.New("no active turn")
+		return ErrNoActiveTurn
 	}
 	return s.client.InterruptTurn(ctx, threadID, turnID)
 }

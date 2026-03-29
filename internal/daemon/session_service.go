@@ -1322,7 +1322,10 @@ func (s *SessionService) approvalDeps() approvalDeps {
 }
 
 func (s *SessionService) interruptDeps() interruptDeps {
-	return interruptDeps{liveManager: s.liveManager}
+	return interruptDeps{
+		liveManager: s.liveManager,
+		manager:     s.manager,
+	}
 }
 
 func (s *SessionService) ensureSessionCwd(ctx context.Context, session *types.Session, meta *types.SessionMeta) {
