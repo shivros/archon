@@ -41,3 +41,28 @@ func TestClientAPIStopWorkflowRunDelegatesToClient(t *testing.T) {
 		t.Fatalf("expected one stop request, got %d", called)
 	}
 }
+
+func TestClientAPISnapshotFetchAvailabilityReflectsClientPresence(t *testing.T) {
+	t.Parallel()
+
+	var nilAPI *ClientAPI
+	if nilAPI.SnapshotFetchAvailable() {
+		t.Fatalf("expected nil ClientAPI to report snapshot fetch unavailable")
+	}
+
+	apiWithoutClient := NewClientAPI(nil)
+	if apiWithoutClient.SnapshotFetchAvailable() {
+		t.Fatalf("expected ClientAPI without client to report snapshot fetch unavailable")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	raw := client.NewWithBaseURL(server.URL, "token")
+	apiWithClient := NewClientAPI(raw)
+	if !apiWithClient.SnapshotFetchAvailable() {
+		t.Fatalf("expected ClientAPI with client to report snapshot fetch available")
+	}
+}

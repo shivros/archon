@@ -37,6 +37,40 @@ type guidedWorkflowAPIMock struct {
 	snapshotTimeCalls int
 }
 
+type guidedWorkflowSnapshotUnavailableAPIMock struct {
+	*guidedWorkflowAPIMock
+}
+
+func (m *guidedWorkflowSnapshotUnavailableAPIMock) SnapshotFetchAvailable() bool {
+	return false
+}
+
+type guidedWorkflowInteractiveTransitionGatewayMock struct {
+	applyRunCalls      int
+	applySnapshotCalls int
+}
+
+func (g *guidedWorkflowInteractiveTransitionGatewayMock) ApplyRun(*guidedworkflows.WorkflowRun) {
+	g.applyRunCalls++
+}
+
+func (g *guidedWorkflowInteractiveTransitionGatewayMock) ApplySnapshot(*guidedworkflows.WorkflowRun, []guidedworkflows.RunTimelineEvent) {
+	g.applySnapshotCalls++
+}
+
+type guidedWorkflowPreviewTransitionGatewayMock struct {
+	applyPreviewCalls         int
+	applyPreviewSnapshotCalls int
+}
+
+func (g *guidedWorkflowPreviewTransitionGatewayMock) ApplyPreview(*guidedworkflows.WorkflowRun) {
+	g.applyPreviewCalls++
+}
+
+func (g *guidedWorkflowPreviewTransitionGatewayMock) ApplyPreviewSnapshot(*guidedworkflows.WorkflowRun, []guidedworkflows.RunTimelineEvent) {
+	g.applyPreviewSnapshotCalls++
+}
+
 func (m *guidedWorkflowAPIMock) ListWorkflowRuns(_ context.Context) ([]*guidedworkflows.WorkflowRun, error) {
 	out := make([]*guidedworkflows.WorkflowRun, 0, len(m.listRuns))
 	for _, run := range m.listRuns {
@@ -2309,6 +2343,210 @@ func TestSelectingWorkflowSidebarNodeOpensGuidedWorkflowView(t *testing.T) {
 	}
 	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != run.ID {
 		t.Fatalf("expected guided workflow run %q, got %#v", run.ID, m.guidedWorkflow)
+	}
+}
+
+func TestSelectingWorkflowSidebarNodeHydratesPassiveTimelinePreview(t *testing.T) {
+	now := time.Date(2026, 2, 17, 13, 28, 0, 0, time.UTC)
+	run := newWorkflowRunFixture("gwf-passive-preview", guidedworkflows.WorkflowRunStatusRunning, now)
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{cloneWorkflowRun(run)},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_started", RunID: run.ID},
+			},
+		},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row in sidebar")
+	}
+
+	cmd := m.onSelectionChangedImmediate()
+	if cmd == nil {
+		t.Fatalf("expected passive workflow selection to fetch timeline snapshot")
+	}
+	if m.mode == uiModeGuidedWorkflow {
+		t.Fatalf("expected passive workflow selection to avoid opening guided workflow mode")
+	}
+	msg := workflowRunSnapshotMsgFromCmd(t, cmd)
+	updated, _ := m.Update(msg)
+	m = asModel(t, updated)
+	if strings.Contains(strings.ToLower(m.contentRaw), "no events yet") {
+		t.Fatalf("expected passive workflow preview to render timeline events, got %q", m.contentRaw)
+	}
+	if !strings.Contains(strings.ToLower(m.contentRaw), "run_started") {
+		t.Fatalf("expected passive workflow preview to include timeline event text, got %q", m.contentRaw)
+	}
+	if m.guidedWorkflow == nil || len(m.guidedWorkflow.timeline) != 1 {
+		t.Fatalf("expected guided workflow preview timeline to be hydrated")
+	}
+	m.applySidebarItemsWithReason(sidebarApplyReasonBackground)
+	if !strings.Contains(strings.ToLower(m.contentRaw), "run_started") {
+		t.Fatalf("expected sidebar refresh to preserve workflow preview timeline, got %q", m.contentRaw)
+	}
+}
+
+func TestPassiveWorkflowPreviewAutoRefreshesTimeline(t *testing.T) {
+	now := time.Now().UTC()
+	run := newWorkflowRunFixture("gwf-passive-refresh", guidedworkflows.WorkflowRunStatusRunning, now)
+	api := &guidedWorkflowAPIMock{
+		snapshotRuns: []*guidedworkflows.WorkflowRun{cloneWorkflowRun(run), cloneWorkflowRun(run)},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{
+			{
+				{At: now, Type: "run_started", RunID: run.ID},
+			},
+			{
+				{At: now, Type: "run_started", RunID: run.ID},
+				{At: now.Add(2 * time.Second), Type: "step_completed", RunID: run.ID, Message: "phase plan complete"},
+			},
+		},
+	}
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = api
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row in sidebar")
+	}
+
+	firstCmd := m.onSelectionChangedImmediate()
+	firstMsg := workflowRunSnapshotMsgFromCmd(t, firstCmd)
+	updated, _ := m.Update(firstMsg)
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || len(m.guidedWorkflow.timeline) != 1 {
+		t.Fatalf("expected first passive snapshot to hydrate timeline")
+	}
+
+	autoCmd := m.maybeAutoRefreshWorkflowPreview(now.Add(guidedWorkflowPollInterval + time.Second))
+	if autoCmd == nil {
+		t.Fatalf("expected passive workflow preview to auto-refresh")
+	}
+	autoMsg := workflowRunSnapshotMsgFromCmd(t, autoCmd)
+	updated, _ = m.Update(autoMsg)
+	m = asModel(t, updated)
+	if m.guidedWorkflow == nil || len(m.guidedWorkflow.timeline) != 2 {
+		t.Fatalf("expected auto-refreshed passive preview timeline to include latest events")
+	}
+}
+
+func TestGuidedWorkflowSnapshotFetchAvailableHonorsAvailabilityCapability(t *testing.T) {
+	m := NewModel(nil)
+	if m.guidedWorkflowSnapshotFetchAvailable() {
+		t.Fatalf("expected snapshot fetch to be unavailable without api")
+	}
+
+	m.guidedWorkflowAPI = &guidedWorkflowAPIMock{}
+	if !m.guidedWorkflowSnapshotFetchAvailable() {
+		t.Fatalf("expected snapshot fetch to be available for api without availability capability")
+	}
+
+	m.guidedWorkflowAPI = &guidedWorkflowSnapshotUnavailableAPIMock{
+		guidedWorkflowAPIMock: &guidedWorkflowAPIMock{},
+	}
+	if m.guidedWorkflowSnapshotFetchAvailable() {
+		t.Fatalf("expected snapshot fetch to be unavailable when capability reports false")
+	}
+}
+
+func TestRefreshWorkflowPreviewFromSelectionSkipsWhenSnapshotUnavailable(t *testing.T) {
+	m := NewModel(nil)
+	m.guidedWorkflowAPI = &guidedWorkflowSnapshotUnavailableAPIMock{
+		guidedWorkflowAPIMock: &guidedWorkflowAPIMock{},
+	}
+	run := &guidedworkflows.WorkflowRun{ID: "gwf-unavailable-refresh"}
+	item := &sidebarItem{kind: sidebarWorkflow, workflow: run}
+
+	cmd := m.refreshWorkflowPreviewFromSelection(item)
+	if cmd != nil {
+		t.Fatalf("expected nil preview refresh command when snapshot fetching is unavailable")
+	}
+}
+
+func TestMaybeAutoRefreshWorkflowPreviewSkipsWhenSnapshotUnavailable(t *testing.T) {
+	now := time.Now().UTC()
+	run := newWorkflowRunFixture("gwf-unavailable-auto", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := newPhase0ModelWithSession("codex")
+	m.guidedWorkflowAPI = &guidedWorkflowSnapshotUnavailableAPIMock{
+		guidedWorkflowAPIMock: &guidedWorkflowAPIMock{},
+	}
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow row in sidebar")
+	}
+	_ = m.onSelectionChangedImmediate()
+
+	cmd := m.maybeAutoRefreshWorkflowPreview(now.Add(guidedWorkflowPollInterval + time.Second))
+	if cmd != nil {
+		t.Fatalf("expected auto-refresh command to be nil when snapshot fetching is unavailable")
+	}
+}
+
+func TestOpenGuidedWorkflowFromSidebarUsesInteractiveGatewayOnly(t *testing.T) {
+	now := time.Now().UTC()
+	run := newWorkflowRunFixture("gwf-open-interactive-only", guidedworkflows.WorkflowRunStatusRunning, now)
+	interactive := &guidedWorkflowInteractiveTransitionGatewayMock{}
+	preview := &guidedWorkflowPreviewTransitionGatewayMock{}
+	m := NewModel(nil,
+		WithGuidedWorkflowInteractiveStateTransitionGateway(interactive),
+		WithGuidedWorkflowPreviewStateTransitionGateway(preview),
+	)
+	item := &sidebarItem{kind: sidebarWorkflow, workflow: run}
+
+	cmd := m.openGuidedWorkflowFromSidebar(item)
+	if cmd == nil {
+		t.Fatalf("expected open guided workflow command")
+	}
+	if interactive.applyRunCalls != 1 {
+		t.Fatalf("expected interactive ApplyRun to be called once, got %d", interactive.applyRunCalls)
+	}
+	if preview.applyPreviewCalls != 0 {
+		t.Fatalf("expected preview ApplyPreview to remain 0, got %d", preview.applyPreviewCalls)
+	}
+	if preview.applyPreviewSnapshotCalls != 0 {
+		t.Fatalf("expected preview ApplyPreviewSnapshot to remain 0, got %d", preview.applyPreviewSnapshotCalls)
+	}
+}
+
+func TestRenderWorkflowPreviewUsesPreviewGatewayOnly(t *testing.T) {
+	now := time.Now().UTC()
+	run := newWorkflowRunFixture("gwf-render-preview-only", guidedworkflows.WorkflowRunStatusRunning, now)
+	interactive := &guidedWorkflowInteractiveTransitionGatewayMock{}
+	preview := &guidedWorkflowPreviewTransitionGatewayMock{}
+	m := NewModel(nil,
+		WithGuidedWorkflowInteractiveStateTransitionGateway(interactive),
+		WithGuidedWorkflowPreviewStateTransitionGateway(preview),
+	)
+	item := &sidebarItem{kind: sidebarWorkflow, workflow: run}
+
+	m.renderWorkflowPreview(item)
+	if preview.applyPreviewCalls != 1 {
+		t.Fatalf("expected preview ApplyPreview to be called once, got %d", preview.applyPreviewCalls)
+	}
+	if interactive.applyRunCalls != 0 {
+		t.Fatalf("expected interactive ApplyRun to remain 0, got %d", interactive.applyRunCalls)
+	}
+	if interactive.applySnapshotCalls != 0 {
+		t.Fatalf("expected interactive ApplySnapshot to remain 0, got %d", interactive.applySnapshotCalls)
 	}
 }
 

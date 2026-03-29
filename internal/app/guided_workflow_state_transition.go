@@ -1,6 +1,8 @@
 package app
 
-import "control/internal/guidedworkflows"
+import (
+	"control/internal/guidedworkflows"
+)
 
 type GuidedWorkflowReflowInput struct {
 	BeforeInputLines int
@@ -42,10 +44,19 @@ func (m *Model) guidedWorkflowReflowPolicyOrDefault() GuidedWorkflowReflowPolicy
 	return m.guidedWorkflowReflowPolicy
 }
 
-type GuidedWorkflowStateTransitionGateway interface {
+type GuidedWorkflowInteractiveStateTransitionGateway interface {
 	ApplyRun(run *guidedworkflows.WorkflowRun)
 	ApplySnapshot(run *guidedworkflows.WorkflowRun, timeline []guidedworkflows.RunTimelineEvent)
+}
+
+type GuidedWorkflowPreviewStateTransitionGateway interface {
 	ApplyPreview(run *guidedworkflows.WorkflowRun)
+	ApplyPreviewSnapshot(run *guidedworkflows.WorkflowRun, timeline []guidedworkflows.RunTimelineEvent)
+}
+
+type GuidedWorkflowStateTransitionGateway interface {
+	GuidedWorkflowInteractiveStateTransitionGateway
+	GuidedWorkflowPreviewStateTransitionGateway
 }
 
 type defaultGuidedWorkflowStateTransitionGateway struct {
@@ -73,6 +84,15 @@ func (g defaultGuidedWorkflowStateTransitionGateway) ApplyPreview(run *guidedwor
 		return
 	}
 	g.model.guidedWorkflow.SetRun(run)
+}
+
+func (g defaultGuidedWorkflowStateTransitionGateway) ApplyPreviewSnapshot(run *guidedworkflows.WorkflowRun, timeline []guidedworkflows.RunTimelineEvent) {
+	m := g.model
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
+	m.guidedWorkflow.SetSnapshot(run, timeline)
+	m.renderWorkflowPreviewContent()
 }
 
 func (g defaultGuidedWorkflowStateTransitionGateway) apply(update func(controller *GuidedWorkflowUIController)) {
@@ -103,16 +123,52 @@ func WithGuidedWorkflowStateTransitionGateway(gateway GuidedWorkflowStateTransit
 			return
 		}
 		if gateway == nil {
-			m.guidedWorkflowStateTransitionGateway = NewDefaultGuidedWorkflowStateTransitionGateway(m)
+			defaultGateway := NewDefaultGuidedWorkflowStateTransitionGateway(m)
+			m.guidedWorkflowInteractiveStateTransitionGateway = defaultGateway
+			m.guidedWorkflowPreviewStateTransitionGateway = defaultGateway
 			return
 		}
-		m.guidedWorkflowStateTransitionGateway = gateway
+		m.guidedWorkflowInteractiveStateTransitionGateway = gateway
+		m.guidedWorkflowPreviewStateTransitionGateway = gateway
 	}
 }
 
-func (m *Model) guidedWorkflowStateTransitionGatewayOrDefault() GuidedWorkflowStateTransitionGateway {
-	if m == nil || m.guidedWorkflowStateTransitionGateway == nil {
+func WithGuidedWorkflowInteractiveStateTransitionGateway(gateway GuidedWorkflowInteractiveStateTransitionGateway) ModelOption {
+	return func(m *Model) {
+		if m == nil {
+			return
+		}
+		if gateway == nil {
+			m.guidedWorkflowInteractiveStateTransitionGateway = NewDefaultGuidedWorkflowStateTransitionGateway(m)
+			return
+		}
+		m.guidedWorkflowInteractiveStateTransitionGateway = gateway
+	}
+}
+
+func WithGuidedWorkflowPreviewStateTransitionGateway(gateway GuidedWorkflowPreviewStateTransitionGateway) ModelOption {
+	return func(m *Model) {
+		if m == nil {
+			return
+		}
+		if gateway == nil {
+			m.guidedWorkflowPreviewStateTransitionGateway = NewDefaultGuidedWorkflowStateTransitionGateway(m)
+			return
+		}
+		m.guidedWorkflowPreviewStateTransitionGateway = gateway
+	}
+}
+
+func (m *Model) guidedWorkflowInteractiveStateTransitionGatewayOrDefault() GuidedWorkflowInteractiveStateTransitionGateway {
+	if m == nil || m.guidedWorkflowInteractiveStateTransitionGateway == nil {
 		return NewDefaultGuidedWorkflowStateTransitionGateway(m)
 	}
-	return m.guidedWorkflowStateTransitionGateway
+	return m.guidedWorkflowInteractiveStateTransitionGateway
+}
+
+func (m *Model) guidedWorkflowPreviewStateTransitionGatewayOrDefault() GuidedWorkflowPreviewStateTransitionGateway {
+	if m == nil || m.guidedWorkflowPreviewStateTransitionGateway == nil {
+		return NewDefaultGuidedWorkflowStateTransitionGateway(m)
+	}
+	return m.guidedWorkflowPreviewStateTransitionGateway
 }

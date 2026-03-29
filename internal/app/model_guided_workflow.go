@@ -83,7 +83,7 @@ func (m *Model) openGuidedWorkflowFromSidebar(item *sidebarItem) tea.Cmd {
 	})
 	m.enterGuidedWorkflow(context)
 	if m.guidedWorkflow != nil {
-		m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyRun(item.workflow)
+		m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault().ApplyRun(item.workflow)
 	}
 	m.setStatusMessage("opened guided workflow " + runID)
 	return fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
@@ -104,7 +104,14 @@ func (m *Model) renderWorkflowPreview(item *sidebarItem) {
 	if m.guidedWorkflow == nil {
 		m.guidedWorkflow = NewGuidedWorkflowUIController()
 	}
-	m.guidedWorkflowStateTransitionGatewayOrDefault().ApplyPreview(run)
+	m.guidedWorkflowPreviewStateTransitionGatewayOrDefault().ApplyPreview(run)
+	m.renderWorkflowPreviewContent()
+}
+
+func (m *Model) renderWorkflowPreviewContent() {
+	if m == nil || m.guidedWorkflow == nil {
+		return
+	}
 	pickerWidth := max(minViewportWidth, m.viewport.Width())
 	pickerHeight := clamp(m.viewport.Height()/2, 6, 10)
 	m.guidedWorkflow.SetTemplatePickerSize(pickerWidth, pickerHeight)
@@ -113,6 +120,58 @@ func (m *Model) renderWorkflowPreview(item *sidebarItem) {
 		content = "Workflow selected. Press enter to open."
 	}
 	m.setContentText(content)
+}
+
+func (m *Model) refreshWorkflowPreviewFromSelection(item *sidebarItem) tea.Cmd {
+	if m == nil || item == nil || item.kind != sidebarWorkflow || m.mode == uiModeGuidedWorkflow || m.guidedWorkflow == nil {
+		return nil
+	}
+	if !m.guidedWorkflowSnapshotFetchAvailable() {
+		return nil
+	}
+	runID := strings.TrimSpace(item.workflowRunID())
+	if runID == "" {
+		return nil
+	}
+	now := m.clockNow
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	m.guidedWorkflow.MarkRefreshQueued(now)
+	return fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+}
+
+func (m *Model) maybeAutoRefreshWorkflowPreview(now time.Time) tea.Cmd {
+	if m == nil || m.mode == uiModeGuidedWorkflow || m.guidedWorkflow == nil {
+		return nil
+	}
+	if !m.guidedWorkflowSnapshotFetchAvailable() {
+		return nil
+	}
+	item := m.selectedItem()
+	if item == nil || item.kind != sidebarWorkflow {
+		return nil
+	}
+	runID := strings.TrimSpace(item.workflowRunID())
+	if runID == "" || strings.TrimSpace(m.guidedWorkflow.RunID()) != runID {
+		return nil
+	}
+	if !m.guidedWorkflow.CanRefresh(now, guidedWorkflowPollInterval) {
+		return nil
+	}
+	m.guidedWorkflow.MarkRefreshQueued(now)
+	return fetchWorkflowRunSnapshotCmd(m.guidedWorkflowAPI, runID)
+}
+
+func (m *Model) guidedWorkflowSnapshotFetchAvailable() bool {
+	if m == nil || m.guidedWorkflowAPI == nil {
+		return false
+	}
+	availability, ok := m.guidedWorkflowAPI.(GuidedWorkflowSnapshotFetchAvailability)
+	if !ok {
+		return true
+	}
+	return availability.SnapshotFetchAvailable()
 }
 
 func (m *Model) exitGuidedWorkflow(status string) {

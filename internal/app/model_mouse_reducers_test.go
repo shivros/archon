@@ -2907,7 +2907,10 @@ func flushPendingMouseCmd(t *testing.T, m *Model) {
 	if msg == nil {
 		return
 	}
-	handled, next := m.reduceStateMessages(msg)
+	handled, next := m.reduceMutationMessages(msg)
+	if !handled {
+		handled, next = m.reduceStateMessages(msg)
+	}
 	if !handled {
 		t.Fatalf("expected pending mouse command message to be handled, got %T", msg)
 	}

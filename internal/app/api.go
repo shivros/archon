@@ -309,6 +309,10 @@ type GuidedWorkflowRunAPI interface {
 	GetWorkflowRunTimeline(ctx context.Context, runID string) ([]guidedworkflows.RunTimelineEvent, error)
 }
 
+type GuidedWorkflowSnapshotFetchAvailability interface {
+	SnapshotFetchAvailable() bool
+}
+
 type GuidedWorkflowAPI interface {
 	GuidedWorkflowTemplateAPI
 	GuidedWorkflowRunAPI
@@ -320,6 +324,10 @@ type ClientAPI struct {
 
 func NewClientAPI(client *client.Client) *ClientAPI {
 	return &ClientAPI{client: client}
+}
+
+func (a *ClientAPI) SnapshotFetchAvailable() bool {
+	return a != nil && a.client != nil
 }
 
 func (a *ClientAPI) ListWorkspaces(ctx context.Context) ([]*types.Workspace, error) {

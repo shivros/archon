@@ -1,10 +1,12 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"control/internal/guidedworkflows"
+	"control/internal/types"
 )
 
 type fixedGuidedWorkflowReflowPolicy struct {
@@ -20,9 +22,10 @@ func (p *fixedGuidedWorkflowReflowPolicy) ShouldReflow(input GuidedWorkflowReflo
 }
 
 type stubGuidedWorkflowStateTransitionGateway struct {
-	applyRunCalls      int
-	applySnapshotCalls int
-	applyPreviewCalls  int
+	applyRunCalls             int
+	applySnapshotCalls        int
+	applyPreviewCalls         int
+	applyPreviewSnapshotCalls int
 }
 
 func (g *stubGuidedWorkflowStateTransitionGateway) ApplyRun(*guidedworkflows.WorkflowRun) {
@@ -35,6 +38,36 @@ func (g *stubGuidedWorkflowStateTransitionGateway) ApplySnapshot(*guidedworkflow
 
 func (g *stubGuidedWorkflowStateTransitionGateway) ApplyPreview(*guidedworkflows.WorkflowRun) {
 	g.applyPreviewCalls++
+}
+
+func (g *stubGuidedWorkflowStateTransitionGateway) ApplyPreviewSnapshot(*guidedworkflows.WorkflowRun, []guidedworkflows.RunTimelineEvent) {
+	g.applyPreviewSnapshotCalls++
+}
+
+type stubGuidedWorkflowInteractiveStateTransitionGateway struct {
+	applyRunCalls      int
+	applySnapshotCalls int
+}
+
+func (g *stubGuidedWorkflowInteractiveStateTransitionGateway) ApplyRun(*guidedworkflows.WorkflowRun) {
+	g.applyRunCalls++
+}
+
+func (g *stubGuidedWorkflowInteractiveStateTransitionGateway) ApplySnapshot(*guidedworkflows.WorkflowRun, []guidedworkflows.RunTimelineEvent) {
+	g.applySnapshotCalls++
+}
+
+type stubGuidedWorkflowPreviewStateTransitionGateway struct {
+	applyPreviewCalls         int
+	applyPreviewSnapshotCalls int
+}
+
+func (g *stubGuidedWorkflowPreviewStateTransitionGateway) ApplyPreview(*guidedworkflows.WorkflowRun) {
+	g.applyPreviewCalls++
+}
+
+func (g *stubGuidedWorkflowPreviewStateTransitionGateway) ApplyPreviewSnapshot(*guidedworkflows.WorkflowRun, []guidedworkflows.RunTimelineEvent) {
+	g.applyPreviewSnapshotCalls++
 }
 
 func TestWithGuidedWorkflowReflowPolicyConfiguresAndResetsDefault(t *testing.T) {
@@ -65,19 +98,67 @@ func TestGuidedWorkflowReflowPolicyOrDefaultNilModelUsesDefault(t *testing.T) {
 func TestWithGuidedWorkflowStateTransitionGatewayConfiguresAndResetsDefault(t *testing.T) {
 	custom := &stubGuidedWorkflowStateTransitionGateway{}
 	m := NewModel(nil, WithGuidedWorkflowStateTransitionGateway(custom))
-	if got := m.guidedWorkflowStateTransitionGatewayOrDefault(); got != custom {
-		t.Fatalf("expected custom guided workflow state transition gateway, got %T", got)
+	if got := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault(); got != custom {
+		t.Fatalf("expected custom interactive gateway, got %T", got)
+	}
+	if got := m.guidedWorkflowPreviewStateTransitionGatewayOrDefault(); got != custom {
+		t.Fatalf("expected custom preview gateway, got %T", got)
 	}
 
 	WithGuidedWorkflowStateTransitionGateway(nil)(&m)
-	if _, ok := m.guidedWorkflowStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
-		t.Fatalf("expected default guided workflow state transition gateway after reset")
+	if _, ok := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
+		t.Fatalf("expected default interactive gateway after reset")
+	}
+	if _, ok := m.guidedWorkflowPreviewStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
+		t.Fatalf("expected default preview gateway after reset")
 	}
 }
 
 func TestWithGuidedWorkflowStateTransitionGatewayNilModelNoop(t *testing.T) {
 	var m *Model
 	WithGuidedWorkflowStateTransitionGateway(&stubGuidedWorkflowStateTransitionGateway{})(m)
+}
+
+func TestWithGuidedWorkflowInteractiveStateTransitionGatewayConfiguresAndResetsDefault(t *testing.T) {
+	custom := &stubGuidedWorkflowInteractiveStateTransitionGateway{}
+	m := NewModel(nil, WithGuidedWorkflowInteractiveStateTransitionGateway(custom))
+	if got := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault(); got != custom {
+		t.Fatalf("expected custom interactive gateway, got %T", got)
+	}
+	if _, ok := m.guidedWorkflowPreviewStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
+		t.Fatalf("expected preview gateway to remain default")
+	}
+
+	WithGuidedWorkflowInteractiveStateTransitionGateway(nil)(&m)
+	if _, ok := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
+		t.Fatalf("expected default interactive gateway after reset")
+	}
+}
+
+func TestWithGuidedWorkflowPreviewStateTransitionGatewayConfiguresAndResetsDefault(t *testing.T) {
+	custom := &stubGuidedWorkflowPreviewStateTransitionGateway{}
+	m := NewModel(nil, WithGuidedWorkflowPreviewStateTransitionGateway(custom))
+	if got := m.guidedWorkflowPreviewStateTransitionGatewayOrDefault(); got != custom {
+		t.Fatalf("expected custom preview gateway, got %T", got)
+	}
+	if _, ok := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
+		t.Fatalf("expected interactive gateway to remain default")
+	}
+
+	WithGuidedWorkflowPreviewStateTransitionGateway(nil)(&m)
+	if _, ok := m.guidedWorkflowPreviewStateTransitionGatewayOrDefault().(defaultGuidedWorkflowStateTransitionGateway); !ok {
+		t.Fatalf("expected default preview gateway after reset")
+	}
+}
+
+func TestWithGuidedWorkflowInteractiveStateTransitionGatewayNilModelNoop(t *testing.T) {
+	var m *Model
+	WithGuidedWorkflowInteractiveStateTransitionGateway(&stubGuidedWorkflowInteractiveStateTransitionGateway{})(m)
+}
+
+func TestWithGuidedWorkflowPreviewStateTransitionGatewayNilModelNoop(t *testing.T) {
+	var m *Model
+	WithGuidedWorkflowPreviewStateTransitionGateway(&stubGuidedWorkflowPreviewStateTransitionGateway{})(m)
 }
 
 func TestDefaultGuidedWorkflowStateTransitionGatewayApplyRunUsesReflowPolicy(t *testing.T) {
@@ -91,7 +172,7 @@ func TestDefaultGuidedWorkflowStateTransitionGatewayApplyRunUsesReflowPolicy(t *
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
 	m.resize(100, 24)
 
-	gateway := m.guidedWorkflowStateTransitionGatewayOrDefault()
+	gateway := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault()
 	gateway.ApplyRun(running)
 	liveViewportHeight := m.viewport.Height()
 	policy.calls = 0
@@ -119,7 +200,7 @@ func TestDefaultGuidedWorkflowStateTransitionGatewayApplyRunRespectsPolicyBlock(
 	enterGuidedWorkflowForTest(&m, guidedWorkflowLaunchContext{workspaceID: "ws1", worktreeID: "wt1", sessionID: "s1"})
 	m.resize(100, 24)
 
-	gateway := m.guidedWorkflowStateTransitionGatewayOrDefault()
+	gateway := m.guidedWorkflowInteractiveStateTransitionGatewayOrDefault()
 	gateway.ApplyRun(running)
 	liveViewportHeight := m.viewport.Height()
 	policy.calls = 0
@@ -152,6 +233,50 @@ func TestDefaultGuidedWorkflowStateTransitionGatewayApplyPreviewUpdatesControlle
 	gateway.ApplyPreview(run)
 	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != "gwf-preview" {
 		t.Fatalf("expected preview transition to set guided workflow run id")
+	}
+}
+
+func TestDefaultGuidedWorkflowStateTransitionGatewayApplySnapshotUpdatesController(t *testing.T) {
+	now := time.Now().UTC()
+	run := newWorkflowRunFixture("gwf-snapshot-apply", guidedworkflows.WorkflowRunStatusRunning, now)
+	timeline := []guidedworkflows.RunTimelineEvent{
+		{At: now, Type: "run_started", RunID: run.ID},
+		{At: now.Add(2 * time.Second), Type: "step_completed", RunID: run.ID},
+	}
+	m := NewModel(nil)
+	gateway := NewDefaultGuidedWorkflowStateTransitionGateway(&m)
+
+	gateway.ApplySnapshot(run, timeline)
+	if m.guidedWorkflow == nil || m.guidedWorkflow.RunID() != run.ID {
+		t.Fatalf("expected snapshot transition to set guided workflow run id")
+	}
+	if got := len(m.guidedWorkflow.timeline); got != len(timeline) {
+		t.Fatalf("expected snapshot transition to set timeline length %d, got %d", len(timeline), got)
+	}
+}
+
+func TestDefaultGuidedWorkflowStateTransitionGatewayApplyPreviewSnapshotRendersPassivePreview(t *testing.T) {
+	now := time.Now().UTC()
+	run := newWorkflowRunFixture("gwf-preview-snapshot", guidedworkflows.WorkflowRunStatusRunning, now)
+	m := newPhase0ModelWithSession("codex")
+	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
+	m.sessionMeta["s1"] = &types.SessionMeta{
+		SessionID:     "s1",
+		WorkspaceID:   "ws1",
+		WorkflowRunID: run.ID,
+	}
+	m.applySidebarItems()
+	if m.sidebar == nil || !m.sidebar.SelectByWorkflowID(run.ID) {
+		t.Fatalf("expected workflow to be selectable")
+	}
+	_ = m.onSelectionChangedImmediate()
+
+	gateway := m.guidedWorkflowPreviewStateTransitionGatewayOrDefault()
+	gateway.ApplyPreviewSnapshot(run, []guidedworkflows.RunTimelineEvent{
+		{At: now, Type: "run_started", RunID: run.ID},
+	})
+	if strings.Contains(strings.ToLower(m.contentRaw), "no events yet") {
+		t.Fatalf("expected passive preview render to include snapshot timeline, got %q", m.contentRaw)
 	}
 }
 

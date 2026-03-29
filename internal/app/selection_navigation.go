@@ -111,6 +111,8 @@ func (defaultSelectionTransitionService) resolveSelectionCommand(m *Model, handl
 	switch {
 	case !handled:
 		return m.scheduleSessionLoad(item, delay)
+	case item != nil && item.kind == sidebarWorkflow:
+		return m.refreshWorkflowPreviewFromSelection(item)
 	case m.mode == uiModeRecents:
 		return m.ensureRecentsPreviewForSelection()
 	default:

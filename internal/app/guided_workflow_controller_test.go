@@ -293,6 +293,23 @@ func TestGuidedWorkflowControllerTurnLinkTargets(t *testing.T) {
 	}
 }
 
+func TestGuidedWorkflowControllerSetRunClearsTimelineWhenRunChanges(t *testing.T) {
+	controller := NewGuidedWorkflowUIController()
+	now := time.Now().UTC()
+	controller.SetSnapshot(
+		&guidedworkflows.WorkflowRun{ID: "gwf-1", Status: guidedworkflows.WorkflowRunStatusRunning},
+		[]guidedworkflows.RunTimelineEvent{{At: now, Type: "run_started", RunID: "gwf-1"}},
+	)
+	if got := len(controller.timeline); got != 1 {
+		t.Fatalf("expected baseline timeline length 1, got %d", got)
+	}
+
+	controller.SetRun(&guidedworkflows.WorkflowRun{ID: "gwf-2", Status: guidedworkflows.WorkflowRunStatusRunning})
+	if got := len(controller.timeline); got != 0 {
+		t.Fatalf("expected SetRun on different run to clear timeline, got %d", got)
+	}
+}
+
 func TestGuidedWorkflowStatusTextHelpersIncludeExplicitRunStates(t *testing.T) {
 	if got := workflowRunDetailedStatusText(nil); got != "" {
 		t.Fatalf("expected empty detailed status text for nil run, got %q", got)

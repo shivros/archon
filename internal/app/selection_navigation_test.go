@@ -193,7 +193,7 @@ func TestSystemSessionSelectionKeepsGuidedWorkflowMode(t *testing.T) {
 	}
 }
 
-func TestSelectionTransitionResolveSelectionCommandKeepsWorkflowSelectionPassive(t *testing.T) {
+func TestSelectionTransitionResolveSelectionCommandFetchesWorkflowPreviewSnapshotWithoutOpening(t *testing.T) {
 	service := defaultSelectionTransitionService{}
 	m := newPhase0ModelWithSession("codex")
 	now := time.Now().UTC()
@@ -202,6 +202,10 @@ func TestSelectionTransitionResolveSelectionCommandKeepsWorkflowSelectionPassive
 		WorkspaceID: "ws1",
 		Status:      guidedworkflows.WorkflowRunStatusRunning,
 		CreatedAt:   now,
+	}
+	m.guidedWorkflowAPI = &guidedWorkflowAPIMock{
+		snapshotRuns:      []*guidedworkflows.WorkflowRun{cloneWorkflowRun(run)},
+		snapshotTimelines: [][]guidedworkflows.RunTimelineEvent{{{At: now, Type: "run_started", RunID: run.ID}}},
 	}
 	m.workflowRuns = []*guidedworkflows.WorkflowRun{run}
 	m.applySidebarItems()
@@ -212,8 +216,15 @@ func TestSelectionTransitionResolveSelectionCommandKeepsWorkflowSelectionPassive
 	if item == nil || item.kind != sidebarWorkflow {
 		t.Fatalf("expected selected workflow item")
 	}
-	if cmd := service.resolveSelectionCommand(&m, true, item, 0); cmd != nil {
-		t.Fatalf("expected workflow selection command to stay nil until explicit activation")
+	cmd := service.resolveSelectionCommand(&m, true, item, 0)
+	if cmd == nil {
+		t.Fatalf("expected workflow selection command to fetch preview snapshot")
+	}
+	if _, ok := cmd().(workflowRunSnapshotMsg); !ok {
+		t.Fatalf("expected workflow preview selection command to emit workflowRunSnapshotMsg")
+	}
+	if m.mode == uiModeGuidedWorkflow {
+		t.Fatalf("expected workflow preview selection to remain passive")
 	}
 }
 

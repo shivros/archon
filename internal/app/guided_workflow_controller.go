@@ -866,8 +866,19 @@ func (c *GuidedWorkflowUIController) SetRun(run *guidedworkflows.WorkflowRun) {
 	if c == nil {
 		return
 	}
+	previousRunID := ""
+	if c.run != nil {
+		previousRunID = strings.TrimSpace(c.run.ID)
+	}
+	nextRunID := ""
+	if run != nil {
+		nextRunID = strings.TrimSpace(run.ID)
+	}
 	c.dependencyPickerOpen = false
 	c.run = cloneWorkflowRun(run)
+	if previousRunID != nextRunID {
+		c.timeline = nil
+	}
 	c.lastError = ""
 	c.refreshQueued = false
 	c.syncStepSelection()
