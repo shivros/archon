@@ -1539,6 +1539,71 @@ func (s *stubLiveManager) Interrupt(context.Context, *types.Session, *types.Sess
 
 func (s *stubLiveManager) SetNotificationPublisher(NotificationPublisher) {}
 
+func TestLiveManagerConversationInterrupterFallsBackToSessionManagerWhenNoActiveTurn(t *testing.T) {
+	t.Parallel()
+
+	called := 0
+	manager := &SessionManager{
+		sessions: map[string]*sessionRuntime{
+			"s1": {
+				session:   &types.Session{ID: "s1", Provider: "codex"},
+				interrupt: func() error { called++; return nil },
+			},
+		},
+	}
+	live := &stubLiveManager{interruptErr: ErrNoActiveTurn}
+
+	err := (liveManagerConversationInterrupter{providerName: "codex"}).Interrupt(
+		context.Background(),
+		interruptDeps{liveManager: live, manager: manager},
+		&types.Session{ID: "s1", Provider: "codex"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("expected fallback interrupt to succeed, got %v", err)
+	}
+	if live.interruptCalls != 1 {
+		t.Fatalf("expected one live manager interrupt attempt, got %d", live.interruptCalls)
+	}
+	if called != 1 {
+		t.Fatalf("expected one session manager interrupt fallback, got %d", called)
+	}
+}
+
+func TestLiveManagerConversationInterrupterReturnsLiveManagerErrorWithoutFallback(t *testing.T) {
+	t.Parallel()
+
+	called := 0
+	manager := &SessionManager{
+		sessions: map[string]*sessionRuntime{
+			"s1": {
+				session:   &types.Session{ID: "s1", Provider: "codex"},
+				interrupt: func() error { called++; return nil },
+			},
+		},
+	}
+	live := &stubLiveManager{interruptErr: errors.New("boom")}
+
+	err := (liveManagerConversationInterrupter{providerName: "codex"}).Interrupt(
+		context.Background(),
+		interruptDeps{liveManager: live, manager: manager},
+		&types.Session{ID: "s1", Provider: "codex"},
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected interrupt error")
+	}
+	if err.Error() != "boom: boom" {
+		t.Fatalf("expected wrapped live manager error, got %v", err)
+	}
+	if live.interruptCalls != 1 {
+		t.Fatalf("expected one live manager interrupt attempt, got %d", live.interruptCalls)
+	}
+	if called != 0 {
+		t.Fatalf("did not expect session manager fallback, got %d calls", called)
+	}
+}
+
 type failingSessionMetaStore struct {
 	entry     *types.SessionMeta
 	upsertErr error
