@@ -3580,10 +3580,18 @@ func TestRunLifecycleProcessGateSignalDeduplicatesSeenSignalID(t *testing.T) {
 	}
 	service.mu.Lock()
 	service.setRunLocked(run.ID, run)
-	service.turnSeen[turnReceiptKey(run.ID, "sig-1")] = struct{}{}
+	receiptRef, ok := buildGateSignalReceiptRefForSignal(run.ID, GateSignal{
+		Transport: "session_turn",
+		SignalID:  "sig-1",
+	})
+	if !ok {
+		t.Fatal("expected gate receipt ref for seeded duplicate signal")
+	}
+	service.gateSignalSeen[receiptRef.Key()] = struct{}{}
 	service.mu.Unlock()
 
 	updated, err := service.processGateSignalForRun(context.Background(), run.ID, GateSignal{
+		Transport: "session_turn",
 		SessionID: "sess-1",
 		SignalID:  "sig-1",
 		Status:    "completed",
@@ -3595,6 +3603,264 @@ func TestRunLifecycleProcessGateSignalDeduplicatesSeenSignalID(t *testing.T) {
 	}
 	if updated != nil {
 		t.Fatalf("expected duplicate signal to be ignored without run update, got %#v", updated)
+	}
+}
+
+func TestRunLifecycleProcessGateSignalNoopsForMissingOrNonRunningRun(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+
+	updated, err := service.processGateSignalForRun(context.Background(), "missing-run", GateSignal{
+		Transport: "session_turn",
+		SignalID:  "sig-1",
+	})
+	if err != nil {
+		t.Fatalf("processGateSignalForRun missing run: %v", err)
+	}
+	if updated != nil {
+		t.Fatalf("expected nil update for missing run, got %#v", updated)
+	}
+
+	run := &WorkflowRun{
+		ID:     "run-not-running",
+		Status: WorkflowRunStatusCompleted,
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.mu.Unlock()
+
+	updated, err = service.processGateSignalForRun(context.Background(), run.ID, GateSignal{
+		Transport: "session_turn",
+		SignalID:  "sig-1",
+	})
+	if err != nil {
+		t.Fatalf("processGateSignalForRun non-running run: %v", err)
+	}
+	if updated != nil {
+		t.Fatalf("expected nil update for non-running run, got %#v", updated)
+	}
+}
+
+func TestRunLifecycleProcessGateSignalDoesNotCollideAcrossTransports(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID:        "run-gate-transport-dedupe",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-1",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	receiptRef, ok := buildGateSignalReceiptRefForSignal(run.ID, GateSignal{
+		Transport: "session_turn",
+		SignalID:  "sig-1",
+	})
+	if !ok {
+		t.Fatal("expected gate receipt ref for seeded duplicate signal")
+	}
+	service.gateSignalSeen[receiptRef.Key()] = struct{}{}
+	service.mu.Unlock()
+
+	updated, err := service.processGateSignalForRun(context.Background(), run.ID, GateSignal{
+		Transport: "webhook",
+		SessionID: "sess-1",
+		SignalID:  "sig-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ok"}`,
+	})
+	if err != nil {
+		t.Fatalf("processGateSignalForRun: %v", err)
+	}
+	if updated == nil {
+		t.Fatalf("expected gate signal on a different transport to progress the run")
+	}
+	if updated.Status != WorkflowRunStatusCompleted {
+		t.Fatalf("expected run to complete after webhook gate signal, got %q", updated.Status)
+	}
+}
+
+func TestRunLifecycleHydrateGateSignalReceiptsUsesTransportAwareKeys(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID:     "run-gate-hydrate",
+		Status: WorkflowRunStatusCompleted,
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						SignalID: "sig-1",
+						LastSignal: &GateSignalContext{
+							Transport: "webhook",
+							SignalID:  "sig-1",
+						},
+					},
+					{
+						ID:       "gate-2",
+						SignalID: "sig-2",
+					},
+				},
+			},
+		},
+	}
+
+	service.mu.Lock()
+	service.hydrateGateSignalReceiptsLocked(run)
+	webhookRef, ok := buildGateSignalReceiptRefForSignal(run.ID, GateSignal{
+		Transport: "webhook",
+		SignalID:  "sig-1",
+	})
+	if !ok {
+		t.Fatal("expected webhook gate receipt ref")
+	}
+	sessionRef, ok := buildGateSignalReceiptRefForSignal(run.ID, GateSignal{
+		Transport: "session_turn",
+		SignalID:  "sig-1",
+	})
+	if !ok {
+		t.Fatal("expected session gate receipt ref")
+	}
+	defaultRef, ok := buildGateSignalReceiptRefForSignal(run.ID, GateSignal{
+		SignalID: "sig-2",
+	})
+	if !ok {
+		t.Fatal("expected default-transport gate receipt ref")
+	}
+	_, webhookSeen := service.gateSignalSeen[webhookRef.Key()]
+	_, sessionSeen := service.gateSignalSeen[sessionRef.Key()]
+	_, defaultTransportSeen := service.gateSignalSeen[defaultRef.Key()]
+	service.mu.Unlock()
+
+	if !webhookSeen {
+		t.Fatalf("expected webhook gate receipt to be hydrated")
+	}
+	if sessionSeen {
+		t.Fatalf("expected webhook receipt to avoid colliding with session_turn")
+	}
+	if !defaultTransportSeen {
+		t.Fatalf("expected legacy gate receipt without transport to hydrate under default session_turn transport")
+	}
+}
+
+func TestRunLifecycleHydrateGateSignalReceiptsSkipsInvalidGateAndBlankRunID(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+
+	service.mu.Lock()
+	service.hydrateGateSignalReceiptsLocked(&WorkflowRun{
+		ID: " ",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{SignalID: "sig-ignored"},
+				},
+			},
+		},
+	})
+	if len(service.gateSignalSeen) != 0 {
+		service.mu.Unlock()
+		t.Fatalf("expected blank run id hydration to be ignored")
+	}
+
+	run := &WorkflowRun{
+		ID: "run-gate-hydrate-guards",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{},
+					{SignalID: "sig-valid"},
+				},
+			},
+		},
+	}
+	service.hydrateGateSignalReceiptsLocked(run)
+	validRef, ok := buildGateSignalReceiptRefForSignal(run.ID, GateSignal{SignalID: "sig-valid"})
+	if !ok {
+		service.mu.Unlock()
+		t.Fatal("expected valid gate receipt ref")
+	}
+	_, validSeen := service.gateSignalSeen[validRef.Key()]
+	service.mu.Unlock()
+
+	if !validSeen {
+		t.Fatalf("expected valid gate receipt to be hydrated")
+	}
+}
+
+func TestRunLifecycleProcessGateSignalReturnsErrRunNotFoundAfterAdvanceWhenRunDisappears(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID:        "run-gate-relock-miss",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusAwaitingSignal,
+						SignalID: "sig-1",
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	queue := NewChannelDispatchQueue(1, 1, func(req DispatchRequest) DispatchQueueResult {
+		service.mu.Lock()
+		delete(service.runs, req.RunID)
+		delete(service.timelines, req.RunID)
+		service.mu.Unlock()
+		return DispatchQueueResult{Done: true}
+	})
+	defer queue.Close()
+
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.dispatchQueue = queue
+	service.mu.Unlock()
+
+	_, err := service.processGateSignalForRun(context.Background(), run.ID, GateSignal{
+		Transport: "session_turn",
+		SessionID: "sess-1",
+		SignalID:  "sig-1",
+		Status:    "completed",
+		Terminal:  true,
+		Output:    `{"passed":true,"reason":"ok"}`,
+	})
+	if !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("expected ErrRunNotFound after run disappears during queue advance, got %v", err)
 	}
 }
 

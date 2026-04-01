@@ -123,12 +123,13 @@ type InMemoryRunService struct {
 	// 1. Acquire per-run lock first, then s.mu.
 	// 2. Release in reverse order.
 	// 3. Slow external I/O (for example prompt dispatch) must run with both locks released.
-	mu        sync.RWMutex
-	runs      map[string]*WorkflowRun
-	timelines map[string][]RunTimelineEvent
-	turnSeen  map[string]struct{}
-	actions   map[string]struct{}
-	runLocks  RunLockManager
+	mu             sync.RWMutex
+	runs           map[string]*WorkflowRun
+	timelines      map[string][]RunTimelineEvent
+	turnSeen       map[string]struct{}
+	gateSignalSeen map[string]struct{}
+	actions        map[string]struct{}
+	runLocks       RunLockManager
 
 	maxActiveRuns    int
 	telemetryEnabled bool
@@ -470,6 +471,7 @@ func NewRunService(cfg Config, opts ...RunServiceOption) *InMemoryRunService {
 		runs:                   map[string]*WorkflowRun{},
 		timelines:              map[string][]RunTimelineEvent{},
 		turnSeen:               map[string]struct{}{},
+		gateSignalSeen:         map[string]struct{}{},
 		actions:                map[string]struct{}{},
 		runLocks:               NewPerRunLockManager(),
 		telemetryEnabled:       true,
@@ -1361,6 +1363,7 @@ func (s *InMemoryRunService) processTurnEventForRun(ctx context.Context, runID s
 }
 
 func (s *InMemoryRunService) processGateSignalForRun(ctx context.Context, runID string, signal GateSignal) (*WorkflowRun, error) {
+	signal = normalizeGateSignal(signal)
 	s.mu.Lock()
 
 	run, ok := s.getRunByIDLocked(runID)
@@ -1370,9 +1373,9 @@ func (s *InMemoryRunService) processGateSignalForRun(ctx context.Context, runID 
 	}
 
 	markSignalSeen := false
+	receiptRef, hasReceipt := buildGateSignalReceiptRefForSignal(run.ID, signal)
 	if signal.SignalID != "" {
-		receipt := turnReceiptKey(run.ID, signal.SignalID)
-		if _, seen := s.turnSeen[receipt]; seen {
+		if _, seen := s.gateSignalSeen[receiptRef.Key()]; seen {
 			s.mu.Unlock()
 			return nil, nil
 		}
@@ -1390,8 +1393,8 @@ func (s *InMemoryRunService) processGateSignalForRun(ctx context.Context, runID 
 		markSignalSeen = true
 	}
 	if run.Status != WorkflowRunStatusRunning {
-		if markSignalSeen {
-			s.turnSeen[turnReceiptKey(run.ID, signal.SignalID)] = struct{}{}
+		if markSignalSeen && hasReceipt {
+			s.gateSignalSeen[receiptRef.Key()] = struct{}{}
 		}
 		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
 		s.maybeEnqueueDependentRechecksLocked(run.ID, beforeStatus, run.Status)
@@ -1424,8 +1427,8 @@ func (s *InMemoryRunService) processGateSignalForRun(ctx context.Context, runID 
 		s.mu.Unlock()
 		return nil, ErrRunNotFound
 	}
-	if markSignalSeen {
-		s.turnSeen[turnReceiptKey(run.ID, signal.SignalID)] = struct{}{}
+	if markSignalSeen && hasReceipt {
+		s.gateSignalSeen[receiptRef.Key()] = struct{}{}
 	}
 	if run.Status != WorkflowRunStatusRunning {
 		s.recordTerminalTransitionLocked(beforeStatus, run.Status)
@@ -4668,6 +4671,7 @@ func (s *InMemoryRunService) restoreRuns(ctx context.Context) {
 		s.setRunLocked(runID, run)
 		s.setTimelineLocked(runID, timeline)
 		s.hydrateTurnReceiptsLocked(run)
+		s.hydrateGateSignalReceiptsLocked(run)
 	}
 	queuedRunIDs := make([]string, 0)
 	for _, run := range s.listRunsIncludingDismissedLocked() {
@@ -4701,15 +4705,24 @@ func (s *InMemoryRunService) hydrateTurnReceiptsLocked(run *WorkflowRun) {
 			}
 			s.turnSeen[turnReceiptKey(runID, turnID)] = struct{}{}
 		}
+	}
+}
+
+func (s *InMemoryRunService) hydrateGateSignalReceiptsLocked(run *WorkflowRun) {
+	if s == nil || run == nil {
+		return
+	}
+	runID := strings.TrimSpace(run.ID)
+	if runID == "" {
+		return
+	}
+	for _, phase := range run.Phases {
 		for _, gate := range phase.Gates {
-			signalID := strings.TrimSpace(gate.SignalID)
-			if signalID == "" && gate.Execution != nil {
-				signalID = strings.TrimSpace(gate.Execution.SignalID)
-			}
-			if signalID == "" {
+			receiptRef, ok := buildGateSignalReceiptRefForGate(runID, gate)
+			if !ok {
 				continue
 			}
-			s.turnSeen[turnReceiptKey(runID, signalID)] = struct{}{}
+			s.gateSignalSeen[receiptRef.Key()] = struct{}{}
 		}
 	}
 }
