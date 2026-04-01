@@ -403,6 +403,14 @@ type dispatchTelemetryContext struct {
 	Blocked      bool
 }
 
+type sessionTurnDispatchBridge interface {
+	dispatchSessionTurn(
+		ctx context.Context,
+		req guidedworkflows.StepPromptDispatchRequest,
+		telemetry dispatchTelemetryContext,
+	) (guidedworkflows.StepPromptDispatchResult, error)
+}
+
 type noopDispatchTelemetryReporter struct{}
 
 func (noopDispatchTelemetryReporter) ReportDispatchResult(dispatchTelemetryContext) {}
@@ -489,7 +497,7 @@ func (d *LLMJudgeGateDispatcher) DispatchGate(
 	if d == nil || d.stepDispatcher == nil {
 		return guidedworkflows.GateDispatchResult{}, nil
 	}
-	stepResult, err := d.stepDispatcher.DispatchStepPrompt(ctx, guidedworkflows.StepPromptDispatchRequest{
+	stepReq := guidedworkflows.StepPromptDispatchRequest{
 		RunID:                  strings.TrimSpace(req.RunID),
 		TemplateID:             strings.TrimSpace(req.TemplateID),
 		DefaultAccessLevel:     req.DefaultAccessLevel,
@@ -499,11 +507,23 @@ func (d *LLMJudgeGateDispatcher) DispatchGate(
 		WorktreeID:             strings.TrimSpace(req.WorktreeID),
 		SessionID:              strings.TrimSpace(req.SessionID),
 		PhaseID:                strings.TrimSpace(req.PhaseID),
-		GateID:                 strings.TrimSpace(req.GateID),
-		GateKind:               req.GateKind,
-		Boundary:               req.Boundary,
 		Prompt:                 strings.TrimSpace(req.Prompt),
-	})
+	}
+	var (
+		stepResult guidedworkflows.StepPromptDispatchResult
+		err        error
+	)
+	if bridge, ok := d.stepDispatcher.(sessionTurnDispatchBridge); ok {
+		stepResult, err = bridge.dispatchSessionTurn(ctx, stepReq, dispatchTelemetryContext{
+			RunID:    strings.TrimSpace(req.RunID),
+			PhaseID:  strings.TrimSpace(req.PhaseID),
+			GateID:   strings.TrimSpace(req.GateID),
+			GateKind: string(req.GateKind),
+			Boundary: string(req.Boundary),
+		})
+	} else {
+		stepResult, err = d.stepDispatcher.DispatchStepPrompt(ctx, stepReq)
+	}
 	if err != nil {
 		return guidedworkflows.GateDispatchResult{}, wrapGateDispatchError(err)
 	}
@@ -544,6 +564,22 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	ctx context.Context,
 	req guidedworkflows.StepPromptDispatchRequest,
 ) (guidedworkflows.StepPromptDispatchResult, error) {
+	result, err := d.dispatchSessionTurn(ctx, req, dispatchTelemetryContext{
+		RunID:   strings.TrimSpace(req.RunID),
+		PhaseID: strings.TrimSpace(req.PhaseID),
+		StepID:  strings.TrimSpace(req.StepID),
+	})
+	if err != nil {
+		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
+	}
+	return result, nil
+}
+
+func (d *guidedWorkflowPromptDispatcher) dispatchSessionTurn(
+	ctx context.Context,
+	req guidedworkflows.StepPromptDispatchRequest,
+	telemetry dispatchTelemetryContext,
+) (guidedworkflows.StepPromptDispatchResult, error) {
 	if d == nil || d.sessions == nil {
 		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf("%w: session gateway unavailable", guidedworkflows.ErrStepDispatch)
 	}
@@ -553,7 +589,7 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 	}
 	sessionID, provider, model, err := d.resolveSession(ctx, req)
 	if err != nil {
-		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
+		return guidedworkflows.StepPromptDispatchResult{}, err
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return guidedworkflows.StepPromptDispatchResult{}, fmt.Errorf(
@@ -579,21 +615,14 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		if errors.Is(err, guidedworkflows.ErrStepDispatchDeferred) {
 			disposition = "deferred"
 		}
-		reporter.ReportDispatchResult(dispatchTelemetryContext{
-			RunID:        req.RunID,
-			PhaseID:      req.PhaseID,
-			StepID:       req.StepID,
-			GateID:       req.GateID,
-			GateKind:     string(req.GateKind),
-			Boundary:     string(req.Boundary),
-			SessionID:    sessionID,
-			Provider:     provider,
-			Disposition:  disposition,
-			AttemptCount: attemptCount,
-			Error:        err,
-			Blocked:      shouldFailStepDispatchWithoutSessionReplacement(err),
-		})
-		return guidedworkflows.StepPromptDispatchResult{}, wrapStepDispatchError(err)
+		telemetry.SessionID = sessionID
+		telemetry.Provider = provider
+		telemetry.Disposition = disposition
+		telemetry.AttemptCount = attemptCount
+		telemetry.Error = err
+		telemetry.Blocked = shouldFailStepDispatchWithoutSessionReplacement(err)
+		reporter.ReportDispatchResult(telemetry)
+		return guidedworkflows.StepPromptDispatchResult{}, err
 	}
 	effectiveModel := strings.TrimSpace(model)
 	if resolvedRuntime != nil {
@@ -608,20 +637,15 @@ func (d *guidedWorkflowPromptDispatcher) DispatchStepPrompt(
 		Provider:   strings.TrimSpace(provider),
 		Model:      effectiveModel,
 	}
-	reporter.ReportDispatchResult(dispatchTelemetryContext{
-		RunID:        req.RunID,
-		PhaseID:      req.PhaseID,
-		StepID:       req.StepID,
-		GateID:       req.GateID,
-		GateKind:     string(req.GateKind),
-		Boundary:     string(req.Boundary),
-		SessionID:    result.SessionID,
-		Provider:     result.Provider,
-		Model:        result.Model,
-		TurnID:       result.TurnID,
-		Disposition:  "dispatched",
-		AttemptCount: attemptCount,
-	})
+	telemetry.SessionID = result.SessionID
+	telemetry.Provider = result.Provider
+	telemetry.Model = result.Model
+	telemetry.TurnID = result.TurnID
+	telemetry.Disposition = "dispatched"
+	telemetry.AttemptCount = attemptCount
+	telemetry.Error = nil
+	telemetry.Blocked = false
+	reporter.ReportDispatchResult(telemetry)
 	return result, nil
 }
 

@@ -447,9 +447,6 @@ type StepPromptDispatchRequest struct {
 	SessionID              string                       `json:"session_id,omitempty"`
 	PhaseID                string                       `json:"phase_id,omitempty"`
 	StepID                 string                       `json:"step_id,omitempty"`
-	GateID                 string                       `json:"gate_id,omitempty"`
-	GateKind               WorkflowGateKind             `json:"gate_kind,omitempty"`
-	Boundary               WorkflowGateBoundary         `json:"boundary,omitempty"`
 	Prompt                 string                       `json:"prompt"`
 	RuntimeOptions         *types.SessionRuntimeOptions `json:"runtime_options,omitempty"`
 }

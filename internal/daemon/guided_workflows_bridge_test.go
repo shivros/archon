@@ -1056,6 +1056,15 @@ func TestNewLLMJudgeGateDispatcherNilStepDispatcher(t *testing.T) {
 }
 
 func TestLLMJudgeGateDispatcherDispatchGateMapsStepDispatch(t *testing.T) {
+	selectedRuntime := &types.SessionRuntimeOptions{
+		Model:     "gpt-5.3-codex",
+		Reasoning: types.ReasoningHigh,
+		Access:    types.AccessOnRequest,
+		Provider: map[string]any{
+			"temperature": 0.1,
+		},
+		Version: 2,
+	}
 	stepDispatcher := &bridgeStepPromptDispatcherStub{
 		responses: []guidedworkflows.StepPromptDispatchResult{
 			{
@@ -1072,16 +1081,19 @@ func TestLLMJudgeGateDispatcherDispatchGateMapsStepDispatch(t *testing.T) {
 		t.Fatalf("expected gate dispatcher")
 	}
 	result, err := gateDispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
-		RunID:       "run-1",
-		TemplateID:  "tpl-1",
-		WorkspaceID: "ws-1",
-		WorktreeID:  "wt-1",
-		SessionID:   "sess-gate",
-		PhaseID:     "phase-1",
-		GateID:      "gate-1",
-		GateKind:    guidedworkflows.WorkflowGateKindLLMJudge,
-		Boundary:    guidedworkflows.WorkflowGateBoundaryPhaseEnd,
-		Prompt:      "judge prompt",
+		RunID:                  "run-1",
+		TemplateID:             "tpl-1",
+		DefaultAccessLevel:     types.AccessOnRequest,
+		SelectedProvider:       "codex",
+		SelectedRuntimeOptions: selectedRuntime,
+		WorkspaceID:            "ws-1",
+		WorktreeID:             "wt-1",
+		SessionID:              "sess-gate",
+		PhaseID:                "phase-1",
+		GateID:                 "gate-1",
+		GateKind:               guidedworkflows.WorkflowGateKindLLMJudge,
+		Boundary:               guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+		Prompt:                 "judge prompt",
 	})
 	if err != nil {
 		t.Fatalf("DispatchGate: %v", err)
@@ -1093,8 +1105,23 @@ func TestLLMJudgeGateDispatcherDispatchGateMapsStepDispatch(t *testing.T) {
 		t.Fatalf("expected one underlying step dispatch call, got %d", len(stepDispatcher.calls))
 	}
 	call := stepDispatcher.calls[0]
-	if call.GateID != "gate-1" || call.GateKind != guidedworkflows.WorkflowGateKindLLMJudge || call.Boundary != guidedworkflows.WorkflowGateBoundaryPhaseEnd {
-		t.Fatalf("expected gate metadata to be forwarded, got %#v", call)
+	if call.PhaseID != "phase-1" || call.SessionID != "sess-gate" || call.Prompt != "judge prompt" {
+		t.Fatalf("expected gate adapter to translate onto step transport fields, got %#v", call)
+	}
+	if call.SelectedProvider != "codex" || call.DefaultAccessLevel != types.AccessOnRequest {
+		t.Fatalf("expected provider and access level to propagate, got %#v", call)
+	}
+	if call.SelectedRuntimeOptions == nil || call.SelectedRuntimeOptions == selectedRuntime {
+		t.Fatalf("expected cloned runtime options on translated dispatch, got %#v", call.SelectedRuntimeOptions)
+	}
+	if call.SelectedRuntimeOptions.Model != "gpt-5.3-codex" || call.SelectedRuntimeOptions.Reasoning != types.ReasoningHigh {
+		t.Fatalf("expected runtime options to propagate, got %#v", call.SelectedRuntimeOptions)
+	}
+	if call.SelectedRuntimeOptions.Access != types.AccessOnRequest || call.SelectedRuntimeOptions.Version != 2 {
+		t.Fatalf("expected access/version runtime options to propagate, got %#v", call.SelectedRuntimeOptions)
+	}
+	if got := call.SelectedRuntimeOptions.Provider["temperature"]; got != 0.1 {
+		t.Fatalf("expected provider runtime options to propagate, got %#v", call.SelectedRuntimeOptions.Provider)
 	}
 }
 
@@ -1113,6 +1140,154 @@ func TestLLMJudgeGateDispatcherDispatchGateWrapsDeferredError(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, guidedworkflows.ErrGateDispatchDeferred) {
 		t.Fatalf("expected wrapped ErrGateDispatchDeferred, got %v", err)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherDispatchGateReportsGateTelemetry(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+			},
+		},
+		turnID: "turn-gate",
+	}
+	capture := &captureDispatchTelemetryReporter{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:          gateway,
+		dispatchTelemetry: capture,
+	}
+	result, err := dispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:       "run-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+		PhaseID:     "phase-1",
+		GateID:      "gate-1",
+		GateKind:    guidedworkflows.WorkflowGateKindLLMJudge,
+		Boundary:    guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+		Prompt:      "judge prompt",
+	})
+	if err != nil {
+		t.Fatalf("DispatchGate: %v", err)
+	}
+	if !result.Dispatched || result.SignalID != "turn-gate" {
+		t.Fatalf("unexpected gate dispatch result: %#v", result)
+	}
+	if capture.last.GateID != "gate-1" || capture.last.GateKind != string(guidedworkflows.WorkflowGateKindLLMJudge) {
+		t.Fatalf("expected gate telemetry metadata, got %#v", capture.last)
+	}
+	if capture.last.Boundary != string(guidedworkflows.WorkflowGateBoundaryPhaseEnd) {
+		t.Fatalf("expected gate boundary telemetry, got %#v", capture.last)
+	}
+	if capture.last.StepID != "" {
+		t.Fatalf("expected gate telemetry to remain step-free, got %#v", capture.last)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherDispatchGateReportsDeferredGateTelemetry(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+			},
+		},
+		sendErrs: []error{
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+			errors.New("turn already in progress"),
+		},
+	}
+	capture := &captureDispatchTelemetryReporter{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:          gateway,
+		dispatchTelemetry: capture,
+	}
+	_, err := dispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:       "run-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+		PhaseID:     "phase-1",
+		GateID:      "gate-1",
+		GateKind:    guidedworkflows.WorkflowGateKindLLMJudge,
+		Boundary:    guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+		Prompt:      "judge prompt",
+	})
+	if err == nil || !errors.Is(err, guidedworkflows.ErrGateDispatchDeferred) {
+		t.Fatalf("expected deferred gate dispatch error, got %v", err)
+	}
+	if capture.last.GateID != "gate-1" || capture.last.GateKind != string(guidedworkflows.WorkflowGateKindLLMJudge) || capture.last.Boundary != string(guidedworkflows.WorkflowGateBoundaryPhaseEnd) {
+		t.Fatalf("expected gate metadata on deferred telemetry, got %#v", capture.last)
+	}
+	if capture.last.StepID != "" || capture.last.Disposition != "deferred" {
+		t.Fatalf("expected deferred gate-only telemetry, got %#v", capture.last)
+	}
+}
+
+func TestGuidedWorkflowPromptDispatcherDispatchGateReportsFatalGateTelemetry(t *testing.T) {
+	gateway := &stubGuidedWorkflowSessionGateway{
+		sessions: []*types.Session{
+			{ID: "sess-1", Provider: "codex", Status: types.SessionStatusRunning},
+		},
+		meta: []*types.SessionMeta{
+			{
+				SessionID:   "sess-1",
+				WorkspaceID: "ws-1",
+				WorktreeID:  "wt-1",
+			},
+		},
+		sendErr: errors.New("send failed"),
+	}
+	capture := &captureDispatchTelemetryReporter{}
+	dispatcher := &guidedWorkflowPromptDispatcher{
+		sessions:          gateway,
+		dispatchTelemetry: capture,
+	}
+	_, err := dispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:       "run-1",
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+		SessionID:   "sess-1",
+		PhaseID:     "phase-1",
+		GateID:      "gate-1",
+		GateKind:    guidedworkflows.WorkflowGateKindLLMJudge,
+		Boundary:    guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+		Prompt:      "judge prompt",
+	})
+	if err == nil || !errors.Is(err, guidedworkflows.ErrGateDispatch) {
+		t.Fatalf("expected fatal gate dispatch error, got %v", err)
+	}
+	if capture.last.GateID != "gate-1" || capture.last.GateKind != string(guidedworkflows.WorkflowGateKindLLMJudge) || capture.last.Boundary != string(guidedworkflows.WorkflowGateBoundaryPhaseEnd) {
+		t.Fatalf("expected gate metadata on fatal telemetry, got %#v", capture.last)
+	}
+	if capture.last.StepID != "" || capture.last.Disposition != "fatal" {
+		t.Fatalf("expected fatal gate-only telemetry, got %#v", capture.last)
+	}
+}
+
+func TestLLMJudgeGateDispatcherNilReceiverIsSafe(t *testing.T) {
+	var dispatcher *LLMJudgeGateDispatcher
+	result, err := dispatcher.DispatchGate(context.Background(), guidedworkflows.GateDispatchRequest{
+		RunID:  "run-1",
+		GateID: "gate-1",
+		Prompt: "judge prompt",
+	})
+	if err != nil {
+		t.Fatalf("expected nil receiver to return cleanly, got %v", err)
+	}
+	if result != (guidedworkflows.GateDispatchResult{}) {
+		t.Fatalf("expected zero result for nil receiver, got %#v", result)
 	}
 }
 

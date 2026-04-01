@@ -35,6 +35,7 @@ type stubTemplateProvider struct {
 
 type stubStepPromptDispatcher struct {
 	calls     []StepPromptDispatchRequest
+	gateCalls []GateDispatchRequest
 	responses []StepPromptDispatchResult
 	err       error
 	errs      []error
@@ -275,6 +276,9 @@ func (s *stubStepPromptDispatcher) DispatchStepPrompt(_ context.Context, req Ste
 }
 
 func (s *stubStepPromptDispatcher) DispatchGate(ctx context.Context, req GateDispatchRequest) (GateDispatchResult, error) {
+	if s != nil {
+		s.gateCalls = append(s.gateCalls, req)
+	}
 	stepResult, err := s.DispatchStepPrompt(ctx, StepPromptDispatchRequest{
 		RunID:                  req.RunID,
 		TemplateID:             req.TemplateID,
@@ -285,9 +289,6 @@ func (s *stubStepPromptDispatcher) DispatchGate(ctx context.Context, req GateDis
 		WorktreeID:             req.WorktreeID,
 		SessionID:              req.SessionID,
 		PhaseID:                req.PhaseID,
-		GateID:                 req.GateID,
-		GateKind:               req.GateKind,
-		Boundary:               req.Boundary,
 		Prompt:                 req.Prompt,
 	})
 	if err != nil {
@@ -2351,8 +2352,8 @@ func TestRunLifecyclePhaseEndLLMJudgePassesAndAdvancesToNextPhase(t *testing.T) 
 	if len(current.Phases[0].Gates) != 1 || current.Phases[0].Gates[0].Status != WorkflowGateStatusAwaitingSignal {
 		t.Fatalf("expected llm_judge gate to await turn, got %#v", current.Phases[0].Gates)
 	}
-	if got := dispatcher.calls[1].GateID; got != "gate_1" {
-		t.Fatalf("expected gate_id gate_1, got %q", got)
+	if len(dispatcher.gateCalls) != 1 || dispatcher.gateCalls[0].GateID != "gate_1" {
+		t.Fatalf("expected one gate dispatch call with gate_id gate_1, got %#v", dispatcher.gateCalls)
 	}
 
 	updated, err = service.OnTurnCompleted(context.Background(), TurnSignal{
