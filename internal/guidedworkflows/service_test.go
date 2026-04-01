@@ -85,14 +85,16 @@ type stubStepOutcomeEvaluator struct {
 }
 
 type stubGateCoordinator struct {
-	hasActive         bool
-	hasDeferred       bool
-	pendingResolution GateResolution
-	pendingErr        error
-	signalResolution  GateResolution
-	signalErr         error
-	pendingCtx        context.Context
-	signalCtx         context.Context
+	hasActive          bool
+	hasDeferred        bool
+	pendingResolution  GateResolution
+	pendingErr         error
+	pendingResolutions []GateResolution
+	pendingErrors      []error
+	signalResolution   GateResolution
+	signalErr          error
+	pendingCtx         context.Context
+	signalCtx          context.Context
 }
 
 type stubGateSignalMatcher struct {
@@ -140,6 +142,27 @@ func (s *stubGateCoordinator) ResolvePendingGate(ctx context.Context, _ *Workflo
 	}
 	if s == nil {
 		return GateResolution{}, nil
+	}
+	if len(s.pendingResolutions) > 0 || len(s.pendingErrors) > 0 {
+		resolution := GateResolution{}
+		if len(s.pendingResolutions) > 0 {
+			resolution = s.pendingResolutions[0]
+			if len(s.pendingResolutions) == 1 {
+				s.pendingResolutions = s.pendingResolutions[:0]
+			} else {
+				s.pendingResolutions = s.pendingResolutions[1:]
+			}
+		}
+		var err error
+		if len(s.pendingErrors) > 0 {
+			err = s.pendingErrors[0]
+			if len(s.pendingErrors) == 1 {
+				s.pendingErrors = s.pendingErrors[:0]
+			} else {
+				s.pendingErrors = s.pendingErrors[1:]
+			}
+		}
+		return resolution, err
 	}
 	return s.pendingResolution, s.pendingErr
 }
@@ -4024,6 +4047,417 @@ func TestRunLifecycleStepDispatcherDoesNotImplicitlySetGateDispatcher(t *testing
 	service := NewRunService(Config{Enabled: true}, WithStepPromptDispatcher(dispatcher))
 	if service.gateDispatcher != nil {
 		t.Fatalf("expected gate dispatcher to remain nil without explicit WithGateDispatcher wiring")
+	}
+}
+
+func TestResolvePendingGateActionLocked(t *testing.T) {
+	baseRun := &WorkflowRun{
+		ID:     "run-gate-action",
+		Status: WorkflowRunStatusRunning,
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusPending,
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		service    *InMemoryRunService
+		run        *WorkflowRun
+		wantKind   pendingGateActionKind
+		wantErr    string
+		wantPrompt string
+	}{
+		{
+			name:     "none when coordinator does not consume",
+			service:  NewRunService(Config{Enabled: true}, WithGateCoordinator(&stubGateCoordinator{pendingResolution: GateResolution{Consumed: false}})),
+			run:      cloneWorkflowRun(baseRun),
+			wantKind: pendingGateActionNone,
+		},
+		{
+			name: "continue",
+			service: NewRunService(Config{Enabled: true}, WithGateCoordinator(&stubGateCoordinator{
+				pendingResolution: GateResolution{Consumed: true, PhaseIndex: 0, GateIndex: 0, Outcome: GateOutcomeContinue, Summary: "ok"},
+			})),
+			run:      cloneWorkflowRun(baseRun),
+			wantKind: pendingGateActionContinue,
+		},
+		{
+			name: "pause",
+			service: NewRunService(Config{Enabled: true}, WithGateCoordinator(&stubGateCoordinator{
+				pendingResolution: GateResolution{Consumed: true, PhaseIndex: 0, GateIndex: 0, Outcome: GateOutcomePause, Summary: "stop"},
+			})),
+			run:      cloneWorkflowRun(baseRun),
+			wantKind: pendingGateActionPause,
+		},
+		{
+			name: "awaiting dispatch",
+			service: NewRunService(
+				Config{Enabled: true},
+				WithGateCoordinator(&stubGateCoordinator{
+					pendingResolution: GateResolution{Consumed: true, PhaseIndex: 0, GateIndex: 0, Outcome: GateOutcomeAwaiting, DispatchPrompt: "judge this"},
+				}),
+				WithGateDispatcher(&stubStepPromptDispatcher{}),
+			),
+			run:        cloneWorkflowRun(baseRun),
+			wantKind:   pendingGateActionAwaitingDispatch,
+			wantPrompt: "judge this",
+		},
+		{
+			name: "awaiting dispatch with empty prompt becomes fail action",
+			service: NewRunService(Config{Enabled: true}, WithGateCoordinator(&stubGateCoordinator{
+				pendingResolution: GateResolution{Consumed: true, PhaseIndex: 0, GateIndex: 0, Outcome: GateOutcomeAwaiting},
+			})),
+			run:      cloneWorkflowRun(baseRun),
+			wantKind: pendingGateActionFail,
+			wantErr:  "gate dispatch prompt is empty",
+		},
+		{
+			name: "coordinator error without resolvable target returns none",
+			service: NewRunService(Config{Enabled: true}, WithGateCoordinator(&stubGateCoordinator{
+				pendingResolution: GateResolution{PhaseIndex: -1, GateIndex: -1},
+				pendingErr:        errors.New("coordinator boom"),
+			})),
+			run:      cloneWorkflowRun(baseRun),
+			wantKind: pendingGateActionNone,
+			wantErr:  "coordinator boom",
+		},
+		{
+			name: "coordinator error with resolvable target returns fail",
+			service: NewRunService(Config{Enabled: true}, WithGateCoordinator(&stubGateCoordinator{
+				pendingResolution: GateResolution{Consumed: true, PhaseIndex: 0, GateIndex: 0},
+				pendingErr:        errors.New("coordinator boom"),
+			})),
+			run:      cloneWorkflowRun(baseRun),
+			wantKind: pendingGateActionFail,
+			wantErr:  "coordinator boom",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			action, err := tc.service.resolvePendingGateActionLocked(context.Background(), tc.run)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("resolvePendingGateActionLocked: %v", err)
+			}
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.wantErr)) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+			}
+			if action.kind != tc.wantKind {
+				t.Fatalf("expected action kind %q, got %q", tc.wantKind, action.kind)
+			}
+			if tc.wantPrompt != "" && action.dispatch.dispatchPrompt != tc.wantPrompt {
+				t.Fatalf("expected dispatch prompt %q, got %q", tc.wantPrompt, action.dispatch.dispatchPrompt)
+			}
+		})
+	}
+}
+
+func TestApplyPendingGateActionLocked(t *testing.T) {
+	baseRun := &WorkflowRun{
+		ID:     "run-gate-apply",
+		Status: WorkflowRunStatusRunning,
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Status:   WorkflowGateStatusPending,
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{
+							Prompt: "judge",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("continue applies pass and keeps resolving", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true})
+		run := cloneWorkflowRun(baseRun)
+		dispatchCtx, hasDispatch, continueResolving := service.applyPendingGateActionLocked(run, pendingGateAction{
+			kind: pendingGateActionContinue,
+			resolution: GateResolution{
+				PhaseIndex: 0,
+				GateIndex:  0,
+				Outcome:    GateOutcomeContinue,
+				Summary:    "passed",
+			},
+		})
+		if hasDispatch {
+			t.Fatalf("expected no dispatch context for continue action, got %#v", dispatchCtx)
+		}
+		if !continueResolving {
+			t.Fatalf("expected continue action to request another resolution loop")
+		}
+		if run.Phases[0].Gates[0].Status != WorkflowGateStatusPassed {
+			t.Fatalf("expected gate to pass, got %q", run.Phases[0].Gates[0].Status)
+		}
+	})
+
+	t.Run("pause applies pause and stops", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true})
+		run := cloneWorkflowRun(baseRun)
+		_, hasDispatch, continueResolving := service.applyPendingGateActionLocked(run, pendingGateAction{
+			kind: pendingGateActionPause,
+			resolution: GateResolution{
+				PhaseIndex: 0,
+				GateIndex:  0,
+				Outcome:    GateOutcomePause,
+				Summary:    "rejected",
+			},
+		})
+		if hasDispatch || continueResolving {
+			t.Fatalf("expected pause action to stop without dispatch")
+		}
+		if run.Phases[0].Gates[0].Status != WorkflowGateStatusPaused {
+			t.Fatalf("expected gate to pause, got %q", run.Phases[0].Gates[0].Status)
+		}
+	})
+
+	t.Run("fail applies failure and stops", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true})
+		run := cloneWorkflowRun(baseRun)
+		_, hasDispatch, continueResolving := service.applyPendingGateActionLocked(run, pendingGateAction{
+			kind: pendingGateActionFail,
+			resolution: GateResolution{
+				PhaseIndex: 0,
+				GateIndex:  0,
+			},
+			failCause: errors.New("dispatch unavailable"),
+		})
+		if hasDispatch || continueResolving {
+			t.Fatalf("expected fail action to stop without dispatch")
+		}
+		if run.Phases[0].Gates[0].Status != WorkflowGateStatusFailed {
+			t.Fatalf("expected gate to fail, got %q", run.Phases[0].Gates[0].Status)
+		}
+		if run.Status != WorkflowRunStatusFailed {
+			t.Fatalf("expected run to fail, got %q", run.Status)
+		}
+	})
+
+	t.Run("awaiting dispatch returns dispatch context", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true})
+		run := cloneWorkflowRun(baseRun)
+		dispatchCtx, hasDispatch, continueResolving := service.applyPendingGateActionLocked(run, pendingGateAction{
+			kind: pendingGateActionAwaitingDispatch,
+			resolution: GateResolution{
+				PhaseIndex: 0,
+				GateIndex:  0,
+				Outcome:    GateOutcomeAwaiting,
+			},
+			dispatch: gateDispatchContext{
+				runID:          run.ID,
+				phaseIndex:     0,
+				gateIndex:      0,
+				dispatchPrompt: "judge this",
+			},
+		})
+		if !hasDispatch || continueResolving {
+			t.Fatalf("expected awaiting action to return dispatch context and stop")
+		}
+		if dispatchCtx.dispatchPrompt != "judge this" {
+			t.Fatalf("expected dispatch prompt to round-trip, got %q", dispatchCtx.dispatchPrompt)
+		}
+		if run.Phases[0].Gates[0].Status != WorkflowGateStatusPending {
+			t.Fatalf("expected awaiting action to leave gate pending until dispatch applies, got %q", run.Phases[0].Gates[0].Status)
+		}
+		if run.Phases[0].Gates[0].StartedAt == nil {
+			t.Fatalf("expected awaiting action to initialize gate start time")
+		}
+	})
+}
+
+func TestBuildAwaitingGateDispatchContextLocked(t *testing.T) {
+	run := &WorkflowRun{
+		ID:     "run-build-gate-dispatch",
+		Status: WorkflowRunStatusRunning,
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{
+						ID:       "gate-1",
+						Kind:     WorkflowGateKindLLMJudge,
+						Boundary: WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("empty prompt fails", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true}, WithGateDispatcher(&stubStepPromptDispatcher{}))
+		_, err := service.buildAwaitingGateDispatchContextLocked(run, GateResolution{
+			PhaseIndex: 0,
+			GateIndex:  0,
+		})
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "prompt is empty") {
+			t.Fatalf("expected empty prompt error, got %v", err)
+		}
+	})
+
+	t.Run("missing dispatcher fails", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true})
+		_, err := service.buildAwaitingGateDispatchContextLocked(run, GateResolution{
+			PhaseIndex:     0,
+			GateIndex:      0,
+			DispatchPrompt: "judge",
+		})
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "dispatcher unavailable") {
+			t.Fatalf("expected missing dispatcher error, got %v", err)
+		}
+	})
+
+	t.Run("valid prompt builds context", func(t *testing.T) {
+		service := NewRunService(Config{Enabled: true}, WithGateDispatcher(&stubStepPromptDispatcher{}))
+		ctx, err := service.buildAwaitingGateDispatchContextLocked(run, GateResolution{
+			PhaseIndex:     0,
+			GateIndex:      0,
+			DispatchPrompt: "judge",
+		})
+		if err != nil {
+			t.Fatalf("buildAwaitingGateDispatchContextLocked: %v", err)
+		}
+		if ctx.runID != run.ID || ctx.phaseIndex != 0 || ctx.gateIndex != 0 || ctx.dispatchPrompt != "judge" {
+			t.Fatalf("unexpected gate dispatch context: %#v", ctx)
+		}
+	})
+}
+
+func TestPhaseAndGateForResolutionLocked(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	run := &WorkflowRun{
+		ID: "run-phase-gate-lookup",
+		Phases: []PhaseRun{
+			{
+				ID: "phase-1",
+				Gates: []WorkflowGateRun{
+					{ID: "gate-1"},
+				},
+			},
+		},
+	}
+
+	phase, gate, ok := service.phaseAndGateForResolutionLocked(run, GateResolution{PhaseIndex: 0, GateIndex: 0})
+	if !ok || phase == nil || gate == nil || gate.ID != "gate-1" {
+		t.Fatalf("expected valid phase/gate lookup, got phase=%#v gate=%#v ok=%v", phase, gate, ok)
+	}
+	if _, _, ok := service.phaseAndGateForResolutionLocked(run, GateResolution{PhaseIndex: 1, GateIndex: 0}); ok {
+		t.Fatalf("expected invalid phase index lookup to fail")
+	}
+	if _, _, ok := service.phaseAndGateForResolutionLocked(run, GateResolution{PhaseIndex: 0, GateIndex: 1}); ok {
+		t.Fatalf("expected invalid gate index lookup to fail")
+	}
+}
+
+func TestEnsureGateStartedForActionLocked(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	service.ensureGateStartedForActionLocked(nil)
+
+	gate := &WorkflowGateRun{}
+	service.ensureGateStartedForActionLocked(gate)
+	if gate.StartedAt == nil {
+		t.Fatalf("expected gate start time to be initialized")
+	}
+
+	startedAt := gate.StartedAt
+	service.ensureGateStartedForActionLocked(gate)
+	if gate.StartedAt != startedAt {
+		t.Fatalf("expected already-started gate to keep original start time")
+	}
+}
+
+func TestRunLifecycleAdvanceOnceWithDispatchGateContinueThenStepDispatches(t *testing.T) {
+	dispatcher := &stubStepPromptDispatcher{
+		responses: []StepPromptDispatchResult{
+			{Dispatched: true, SessionID: "sess-2", TurnID: "turn-step-2"},
+		},
+	}
+	coordinator := &stubGateCoordinator{
+		pendingResolutions: []GateResolution{
+			{
+				Consumed:   true,
+				PhaseIndex: 0,
+				GateIndex:  0,
+				Outcome:    GateOutcomeContinue,
+				Summary:    "passed",
+			},
+			{},
+		},
+	}
+	service := NewRunService(
+		Config{Enabled: true},
+		WithStepPromptDispatcher(dispatcher),
+		WithGateCoordinator(coordinator),
+	)
+	run := &WorkflowRun{
+		ID:        "run-gate-continue-step-dispatch",
+		Status:    WorkflowRunStatusRunning,
+		SessionID: "sess-1",
+		Phases: []PhaseRun{
+			{
+				ID:     "phase-1",
+				Status: PhaseRunStatusCompleted,
+				Gates: []WorkflowGateRun{
+					{
+						ID:             "gate-1",
+						Kind:           WorkflowGateKindLLMJudge,
+						Status:         WorkflowGateStatusPending,
+						Boundary:       WorkflowGateBoundaryRef{Boundary: WorkflowGateBoundaryPhaseEnd, PhaseID: "phase-1"},
+						LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge"},
+					},
+				},
+			},
+			{
+				ID:     "phase-2",
+				Status: PhaseRunStatusPending,
+				Steps: []StepRun{
+					{ID: "step-2", Name: "Step 2", Prompt: "do thing", Status: StepRunStatusPending},
+				},
+			},
+		},
+	}
+	service.mu.Lock()
+	service.setRunLocked(run.ID, run)
+	service.mu.Unlock()
+
+	if err := service.advanceOnceWithDispatch(context.Background(), run.ID); err != nil {
+		t.Fatalf("advanceOnceWithDispatch: %v", err)
+	}
+
+	current, err := service.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if current.Phases[0].Gates[0].Status != WorkflowGateStatusPassed {
+		t.Fatalf("expected gate to pass before step dispatch, got %q", current.Phases[0].Gates[0].Status)
+	}
+	if current.Phases[1].Steps[0].Status != StepRunStatusRunning || !current.Phases[1].Steps[0].AwaitingTurn {
+		t.Fatalf("expected next step to dispatch after gate continue, got %#v", current.Phases[1].Steps[0])
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("expected one step dispatch call, got %d", len(dispatcher.calls))
 	}
 }
 

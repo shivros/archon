@@ -2051,6 +2051,10 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 		runLockHeld = false
 	}
 	defer unlockRunLock()
+	relockRunLock := func() {
+		releaseRunLock = s.runLocks.Lock(normalizedRunID)
+		runLockHeld = true
+	}
 
 	s.mu.Lock()
 	run, err := s.mustRunLocked(normalizedRunID)
@@ -2140,15 +2144,9 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 			ctx,
 			gateDispatchCtx,
 			unlockRunLock,
-			func() {
-				releaseRunLock = s.runLocks.Lock(normalizedRunID)
-				runLockHeld = true
-			},
+			relockRunLock,
 		)
-		if outcome.applied && outcome.run != nil {
-			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
-			s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
-		}
+		s.recordDispatchOutcomeTransitionLocked(outcome, beforeStatus)
 		s.mu.Unlock()
 		if handoffErr != nil {
 			return handoffErr
@@ -2176,15 +2174,9 @@ func (s *InMemoryRunService) advanceOnceWithDispatch(ctx context.Context, runID 
 			ctx,
 			dispatchCtx,
 			unlockRunLock,
-			func() {
-				releaseRunLock = s.runLocks.Lock(normalizedRunID)
-				runLockHeld = true
-			},
+			relockRunLock,
 		)
-		if outcome.applied && outcome.run != nil {
-			s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
-			s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
-		}
+		s.recordDispatchOutcomeTransitionLocked(outcome, beforeStatus)
 		s.mu.Unlock()
 		if handoffErr != nil {
 			return handoffErr
@@ -2286,24 +2278,7 @@ func (s *InMemoryRunService) deferRunForStepDispatchLocked(run *WorkflowRun, pha
 	now := s.engine.now()
 	run.CurrentPhaseIndex = phaseIndex
 	run.CurrentStepIndex = stepIndex
-	if phase.Status == PhaseRunStatusPending {
-		phase.Status = PhaseRunStatusRunning
-		phase.StartedAt = &now
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "phase",
-			Action:  "phase_started",
-			PhaseID: phase.ID,
-			Outcome: "running",
-			Detail:  phase.Name,
-		})
-		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
-			At:      now,
-			Type:    "phase_started",
-			RunID:   run.ID,
-			PhaseID: phase.ID,
-		})
-	}
+	s.ensurePhaseStartedForDispatchLocked(run, phase, now)
 	step.Status = StepRunStatusPending
 	step.AwaitingTurn = false
 	step.CompletedAt = nil
@@ -4895,12 +4870,6 @@ type stepDispatchContext struct {
 	beforeStatus   WorkflowRunStatus
 }
 
-type stepDispatchHandoffOutcome struct {
-	applied    bool
-	dispatched bool
-	run        *WorkflowRun
-}
-
 type gateDispatchContext struct {
 	runID          string
 	phaseIndex     int
@@ -4910,10 +4879,27 @@ type gateDispatchContext struct {
 	beforeStatus   WorkflowRunStatus
 }
 
-type gateDispatchHandoffOutcome struct {
+type dispatchHandoffOutcome struct {
 	applied    bool
 	dispatched bool
 	run        *WorkflowRun
+}
+
+type pendingGateActionKind string
+
+const (
+	pendingGateActionNone             pendingGateActionKind = "none"
+	pendingGateActionPause            pendingGateActionKind = "pause"
+	pendingGateActionContinue         pendingGateActionKind = "continue"
+	pendingGateActionAwaitingDispatch pendingGateActionKind = "awaiting_dispatch"
+	pendingGateActionFail             pendingGateActionKind = "fail"
+)
+
+type pendingGateAction struct {
+	kind       pendingGateActionKind
+	resolution GateResolution
+	dispatch   gateDispatchContext
+	failCause  error
 }
 
 // prepareStepDispatchContext captures dispatch context while holding the lock.
@@ -4956,68 +4942,148 @@ func (s *InMemoryRunService) prepareGateDispatchContext(ctx context.Context, run
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	coordinator := s.gateCoordinatorOrDefault()
 	for {
-		if err := ctx.Err(); err != nil {
-			return gateDispatchContext{}, false, err
-		}
-		resolution, err := coordinator.ResolvePendingGate(ctx, run)
+		action, err := s.resolvePendingGateActionLocked(ctx, run)
+		dispatchCtx, hasDispatch, continueResolving := s.applyPendingGateActionLocked(run, action)
 		if err != nil {
-			if strings.TrimSpace(resolution.GateID) != "" &&
-				resolution.PhaseIndex >= 0 &&
-				resolution.PhaseIndex < len(run.Phases) &&
-				resolution.GateIndex >= 0 &&
-				resolution.GateIndex < len(run.Phases[resolution.PhaseIndex].Gates) {
-				s.failRunForGateDispatchLocked(run, resolution.PhaseIndex, resolution.GateIndex, err)
-			}
 			return gateDispatchContext{}, false, err
 		}
-		if !resolution.Consumed {
-			return gateDispatchContext{}, false, nil
+		if hasDispatch {
+			return dispatchCtx, true, nil
 		}
-		if resolution.PhaseIndex < 0 || resolution.PhaseIndex >= len(run.Phases) {
+		if !continueResolving {
 			return gateDispatchContext{}, false, nil
-		}
-		phase := &run.Phases[resolution.PhaseIndex]
-		if resolution.GateIndex < 0 || resolution.GateIndex >= len(phase.Gates) {
-			return gateDispatchContext{}, false, nil
-		}
-		gate := &phase.Gates[resolution.GateIndex]
-		now := s.engine.now()
-		if gate.StartedAt == nil {
-			gate.StartedAt = &now
-		}
-		resolution = s.applyGateContinuationRouteLocked(run, phase, gate, now, resolution)
-		switch resolution.Outcome {
-		case GateOutcomePause:
-			s.applyGatePause(run, phase, gate, GateSignal{}, now, resolution)
-			return gateDispatchContext{}, false, nil
-		case GateOutcomeContinue:
-			s.applyGatePass(run, phase, gate, GateSignal{}, now, resolution)
-			continue
-		case GateOutcomeAwaiting:
-			dispatchPrompt := strings.TrimSpace(resolution.DispatchPrompt)
-			if dispatchPrompt == "" {
-				s.failRunForGateDispatchLocked(run, resolution.PhaseIndex, resolution.GateIndex, fmt.Errorf("%w: gate dispatch prompt is empty", ErrGateDispatch))
-				return gateDispatchContext{}, false, fmt.Errorf("%w: gate dispatch prompt is empty", ErrGateDispatch)
-			}
-			if s.gateDispatcher == nil {
-				s.failRunForGateDispatchLocked(run, resolution.PhaseIndex, resolution.GateIndex, fmt.Errorf("%w: gate dispatcher unavailable", ErrGateDispatch))
-				return gateDispatchContext{}, false, fmt.Errorf("%w: gate dispatcher unavailable", ErrGateDispatch)
-			}
-			req := s.buildGateDispatchRequest(run, resolution.PhaseIndex, resolution.GateIndex, dispatchPrompt)
-			return gateDispatchContext{
-				runID:          strings.TrimSpace(run.ID),
-				phaseIndex:     resolution.PhaseIndex,
-				gateIndex:      resolution.GateIndex,
-				dispatchPrompt: dispatchPrompt,
-				req:            req,
-				beforeStatus:   run.Status,
-			}, true, nil
-		default:
-			return gateDispatchContext{}, false, fmt.Errorf("%w: unsupported gate outcome %q", ErrInvalidTransition, resolution.Outcome)
 		}
 	}
+}
+
+func (s *InMemoryRunService) resolvePendingGateActionLocked(ctx context.Context, run *WorkflowRun) (pendingGateAction, error) {
+	if s == nil || run == nil {
+		return pendingGateAction{kind: pendingGateActionNone}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return pendingGateAction{kind: pendingGateActionNone}, err
+	}
+	resolution, err := s.gateCoordinatorOrDefault().ResolvePendingGate(ctx, run)
+	if err != nil {
+		action := pendingGateAction{kind: pendingGateActionNone}
+		if _, _, ok := s.phaseAndGateForResolutionLocked(run, resolution); ok {
+			action = pendingGateAction{
+				kind:       pendingGateActionFail,
+				resolution: resolution,
+				failCause:  err,
+			}
+		}
+		return action, err
+	}
+	if !resolution.Consumed {
+		return pendingGateAction{kind: pendingGateActionNone}, nil
+	}
+	phase, gate, ok := s.phaseAndGateForResolutionLocked(run, resolution)
+	if !ok {
+		return pendingGateAction{kind: pendingGateActionNone}, nil
+	}
+	resolution = s.applyGateContinuationRouteLocked(run, phase, gate, s.engine.now(), resolution)
+	switch resolution.Outcome {
+	case GateOutcomePause:
+		return pendingGateAction{kind: pendingGateActionPause, resolution: resolution}, nil
+	case GateOutcomeContinue:
+		return pendingGateAction{kind: pendingGateActionContinue, resolution: resolution}, nil
+	case GateOutcomeAwaiting:
+		dispatchCtx, err := s.buildAwaitingGateDispatchContextLocked(run, resolution)
+		if err != nil {
+			return pendingGateAction{
+				kind:       pendingGateActionFail,
+				resolution: resolution,
+				failCause:  err,
+			}, err
+		}
+		return pendingGateAction{
+			kind:       pendingGateActionAwaitingDispatch,
+			resolution: resolution,
+			dispatch:   dispatchCtx,
+		}, nil
+	default:
+		return pendingGateAction{kind: pendingGateActionNone}, fmt.Errorf("%w: unsupported gate outcome %q", ErrInvalidTransition, resolution.Outcome)
+	}
+}
+
+func (s *InMemoryRunService) applyPendingGateActionLocked(run *WorkflowRun, action pendingGateAction) (gateDispatchContext, bool, bool) {
+	if s == nil || run == nil {
+		return gateDispatchContext{}, false, false
+	}
+	switch action.kind {
+	case pendingGateActionNone:
+		return gateDispatchContext{}, false, false
+	case pendingGateActionFail:
+		if phase, gate, ok := s.phaseAndGateForResolutionLocked(run, action.resolution); ok {
+			s.ensureGateStartedForActionLocked(gate)
+			s.failRunForGateDispatchLocked(run, action.resolution.PhaseIndex, action.resolution.GateIndex, action.failCause)
+			_ = phase
+		}
+		return gateDispatchContext{}, false, false
+	case pendingGateActionPause:
+		if phase, gate, ok := s.phaseAndGateForResolutionLocked(run, action.resolution); ok {
+			now := s.engine.now()
+			s.ensureGateStartedForActionLocked(gate)
+			s.applyGatePause(run, phase, gate, GateSignal{}, now, action.resolution)
+		}
+		return gateDispatchContext{}, false, false
+	case pendingGateActionContinue:
+		if phase, gate, ok := s.phaseAndGateForResolutionLocked(run, action.resolution); ok {
+			now := s.engine.now()
+			s.ensureGateStartedForActionLocked(gate)
+			s.applyGatePass(run, phase, gate, GateSignal{}, now, action.resolution)
+		}
+		return gateDispatchContext{}, false, true
+	case pendingGateActionAwaitingDispatch:
+		if _, gate, ok := s.phaseAndGateForResolutionLocked(run, action.resolution); ok {
+			s.ensureGateStartedForActionLocked(gate)
+		}
+		return action.dispatch, true, false
+	default:
+		return gateDispatchContext{}, false, false
+	}
+}
+
+func (s *InMemoryRunService) buildAwaitingGateDispatchContextLocked(run *WorkflowRun, resolution GateResolution) (gateDispatchContext, error) {
+	dispatchPrompt := strings.TrimSpace(resolution.DispatchPrompt)
+	if dispatchPrompt == "" {
+		return gateDispatchContext{}, fmt.Errorf("%w: gate dispatch prompt is empty", ErrGateDispatch)
+	}
+	if s == nil || s.gateDispatcher == nil {
+		return gateDispatchContext{}, fmt.Errorf("%w: gate dispatcher unavailable", ErrGateDispatch)
+	}
+	return gateDispatchContext{
+		runID:          strings.TrimSpace(run.ID),
+		phaseIndex:     resolution.PhaseIndex,
+		gateIndex:      resolution.GateIndex,
+		dispatchPrompt: dispatchPrompt,
+		req:            s.buildGateDispatchRequest(run, resolution.PhaseIndex, resolution.GateIndex, dispatchPrompt),
+		beforeStatus:   run.Status,
+	}, nil
+}
+
+func (s *InMemoryRunService) phaseAndGateForResolutionLocked(run *WorkflowRun, resolution GateResolution) (*PhaseRun, *WorkflowGateRun, bool) {
+	if run == nil || resolution.PhaseIndex < 0 || resolution.PhaseIndex >= len(run.Phases) {
+		return nil, nil, false
+	}
+	phase := &run.Phases[resolution.PhaseIndex]
+	if resolution.GateIndex < 0 || resolution.GateIndex >= len(phase.Gates) {
+		return nil, nil, false
+	}
+	return phase, &phase.Gates[resolution.GateIndex], true
+}
+
+func (s *InMemoryRunService) ensureGateStartedForActionLocked(gate *WorkflowGateRun) {
+	if s == nil || gate == nil || gate.StartedAt != nil {
+		return
+	}
+	now := s.engine.now()
+	gate.StartedAt = &now
 }
 
 // canApplyStepDispatchResultLocked returns true when a dispatch result still matches
@@ -5070,6 +5136,35 @@ func (s *InMemoryRunService) canApplyGateDispatchResultLocked(dispatchCtx gateDi
 	return phase.Gates[dispatchCtx.gateIndex].Status == WorkflowGateStatusPending
 }
 
+func (s *InMemoryRunService) withDispatchRunLockHandoffLocked(
+	runID string,
+	unlockRunLock func(),
+	relockRunLock func(),
+	dispatch func(),
+) (*WorkflowRun, error) {
+	if unlockRunLock == nil {
+		unlockRunLock = func() {}
+	}
+	if relockRunLock == nil {
+		relockRunLock = func() {}
+	}
+	if dispatch == nil {
+		dispatch = func() {}
+	}
+	s.mu.Unlock()
+	unlockRunLock()
+
+	dispatch()
+
+	relockRunLock()
+	s.mu.Lock()
+	run, _ := s.getRunByIDLocked(runID)
+	if run == nil {
+		return nil, ErrRunNotFound
+	}
+	return run, nil
+}
+
 // dispatchWithRunLockHandoffLocked performs dispatch I/O without holding locks, then
 // reacquires locks and applies the result if the target step is still valid.
 // The caller must hold s.mu on entry and will hold s.mu on return.
@@ -5078,25 +5173,18 @@ func (s *InMemoryRunService) dispatchWithRunLockHandoffLocked(
 	dispatchCtx stepDispatchContext,
 	unlockRunLock func(),
 	relockRunLock func(),
-) (stepDispatchHandoffOutcome, error) {
-	if unlockRunLock == nil {
-		unlockRunLock = func() {}
+) (dispatchHandoffOutcome, error) {
+	var (
+		result      StepPromptDispatchResult
+		dispatchErr error
+	)
+	run, handoffErr := s.withDispatchRunLockHandoffLocked(dispatchCtx.runID, unlockRunLock, relockRunLock, func() {
+		result, dispatchErr = s.dispatchStepPrompt(ctx, dispatchCtx.req)
+	})
+	if handoffErr != nil {
+		return dispatchHandoffOutcome{}, handoffErr
 	}
-	if relockRunLock == nil {
-		relockRunLock = func() {}
-	}
-	s.mu.Unlock()
-	unlockRunLock()
-
-	result, dispatchErr := s.dispatchStepPrompt(ctx, dispatchCtx.req)
-
-	relockRunLock()
-	s.mu.Lock()
-	run, _ := s.getRunByIDLocked(dispatchCtx.runID)
-	if run == nil {
-		return stepDispatchHandoffOutcome{}, ErrRunNotFound
-	}
-	outcome := stepDispatchHandoffOutcome{run: run}
+	outcome := dispatchHandoffOutcome{run: run}
 	if !s.canApplyStepDispatchResultLocked(dispatchCtx) {
 		return outcome, nil
 	}
@@ -5118,25 +5206,18 @@ func (s *InMemoryRunService) dispatchGateWithRunLockHandoffLocked(
 	dispatchCtx gateDispatchContext,
 	unlockRunLock func(),
 	relockRunLock func(),
-) (gateDispatchHandoffOutcome, error) {
-	if unlockRunLock == nil {
-		unlockRunLock = func() {}
+) (dispatchHandoffOutcome, error) {
+	var (
+		result      GateDispatchResult
+		dispatchErr error
+	)
+	run, handoffErr := s.withDispatchRunLockHandoffLocked(dispatchCtx.runID, unlockRunLock, relockRunLock, func() {
+		result, dispatchErr = s.dispatchGate(ctx, dispatchCtx.req)
+	})
+	if handoffErr != nil {
+		return dispatchHandoffOutcome{}, handoffErr
 	}
-	if relockRunLock == nil {
-		relockRunLock = func() {}
-	}
-	s.mu.Unlock()
-	unlockRunLock()
-
-	result, dispatchErr := s.dispatchGate(ctx, dispatchCtx.req)
-
-	relockRunLock()
-	s.mu.Lock()
-	run, _ := s.getRunByIDLocked(dispatchCtx.runID)
-	if run == nil {
-		return gateDispatchHandoffOutcome{}, ErrRunNotFound
-	}
-	outcome := gateDispatchHandoffOutcome{run: run}
+	outcome := dispatchHandoffOutcome{run: run}
 	if !s.canApplyGateDispatchResultLocked(dispatchCtx) {
 		return outcome, nil
 	}
@@ -5179,15 +5260,16 @@ func (s *InMemoryRunService) applyStepDispatchResult(
 
 	s.recordDispatchAttemptLocked()
 
-	if dispatchErr != nil {
-		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(dispatchErr) == DispatchErrorDispositionDeferred {
-			s.recordDispatchDeferredLocked()
-			s.deferRunForStepDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.stepIndex, dispatchErr)
-			return true, nil
-		}
-		s.recordDispatchFailureLocked()
-		s.failRunForStepDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.stepIndex, dispatchErr)
-		return false, dispatchErr
+	if applied, err, handled := s.handleDispatchAttemptErrorLocked(
+		dispatchErr,
+		func(cause error) {
+			s.deferRunForStepDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.stepIndex, cause)
+		},
+		func(cause error) {
+			s.failRunForStepDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.stepIndex, cause)
+		},
+	); handled {
+		return applied, err
 	}
 	if !result.Dispatched {
 		cause := fmt.Errorf("%w: dispatcher did not dispatch step prompt", ErrStepDispatch)
@@ -5204,24 +5286,7 @@ func (s *InMemoryRunService) applyStepDispatchResult(
 	now := s.engine.now()
 	run.CurrentPhaseIndex = dispatchCtx.phaseIndex
 	run.CurrentStepIndex = dispatchCtx.stepIndex
-	if phase.Status == PhaseRunStatusPending {
-		phase.Status = PhaseRunStatusRunning
-		phase.StartedAt = &now
-		appendRunAudit(run, RunAuditEntry{
-			At:      now,
-			Scope:   "phase",
-			Action:  "phase_started",
-			PhaseID: phase.ID,
-			Outcome: "running",
-			Detail:  phase.Name,
-		})
-		s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
-			At:      now,
-			Type:    "phase_started",
-			RunID:   run.ID,
-			PhaseID: phase.ID,
-		})
-	}
+	s.ensurePhaseStartedForDispatchLocked(run, phase, now)
 	step.Status = StepRunStatusRunning
 	step.AwaitingTurn = true
 	step.StartedAt = &now
@@ -5278,15 +5343,16 @@ func (s *InMemoryRunService) applyGateDispatchResult(
 
 	s.recordDispatchAttemptLocked()
 
-	if dispatchErr != nil {
-		if s.dispatchClassifier != nil && s.dispatchClassifier.Classify(dispatchErr) == DispatchErrorDispositionDeferred {
-			s.recordDispatchDeferredLocked()
-			s.deferRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, dispatchErr)
-			return true, nil
-		}
-		s.recordDispatchFailureLocked()
-		s.failRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, dispatchErr)
-		return false, dispatchErr
+	if applied, err, handled := s.handleDispatchAttemptErrorLocked(
+		dispatchErr,
+		func(cause error) {
+			s.deferRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, cause)
+		},
+		func(cause error) {
+			s.failRunForGateDispatchLocked(run, dispatchCtx.phaseIndex, dispatchCtx.gateIndex, cause)
+		},
+	); handled {
+		return applied, err
 	}
 	if cause := validateGateDispatchResult(result); cause != nil {
 		s.recordDispatchFailureLocked()
@@ -5341,6 +5407,61 @@ func (s *InMemoryRunService) applyGateDispatchResult(
 	})
 	s.persistRunSnapshotLocked(ctx, run.ID)
 	return true, nil
+}
+
+func (s *InMemoryRunService) handleDispatchAttemptErrorLocked(
+	dispatchErr error,
+	deferDispatch func(error),
+	failDispatch func(error),
+) (applied bool, err error, handled bool) {
+	if dispatchErr == nil {
+		return false, nil, false
+	}
+	if s != nil && s.dispatchClassifier != nil &&
+		s.dispatchClassifier.Classify(dispatchErr) == DispatchErrorDispositionDeferred {
+		s.recordDispatchDeferredLocked()
+		if deferDispatch != nil {
+			deferDispatch(dispatchErr)
+		}
+		return true, nil, true
+	}
+	if s != nil {
+		s.recordDispatchFailureLocked()
+	}
+	if failDispatch != nil {
+		failDispatch(dispatchErr)
+	}
+	return false, dispatchErr, true
+}
+
+func (s *InMemoryRunService) ensurePhaseStartedForDispatchLocked(run *WorkflowRun, phase *PhaseRun, now time.Time) {
+	if s == nil || run == nil || phase == nil || phase.Status != PhaseRunStatusPending {
+		return
+	}
+	phase.Status = PhaseRunStatusRunning
+	phase.StartedAt = &now
+	appendRunAudit(run, RunAuditEntry{
+		At:      now,
+		Scope:   "phase",
+		Action:  "phase_started",
+		PhaseID: phase.ID,
+		Outcome: "running",
+		Detail:  phase.Name,
+	})
+	s.appendTimelineEventLocked(run.ID, RunTimelineEvent{
+		At:      now,
+		Type:    "phase_started",
+		RunID:   run.ID,
+		PhaseID: phase.ID,
+	})
+}
+
+func (s *InMemoryRunService) recordDispatchOutcomeTransitionLocked(outcome dispatchHandoffOutcome, beforeStatus WorkflowRunStatus) {
+	if s == nil || !outcome.applied || outcome.run == nil {
+		return
+	}
+	s.recordTerminalTransitionLocked(beforeStatus, outcome.run.Status)
+	s.maybeEnqueueDependentRechecksLocked(outcome.run.ID, beforeStatus, outcome.run.Status)
 }
 
 func validateGateDispatchResult(result GateDispatchResult) error {
