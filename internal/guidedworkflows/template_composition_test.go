@@ -334,6 +334,171 @@ func TestParseWorkflowTemplateCatalogJSONRejectsDuplicateGateIDAndMissingJudgePr
 	}
 }
 
+func TestParseWorkflowTemplateCatalogJSONSupportsGateRoutes(t *testing.T) {
+	parsed, err := ParseWorkflowTemplateCatalogJSON([]byte(`{
+		"version": 1,
+		"templates": [{
+			"id": "route_template",
+			"name": "Route Template",
+			"phases": [{
+				"id": "p1",
+				"name": "Phase 1",
+				"steps": [
+					{"id": "s1", "name": "Step 1", "prompt": "one"},
+					{"id": "s2", "name": "Step 2", "prompt": "two"}
+				],
+				"gates": [{
+					"id": "manual_1",
+					"kind": "manual_review",
+					"routes": [
+						{"id": "continue", "target": {"kind": "next_step"}},
+						{"id": "retry", "target": {"kind": "step", "step_id": "s1"}},
+						{"id": "finish", "target": {"kind": "complete_phase"}}
+					]
+				}, {
+					"id": "judge_1",
+					"kind": "llm_judge",
+					"prompt": "Judge this phase",
+					"routes": [
+						{"id": "accept", "target": {"kind": "next_step"}}
+					]
+				}]
+			}]
+		}]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseWorkflowTemplateCatalogJSON: %v", err)
+	}
+	gates := parsed.Templates[0].Phases[0].Gates
+	if len(gates) != 2 {
+		t.Fatalf("expected two gates, got %d", len(gates))
+	}
+	if len(gates[0].Routes) != 3 {
+		t.Fatalf("expected three manual_review routes, got %#v", gates[0].Routes)
+	}
+	if gates[0].Routes[1].Target.Kind != WorkflowGateRouteTargetStep || gates[0].Routes[1].Target.StepID != "s1" {
+		t.Fatalf("unexpected named-step route target: %#v", gates[0].Routes[1])
+	}
+	if len(gates[1].Routes) != 1 || gates[1].Routes[0].Target.Kind != WorkflowGateRouteTargetNextStep {
+		t.Fatalf("unexpected llm_judge routes: %#v", gates[1].Routes)
+	}
+}
+
+func TestParseWorkflowTemplateCatalogJSONRejectsMalformedGateRoutes(t *testing.T) {
+	_, err := ParseWorkflowTemplateCatalogJSON([]byte(`{
+		"version": 1,
+		"templates": [{
+			"id": "dup_route_ids",
+			"name": "Duplicate Route IDs",
+			"phases": [{
+				"id": "p1",
+				"name": "Phase 1",
+				"steps": [{"id": "s1", "name": "Step 1", "prompt": "hello"}],
+				"gates": [{
+					"id": "g1",
+					"kind": "manual_review",
+					"routes": [
+						{"id": "same", "target": {"kind": "next_step"}},
+						{"id": "same", "target": {"kind": "complete_phase"}}
+					]
+				}]
+			}]
+		}]
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "duplicate route id") {
+		t.Fatalf("expected duplicate route id error, got %v", err)
+	}
+
+	_, err = ParseWorkflowTemplateCatalogJSON([]byte(`{
+		"version": 1,
+		"templates": [{
+			"id": "missing_step_id",
+			"name": "Missing Step ID",
+			"phases": [{
+				"id": "p1",
+				"name": "Phase 1",
+				"steps": [{"id": "s1", "name": "Step 1", "prompt": "hello"}],
+				"gates": [{
+					"id": "g1",
+					"kind": "manual_review",
+					"routes": [{"id": "retry", "target": {"kind": "step"}}]
+				}]
+			}]
+		}]
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "target.step_id is required") {
+		t.Fatalf("expected missing step_id error, got %v", err)
+	}
+
+	_, err = ParseWorkflowTemplateCatalogJSON([]byte(`{
+		"version": 1,
+		"templates": [{
+			"id": "bad_route_target",
+			"name": "Bad Route Target",
+			"phases": [{
+				"id": "p1",
+				"name": "Phase 1",
+				"steps": [{"id": "s1", "name": "Step 1", "prompt": "hello"}],
+				"gates": [{
+					"id": "g1",
+					"kind": "manual_review",
+					"routes": [{"id": "retry", "target": {"kind": "next_step", "step_id": "s1"}}]
+				}]
+			}]
+		}]
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "does not accept step_id") {
+		t.Fatalf("expected invalid next_step route error, got %v", err)
+	}
+
+	_, err = ParseWorkflowTemplateCatalogJSON([]byte(`{
+		"version": 1,
+		"templates": [{
+			"id": "unknown_route_step",
+			"name": "Unknown Route Step",
+			"phases": [{
+				"id": "p1",
+				"name": "Phase 1",
+				"steps": [{"id": "s1", "name": "Step 1", "prompt": "hello"}],
+				"gates": [{
+					"id": "g1",
+					"kind": "manual_review",
+					"routes": [{"id": "retry", "target": {"kind": "step", "step_id": "missing"}}]
+				}]
+			}]
+		}]
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "does not match any template step") {
+		t.Fatalf("expected unknown route target step error, got %v", err)
+	}
+}
+
+func TestParseWorkflowTemplateCatalogJSONGateRoutesAreOptional(t *testing.T) {
+	parsed, err := ParseWorkflowTemplateCatalogJSON([]byte(`{
+		"version": 1,
+		"templates": [{
+			"id": "route_less",
+			"name": "Route Less",
+			"phases": [{
+				"id": "p1",
+				"name": "Phase",
+				"steps": [{"id": "s1", "name": "Step", "prompt": "hello"}],
+				"gates": [{"id":"g1","kind":"manual_review","reason":"sign off"}]
+			}]
+		}]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseWorkflowTemplateCatalogJSON: %v", err)
+	}
+	gates := parsed.Templates[0].Phases[0].Gates
+	if len(gates) != 1 {
+		t.Fatalf("expected one gate, got %d", len(gates))
+	}
+	if len(gates[0].Routes) != 0 {
+		t.Fatalf("expected route-less gate to preserve empty routes, got %#v", gates[0].Routes)
+	}
+}
+
 func TestParseWorkflowTemplateCatalogJSONLocalStepOverrideWorks(t *testing.T) {
 	parsed, err := ParseWorkflowTemplateCatalogJSON([]byte(`{
 		"version": 1,

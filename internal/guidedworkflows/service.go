@@ -4043,6 +4043,7 @@ func instantiatePhases(template WorkflowTemplate) []PhaseRun {
 					ID:                 strings.TrimSpace(gate.ID),
 					Kind:               gate.Kind,
 					Boundary:           boundary,
+					Routes:             cloneWorkflowGateRoutes(gate.Routes),
 					ManualReviewConfig: cloneManualReviewConfig(gate.ManualReviewConfig),
 					LLMJudgeConfig:     cloneLLMJudgeConfig(gate.LLMJudgeConfig),
 					Status:             WorkflowGateStatusPending,
@@ -4111,6 +4112,7 @@ func cloneWorkflowRun(in *WorkflowRun) *WorkflowRun {
 			out.Phases[i].Gates = make([]WorkflowGateRun, 0, len(phase.Gates))
 			for _, gate := range phase.Gates {
 				gateCopy := gate
+				gateCopy.Routes = cloneWorkflowGateRoutes(gate.Routes)
 				if gate.Execution != nil {
 					execution := *gate.Execution
 					gateCopy.Execution = &execution

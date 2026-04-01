@@ -325,6 +325,82 @@ func TestSeedRepositoryFromFiles(t *testing.T) {
 	}
 }
 
+func TestBboltWorkflowTemplateStoreRoundTripsGateRoutes(t *testing.T) {
+	repo, err := NewBboltRepository(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatalf("NewBboltRepository: %v", err)
+	}
+	defer closeTestCloser(t, repo)
+
+	ctx := context.Background()
+	template := guidedworkflows.WorkflowTemplate{
+		ID:   "route_template",
+		Name: "Route Template",
+		Phases: []guidedworkflows.WorkflowTemplatePhase{
+			{
+				ID:   "phase_1",
+				Name: "Phase 1",
+				Steps: []guidedworkflows.WorkflowTemplateStep{
+					{ID: "step_1", Name: "Step 1", Prompt: "hello"},
+				},
+				Gates: []guidedworkflows.WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: guidedworkflows.WorkflowGateKindManualReview,
+						Boundary: guidedworkflows.WorkflowGateBoundaryRef{
+							Boundary: guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						Routes: []guidedworkflows.WorkflowGateRoute{
+							{
+								ID: "continue",
+								Target: guidedworkflows.WorkflowGateRouteTargetRef{
+									Kind: guidedworkflows.WorkflowGateRouteTargetNextStep,
+								},
+							},
+						},
+						ManualReviewConfig: &guidedworkflows.ManualReviewConfig{Reason: "sign off"},
+					},
+				},
+			},
+		},
+	}
+
+	saved, err := repo.WorkflowTemplates().UpsertWorkflowTemplate(ctx, template)
+	if err != nil {
+		t.Fatalf("UpsertWorkflowTemplate: %v", err)
+	}
+	if saved == nil || len(saved.Phases) != 1 || len(saved.Phases[0].Gates) != 1 {
+		t.Fatalf("expected saved template with gates, got %#v", saved)
+	}
+
+	loaded, ok, err := repo.WorkflowTemplates().GetWorkflowTemplate(ctx, template.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflowTemplate: %v", err)
+	}
+	if !ok || loaded == nil {
+		t.Fatalf("expected template to exist")
+	}
+	if len(loaded.Phases[0].Gates) != 1 || len(loaded.Phases[0].Gates[0].Routes) != 1 {
+		t.Fatalf("expected routes to round-trip, got %#v", loaded.Phases[0].Gates)
+	}
+	if loaded.Phases[0].Gates[0].ManualReviewConfig == nil || loaded.Phases[0].Gates[0].ManualReviewConfig.Reason != "sign off" {
+		t.Fatalf("expected manual review config to round-trip, got %#v", loaded.Phases[0].Gates[0].ManualReviewConfig)
+	}
+
+	loaded.Phases[0].Gates[0].Routes[0].ID = "changed"
+	reloaded, ok, err := repo.WorkflowTemplates().GetWorkflowTemplate(ctx, template.ID)
+	if err != nil {
+		t.Fatalf("GetWorkflowTemplate second read: %v", err)
+	}
+	if !ok || reloaded == nil {
+		t.Fatalf("expected template to exist on second read")
+	}
+	if reloaded.Phases[0].Gates[0].Routes[0].ID != "continue" {
+		t.Fatalf("expected stored template to remain unchanged, got %#v", reloaded.Phases[0].Gates[0].Routes)
+	}
+}
+
 func typesToTemplate(id, name, prompt string) guidedworkflows.WorkflowTemplate {
 	return guidedworkflows.WorkflowTemplate{
 		ID:   id,

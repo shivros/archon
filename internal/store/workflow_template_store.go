@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"control/internal/guidedworkflows"
-	"control/internal/types"
 )
 
 var ErrWorkflowTemplateNotFound = errors.New("workflow template not found")
@@ -51,7 +50,7 @@ func (s *FileWorkflowTemplateStore) ListWorkflowTemplates(ctx context.Context) (
 	}
 	out := make([]guidedworkflows.WorkflowTemplate, 0, len(file.Templates))
 	for _, template := range file.Templates {
-		out = append(out, cloneWorkflowTemplate(template))
+		out = append(out, guidedworkflows.CloneWorkflowTemplate(template))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].ID < out[j].ID
@@ -78,7 +77,7 @@ func (s *FileWorkflowTemplateStore) GetWorkflowTemplate(ctx context.Context, tem
 		if strings.TrimSpace(template.ID) != id {
 			continue
 		}
-		copy := cloneWorkflowTemplate(template)
+		copy := guidedworkflows.CloneWorkflowTemplate(template)
 		return &copy, true, nil
 	}
 	return nil, false, nil
@@ -116,7 +115,7 @@ func (s *FileWorkflowTemplateStore) UpsertWorkflowTemplate(ctx context.Context, 
 	if err := s.save(file); err != nil {
 		return nil, err
 	}
-	out := cloneWorkflowTemplate(normalized)
+	out := guidedworkflows.CloneWorkflowTemplate(normalized)
 	return &out, nil
 }
 
@@ -156,7 +155,7 @@ func (s *FileWorkflowTemplateStore) load() (*workflowTemplateFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := guidedworkflows.ParseWorkflowTemplateCatalogJSON(raw)
+	parsed, err := guidedworkflows.DecodeWorkflowTemplateCatalogJSON(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -189,120 +188,5 @@ func (s *FileWorkflowTemplateStore) save(file *workflowTemplateFile) error {
 }
 
 func normalizeWorkflowTemplate(template guidedworkflows.WorkflowTemplate) (guidedworkflows.WorkflowTemplate, error) {
-	template.ID = strings.TrimSpace(template.ID)
-	template.Name = strings.TrimSpace(template.Name)
-	template.Description = strings.TrimSpace(template.Description)
-	normalizedAccess, ok := guidedworkflows.NormalizeTemplateAccessLevel(template.DefaultAccessLevel)
-	if !ok {
-		return guidedworkflows.WorkflowTemplate{}, errors.New("invalid template default_access_level: " + strings.TrimSpace(string(template.DefaultAccessLevel)))
-	}
-	template.DefaultAccessLevel = normalizedAccess
-	if template.ID == "" {
-		return guidedworkflows.WorkflowTemplate{}, errors.New("template id is required")
-	}
-	if template.Name == "" {
-		return guidedworkflows.WorkflowTemplate{}, errors.New("template name is required")
-	}
-	if len(template.Phases) == 0 {
-		return guidedworkflows.WorkflowTemplate{}, errors.New("template phases are required")
-	}
-	phaseIDs := map[string]struct{}{}
-	stepIDs := map[string]struct{}{}
-	for pIdx := range template.Phases {
-		phase := &template.Phases[pIdx]
-		phase.ID = strings.TrimSpace(phase.ID)
-		phase.Name = strings.TrimSpace(phase.Name)
-		if phase.ID == "" {
-			return guidedworkflows.WorkflowTemplate{}, errors.New("phase id is required")
-		}
-		if phase.Name == "" {
-			return guidedworkflows.WorkflowTemplate{}, errors.New("phase name is required")
-		}
-		if _, exists := phaseIDs[phase.ID]; exists {
-			return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate phase id: " + phase.ID)
-		}
-		phaseIDs[phase.ID] = struct{}{}
-		if len(phase.Steps) == 0 {
-			return guidedworkflows.WorkflowTemplate{}, errors.New("phase steps are required")
-		}
-		phaseStepIDs := map[string]struct{}{}
-		for sIdx := range phase.Steps {
-			step := &phase.Steps[sIdx]
-			step.ID = strings.TrimSpace(step.ID)
-			step.Name = strings.TrimSpace(step.Name)
-			step.Prompt = strings.TrimSpace(step.Prompt)
-			if step.ID == "" {
-				return guidedworkflows.WorkflowTemplate{}, errors.New("step id is required")
-			}
-			if step.Name == "" {
-				return guidedworkflows.WorkflowTemplate{}, errors.New("step name is required")
-			}
-			if step.Prompt == "" {
-				return guidedworkflows.WorkflowTemplate{}, errors.New("step prompt is required")
-			}
-			if _, exists := phaseStepIDs[step.ID]; exists {
-				return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate step id in phase: " + step.ID)
-			}
-			phaseStepIDs[step.ID] = struct{}{}
-			if _, exists := stepIDs[step.ID]; exists {
-				return guidedworkflows.WorkflowTemplate{}, errors.New("duplicate step id: " + step.ID)
-			}
-			stepIDs[step.ID] = struct{}{}
-			runtimeOptions, err := normalizeWorkflowStepRuntimeOptions(step.RuntimeOptions)
-			if err != nil {
-				return guidedworkflows.WorkflowTemplate{}, err
-			}
-			step.RuntimeOptions = runtimeOptions
-		}
-	}
-	return template, nil
-}
-
-func cloneWorkflowTemplate(template guidedworkflows.WorkflowTemplate) guidedworkflows.WorkflowTemplate {
-	out := template
-	out.Phases = make([]guidedworkflows.WorkflowTemplatePhase, len(template.Phases))
-	for idx, phase := range template.Phases {
-		outPhase := phase
-		outPhase.Steps = append([]guidedworkflows.WorkflowTemplateStep{}, phase.Steps...)
-		for stepIdx := range outPhase.Steps {
-			outPhase.Steps[stepIdx].RuntimeOptions = types.CloneRuntimeOptions(outPhase.Steps[stepIdx].RuntimeOptions)
-		}
-		out.Phases[idx] = outPhase
-	}
-	return out
-}
-
-func normalizeWorkflowStepRuntimeOptions(in *types.SessionRuntimeOptions) (*types.SessionRuntimeOptions, error) {
-	if in == nil {
-		return nil, nil
-	}
-	out := types.CloneRuntimeOptions(in)
-	if out == nil {
-		return nil, nil
-	}
-	out.Model = strings.TrimSpace(out.Model)
-	if out.Reasoning != "" {
-		normalizedReasoning, ok := types.NormalizeReasoningLevel(out.Reasoning)
-		if !ok {
-			return nil, errors.New("invalid step runtime_options.reasoning: " + strings.TrimSpace(string(out.Reasoning)))
-		}
-		out.Reasoning = normalizedReasoning
-	}
-	if out.Access != "" {
-		normalizedAccess, ok := types.NormalizeAccessLevel(out.Access)
-		if !ok {
-			return nil, errors.New("invalid step runtime_options.access: " + strings.TrimSpace(string(out.Access)))
-		}
-		out.Access = normalizedAccess
-	}
-	if out.Provider != nil && len(out.Provider) == 0 {
-		out.Provider = nil
-	}
-	if out.Version == 0 {
-		out.Version = 1
-	}
-	if out.Model == "" && out.Reasoning == "" && out.Access == "" && len(out.Provider) == 0 {
-		return nil, nil
-	}
-	return out, nil
+	return guidedworkflows.NormalizeWorkflowTemplate(template)
 }

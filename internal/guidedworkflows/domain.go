@@ -74,10 +74,29 @@ type WorkflowGateBoundaryRef struct {
 	StepID   string               `json:"step_id,omitempty"`
 }
 
+type WorkflowGateRouteTargetKind string
+
+const (
+	WorkflowGateRouteTargetNextStep      WorkflowGateRouteTargetKind = "next_step"
+	WorkflowGateRouteTargetStep          WorkflowGateRouteTargetKind = "step"
+	WorkflowGateRouteTargetCompletePhase WorkflowGateRouteTargetKind = "complete_phase"
+)
+
+type WorkflowGateRouteTargetRef struct {
+	Kind   WorkflowGateRouteTargetKind `json:"kind"`
+	StepID string                      `json:"step_id,omitempty"`
+}
+
+type WorkflowGateRoute struct {
+	ID     string                     `json:"id"`
+	Target WorkflowGateRouteTargetRef `json:"target"`
+}
+
 type WorkflowGateSpec struct {
 	ID                 string                  `json:"id"`
 	Kind               WorkflowGateKind        `json:"kind"`
 	Boundary           WorkflowGateBoundaryRef `json:"boundary"`
+	Routes             []WorkflowGateRoute     `json:"routes,omitempty"`
 	ManualReviewConfig *ManualReviewConfig     `json:"manual_review_config,omitempty"`
 	LLMJudgeConfig     *LLMJudgeConfig         `json:"llm_judge_config,omitempty"`
 }
@@ -176,6 +195,7 @@ type WorkflowGateRun struct {
 	ID                 string                  `json:"id"`
 	Kind               WorkflowGateKind        `json:"kind"`
 	Boundary           WorkflowGateBoundaryRef `json:"boundary"`
+	Routes             []WorkflowGateRoute     `json:"routes,omitempty"`
 	ManualReviewConfig *ManualReviewConfig     `json:"manual_review_config,omitempty"`
 	LLMJudgeConfig     *LLMJudgeConfig         `json:"llm_judge_config,omitempty"`
 	Status             WorkflowGateStatus      `json:"status,omitempty"`

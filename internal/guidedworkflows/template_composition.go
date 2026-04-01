@@ -53,13 +53,26 @@ type rawWorkflowStep struct {
 }
 
 type rawWorkflowGate struct {
-	ID        string `json:"id,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Boundary  string `json:"boundary,omitempty"`
-	Prompt    string `json:"prompt,omitempty"`
-	PromptRef string `json:"prompt_ref,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	ID        string                 `json:"id,omitempty"`
+	Kind      string                 `json:"kind,omitempty"`
+	Boundary  string                 `json:"boundary,omitempty"`
+	Prompt    string                 `json:"prompt,omitempty"`
+	PromptRef string                 `json:"prompt_ref,omitempty"`
+	Reason    string                 `json:"reason,omitempty"`
+	Routes    []rawWorkflowGateRoute `json:"routes,omitempty"`
 	fields    map[string]json.RawMessage
+}
+
+type rawWorkflowGateRoute struct {
+	ID     string                     `json:"id,omitempty"`
+	Target rawWorkflowGateRouteTarget `json:"target,omitempty"`
+	fields map[string]json.RawMessage
+}
+
+type rawWorkflowGateRouteTarget struct {
+	Kind   string `json:"kind,omitempty"`
+	StepID string `json:"step_id,omitempty"`
+	fields map[string]json.RawMessage
 }
 
 func (g *rawWorkflowGate) UnmarshalJSON(data []byte) error {
@@ -77,6 +90,36 @@ func (g *rawWorkflowGate) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (r *rawWorkflowGateRoute) UnmarshalJSON(data []byte) error {
+	type routeAlias rawWorkflowGateRoute
+	var alias routeAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*r = rawWorkflowGateRoute(alias)
+	r.fields = fields
+	return nil
+}
+
+func (t *rawWorkflowGateRouteTarget) UnmarshalJSON(data []byte) error {
+	type targetAlias rawWorkflowGateRouteTarget
+	var alias targetAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*t = rawWorkflowGateRouteTarget(alias)
+	t.fields = fields
+	return nil
+}
+
 func (g rawWorkflowGate) unknownFields(allowed ...string) []string {
 	if len(g.fields) == 0 {
 		return nil
@@ -87,6 +130,44 @@ func (g rawWorkflowGate) unknownFields(allowed ...string) []string {
 	}
 	unknown := make([]string, 0)
 	for field := range g.fields {
+		if _, ok := allowedSet[field]; ok {
+			continue
+		}
+		unknown = append(unknown, field)
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+func (r rawWorkflowGateRoute) unknownFields(allowed ...string) []string {
+	if len(r.fields) == 0 {
+		return nil
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for field := range r.fields {
+		if _, ok := allowedSet[field]; ok {
+			continue
+		}
+		unknown = append(unknown, field)
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+func (t rawWorkflowGateRouteTarget) unknownFields(allowed ...string) []string {
+	if len(t.fields) == 0 {
+		return nil
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, name := range allowed {
+		allowedSet[name] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for field := range t.fields {
 		if _, ok := allowedSet[field]; ok {
 			continue
 		}
@@ -238,6 +319,11 @@ func expandRawTemplates(rawTemplates []rawWorkflowTemplate, defs templateComposi
 			}
 		}
 		tpl.Phases = phases
+		normalized, err := NormalizeWorkflowTemplate(tpl)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrTemplateConfigInvalid, err.Error())
+		}
+		tpl = normalized
 		out = append(out, tpl)
 	}
 	return out, nil
@@ -301,20 +387,12 @@ func expandPhaseGates(rawPhase rawWorkflowPhase, prompts map[string]string, phas
 		if kindRaw == "" {
 			return nil, fmt.Errorf("%w: %s.kind is required", ErrTemplateConfigInvalid, gateCtx)
 		}
-		var kind WorkflowGateKind
-		switch kindRaw {
-		case string(WorkflowGateKindManualReview):
-			kind = WorkflowGateKindManualReview
-		case string(WorkflowGateKindLLMJudge):
-			kind = WorkflowGateKindLLMJudge
-		default:
+		kind, ok := normalizeWorkflowGateKind(WorkflowGateKind(kindRaw))
+		if !ok {
 			return nil, fmt.Errorf("%w: %s.kind %q is not supported", ErrTemplateConfigInvalid, gateCtx, kindRaw)
 		}
-		boundary := WorkflowGateBoundary(strings.TrimSpace(rawGate.Boundary))
-		if boundary == "" {
-			boundary = WorkflowGateBoundaryPhaseEnd
-		}
-		if boundary != WorkflowGateBoundaryPhaseEnd {
+		boundary, ok := normalizeWorkflowGateBoundary(WorkflowGateBoundary(strings.TrimSpace(rawGate.Boundary)))
+		if !ok {
 			return nil, fmt.Errorf("%w: %s.boundary %q is not supported", ErrTemplateConfigInvalid, gateCtx, boundary)
 		}
 		id := strings.TrimSpace(rawGate.ID)
@@ -333,9 +411,14 @@ func expandPhaseGates(rawPhase rawWorkflowPhase, prompts map[string]string, phas
 				PhaseID:  strings.TrimSpace(phaseID),
 			},
 		}
+		routes, err := expandGateRoutes(rawGate.Routes, gateCtx)
+		if err != nil {
+			return nil, err
+		}
+		gate.Routes = routes
 		switch kind {
 		case WorkflowGateKindManualReview:
-			unknown := rawGate.unknownFields("id", "kind", "boundary", "reason")
+			unknown := rawGate.unknownFields("id", "kind", "boundary", "reason", "routes")
 			if len(unknown) > 0 {
 				return nil, fmt.Errorf("%w: %s manual_review has unknown field(s): %s", ErrTemplateConfigInvalid, gateCtx, strings.Join(unknown, ", "))
 			}
@@ -346,7 +429,7 @@ func expandPhaseGates(rawPhase rawWorkflowPhase, prompts map[string]string, phas
 				Reason: strings.TrimSpace(rawGate.Reason),
 			}
 		case WorkflowGateKindLLMJudge:
-			unknown := rawGate.unknownFields("id", "kind", "boundary", "prompt", "prompt_ref")
+			unknown := rawGate.unknownFields("id", "kind", "boundary", "prompt", "prompt_ref", "routes")
 			if len(unknown) > 0 {
 				return nil, fmt.Errorf("%w: %s llm_judge has unknown field(s): %s", ErrTemplateConfigInvalid, gateCtx, strings.Join(unknown, ", "))
 			}
@@ -365,6 +448,43 @@ func expandPhaseGates(rawPhase rawWorkflowPhase, prompts map[string]string, phas
 			}
 		}
 		out = append(out, gate)
+	}
+	return out, nil
+}
+
+func expandGateRoutes(rawRoutes []rawWorkflowGateRoute, gateCtx string) ([]WorkflowGateRoute, error) {
+	if len(rawRoutes) == 0 {
+		return nil, nil
+	}
+	out := make([]WorkflowGateRoute, 0, len(rawRoutes))
+	routeIDs := map[string]struct{}{}
+	for idx, rawRoute := range rawRoutes {
+		routeCtx := fmt.Sprintf("%s.routes[%d]", gateCtx, idx)
+		if unknown := rawRoute.unknownFields("id", "target"); len(unknown) > 0 {
+			return nil, fmt.Errorf("%w: %s has unknown field(s): %s", ErrTemplateConfigInvalid, routeCtx, strings.Join(unknown, ", "))
+		}
+		id := strings.TrimSpace(rawRoute.ID)
+		if id == "" {
+			return nil, fmt.Errorf("%w: %s.id is required", ErrTemplateConfigInvalid, routeCtx)
+		}
+		if _, exists := routeIDs[id]; exists {
+			return nil, fmt.Errorf("%w: duplicate route id %q at %s", ErrTemplateConfigInvalid, id, routeCtx)
+		}
+		routeIDs[id] = struct{}{}
+		if unknown := rawRoute.Target.unknownFields("kind", "step_id"); len(unknown) > 0 {
+			return nil, fmt.Errorf("%w: %s.target has unknown field(s): %s", ErrTemplateConfigInvalid, routeCtx, strings.Join(unknown, ", "))
+		}
+		if strings.TrimSpace(rawRoute.Target.Kind) == "" {
+			return nil, fmt.Errorf("%w: %s.target.kind is required", ErrTemplateConfigInvalid, routeCtx)
+		}
+		route := WorkflowGateRoute{
+			ID: id,
+			Target: WorkflowGateRouteTargetRef{
+				Kind:   WorkflowGateRouteTargetKind(strings.TrimSpace(rawRoute.Target.Kind)),
+				StepID: strings.TrimSpace(rawRoute.Target.StepID),
+			},
+		}
+		out = append(out, route)
 	}
 	return out, nil
 }
@@ -487,6 +607,7 @@ func cloneWorkflowTemplatePhase(in WorkflowTemplatePhase) WorkflowTemplatePhase 
 
 func cloneWorkflowGateSpec(in WorkflowGateSpec) WorkflowGateSpec {
 	out := in
+	out.Routes = cloneWorkflowGateRoutes(in.Routes)
 	if in.ManualReviewConfig != nil {
 		cfg := *in.ManualReviewConfig
 		out.ManualReviewConfig = &cfg

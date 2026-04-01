@@ -44,6 +44,33 @@ func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
 						},
 					},
 				},
+				Gates: []guidedworkflows.WorkflowGateSpec{
+					{
+						ID:   "gate_1",
+						Kind: guidedworkflows.WorkflowGateKindManualReview,
+						Boundary: guidedworkflows.WorkflowGateBoundaryRef{
+							Boundary: guidedworkflows.WorkflowGateBoundaryPhaseEnd,
+							PhaseID:  "phase_1",
+						},
+						Routes: []guidedworkflows.WorkflowGateRoute{
+							{
+								ID: "continue",
+								Target: guidedworkflows.WorkflowGateRouteTargetRef{
+									Kind: guidedworkflows.WorkflowGateRouteTargetNextStep,
+								},
+							},
+							{
+								ID: "finish",
+								Target: guidedworkflows.WorkflowGateRouteTargetRef{
+									Kind: guidedworkflows.WorkflowGateRouteTargetCompletePhase,
+								},
+							},
+						},
+						ManualReviewConfig: &guidedworkflows.ManualReviewConfig{
+							Reason: "human review required",
+						},
+					},
+				},
 			},
 		},
 	}
@@ -76,6 +103,15 @@ func TestWorkflowTemplateStoreRoundTrip(t *testing.T) {
 	}
 	if loaded.DefaultAccessLevel != types.AccessOnRequest {
 		t.Fatalf("expected default_access_level to round-trip, got %q", loaded.DefaultAccessLevel)
+	}
+	if len(loaded.Phases[0].Gates) != 1 {
+		t.Fatalf("expected gates to round-trip, got %#v", loaded.Phases[0].Gates)
+	}
+	if len(loaded.Phases[0].Gates[0].Routes) != 2 {
+		t.Fatalf("expected gate routes to round-trip, got %#v", loaded.Phases[0].Gates[0].Routes)
+	}
+	if loaded.Phases[0].Gates[0].ManualReviewConfig == nil || loaded.Phases[0].Gates[0].ManualReviewConfig.Reason != "human review required" {
+		t.Fatalf("expected manual review config to round-trip, got %#v", loaded.Phases[0].Gates[0].ManualReviewConfig)
 	}
 
 	templates, err = store.ListWorkflowTemplates(ctx)

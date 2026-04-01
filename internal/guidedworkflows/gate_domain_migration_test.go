@@ -36,4 +36,7 @@ func TestWorkflowGateSpecUsesKindSpecificConfig(t *testing.T) {
 	if _, ok := specType.FieldByName("LLMJudgeConfig"); !ok {
 		t.Fatalf("expected WorkflowGateSpec.LLMJudgeConfig")
 	}
+	if _, ok := specType.FieldByName("Routes"); !ok {
+		t.Fatalf("expected WorkflowGateSpec.Routes")
+	}
 }

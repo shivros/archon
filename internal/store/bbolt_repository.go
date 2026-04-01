@@ -802,7 +802,7 @@ func (s *bboltWorkflowTemplateStore) ListWorkflowTemplates(ctx context.Context) 
 			if err := json.Unmarshal(v, &template); err != nil {
 				return err
 			}
-			out = append(out, cloneWorkflowTemplate(template))
+			out = append(out, guidedworkflows.CloneWorkflowTemplate(template))
 			return nil
 		})
 	})
@@ -837,7 +837,7 @@ func (s *bboltWorkflowTemplateStore) GetWorkflowTemplate(ctx context.Context, te
 		if err := json.Unmarshal(raw, &template); err != nil {
 			return err
 		}
-		copyTemplate := cloneWorkflowTemplate(template)
+		copyTemplate := guidedworkflows.CloneWorkflowTemplate(template)
 		out = &copyTemplate
 		ok = true
 		return nil
@@ -869,7 +869,7 @@ func (s *bboltWorkflowTemplateStore) UpsertWorkflowTemplate(ctx context.Context,
 	}); err != nil {
 		return nil, err
 	}
-	out := cloneWorkflowTemplate(normalized)
+	out := guidedworkflows.CloneWorkflowTemplate(normalized)
 	return &out, nil
 }
 
