@@ -240,6 +240,41 @@ func TestLLMJudgeGateHandlerSignalEmptyOutputFailsClosed(t *testing.T) {
 	}
 }
 
+func TestLLMJudgeGateHandlerSignalIgnoresSignalIDMismatch(t *testing.T) {
+	result := llmJudgeGateHandler{}.HandleSignal(context.Background(), GateSignalInput{
+		Gate: WorkflowGateRun{SignalID: "signal-1"},
+		Signal: GateSignal{
+			SignalID: "signal-2",
+			Status:   "completed",
+			Terminal: true,
+			Output:   `{"passed": true, "reason": "ok"}`,
+		},
+	})
+	if result.Consumed {
+		t.Fatalf("expected mismatched signal to be ignored, got %#v", result)
+	}
+	if !strings.Contains(result.IgnoreReason, "signal_id mismatch") {
+		t.Fatalf("expected signal mismatch ignore reason, got %#v", result)
+	}
+}
+
+func TestLLMJudgeGateHandlerSignalIgnoresMissingSignalIDWhenExpected(t *testing.T) {
+	result := llmJudgeGateHandler{}.HandleSignal(context.Background(), GateSignalInput{
+		Gate: WorkflowGateRun{SignalID: "signal-1"},
+		Signal: GateSignal{
+			Status:   "completed",
+			Terminal: true,
+			Output:   `{"passed": true, "reason": "ok"}`,
+		},
+	})
+	if result.Consumed {
+		t.Fatalf("expected missing signal id to be ignored, got %#v", result)
+	}
+	if !strings.Contains(result.IgnoreReason, "missing signal_id") {
+		t.Fatalf("expected missing signal id ignore reason, got %#v", result)
+	}
+}
+
 func TestLLMJudgeGateHandlerSignalDefaultsSummaryWhenReasonMissing(t *testing.T) {
 	pass := llmJudgeGateHandler{}.HandleSignal(context.Background(), GateSignalInput{
 		Gate: WorkflowGateRun{SignalID: "signal-1"},
@@ -268,6 +303,60 @@ func TestLLMJudgeGateHandlerSignalDefaultsSummaryWhenReasonMissing(t *testing.T)
 	}
 }
 
+func TestLLMJudgeGateHandlerSignalPassesSelectedRouteID(t *testing.T) {
+	result := llmJudgeGateHandler{}.HandleSignal(context.Background(), GateSignalInput{
+		Gate: WorkflowGateRun{SignalID: "signal-1"},
+		Signal: GateSignal{
+			SignalID: "signal-1",
+			Status:   "completed",
+			Terminal: true,
+			Output:   `{"passed": true, "reason": "phase looks good", "route": "skip_validation"}`,
+		},
+	})
+	if !result.Consumed || result.Outcome != GateOutcomeContinue || result.Status != WorkflowGateStatusPassed {
+		t.Fatalf("expected successful gate result, got %#v", result)
+	}
+	if result.SelectedRouteID != "skip_validation" {
+		t.Fatalf("expected selected route id to propagate, got %#v", result)
+	}
+}
+
+func TestLLMJudgeGateHandlerSignalTreatsBlankRouteAsNoSelection(t *testing.T) {
+	result := llmJudgeGateHandler{}.HandleSignal(context.Background(), GateSignalInput{
+		Gate: WorkflowGateRun{SignalID: "signal-1"},
+		Signal: GateSignal{
+			SignalID: "signal-1",
+			Status:   "completed",
+			Terminal: true,
+			Output:   `{"passed": true, "reason": "phase looks good", "route": "   "}`,
+		},
+	})
+	if !result.Consumed || result.Outcome != GateOutcomeContinue || result.Status != WorkflowGateStatusPassed {
+		t.Fatalf("expected successful gate result, got %#v", result)
+	}
+	if result.SelectedRouteID != "" {
+		t.Fatalf("expected blank route to normalize to no selection, got %#v", result)
+	}
+}
+
+func TestLLMJudgeGateHandlerRejectsRouteOnFailedDecision(t *testing.T) {
+	result := llmJudgeGateHandler{}.HandleSignal(context.Background(), GateSignalInput{
+		Gate: WorkflowGateRun{SignalID: "signal-1"},
+		Signal: GateSignal{
+			SignalID: "signal-1",
+			Status:   "completed",
+			Terminal: true,
+			Output:   `{"passed": false, "reason": "needs work", "route": "skip_validation"}`,
+		},
+	})
+	if !result.Consumed || result.Outcome != GateOutcomePause || result.Status != WorkflowGateStatusFailed {
+		t.Fatalf("expected invalid-output pause result, got %#v", result)
+	}
+	if result.ReasonCode != reasonGateLLMJudgeInvalidOutput {
+		t.Fatalf("expected invalid output reason code, got %#v", result)
+	}
+}
+
 func TestComposeLLMJudgeDispatchPromptIncludesStepError(t *testing.T) {
 	prompt := composeLLMJudgeDispatchPrompt(
 		WorkflowRun{TemplateName: "Template"},
@@ -292,6 +381,36 @@ func TestComposeLLMJudgeDispatchPromptIncludesStepError(t *testing.T) {
 	}
 }
 
+func TestComposeLLMJudgeDispatchPromptIncludesRouteSchemaAndAllowedRoutes(t *testing.T) {
+	prompt := composeLLMJudgeDispatchPrompt(
+		WorkflowRun{
+			TemplateName: "Template",
+			Phases: []PhaseRun{
+				{
+					ID:   "phase-2",
+					Name: "Phase 2",
+					Steps: []StepRun{
+						{ID: "step-2", Name: "Validation"},
+					},
+				},
+			},
+		},
+		PhaseRun{Name: "Phase"},
+		WorkflowGateRun{
+			Routes: []WorkflowGateRoute{
+				{ID: "skip_validation", Target: WorkflowGateRouteTargetRef{Kind: WorkflowGateRouteTargetStep, StepID: "step-2"}},
+			},
+			LLMJudgeConfig: &LLMJudgeConfig{Prompt: "judge this"},
+		},
+	)
+	if !strings.Contains(prompt, `"route": "optional_route_id"`) {
+		t.Fatalf("expected prompt schema to include optional route field, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Allowed routes:") || !strings.Contains(prompt, "skip_validation") {
+		t.Fatalf("expected allowed routes in prompt, got %q", prompt)
+	}
+}
+
 func TestParseLLMJudgeResponseHandlesEmptyInvalidAndCodeFence(t *testing.T) {
 	if _, ok := parseLLMJudgeResponse(""); ok {
 		t.Fatalf("expected empty payload parsing to fail")
@@ -302,6 +421,10 @@ func TestParseLLMJudgeResponseHandlesEmptyInvalidAndCodeFence(t *testing.T) {
 	parsed, ok := parseLLMJudgeResponse("```json\n{\"passed\": true, \"reason\": \"ok\"}\n```")
 	if !ok || parsed.Passed == nil || !*parsed.Passed || parsed.Reason != "ok" {
 		t.Fatalf("expected fenced payload parse success, got %#v ok=%v", parsed, ok)
+	}
+	parsed, ok = parseLLMJudgeResponse(`{"passed": true, "reason": "ok", "route": "skip_validation"}`)
+	if !ok || parsed.Route != "skip_validation" {
+		t.Fatalf("expected route field to parse, got %#v ok=%v", parsed, ok)
 	}
 }
 

@@ -196,6 +196,7 @@ type WorkflowGateRun struct {
 	Kind               WorkflowGateKind        `json:"kind"`
 	Boundary           WorkflowGateBoundaryRef `json:"boundary"`
 	Routes             []WorkflowGateRoute     `json:"routes,omitempty"`
+	SelectedRouteID    string                  `json:"selected_route_id,omitempty"`
 	ManualReviewConfig *ManualReviewConfig     `json:"manual_review_config,omitempty"`
 	LLMJudgeConfig     *LLMJudgeConfig         `json:"llm_judge_config,omitempty"`
 	Status             WorkflowGateStatus      `json:"status,omitempty"`

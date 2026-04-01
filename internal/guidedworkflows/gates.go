@@ -10,6 +10,7 @@ const (
 	reasonGateManualReviewRequired   = "gate_manual_review_required"
 	reasonGateLLMJudgeFailed         = "gate_llm_judge_failed"
 	reasonGateLLMJudgeInvalidOutput  = "gate_llm_judge_invalid_output"
+	reasonGateLLMJudgeInvalidRoute   = "gate_llm_judge_invalid_route"
 	reasonGateLLMJudgeRuntimeFailure = "gate_llm_judge_runtime_failure"
 )
 
@@ -48,35 +49,38 @@ type GateSignalInput struct {
 }
 
 type GateStartResult struct {
-	Outcome        GateOutcome
-	Status         WorkflowGateStatus
-	Summary        string
-	ReasonCode     string
-	DispatchPrompt string
+	Outcome         GateOutcome
+	Status          WorkflowGateStatus
+	Summary         string
+	ReasonCode      string
+	DispatchPrompt  string
+	SelectedRouteID string
 }
 
 type GateSignalResult struct {
-	Consumed     bool
-	Outcome      GateOutcome
-	Status       WorkflowGateStatus
-	Summary      string
-	ReasonCode   string
-	IgnoreReason string
+	Consumed        bool
+	Outcome         GateOutcome
+	Status          WorkflowGateStatus
+	Summary         string
+	ReasonCode      string
+	SelectedRouteID string
+	IgnoreReason    string
 }
 
 type GateResolution struct {
-	Consumed       bool
-	PhaseIndex     int
-	GateIndex      int
-	GateID         string
-	GateKind       WorkflowGateKind
-	Boundary       WorkflowGateBoundary
-	Outcome        GateOutcome
-	Status         WorkflowGateStatus
-	Summary        string
-	ReasonCode     string
-	DispatchPrompt string
-	IgnoreReason   string
+	Consumed        bool
+	PhaseIndex      int
+	GateIndex       int
+	GateID          string
+	GateKind        WorkflowGateKind
+	Boundary        WorkflowGateBoundary
+	Outcome         GateOutcome
+	Status          WorkflowGateStatus
+	Summary         string
+	ReasonCode      string
+	DispatchPrompt  string
+	SelectedRouteID string
+	IgnoreReason    string
 }
 
 type defaultGateCoordinator struct {
@@ -179,17 +183,18 @@ func (c *defaultGateCoordinator) ResolvePendingGate(ctx context.Context, run *Wo
 		}, err
 	}
 	return GateResolution{
-		Consumed:       true,
-		PhaseIndex:     phaseIndex,
-		GateIndex:      gateIndex,
-		GateID:         gate.ID,
-		GateKind:       gate.Kind,
-		Boundary:       gate.Boundary.Boundary,
-		Outcome:        outcome,
-		Status:         status,
-		Summary:        strings.TrimSpace(start.Summary),
-		ReasonCode:     strings.TrimSpace(start.ReasonCode),
-		DispatchPrompt: strings.TrimSpace(start.DispatchPrompt),
+		Consumed:        true,
+		PhaseIndex:      phaseIndex,
+		GateIndex:       gateIndex,
+		GateID:          gate.ID,
+		GateKind:        gate.Kind,
+		Boundary:        gate.Boundary.Boundary,
+		Outcome:         outcome,
+		Status:          status,
+		Summary:         strings.TrimSpace(start.Summary),
+		ReasonCode:      strings.TrimSpace(start.ReasonCode),
+		DispatchPrompt:  strings.TrimSpace(start.DispatchPrompt),
+		SelectedRouteID: strings.TrimSpace(start.SelectedRouteID),
 	}, nil
 }
 
@@ -252,17 +257,18 @@ func (c *defaultGateCoordinator) ResolveSignal(ctx context.Context, run *Workflo
 		}, err
 	}
 	return GateResolution{
-		Consumed:     true,
-		PhaseIndex:   phaseIndex,
-		GateIndex:    gateIndex,
-		GateID:       gate.ID,
-		GateKind:     gate.Kind,
-		Boundary:     gate.Boundary.Boundary,
-		Outcome:      outcome,
-		Status:       status,
-		Summary:      strings.TrimSpace(result.Summary),
-		ReasonCode:   strings.TrimSpace(result.ReasonCode),
-		IgnoreReason: strings.TrimSpace(result.IgnoreReason),
+		Consumed:        true,
+		PhaseIndex:      phaseIndex,
+		GateIndex:       gateIndex,
+		GateID:          gate.ID,
+		GateKind:        gate.Kind,
+		Boundary:        gate.Boundary.Boundary,
+		Outcome:         outcome,
+		Status:          status,
+		Summary:         strings.TrimSpace(result.Summary),
+		ReasonCode:      strings.TrimSpace(result.ReasonCode),
+		SelectedRouteID: strings.TrimSpace(result.SelectedRouteID),
+		IgnoreReason:    strings.TrimSpace(result.IgnoreReason),
 	}, nil
 }
 

@@ -62,7 +62,17 @@ func (llmJudgeGateHandler) HandleSignal(_ context.Context, input GateSignalInput
 			Consumed:   true,
 			Outcome:    GateOutcomePause,
 			Status:     WorkflowGateStatusFailed,
-			Summary:    "llm_judge returned invalid output; expected JSON with passed and reason",
+			Summary:    "llm_judge returned invalid output; expected JSON with passed, reason, and optional route",
+			ReasonCode: reasonGateLLMJudgeInvalidOutput,
+		}
+	}
+	selectedRouteID := strings.TrimSpace(parsed.Route)
+	if selectedRouteID != "" && !*parsed.Passed {
+		return GateSignalResult{
+			Consumed:   true,
+			Outcome:    GateOutcomePause,
+			Status:     WorkflowGateStatusFailed,
+			Summary:    "llm_judge returned invalid output; route may only be selected when passed is true",
 			ReasonCode: reasonGateLLMJudgeInvalidOutput,
 		}
 	}
@@ -76,10 +86,11 @@ func (llmJudgeGateHandler) HandleSignal(_ context.Context, input GateSignalInput
 	}
 	if *parsed.Passed {
 		return GateSignalResult{
-			Consumed: true,
-			Outcome:  GateOutcomeContinue,
-			Status:   WorkflowGateStatusPassed,
-			Summary:  summary,
+			Consumed:        true,
+			Outcome:         GateOutcomeContinue,
+			Status:          WorkflowGateStatusPassed,
+			Summary:         summary,
+			SelectedRouteID: selectedRouteID,
 		}
 	}
 	return GateSignalResult{
@@ -94,13 +105,15 @@ func (llmJudgeGateHandler) HandleSignal(_ context.Context, input GateSignalInput
 type llmJudgeResponse struct {
 	Passed *bool  `json:"passed"`
 	Reason string `json:"reason"`
+	Route  string `json:"route,omitempty"`
 }
 
 func composeLLMJudgeDispatchPrompt(run WorkflowRun, phase PhaseRun, gate WorkflowGateRun) string {
 	lines := []string{
 		"You are evaluating whether the just-completed workflow phase succeeded.",
 		"Return ONLY valid JSON with this exact schema:",
-		`{"passed": true, "reason": "short explanation"}`,
+		`{"passed": true, "reason": "short explanation", "route": "optional_route_id"}`,
+		`Omit "route" when no declared continuation route should be selected.`,
 		"",
 		"Workflow run: " + firstNonEmpty(strings.TrimSpace(run.TemplateName), strings.TrimSpace(run.TemplateID), strings.TrimSpace(run.ID)),
 		"Phase: " + firstNonEmpty(strings.TrimSpace(phase.Name), strings.TrimSpace(phase.ID)),
@@ -111,6 +124,12 @@ func composeLLMJudgeDispatchPrompt(run WorkflowRun, phase PhaseRun, gate Workflo
 	}
 	if judgePrompt != "" {
 		lines = append(lines, "", "Judge instructions:", judgePrompt)
+	}
+	if len(gate.Routes) > 0 {
+		lines = append(lines, "", "Allowed routes:")
+		for _, route := range gate.Routes {
+			lines = append(lines, "- "+strings.TrimSpace(route.ID)+": "+describeGateRouteTarget(&run, route))
+		}
 	}
 	lines = append(lines, "", "Phase evidence:")
 	for idx, step := range phase.Steps {

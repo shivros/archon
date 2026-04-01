@@ -2902,6 +2902,7 @@ func (s *InMemoryRunService) completeAwaitingGateLocked(ctx context.Context, run
 	if strings.TrimSpace(gateSignal.Output) != "" {
 		gate.Output = strings.TrimSpace(gateSignal.Output)
 	}
+	resolution = s.applyGateContinuationRouteLocked(run, phase, gate, now, resolution)
 	switch resolution.Outcome {
 	case GateOutcomePause:
 		s.applyGatePause(run, phase, gate, gateSignal, now, resolution)
@@ -2927,6 +2928,7 @@ func (s *InMemoryRunService) applyGatePass(
 	gate.Error = ""
 	gate.Outcome = "passed"
 	gate.Summary = firstNonEmpty(resolution.Summary, "gate passed")
+	gate.SelectedRouteID = strings.TrimSpace(resolution.SelectedRouteID)
 	if signalID := strings.TrimSpace(signal.SignalID); signalID != "" {
 		gate.SignalID = signalID
 	}
@@ -4972,6 +4974,7 @@ func (s *InMemoryRunService) prepareGateDispatchContext(ctx context.Context, run
 		if gate.StartedAt == nil {
 			gate.StartedAt = &now
 		}
+		resolution = s.applyGateContinuationRouteLocked(run, phase, gate, now, resolution)
 		switch resolution.Outcome {
 		case GateOutcomePause:
 			s.applyGatePause(run, phase, gate, GateSignal{}, now, resolution)
