@@ -31,6 +31,7 @@ func (m MessageIdentity) HasStableIdentity() bool {
 
 type TranscriptIdentityBlock struct {
 	ID                string
+	Kind              string
 	Role              string
 	Text              string
 	TurnID            string

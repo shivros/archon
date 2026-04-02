@@ -245,6 +245,7 @@ func applyTranscriptDeltaWithFinalizationDedupe(
 		_, finalized := finalizedIndexes[i]
 		existingIdentityBlocks := transcriptIdentityBlocksFromChatBlocks(out)
 		candidateIdentityBlock := transcriptIdentityBlockFromChatBlock(candidate)
+		candidateIdentityBlock.Kind = strings.TrimSpace(raw.Kind)
 		var decision transcriptdomain.TranscriptDedupeDecision
 		if finalized {
 			decision = dedupePolicy.FinalizedDecision(existingIdentityBlocks, candidateIdentityBlock)

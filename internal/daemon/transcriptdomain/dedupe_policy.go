@@ -322,6 +322,16 @@ func (p defaultTranscriptBlockMergePolicy) Merge(
 	if candidateText == currentText {
 		return next, changed, true, "text_exact_match"
 	}
+	// Incremental streaming deltas carry only new text, not a
+	// cumulative replay. Skip substring-containment checks that
+	// would incorrectly drop small chunks (spaces, backticks, short
+	// words) that happen to appear in the accumulated text.
+	// Finalized blocks are excluded: even when their Kind looks
+	// incremental (e.g. item/completed with type=agentMessage),
+	// finalized text must participate in superset replacement.
+	if !finalized && IsIncrementalDeltaKind(candidate.Kind) {
+		return next, changed, false, "incremental_delta_diverged"
+	}
 	if strings.Contains(candidateText, currentText) && len(candidateText) >= len(currentText) {
 		next.Text = candidate.Text
 		return next, true, true, "candidate_text_superset"

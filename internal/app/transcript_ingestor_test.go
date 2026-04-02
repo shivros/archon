@@ -328,3 +328,35 @@ func captureIngestorStdLogOutput(t *testing.T) func() {
 func currentCapturedIngestorStdLog() string {
 	return transcriptIngestorLogBuffer.String()
 }
+
+func TestApplyTranscriptDeltaDoesNotDropIncrementalStreamingDeltas(t *testing.T) {
+	// Simulate a codex-style streaming sequence: multiple incremental
+	// deltas with the same item ID and Kind "agentmessage". Small
+	// chunks like " " and "`" must NOT be dropped even though they
+	// are substrings of earlier accumulated text.
+	existing := []ChatBlock{}
+	deltas := []transcriptdomain.Block{
+		{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "The answer is"},
+		{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: " "},
+		{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "`"},
+		{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "Path"},
+		{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "`"},
+		{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: " normalization"},
+	}
+
+	// Apply each delta one at a time (as the streaming ingestor does).
+	blocks := existing
+	for _, d := range deltas {
+		blocks, _, _ = applyTranscriptDeltaWithFinalizationDedupe(
+			blocks, []transcriptdomain.Block{d}, map[int]struct{}{}, nil, nil,
+		)
+	}
+
+	if len(blocks) != 1 {
+		t.Fatalf("expected one coalesced block, got %d: %#v", len(blocks), blocks)
+	}
+	want := "The answer is `Path` normalization"
+	if blocks[0].Text != want {
+		t.Fatalf("expected %q, got %q", want, blocks[0].Text)
+	}
+}

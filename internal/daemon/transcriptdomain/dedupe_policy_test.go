@@ -411,3 +411,107 @@ func TestDefaultTranscriptBlockMergePolicyFinalizedKeepsCurrentShorterCandidate(
 		t.Fatalf("expected finalized shorter candidate to keep current, got next=%#v changed=%v deduped=%v reason=%s", next, changed, deduped, reason)
 	}
 }
+
+func TestDefaultTranscriptBlockMergePolicySkipsContainmentForIncrementalDelta(t *testing.T) {
+	merge := NewDefaultTranscriptBlockMergePolicy(nil)
+	// "the" is a substring of the accumulated text, but since the
+	// candidate is an incremental streaming delta it must not be dropped.
+	_, changed, deduped, reason := merge.Merge(
+		TranscriptIdentityBlock{ID: "msg-1", Role: "assistant", Text: "see the code in the file"},
+		TranscriptIdentityBlock{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "the"},
+		false,
+		false,
+	)
+	if deduped || reason != "incremental_delta_diverged" {
+		t.Fatalf("expected incremental delta to bypass containment, got changed=%v deduped=%v reason=%s", changed, deduped, reason)
+	}
+}
+
+func TestDefaultTranscriptBlockMergePolicySkipsContainmentForShortSubstringDelta(t *testing.T) {
+	merge := NewDefaultTranscriptBlockMergePolicy(nil)
+	// "Path" is a substring of the accumulated text, but it's an
+	// incremental delta and must not be dropped.
+	_, _, deduped, reason := merge.Merge(
+		TranscriptIdentityBlock{ID: "msg-1", Role: "assistant", Text: "use Path normalization"},
+		TranscriptIdentityBlock{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "Path"},
+		false,
+		false,
+	)
+	if deduped || reason != "incremental_delta_diverged" {
+		t.Fatalf("expected incremental delta to bypass containment, got deduped=%v reason=%s", deduped, reason)
+	}
+}
+
+func TestDefaultTranscriptBlockMergePolicyStillDropsCumulativeReplaySubset(t *testing.T) {
+	merge := NewDefaultTranscriptBlockMergePolicy(nil)
+	// With empty Kind (no incremental delta signal), the cumulative
+	// replay path should still detect current-text-superset.
+	_, _, deduped, reason := merge.Merge(
+		TranscriptIdentityBlock{ID: "msg-1", Role: "assistant", Text: "hello world"},
+		TranscriptIdentityBlock{ID: "msg-1", Role: "assistant", Text: "hello"},
+		false,
+		false,
+	)
+	if !deduped || reason != "current_text_superset" {
+		t.Fatalf("expected cumulative replay subset to be dropped, got deduped=%v reason=%s", deduped, reason)
+	}
+}
+
+func TestDefaultTranscriptBlockMergePolicyExactMatchStillWorksForDeltaKind(t *testing.T) {
+	merge := NewDefaultTranscriptBlockMergePolicy(nil)
+	// Exact text match fires before the incremental guard.
+	_, _, deduped, reason := merge.Merge(
+		TranscriptIdentityBlock{ID: "msg-1", Role: "assistant", Text: "hello"},
+		TranscriptIdentityBlock{ID: "msg-1", Kind: "agentmessage", Role: "assistant", Text: "hello"},
+		false,
+		false,
+	)
+	if !deduped || reason != "text_exact_match" {
+		t.Fatalf("expected exact match to still fire for delta kind, got deduped=%v reason=%s", deduped, reason)
+	}
+}
+
+func TestIngestorDedupePolicyDoesNotDropIncrementalStreamingDelta(t *testing.T) {
+	policy := NewIngestorTranscriptDedupePolicy(nil, nil)
+	existing := []TranscriptIdentityBlock{{
+		ID:   "msg-1",
+		Role: "assistant",
+		Text: "The answer is in the code",
+	}}
+	// "the" is a substring of accumulated text but must not be dropped.
+	decision := policy.ReplayDecision(existing, TranscriptIdentityBlock{
+		ID:   "msg-1",
+		Kind: "agentmessage",
+		Role: "assistant",
+		Text: "the",
+	})
+	if decision.Action != TranscriptDedupeActionAppend {
+		t.Fatalf("expected incremental streaming delta to append, got %#v", decision)
+	}
+	if decision.Reason != "incremental_delta_diverged" {
+		t.Fatalf("expected incremental_delta_diverged reason, got %q", decision.Reason)
+	}
+}
+
+func TestIsIncrementalDeltaKind(t *testing.T) {
+	tests := []struct {
+		kind string
+		want bool
+	}{
+		{"", false},
+		{"  ", false},
+		{"agentmessage", true},
+		{"AgentMessage", true},
+		{"assistant_delta", true},
+		{"agentMessage_delta", true},
+		{"assistant_message", false},
+		{"agent_message", false},
+		{"message", false},
+		{"completed", false},
+	}
+	for _, tt := range tests {
+		if got := IsIncrementalDeltaKind(tt.kind); got != tt.want {
+			t.Errorf("IsIncrementalDeltaKind(%q) = %v, want %v", tt.kind, got, tt.want)
+		}
+	}
+}
