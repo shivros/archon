@@ -608,7 +608,7 @@ func concatAdjacentAgentText(current, next string) string {
 		return current
 	}
 	maxOverlap := min(len(current), len(next))
-	for overlap := maxOverlap; overlap > 0; overlap-- {
+	for overlap := maxOverlap; overlap >= 4; overlap-- {
 		if current[len(current)-overlap:] == next[:overlap] {
 			return current + next[overlap:]
 		}

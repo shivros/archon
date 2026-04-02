@@ -145,3 +145,30 @@ func TestConcatAdjacentAgentTextDropsExactReplayChunk(t *testing.T) {
 		t.Fatalf("expected exact replay chunk to be ignored, got %q", got)
 	}
 }
+
+func TestConcatAdjacentAgentTextNoFalseOverlapOnSingleChar(t *testing.T) {
+	// A single-space overlap should NOT be deducted — it's a coincidence,
+	// not a genuine replay boundary.
+	if got := concatAdjacentAgentText("hello ", " world"); got != "hello  world" {
+		t.Fatalf("expected no false overlap on single space, got %q", got)
+	}
+}
+
+func TestConcatAdjacentAgentTextNoFalseOverlapOnTwoChars(t *testing.T) {
+	if got := concatAdjacentAgentText("end e", "e start"); got != "end ee start" {
+		t.Fatalf("expected no false overlap on 2-char sequence, got %q", got)
+	}
+}
+
+func TestConcatAdjacentAgentTextNoFalseOverlapOnThreeChars(t *testing.T) {
+	if got := concatAdjacentAgentText("the end", "end start"); got != "the endend start" {
+		t.Fatalf("expected no false overlap on 3-char sequence, got %q", got)
+	}
+}
+
+func TestConcatAdjacentAgentTextPreservesFourCharOverlap(t *testing.T) {
+	// 4+ chars is legitimate overlap territory (replay/restart).
+	if got := concatAdjacentAgentText("see the ", "the code"); got != "see the code" {
+		t.Fatalf("expected 4-char overlap to be detected, got %q", got)
+	}
+}
