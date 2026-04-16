@@ -15,3 +15,6 @@ cmd/archon/*
 
 # Playwright CLI
 .playwright-cli/
+
+# OpenCode monitoring directory
+.omx/
