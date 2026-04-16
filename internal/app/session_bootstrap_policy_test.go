@@ -34,7 +34,7 @@ func TestSessionBootstrapPolicySessionStartPlans(t *testing.T) {
 	}
 
 	codexPlan := p.SessionStartPlan("codex", types.SessionStatusRunning)
-	if codexPlan.FetchTranscript || !codexPlan.FetchApprovals || codexPlan.OpenTranscript {
+	if codexPlan.FetchTranscript || !codexPlan.FetchApprovals || !codexPlan.OpenTranscript {
 		t.Fatalf("unexpected codex start plan: %#v", codexPlan)
 	}
 

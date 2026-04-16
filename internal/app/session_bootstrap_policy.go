@@ -50,6 +50,7 @@ func (defaultSessionBootstrapPolicy) SessionStartPlan(provider string, status ty
 	if profile.SessionStartTranscript == providers.TranscriptBootstrapModeDeferSnapshot {
 		return sessionBootstrapPlan{
 			FetchApprovals: true,
+			OpenTranscript: true,
 		}
 	}
 	return sessionBootstrapPlan{

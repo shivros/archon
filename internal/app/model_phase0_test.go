@@ -211,6 +211,44 @@ func TestPhase0ComposeSessionSelectionClearsPendingNewSessionTarget(t *testing.T
 	}
 }
 
+func TestStartSessionShowsInitialPromptImmediatelyAndCachesStartedSession(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+
+	session := &types.Session{
+		ID:       "s2",
+		Provider: "codex",
+		Status:   types.SessionStatusRunning,
+		Title:    "Started session",
+	}
+	handled, cmd := m.reduceStateMessages(startSessionMsg{
+		session: session,
+		prompt:  "hello from new session",
+	})
+	if !handled {
+		t.Fatalf("expected start session message to be handled")
+	}
+	if cmd == nil {
+		t.Fatalf("expected follow-up commands for started session")
+	}
+	if got := m.composeSessionID(); got != "s2" {
+		t.Fatalf("expected compose session to retarget to s2, got %q", got)
+	}
+	if got := countBlocksByRoleAndText(m.currentBlocks(), ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected visible optimistic prompt immediately, got %#v", m.currentBlocks())
+	}
+	cached := m.transcriptCache["sess:s2"]
+	if got := countBlocksByRoleAndText(cached, ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected started session cache to contain optimistic prompt, got %#v", cached)
+	}
+	if got := countBlocksByRoleAndText(m.transcriptCache["sess:s1"], ChatRoleUser, "hello from new session"); got != 0 {
+		t.Fatalf("did not expect previous session cache to receive new-session prompt")
+	}
+	if len(m.pendingSends) != 1 {
+		t.Fatalf("expected one optimistic send entry for started session, got %#v", m.pendingSends)
+	}
+}
+
 func TestPhase0ScheduleSessionLoadDebouncesSelection(t *testing.T) {
 	m := NewModel(nil)
 	m.selectSeq = 41

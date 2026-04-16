@@ -83,8 +83,8 @@ func TestDefaultSessionBootstrapCoordinatorBuildsExpectedCommandCounts(t *testin
 		InitialLines:  100,
 		TranscriptAPI: bootstrapTranscriptAPIStub{},
 	})
-	if len(codexStart) != 1 {
-		t.Fatalf("expected approvals-only codex start commands, got %d", len(codexStart))
+	if len(codexStart) != 2 {
+		t.Fatalf("expected approvals plus immediate transcript stream for codex start, got %d", len(codexStart))
 	}
 
 	reconnect := coordinator.BuildReconnectCommands(SessionReconnectBootstrapInput{

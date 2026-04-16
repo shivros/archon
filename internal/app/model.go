@@ -1538,6 +1538,28 @@ func (m *Model) selectedKey() string {
 	return m.sidebar.SelectedKey()
 }
 
+func sessionCacheKey(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	return "sess:" + sessionID
+}
+
+func (m *Model) cacheKeyForSession(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	if key := strings.TrimSpace(m.selectedKey()); sessionIDFromSidebarKey(key) == sessionID {
+		return key
+	}
+	if key := strings.TrimSpace(m.pendingSessionKey); sessionIDFromSidebarKey(key) == sessionID {
+		return key
+	}
+	return sessionCacheKey(sessionID)
+}
+
 func (m *Model) activeTranscriptRevision() string {
 	if m == nil || m.transcriptStream == nil {
 		return ""
@@ -2814,7 +2836,7 @@ func (m *Model) consumeTranscriptTick(now time.Time) tea.Cmd {
 				m.noteRequestVisibleUpdate(sessionID)
 			}
 		}
-		if key := m.selectedKey(); key != "" {
+		if key := m.cacheKeyForSession(sessionID); key != "" {
 			m.cacheTranscriptBlocks(key, blocks)
 		}
 	}
@@ -3558,12 +3580,16 @@ func (m *Model) setCenteredContentText(text string) {
 }
 
 func (m *Model) appendUserMessageLocal(provider, text string) int {
+	return m.appendUserMessageLocalWithKey(m.selectedKey(), provider, text)
+}
+
+func (m *Model) appendUserMessageLocalWithKey(key, provider, text string) int {
 	if strings.EqualFold(provider, "claude") {
 		return -1
 	}
 	blocks, headerIndex := m.transcriptComposerOrDefault().AppendOptimisticUser(m.currentBlocks(), text)
 	m.applyBlocksWithRenderPreference(blocks, true)
-	if key := m.selectedKey(); key != "" {
+	if key = strings.TrimSpace(key); key != "" {
 		m.transcriptCache[key] = blocks
 	}
 	return headerIndex
@@ -3575,7 +3601,14 @@ func (m *Model) nextSendToken() int {
 }
 
 func (m *Model) registerPendingSend(token int, sessionID, provider, text string) {
-	key := m.selectedKey()
+	m.registerPendingSendWithKey(token, m.selectedKey(), sessionID, provider, text)
+}
+
+func (m *Model) registerPendingSendWithKey(token int, key, sessionID, provider, text string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		key = m.cacheKeyForSession(sessionID)
+	}
 	m.pendingSends[token] = pendingSend{
 		key:       key,
 		sessionID: sessionID,
@@ -3597,12 +3630,20 @@ func (m *Model) registerPendingSend(token int, sessionID, provider, text string)
 }
 
 func (m *Model) registerPendingSendHeader(token int, sessionID, provider string, headerIndex int) {
+	m.registerPendingSendHeaderWithKey(token, m.selectedKey(), sessionID, provider, headerIndex)
+}
+
+func (m *Model) registerPendingSendHeaderWithKey(token int, key, sessionID, provider string, headerIndex int) {
 	entry, ok := m.pendingSends[token]
 	if !ok {
 		return
 	}
 	entry.sessionID = sessionID
-	entry.key = m.selectedKey()
+	key = strings.TrimSpace(key)
+	if key == "" {
+		key = m.cacheKeyForSession(sessionID)
+	}
+	entry.key = key
 	if provider != "" {
 		entry.provider = provider
 	}

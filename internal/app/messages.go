@@ -268,6 +268,7 @@ type sendMsg struct {
 
 type startSessionMsg struct {
 	session *types.Session
+	prompt  string
 	err     error
 }
 

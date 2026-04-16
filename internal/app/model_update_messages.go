@@ -465,7 +465,14 @@ func (m *Model) applyLiveSessionItemsSnapshot(ctx sessionItemsMessageContext) bo
 	if !m.shouldKeepLiveTranscriptSnapshot(ctx.id) {
 		return false
 	}
-	visibleBlocks := m.applyOptimisticOverlay(ctx.id, m.activeTranscriptBlocks())
+	if m.transcriptStream == nil {
+		return false
+	}
+	liveBlocks := m.transcriptStream.Blocks()
+	if len(liveBlocks) == 0 {
+		return false
+	}
+	visibleBlocks := m.applyOptimisticOverlay(ctx.id, liveBlocks)
 	if ctx.key != "" {
 		m.cacheTranscriptBlocks(ctx.key, visibleBlocks)
 	}
@@ -1226,7 +1233,16 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.scrollOnLoad = true
 		m.invalidateViewportRender()
 		m.applyBlocksNoRender(nil)
-		m.renderViewport()
+		prompt := strings.TrimSpace(msg.prompt)
+		if prompt != "" && !strings.EqualFold(msg.session.Provider, "claude") {
+			token := m.nextSendToken()
+			m.registerPendingSendWithKey(token, key, msg.session.ID, msg.session.Provider, prompt)
+			if headerIndex := m.appendUserMessageLocalWithKey(key, msg.session.Provider, prompt); headerIndex >= 0 {
+				m.registerPendingSendHeaderWithKey(token, key, msg.session.ID, msg.session.Provider, headerIndex)
+			}
+		} else {
+			m.renderViewport()
+		}
 		m.startRequestActivity(msg.session.ID, msg.session.Provider)
 		watchCmd := tea.Cmd(nil)
 		recentsStateSaveCmd := tea.Cmd(nil)
@@ -1408,12 +1424,23 @@ func (m *Model) shouldKeepLiveTranscriptSnapshot(sessionID string) bool {
 	if !m.requestActivity.active {
 		return false
 	}
-	return strings.TrimSpace(m.requestActivity.sessionID) == strings.TrimSpace(sessionID) && m.requestActivity.eventCount > 0
+	sessionID = strings.TrimSpace(sessionID)
+	if strings.TrimSpace(m.requestActivity.sessionID) != sessionID {
+		return false
+	}
+	if len(m.activeTranscriptBlocks()) == 0 && len(m.currentBlocks()) == 0 {
+		return false
+	}
+	return m.requestActivity.eventCount > 0 ||
+		m.isLoadingTarget(sessionID, "") ||
+		strings.TrimSpace(m.activeContentSessionID()) == sessionID
 }
 
 func (m *Model) activeTranscriptBlocks() []ChatBlock {
 	if m.transcriptStream != nil {
-		return m.transcriptStream.Blocks()
+		if blocks := m.transcriptStream.Blocks(); len(blocks) > 0 {
+			return blocks
+		}
 	}
 	return m.currentBlocks()
 }
@@ -1683,6 +1710,11 @@ func hasChatRole(blocks []ChatBlock, role ChatRole) bool {
 func (m *Model) applyTranscriptStreamMsg(msg transcriptStreamMsg) {
 	provider := m.providerForSessionID(msg.id)
 	if msg.err != nil {
+		if isCanceledRequestError(msg.err) {
+			m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeSkipped, transcriptReasonReconnectStreamCanceled)
+			m.appendTranscriptSessionTrace(msg.id, "generation_open_canceled source=%s generation=%d", msg.source, msg.generation)
+			return
+		}
 		m.setBackgroundError("transcript stream error: " + msg.err.Error())
 		m.recordReconnectOutcome(msg.id, provider, "transcript", transcriptSourceApplyEventsStream, transcriptOutcomeError, transcriptReasonReconnectStreamError)
 		m.appendTranscriptSessionTrace(msg.id, "generation_open_error source=%s generation=%d err=%v", msg.source, msg.generation, msg.err)

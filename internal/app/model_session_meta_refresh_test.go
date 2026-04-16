@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"control/internal/daemon/transcriptdomain"
 	"control/internal/guidedworkflows"
 	"control/internal/types"
 )
@@ -256,6 +257,71 @@ func TestSessionsWithMetaMsgSkipsReloadWhileViewingNotes(t *testing.T) {
 	}
 	if m.mode != uiModeNotes {
 		t.Fatalf("expected to stay in notes mode, got %v", m.mode)
+	}
+}
+
+func TestSessionsWithMetaMsgLateStartedSessionSelectionKeepsVisibleTranscript(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+
+	handled, _ := m.reduceStateMessages(startSessionMsg{
+		session: &types.Session{
+			ID:       "s2",
+			Provider: "codex",
+			Status:   types.SessionStatusRunning,
+			Title:    "Started session",
+		},
+		prompt: "hello from new session",
+	})
+	if !handled {
+		t.Fatalf("expected start session message to be handled")
+	}
+
+	_ = m.applyTranscriptSnapshotMsg(transcriptSnapshotMsg{
+		id:     "s2",
+		key:    "sess:s2",
+		source: transcriptAttachmentSourceSessionStart,
+		snapshot: &transcriptdomain.TranscriptSnapshot{
+			SessionID: "s2",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("1"),
+			Blocks: []transcriptdomain.Block{
+				{Kind: "assistant_message", Role: "assistant", Text: "assistant reply"},
+			},
+		},
+	})
+
+	now := time.Now().UTC()
+	handled, cmd := m.reduceStateMessages(sessionsWithMetaMsg{
+		sessions: []*types.Session{
+			m.sessions[0],
+			{
+				ID:        "s2",
+				Provider:  "codex",
+				Status:    types.SessionStatusRunning,
+				CreatedAt: now,
+				Title:     "Started session",
+			},
+		},
+		meta: []*types.SessionMeta{
+			{SessionID: "s1", WorkspaceID: "ws1"},
+			{SessionID: "s2", WorkspaceID: "ws1"},
+		},
+	})
+	if !handled {
+		t.Fatalf("expected sessionsWithMetaMsg to be handled")
+	}
+	if got := m.selectedSessionID(); got != "s2" {
+		t.Fatalf("expected sidebar selection to reconcile to started session, got %q", got)
+	}
+	if got := latestAssistantBlockText(m.currentBlocks()); got != "assistant reply" {
+		t.Fatalf("expected visible transcript to remain intact after late session reconciliation, got %q", got)
+	}
+	if got := countBlocksByRoleAndText(m.currentBlocks(), ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected prompt to remain visible after late session reconciliation, got %#v", m.currentBlocks())
+	}
+	if cmd == nil {
+		t.Fatalf("expected session reconciliation to schedule selection bootstrap")
 	}
 }
 

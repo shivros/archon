@@ -47,6 +47,7 @@ const (
 	transcriptReasonProjectionMismatch                         = "projection_mismatch"
 	transcriptReasonReconnectStreamDisconnected                = "stream_disconnected"
 	transcriptReasonReconnectStreamError                       = "stream_error"
+	transcriptReasonReconnectStreamCanceled                    = "stream_canceled"
 	transcriptReasonReconnectStreamAttached                    = "stream_attached"
 	transcriptReasonReconnectMismatchedSession                 = "mismatched_session"
 	transcriptReasonReconnectMatchedSession                    = "matched_active_session"

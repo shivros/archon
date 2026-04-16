@@ -874,6 +874,6 @@ func startSessionCmdWithContext(api WorkspaceSessionStartAPI, workspaceID, workt
 			RuntimeOptions: types.CloneRuntimeOptions(runtimeOptions),
 		}
 		session, err := api.StartWorkspaceSession(ctx, workspaceID, worktreeID, req)
-		return startSessionMsg{session: session, err: err}
+		return startSessionMsg{session: session, prompt: text, err: err}
 	}
 }

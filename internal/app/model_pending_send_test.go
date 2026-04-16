@@ -164,6 +164,25 @@ func TestApplyLiveSessionItemsSnapshotReturnsFalseWhenRequestInactive(t *testing
 	}
 }
 
+func TestApplyLiveSessionItemsSnapshotReturnsFalseWithoutStreamBlocks(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	key := m.selectedKey()
+	m.requestActivity = requestActivity{active: true, sessionID: "s1"}
+	m.setSnapshotBlocks([]ChatBlock{{Role: ChatRoleAgent, Text: "history reply"}})
+
+	applied := m.applyLiveSessionItemsSnapshot(sessionItemsMessageContext{
+		source: sessionProjectionSourceTail,
+		id:     "s1",
+		key:    key,
+	})
+	if applied {
+		t.Fatalf("expected missing live stream blocks to skip snapshot apply")
+	}
+	if got := latestAssistantBlockText(m.currentBlocks()); got != "history reply" {
+		t.Fatalf("expected visible transcript to remain unchanged, got %q", got)
+	}
+}
+
 func TestApplyLiveSessionItemsSnapshotClearsLoadingWhenViewportNotVisible(t *testing.T) {
 	m := newPhase0ModelWithSession("codex")
 	key := m.selectedKey()

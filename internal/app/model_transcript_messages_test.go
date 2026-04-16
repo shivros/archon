@@ -11,6 +11,7 @@ import (
 	"control/internal/client"
 
 	"control/internal/daemon/transcriptdomain"
+	"control/internal/types"
 )
 
 func TestApplyTranscriptStreamMsgErrorRecordsReconnectError(t *testing.T) {
@@ -31,6 +32,30 @@ func TestApplyTranscriptStreamMsgErrorRecordsReconnectError(t *testing.T) {
 	last := metrics[len(metrics)-1]
 	if last.Name != transcriptMetricReconnect || last.Outcome != transcriptOutcomeError || last.Reason != transcriptReasonReconnectStreamError || last.Stream != "transcript" {
 		t.Fatalf("unexpected reconnect error metric: %#v", last)
+	}
+}
+
+func TestApplyTranscriptStreamMsgCanceledErrorIsSilent(t *testing.T) {
+	sink := NewInMemoryTranscriptBoundaryMetricsSink()
+	m := newPhase0ModelWithSession("codex")
+	WithTranscriptBoundaryMetricsSink(sink)(&m)
+	m.recordReconnectAttempt("s1", "codex", "transcript", transcriptSourceApplyEventsStream)
+
+	m.applyTranscriptStreamMsg(transcriptStreamMsg{
+		id:  "s1",
+		err: context.Canceled,
+	})
+
+	if strings.Contains(strings.ToLower(m.status), "transcript stream error") {
+		t.Fatalf("expected canceled transcript stream open to stay silent, got status %q", m.status)
+	}
+	metrics := sink.Snapshot()
+	if len(metrics) == 0 {
+		t.Fatalf("expected reconnect metric for canceled stream open")
+	}
+	last := metrics[len(metrics)-1]
+	if last.Name != transcriptMetricReconnect || last.Outcome != transcriptOutcomeSkipped || last.Reason != transcriptReasonReconnectStreamCanceled {
+		t.Fatalf("unexpected canceled reconnect metric: %#v", last)
 	}
 }
 
@@ -431,5 +456,147 @@ func TestApplyTranscriptSnapshotMsgRecoveryAuthoritativeReplacesOlderRevision(t 
 	}
 	if m.transcriptRecoveryCoordinatorOrDefault().ShouldApplyAuthoritativeSnapshot("s1") {
 		t.Fatalf("expected recovery coordinator to mark session recovered")
+	}
+}
+
+func TestApplyLiveSessionItemsSnapshotAppliesForStartedSessionBeforeFirstEvent(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+
+	handled, _ := m.reduceStateMessages(startSessionMsg{
+		session: &types.Session{
+			ID:       "s2",
+			Provider: "codex",
+			Status:   types.SessionStatusRunning,
+			Title:    "Started session",
+		},
+		prompt: "hello from new session",
+	})
+	if !handled {
+		t.Fatalf("expected start session message to be handled")
+	}
+	if got := m.requestActivity.eventCount; got != 0 {
+		t.Fatalf("expected started session request activity to begin before events, got %d", got)
+	}
+
+	_, _ = m.transcriptStream.SetSnapshot(transcriptdomain.TranscriptSnapshot{
+		Revision: transcriptdomain.MustParseRevisionToken("1"),
+		Blocks: []transcriptdomain.Block{
+			{Kind: "assistant_message", Role: "assistant", Text: "live reply"},
+		},
+	})
+
+	applied := m.applyLiveSessionItemsSnapshot(sessionItemsMessageContext{
+		source: sessionProjectionSourceTail,
+		id:     "s2",
+		key:    "sess:s2",
+	})
+	if !applied {
+		t.Fatalf("expected started session live snapshot to apply before first event count increment")
+	}
+	if got := latestAssistantBlockText(m.currentBlocks()); got != "live reply" {
+		t.Fatalf("expected live reply to be visible, got %q", got)
+	}
+	if got := countBlocksByRoleAndText(m.currentBlocks(), ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected optimistic prompt to remain visible during live hydration, got %#v", m.currentBlocks())
+	}
+}
+
+func TestStartedSessionSnapshotRetainsOptimisticPromptUntilCanonicalUserArrives(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+
+	handled, _ := m.reduceStateMessages(startSessionMsg{
+		session: &types.Session{
+			ID:       "s2",
+			Provider: "codex",
+			Status:   types.SessionStatusRunning,
+			Title:    "Started session",
+		},
+		prompt: "hello from new session",
+	})
+	if !handled {
+		t.Fatalf("expected start session message to be handled")
+	}
+
+	cmd := m.applyTranscriptSnapshotMsg(transcriptSnapshotMsg{
+		id:     "s2",
+		key:    "sess:s2",
+		source: transcriptAttachmentSourceSessionStart,
+		snapshot: &transcriptdomain.TranscriptSnapshot{
+			SessionID: "s2",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("1"),
+			Blocks: []transcriptdomain.Block{
+				{Kind: "assistant_message", Role: "assistant", Text: "assistant reply"},
+			},
+		},
+	})
+	if cmd == nil {
+		t.Fatalf("expected started session snapshot to continue bootstrap")
+	}
+	if got := countBlocksByRoleAndText(m.currentBlocks(), ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected optimistic prompt to stay visible until canonical user arrives, got %#v", m.currentBlocks())
+	}
+	if got := latestAssistantBlockText(m.currentBlocks()); got != "assistant reply" {
+		t.Fatalf("expected assistant reply to be visible, got %q", got)
+	}
+
+	_ = m.applyTranscriptSnapshotMsg(transcriptSnapshotMsg{
+		id:     "s2",
+		key:    "sess:s2",
+		source: transcriptAttachmentSourceSessionStart,
+		snapshot: &transcriptdomain.TranscriptSnapshot{
+			SessionID: "s2",
+			Provider:  "codex",
+			Revision:  transcriptdomain.MustParseRevisionToken("2"),
+			Blocks: []transcriptdomain.Block{
+				{Kind: "user_message", Role: "user", Text: "hello from new session"},
+				{Kind: "assistant_message", Role: "assistant", Text: "assistant reply"},
+			},
+		},
+	})
+	if got := countBlocksByRoleAndText(m.currentBlocks(), ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected canonical user block to replace optimistic prompt without duplicates, got %#v", m.currentBlocks())
+	}
+	if len(m.pendingSends) != 0 || len(m.optimisticSends) != 0 {
+		t.Fatalf("expected optimistic start-session send state to resolve once canonical user arrives")
+	}
+}
+
+func TestStartedSessionPendingSnapshotKeepsPromptVisible(t *testing.T) {
+	m := newPhase0ModelWithSession("codex")
+	m.enterCompose("s1")
+	m.sessionTranscriptAPI = bootstrapTranscriptAPIStub{}
+
+	handled, _ := m.reduceStateMessages(startSessionMsg{
+		session: &types.Session{
+			ID:       "s2",
+			Provider: "codex",
+			Status:   types.SessionStatusRunning,
+			Title:    "Started session",
+		},
+		prompt: "hello from new session",
+	})
+	if !handled {
+		t.Fatalf("expected start session message to be handled")
+	}
+
+	cmd := m.applyTranscriptSnapshotMsg(transcriptSnapshotMsg{
+		id:     "s2",
+		key:    "sess:s2",
+		source: transcriptAttachmentSourceSessionStart,
+		err: &client.APIError{
+			StatusCode: 500,
+			Message:    "transcript history pending",
+			Code:       apicode.ErrorCodeTranscriptHistoryPending,
+		},
+		requestedLines: 200,
+	})
+	if cmd == nil {
+		t.Fatalf("expected pending snapshot error to trigger follow-up commands")
+	}
+	if got := countBlocksByRoleAndText(m.currentBlocks(), ChatRoleUser, "hello from new session"); got != 1 {
+		t.Fatalf("expected prompt to remain visible during pending snapshot retries, got %#v", m.currentBlocks())
 	}
 }
