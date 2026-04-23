@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,6 +73,52 @@ func TestNotificationPolicyResolverSessionOverridesWorktree(t *testing.T) {
 	}
 }
 
+func TestNotificationPolicyResolverWorktreeOverridesDefaults(t *testing.T) {
+	tmp := t.TempDir()
+	ctx := context.Background()
+	workspaceStore := store.NewFileWorkspaceStore(filepath.Join(tmp, "workspaces.json"))
+	repoPath := filepath.Join(tmp, "repo")
+	worktreePath := filepath.Join(tmp, "wt")
+	if err := os.MkdirAll(repoPath, 0o700); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	if err := os.MkdirAll(worktreePath, 0o700); err != nil {
+		t.Fatalf("mkdir wt: %v", err)
+	}
+	ws, err := workspaceStore.Add(ctx, &types.Workspace{Name: "repo", RepoPath: repoPath})
+	if err != nil {
+		t.Fatalf("add workspace: %v", err)
+	}
+	enabled := true
+	wt, err := workspaceStore.AddWorktree(ctx, ws.ID, &types.Worktree{
+		Path: worktreePath,
+		NotificationOverrides: &types.NotificationSettingsPatch{
+			Enabled: &enabled,
+			Methods: []types.NotificationMethod{types.NotificationMethodBell},
+		},
+	})
+	if err != nil {
+		t.Fatalf("add worktree: %v", err)
+	}
+
+	defaults := types.DefaultNotificationSettings()
+	defaults.Enabled = false
+	defaults.Methods = []types.NotificationMethod{types.NotificationMethodNotifySend}
+	resolver := NewNotificationPolicyResolver(defaults, &Stores{Worktrees: workspaceStore}, logging.Nop())
+
+	settings := resolver.Resolve(context.Background(), types.NotificationEvent{
+		WorkspaceID: ws.ID,
+		WorktreeID:  wt.ID,
+		Trigger:     types.NotificationTriggerTurnCompleted,
+	})
+	if !settings.Enabled {
+		t.Fatalf("expected worktree override to enable notifications")
+	}
+	if len(settings.Methods) != 1 || settings.Methods[0] != types.NotificationMethodBell {
+		t.Fatalf("expected worktree method override, got %#v", settings.Methods)
+	}
+}
+
 func TestNotificationPolicyResolverHonorsContextCancellation(t *testing.T) {
 	defaults := types.DefaultNotificationSettings()
 	defaults.Enabled = true
@@ -126,6 +173,62 @@ func TestNotificationDispatcherRunsScriptWithPayload(t *testing.T) {
 	}
 	if !strings.Contains(text, "turn.completed") {
 		t.Fatalf("expected trigger in payload, got %q", text)
+	}
+}
+
+func TestNotificationDispatcherRunsScriptWithPayloadAndEnv(t *testing.T) {
+	dispatcherRaw := NewNotificationDispatcher(nil, logging.Nop())
+	dispatcher, ok := dispatcherRaw.(*defaultNotificationDispatcher)
+	if !ok {
+		t.Fatalf("expected default dispatcher, got %T", dispatcherRaw)
+	}
+	runner := &captureNotificationScriptRunner{}
+	dispatcher.scriptRunner = runner
+	event := types.NotificationEvent{
+		Trigger:     types.NotificationTriggerTurnCompleted,
+		OccurredAt:  time.Now().UTC().Format(time.RFC3339Nano),
+		SessionID:   "sess-script-env",
+		WorkspaceID: "ws-script",
+		WorktreeID:  "wt-script",
+		Provider:    "codex",
+		Status:      "completed",
+		TurnID:      "turn-script",
+		Cwd:         "/tmp/archon-script",
+	}
+	settings := types.NotificationSettings{
+		Enabled:              true,
+		ScriptCommands:       []string{"notify-script"},
+		ScriptTimeoutSeconds: 2,
+	}
+	if err := dispatcher.Dispatch(context.Background(), event, settings); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if runner.command != "notify-script" {
+		t.Fatalf("unexpected script command: %q", runner.command)
+	}
+	var payload types.NotificationEvent
+	if err := json.Unmarshal(runner.payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.SessionID != event.SessionID || payload.Trigger != event.Trigger {
+		t.Fatalf("unexpected script payload: %#v", payload)
+	}
+	env := envMap(runner.env)
+	for key, want := range map[string]string{
+		"ARCHON_EVENT":           string(event.Trigger),
+		"ARCHON_SESSION_ID":      event.SessionID,
+		"ARCHON_WORKSPACE_ID":    event.WorkspaceID,
+		"ARCHON_WORKTREE_ID":     event.WorktreeID,
+		"ARCHON_PROVIDER":        event.Provider,
+		"ARCHON_STATUS":          event.Status,
+		"ARCHON_TURN_ID":         event.TurnID,
+		"ARCHON_CWD":             event.Cwd,
+		"ARCHON_NOTIFICATION_AT": event.OccurredAt,
+	} {
+		if got := env[key]; got != want {
+			t.Fatalf("expected %s=%q, got %q", key, want, got)
+		}
 	}
 }
 
@@ -587,6 +690,31 @@ func (d *stubNotificationDispatcher) Dispatch(ctx context.Context, event types.N
 	d.count++
 	d.mu.Unlock()
 	return nil
+}
+
+type captureNotificationScriptRunner struct {
+	command string
+	payload []byte
+	env     []string
+}
+
+func (r *captureNotificationScriptRunner) Run(ctx context.Context, command string, payload []byte, env []string) error {
+	r.command = command
+	r.payload = append([]byte(nil), payload...)
+	r.env = append([]string(nil), env...)
+	return nil
+}
+
+func envMap(values []string) map[string]string {
+	out := map[string]string{}
+	for _, value := range values {
+		key, val, ok := strings.Cut(value, "=")
+		if !ok {
+			continue
+		}
+		out[key] = val
+	}
+	return out
 }
 
 type blockingSessionMetaStore struct{}
