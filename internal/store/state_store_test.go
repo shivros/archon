@@ -36,7 +36,8 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 		"s1": []string{"hello", "world"},
 	}
 	state.ProviderBadges = map[string]*types.ProviderBadgeConfig{
-		"codex": {Prefix: "[GPT]", Color: "231"},
+		"codex":  {Prefix: "[GPT]", Color: "231"},
+		"claude": {Prefix: "[ANT]", Color: "208"},
 	}
 	state.Recents = &types.AppStateRecents{
 		Version: 1,
@@ -74,7 +75,10 @@ func TestAppStateStoreRoundTrip(t *testing.T) {
 		t.Fatalf("expected compose history to round-trip")
 	}
 	if loaded.ProviderBadges["codex"] == nil || loaded.ProviderBadges["codex"].Prefix != "[GPT]" || loaded.ProviderBadges["codex"].Color != "231" {
-		t.Fatalf("expected provider badge overrides to round-trip")
+		t.Fatalf("expected codex provider badge override to round-trip")
+	}
+	if loaded.ProviderBadges["claude"] == nil || loaded.ProviderBadges["claude"].Prefix != "[ANT]" || loaded.ProviderBadges["claude"].Color != "208" {
+		t.Fatalf("expected claude provider badge override to round-trip")
 	}
 	if loaded.Recents == nil {
 		t.Fatalf("expected recents state to round-trip")

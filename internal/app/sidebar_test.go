@@ -193,6 +193,54 @@ func TestResolveProviderBadgeAppliesOverrides(t *testing.T) {
 	}
 }
 
+func TestResolveProviderBadgeAppliesPartialOverrides(t *testing.T) {
+	_ = ApplyTheme("default")
+	overrides := normalizeProviderBadgeOverrides(map[string]*types.ProviderBadgeConfig{
+		"codex": {
+			Prefix: "   ",
+			Color:  "231",
+		},
+		"claude": {
+			Prefix: "[ANT]",
+			Color:  "   ",
+		},
+	})
+
+	codex := resolveProviderBadge("codex", overrides)
+	if codex.Prefix != "[CDX]" {
+		t.Fatalf("expected blank prefix override to keep default [CDX], got %q", codex.Prefix)
+	}
+	if codex.Color != "231" {
+		t.Fatalf("expected color override 231, got %q", codex.Color)
+	}
+
+	claude := resolveProviderBadge("claude", overrides)
+	if claude.Prefix != "[ANT]" {
+		t.Fatalf("expected prefix override [ANT], got %q", claude.Prefix)
+	}
+	if claude.Color != "208" {
+		t.Fatalf("expected blank color override to keep default 208, got %q", claude.Color)
+	}
+}
+
+func TestNormalizeProviderBadgeOverridesIgnoresBlankKeys(t *testing.T) {
+	overrides := normalizeProviderBadgeOverrides(map[string]*types.ProviderBadgeConfig{
+		"   ":     {Prefix: "[BAD]", Color: "1"},
+		"\t\n":    {Prefix: "[TAB]", Color: "2"},
+		" CoDeX ": {Prefix: "[GPT]", Color: "231"},
+	})
+
+	if len(overrides) != 1 {
+		t.Fatalf("expected only normalized codex override, got %#v", overrides)
+	}
+	if overrides["codex"] == nil || overrides["codex"].Prefix != "[GPT]" || overrides["codex"].Color != "231" {
+		t.Fatalf("expected normalized codex override to remain, got %#v", overrides["codex"])
+	}
+	if _, ok := overrides[""]; ok {
+		t.Fatalf("expected blank override key to be ignored")
+	}
+}
+
 func TestResolveProviderBadgeUnknownProviderFallback(t *testing.T) {
 	resolved := resolveProviderBadge("open code", nil)
 	if resolved.Prefix != "[OPE]" {

@@ -89,6 +89,9 @@ Session rows in the TUI sidebar show provider badges (for example `[CDX]`, `[CLD
 ```
 
 `color` accepts Lip Gloss-compatible terminal colors (ANSI index like `"208"` or hex like `"#ff8a3d"`).
+Provider keys are normalized by trimming whitespace and lowercasing before lookup. You can set only
+`prefix` or only `color`; omitted or blank fields keep the built-in default for that provider. Unknown
+providers fall back to a derived three-character badge and the default fallback color.
 
 ## Configuration Files
 Archon separates core/daemon config, UI config, and UI keybindings:
