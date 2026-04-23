@@ -470,7 +470,10 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 		close(runtimeState.done)
 	}
 
-	return cloneSession(session), nil
+	m.mu.Lock()
+	resumedSession := cloneSession(session)
+	m.mu.Unlock()
+	return resumedSession, nil
 }
 
 func (m *SessionManager) Subscribe(id, stream string) (<-chan types.LogEvent, func(), error) {
