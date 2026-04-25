@@ -55,10 +55,15 @@ func buildCommands(wiring commandWiring) map[string]commandRunner {
 		"whoami":  NewWhoAmICommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
 		"logout":  NewLogoutCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
 		"ps":      NewPSCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"session": newSessionCommand(wiring.newSessionClient, wiring.stdout, wiring.stderr),
 		"start":   NewStartCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
-		"kill":    NewKillCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
-		"tail":    NewTailCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
-		"ui":      NewUICommand(wiring.stderr, wiring.newUIClient, wiring.configureUILogging, wiring.version),
+		"kill":      NewKillCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"interrupt": NewInterruptCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"send":      NewSendCommand(wiring.stdout, wiring.stderr, os.Stdin, wiring.newSessionClient),
+		"tail":      NewTailCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"approvals": NewApprovalsCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"approve":   NewApproveCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"ui":        NewUICommand(wiring.stderr, wiring.newUIClient, wiring.configureUILogging, wiring.version),
 		"version": NewVersionCommand(wiring.stdout, wiring.stderr),
 	}
 }

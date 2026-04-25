@@ -18,10 +18,15 @@ Commands:
   whoami   show current Archon Cloud link status
   logout   unlink this Archon daemon from Archon Cloud
   ps       list sessions
+  session  show full details for one session
   start    start a session
   kill     kill a session
-  tail     show recent session output
-  ui       run terminal UI (placeholder)
+  interrupt stop the in-flight turn for a session
+  send     send a message to a session
+  tail     show recent session output (use --follow to stream live)
+  approvals list pending approvals for a session
+  approve   respond to a pending approval
+  ui       run terminal UI
   version  print CLI build metadata
   help     show help
 
@@ -34,11 +39,23 @@ Daemon flags:
   --force         stop any running daemon before starting
   --kill          stop any running daemon and exit
 
+UI flags:
+  --restart-daemon         restart daemon before launching UI
+  --ignore-daemon-mismatch start UI even if daemon version mismatches
+
 Examples:
   archon ps
+  archon session abc123
+  archon session abc123 --format human
   archon config --scope core --format toml
   archon start --provider codex --cwd . -- --help
   archon tail <id> --lines 200
+  archon tail <id> --follow --stream stderr
+  archon send <id> "hello"
+  archon send <id> --input-items items.json --json
+  archon interrupt <id>
+  archon approvals <id>
+  archon approve <id> --request-id 1 --decision allow_once
 `
 
 var rootCommandAliases = map[string]string{
