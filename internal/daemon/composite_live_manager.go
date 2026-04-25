@@ -430,13 +430,14 @@ func cloneSessionShallow(session *types.Session) *types.Session {
 }
 
 // NewIntegrationLiveManager creates a CompositeLiveManager with factories for
-// all built-in providers (codex, claude, opencode, kilocode). This is exported
+// all built-in providers (codex, claude, hermes, opencode, kilocode). This is exported
 // for use by integration tests in other packages (e.g. internal/app).
 func NewIntegrationLiveManager(stores *Stores, manager *SessionManager, codex *CodexLiveManager, logger logging.Logger) *CompositeLiveManager {
 	artifactRepository := newFileSessionItemsRepository(manager)
 	return NewCompositeLiveManager(stores, logger,
 		newCodexLiveSessionFactory(codex),
 		newClaudeLiveSessionFactory(manager, stores, nil, nil, logger),
+		newHermesLiveSessionFactory(manager, nil, logger),
 		newOpenCodeLiveSessionFactory("opencode", nil, nil, artifactRepository, nil, nil, logger),
 		newOpenCodeLiveSessionFactory("kilocode", nil, nil, artifactRepository, nil, nil, logger),
 	)

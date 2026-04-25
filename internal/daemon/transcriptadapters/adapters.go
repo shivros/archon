@@ -52,6 +52,9 @@ func NewDefaultProviderTranscriptAdapterRegistry() *ProviderTranscriptAdapterReg
 			adapter := NewClaudeTranscriptAdapter(providerName)
 			return ProviderAdapterBundle{Item: adapter}
 		},
+		providers.RuntimeACP: func(providerName string) ProviderAdapterBundle {
+			return ProviderAdapterBundle{Event: NewHermesTranscriptAdapter(providerName)}
+		},
 		providers.RuntimeOpenCodeServer: func(providerName string) ProviderAdapterBundle {
 			adapter := NewOpenCodeTranscriptAdapter(providerName)
 			return ProviderAdapterBundle{Event: adapter, Item: adapter}

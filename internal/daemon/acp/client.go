@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -95,6 +96,10 @@ type Client struct {
 	readDone  chan struct{}
 	closed    chan struct{}
 	closeErr  error
+
+	procMu   sync.Mutex
+	procDone chan struct{}
+	procErr  error
 
 	// shutdownCtx is cancelled by Close so in-flight handler goroutines can
 	// observe shutdown and return.
@@ -188,6 +193,14 @@ func Start(ctx context.Context, opts StartOptions) (*Client, error) {
 	c := newClient(stdout, stdin, opts.CloseTimeout, opts.Logger)
 	c.cmd = cmd
 	c.stdout = stdout
+	c.procDone = make(chan struct{})
+	go func() {
+		err := cmd.Wait()
+		c.procMu.Lock()
+		c.procErr = err
+		c.procMu.Unlock()
+		close(c.procDone)
+	}()
 
 	if err := c.initialize(ctx, opts); err != nil {
 		_ = c.Close(context.Background())
@@ -272,6 +285,31 @@ func (c *Client) AgentInfo() ImplementationInfo {
 // Done is closed when the read loop has exited. Callers may select on it to
 // detect a disconnected or crashed agent.
 func (c *Client) Done() <-chan struct{} { return c.readDone }
+
+// Process returns the owned subprocess when the client was started via Start.
+func (c *Client) Process() *os.Process {
+	if c == nil || c.cmd == nil {
+		return nil
+	}
+	return c.cmd.Process
+}
+
+// Wait waits for the owned subprocess to exit. For clients created without a
+// subprocess, it waits for the read loop to terminate.
+func (c *Client) Wait() error {
+	if c == nil {
+		return nil
+	}
+	c.ensureProcWaiter()
+	if c.procDone == nil {
+		<-c.readDone
+		return nil
+	}
+	<-c.procDone
+	c.procMu.Lock()
+	defer c.procMu.Unlock()
+	return c.procErr
+}
 
 // Call issues a JSON-RPC request, blocks until the agent responds or ctx is
 // cancelled, and decodes the result into out (if non-nil). An RPC error from
@@ -384,15 +422,10 @@ func (c *Client) Close(ctx context.Context) error {
 		c.mu.Lock()
 		c.stopped = true
 		c.mu.Unlock()
+		c.ensureProcWaiter()
 
 		c.cancelShutdown()
 		_ = c.stdin.Close()
-
-		var procExited chan error
-		if c.cmd != nil {
-			procExited = make(chan error, 1)
-			go func() { procExited <- c.cmd.Wait() }()
-		}
 
 		deadline := time.After(c.closeTimeout)
 
@@ -405,15 +438,18 @@ func (c *Client) Close(ctx context.Context) error {
 		case <-ctx.Done():
 		}
 
-		if procExited != nil {
+		if c.procDone != nil {
 			select {
-			case err := <-procExited:
+			case <-c.procDone:
+				c.procMu.Lock()
+				err := c.procErr
+				c.procMu.Unlock()
 				if err != nil && !isExpectedExit(err) {
 					c.closeErr = err
 				}
 			default:
 				_ = c.cmd.Process.Kill()
-				<-procExited
+				<-c.procDone
 				if ctx.Err() != nil {
 					c.closeErr = ctx.Err()
 				} else {
@@ -433,6 +469,27 @@ func (c *Client) Close(ctx context.Context) error {
 func isExpectedExit(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr)
+}
+
+func (c *Client) ensureProcWaiter() {
+	if c == nil || c.cmd == nil {
+		return
+	}
+	c.procMu.Lock()
+	if c.procDone != nil {
+		c.procMu.Unlock()
+		return
+	}
+	c.procDone = make(chan struct{})
+	cmd := c.cmd
+	c.procMu.Unlock()
+	go func() {
+		err := cmd.Wait()
+		c.procMu.Lock()
+		c.procErr = err
+		c.procMu.Unlock()
+		close(c.procDone)
+	}()
 }
 
 func (c *Client) readLoop() {

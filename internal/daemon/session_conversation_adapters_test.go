@@ -305,7 +305,7 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 			SessionMeta: metaStore,
 		}, nil, nil)
 		want := &types.SessionRuntimeOptions{
-			Model:     "gpt-5.2-codex",
+			Model:     "gpt-5.4-codex",
 			Reasoning: types.ReasoningHigh,
 		}
 		if err := service.persistRuntimeOptionsAfterSend(context.Background(), "s1", want); err != nil {

@@ -161,6 +161,10 @@ func defaultConversationPortsFor(
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
 		return live, codexHistoryReader{providerName: name, fallback: fallbackHistory}, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+	case providers.RuntimeACP:
+		name := providers.Normalize(def.Name)
+		live := liveManagerConversationSender{providerName: name}
+		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
 	case providers.RuntimeClaude:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}

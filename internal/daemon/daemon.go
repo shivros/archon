@@ -166,6 +166,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.logger,
 		newCodexLiveSessionFactory(liveCodex),
 		newClaudeLiveSessionFactory(d.manager, d.stores, artifactRepository, turnNotifier, d.logger),
+		newHermesLiveSessionFactory(d.manager, approvalStore, d.logger),
 		newOpenCodeLiveSessionFactory("opencode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, NewTurnEvidenceFreshnessTracker(), d.logger),
 		newOpenCodeLiveSessionFactory("kilocode", turnNotifier, approvalStore, artifactRepository, defaultTurnCompletionPayloadBuilder{}, NewTurnEvidenceFreshnessTracker(), d.logger),
 	)

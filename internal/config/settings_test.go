@@ -106,7 +106,7 @@ max_retry_attempts = 4
 [providers.codex]
 command = "/usr/local/bin/codex"
 default_model = "gpt-5.3-codex"
-models = ["gpt-5.3-codex", "gpt-5.2-codex"]
+models = ["gpt-5.3-codex", "gpt-5.4-codex"]
 approval_policy = "on-request"
 sandbox_policy = "workspace-write"
 network_access = false
@@ -775,7 +775,7 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 			Mode:            " guarded-autopilot ",
 			Defaults: CoreGuidedWorkflowsDefaultsConfig{
 				Provider:           " CoDeX ",
-				Model:              " gpt-5.2-codex ",
+				Model:              " gpt-5.4-codex ",
 				Access:             " full-access ",
 				Reasoning:          " EXTRA-HIGH ",
 				ResolutionBoundary: " HIGH ",
@@ -814,8 +814,8 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 		Providers: CoreProvidersConfig{
 			Codex: CoreCodexProviderConfig{
 				Command:        " codex-bin ",
-				DefaultModel:   " gpt-5.2-codex ",
-				Models:         []string{" gpt-5.2-codex ", "", "gpt-5.2-codex", "gpt-5.3-codex"},
+				DefaultModel:   " gpt-5.4-codex ",
+				Models:         []string{" gpt-5.4-codex ", "", "gpt-5.4-codex", "gpt-5.3-codex"},
 				ApprovalPolicy: " on-request ",
 				SandboxPolicy:  " workspace-write ",
 				NetworkAccess:  &networkAccess,
@@ -913,13 +913,13 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	if got := cfg.ProviderCommand("unknown"); got != "" {
 		t.Fatalf("unexpected unknown provider command: %q", got)
 	}
-	if got := cfg.CodexDefaultModel(); got != "gpt-5.2-codex" {
+	if got := cfg.CodexDefaultModel(); got != "gpt-5.4-codex" {
 		t.Fatalf("unexpected codex default model: %q", got)
 	}
 	if got := cfg.ClaudeDefaultModel(); got != "opus" {
 		t.Fatalf("unexpected claude default model: %q", got)
 	}
-	if got := cfg.CodexModels(); len(got) != 2 || got[0] != "gpt-5.2-codex" || got[1] != "gpt-5.3-codex" {
+	if got := cfg.CodexModels(); len(got) != 2 || got[0] != "gpt-5.4-codex" || got[1] != "gpt-5.3-codex" {
 		t.Fatalf("unexpected codex models: %#v", got)
 	}
 	if got := cfg.ClaudeModels(); len(got) != 2 || got[0] != "opus" || got[1] != "sonnet" {
@@ -949,7 +949,7 @@ func TestCoreConfigAccessorsNormalizeValues(t *testing.T) {
 	if got := cfg.GuidedWorkflowsDefaultProvider(); got != "codex" {
 		t.Fatalf("unexpected guided workflows default provider: %q", got)
 	}
-	if got := cfg.GuidedWorkflowsDefaultModel(); got != "gpt-5.2-codex" {
+	if got := cfg.GuidedWorkflowsDefaultModel(); got != "gpt-5.4-codex" {
 		t.Fatalf("unexpected guided workflows default model: %q", got)
 	}
 	if got := cfg.GuidedWorkflowsDefaultAccessLevel(); got != "full_access" {

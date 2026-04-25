@@ -2946,8 +2946,8 @@ func TestMouseReducerComposeOptionPickerClickSelectsOption(t *testing.T) {
 	if m.newSession == nil || m.newSession.runtimeOptions == nil {
 		t.Fatalf("expected runtime options to be updated")
 	}
-	if got := m.newSession.runtimeOptions.Model; got != "gpt-5.2-codex" {
-		t.Fatalf("expected model gpt-5.2-codex, got %q", got)
+	if got := m.newSession.runtimeOptions.Model; got != "gpt-5.4-codex" {
+		t.Fatalf("expected model gpt-5.4-codex, got %q", got)
 	}
 }
 

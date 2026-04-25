@@ -23,6 +23,7 @@ var ErrSessionNotFound = errors.New("session not found")
 var ErrSessionNotLive = errors.New("session not live")
 
 type StartSessionConfig struct {
+	SessionID             string
 	Provider              string
 	Cmd                   string
 	Cwd                   string
@@ -265,6 +266,7 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 		// Always attach provider identifiers to the immutable Archon session ID.
 		m.upsertSessionProviderID(cfg.Provider, session.ID, providerID)
 	}
+	cfg.SessionID = sessionID
 	caps := providers.CapabilitiesFor(cfg.Provider)
 	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
@@ -394,6 +396,7 @@ func (m *SessionManager) ResumeSession(cfg StartSessionConfig, session *types.Se
 	m.mu.Unlock()
 
 	caps := providers.CapabilitiesFor(cfg.Provider)
+	cfg.SessionID = session.ID
 	proc, err := provider.Start(cfg, runtimeState.sink, runtimeState.items)
 	if err != nil {
 		m.mu.Lock()

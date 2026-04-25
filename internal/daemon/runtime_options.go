@@ -16,6 +16,21 @@ func providerOptionCatalog(provider string) *types.ProviderOptionCatalog {
 		return codexProviderOptionCatalog()
 	case "claude":
 		return claudeProviderOptionCatalog()
+	case "hermes":
+		coreCfg := loadCoreConfigOrDefault()
+		models := coreCfg.HermesModels()
+		defaultModel := coreCfg.HermesDefaultModel()
+		if defaultModel != "" && !slices.Contains(models, defaultModel) {
+			models = append([]string{defaultModel}, models...)
+		}
+		return &types.ProviderOptionCatalog{
+			Provider: "hermes",
+			Models:   models,
+			Defaults: types.SessionRuntimeOptions{
+				Model:   defaultModel,
+				Version: 1,
+			},
+		}
 	case "opencode", "kilocode":
 		coreCfg := loadCoreConfigOrDefault()
 		return &types.ProviderOptionCatalog{
@@ -48,13 +63,13 @@ func codexProviderOptionCatalog() *types.ProviderOptionCatalog {
 		},
 		ModelReasoningLevels: map[string][]types.ReasoningLevel{
 			"gpt-5.1-codex":     {types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh, types.ReasoningExtraHigh},
-			"gpt-5.2-codex":     {types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh, types.ReasoningExtraHigh},
+			"gpt-5.4-codex":     {types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh, types.ReasoningExtraHigh},
 			"gpt-5.3-codex":     {types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh, types.ReasoningExtraHigh},
 			"gpt-5.1-codex-max": {types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh, types.ReasoningExtraHigh},
 		},
 		ModelDefaultReasoning: map[string]types.ReasoningLevel{
 			"gpt-5.1-codex":     types.ReasoningMedium,
-			"gpt-5.2-codex":     types.ReasoningMedium,
+			"gpt-5.4-codex":     types.ReasoningMedium,
 			"gpt-5.3-codex":     types.ReasoningMedium,
 			"gpt-5.1-codex-max": types.ReasoningMedium,
 		},

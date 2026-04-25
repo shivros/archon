@@ -513,7 +513,7 @@ func TestParseWorkflowTemplateCatalogJSONLocalStepOverrideWorks(t *testing.T) {
 					"name": "implementation",
 					"prompt_ref": "base",
 					"runtime_options": {
-						"model": "gpt-5.2-codex",
+						"model": "gpt-5.4-codex",
 						"reasoning": "high"
 					}
 				}

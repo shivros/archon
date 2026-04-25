@@ -2610,7 +2610,7 @@ func TestGuidedWorkflowPromptDispatcherTemplateAccessOverridesConfiguredDefaultA
 		sessions: gateway,
 		defaults: guidedWorkflowDispatchDefaults{
 			Provider: "codex",
-			Model:    "gpt-5.2-codex",
+			Model:    "gpt-5.4-codex",
 			Access:   types.AccessFull,
 		},
 	}
@@ -2634,7 +2634,7 @@ func TestGuidedWorkflowPromptDispatcherTemplateAccessOverridesConfiguredDefaultA
 	if runtime.Access != types.AccessReadOnly {
 		t.Fatalf("expected template access to override configured default access, got %q", runtime.Access)
 	}
-	if runtime.Model != "gpt-5.2-codex" {
+	if runtime.Model != "gpt-5.4-codex" {
 		t.Fatalf("expected configured default model to remain set, got %q", runtime.Model)
 	}
 }

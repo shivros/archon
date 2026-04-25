@@ -13,8 +13,8 @@ func TestCodexProviderOptionCatalogFromModels(t *testing.T) {
 
 	catalog := codexProviderOptionCatalogFromModels([]codexModelSummary{
 		{
-			ID:                     "gpt-5.2-codex",
-			Model:                  "gpt-5.2-codex",
+			ID:                     "gpt-5.4-codex",
+			Model:                  "gpt-5.4-codex",
 			DefaultReasoningEffort: "medium",
 			IsDefault:              true,
 			ReasoningEffort: []codexReasoningEffortDef{
@@ -37,10 +37,10 @@ func TestCodexProviderOptionCatalogFromModels(t *testing.T) {
 	if len(catalog.Models) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(catalog.Models))
 	}
-	if catalog.Models[0] != "gpt-5.2-codex" {
+	if catalog.Models[0] != "gpt-5.4-codex" {
 		t.Fatalf("expected default model first, got %q", catalog.Models[0])
 	}
-	if catalog.Defaults.Model != "gpt-5.2-codex" {
+	if catalog.Defaults.Model != "gpt-5.4-codex" {
 		t.Fatalf("expected default model from dynamic list, got %q", catalog.Defaults.Model)
 	}
 	if catalog.Defaults.Reasoning != types.ReasoningMedium {
@@ -49,11 +49,11 @@ func TestCodexProviderOptionCatalogFromModels(t *testing.T) {
 	if len(catalog.ReasoningLevels) < 3 {
 		t.Fatalf("expected merged reasoning levels, got %v", catalog.ReasoningLevels)
 	}
-	levels, ok := modelReasoningLevelsFor(catalog, "gpt-5.2-codex")
+	levels, ok := modelReasoningLevelsFor(catalog, "gpt-5.4-codex")
 	if !ok || len(levels) == 0 {
-		t.Fatalf("expected model-specific reasoning levels for gpt-5.2-codex")
+		t.Fatalf("expected model-specific reasoning levels for gpt-5.4-codex")
 	}
-	defaultLevel, ok := modelDefaultReasoningFor(catalog, "gpt-5.2-codex")
+	defaultLevel, ok := modelDefaultReasoningFor(catalog, "gpt-5.4-codex")
 	if !ok || defaultLevel != types.ReasoningMedium {
 		t.Fatalf("expected model default reasoning medium, got %q", defaultLevel)
 	}
@@ -77,7 +77,7 @@ func TestResolveRuntimeOptionsValidatesReasoningByModel(t *testing.T) {
 	t.Parallel()
 
 	options, err := resolveRuntimeOptions("codex", nil, &types.SessionRuntimeOptions{
-		Model:     "gpt-5.2-codex",
+		Model:     "gpt-5.4-codex",
 		Reasoning: types.ReasoningHigh,
 	}, true)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestResolveRuntimeOptionsValidatesReasoningByModel(t *testing.T) {
 	}
 
 	_, err = resolveRuntimeOptions("codex", nil, &types.SessionRuntimeOptions{
-		Model:     "gpt-5.2-codex",
+		Model:     "gpt-5.4-codex",
 		Reasoning: "turbo",
 	}, true)
 	if err == nil {
@@ -101,8 +101,8 @@ func TestCodexProviderOptionCatalogFromModelsFallsBackWhenOnlyDefaultEffortProvi
 
 	catalog := codexProviderOptionCatalogFromModels([]codexModelSummary{
 		{
-			ID:                     "gpt-5.2-codex",
-			Model:                  "gpt-5.2-codex",
+			ID:                     "gpt-5.4-codex",
+			Model:                  "gpt-5.4-codex",
 			DefaultReasoningEffort: "medium",
 			IsDefault:              true,
 		},
@@ -113,7 +113,7 @@ func TestCodexProviderOptionCatalogFromModelsFallsBackWhenOnlyDefaultEffortProvi
 	if len(catalog.ReasoningLevels) < 3 {
 		t.Fatalf("expected fallback provider reasoning levels, got %v", catalog.ReasoningLevels)
 	}
-	levels, ok := modelReasoningLevelsFor(catalog, "gpt-5.2-codex")
+	levels, ok := modelReasoningLevelsFor(catalog, "gpt-5.4-codex")
 	if !ok || len(levels) < 3 {
 		t.Fatalf("expected fallback model reasoning levels, got %v", levels)
 	}
@@ -185,7 +185,7 @@ func TestProviderOptionCatalogUsesConfigModels(t *testing.T) {
 	content := []byte(`
 [providers.codex]
 default_model = "gpt-5.3-codex"
-models = ["gpt-5.2-codex"]
+models = ["gpt-5.4-codex"]
 
 [providers.claude]
 default_model = "opus"

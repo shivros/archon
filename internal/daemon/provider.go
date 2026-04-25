@@ -60,6 +60,14 @@ var providerFactories = map[providers.Runtime]providerFactory{
 	providers.RuntimeClaude: func(_ providers.Definition, commandName string) (Provider, error) {
 		return newClaudeProvider(commandName)
 	},
+	providers.RuntimeACP: func(def providers.Definition, commandName string) (Provider, error) {
+		switch providers.Normalize(def.Name) {
+		case "hermes":
+			return newHermesProvider(commandName)
+		default:
+			return nil, fmt.Errorf("provider runtime is not supported: %s", def.Runtime)
+		}
+	},
 	providers.RuntimeExec: func(def providers.Definition, commandName string) (Provider, error) {
 		return newExecProvider(def.Name, commandName, nil)
 	},

@@ -81,7 +81,7 @@ func TestSessionTitleUpdate(t *testing.T) {
 
 	runtimeUpdateReq := UpdateSessionRequest{
 		RuntimeOptions: &types.SessionRuntimeOptions{
-			Model:     "gpt-5.2-codex",
+			Model:     "gpt-5.4-codex",
 			Reasoning: types.ReasoningHigh,
 			Access:    types.AccessOnRequest,
 		},
@@ -106,7 +106,7 @@ func TestSessionTitleUpdate(t *testing.T) {
 	if !ok || meta == nil || meta.RuntimeOptions == nil {
 		t.Fatalf("expected runtime options to persist")
 	}
-	if meta.RuntimeOptions.Model != "gpt-5.2-codex" {
+	if meta.RuntimeOptions.Model != "gpt-5.4-codex" {
 		t.Fatalf("expected runtime model to persist, got %q", meta.RuntimeOptions.Model)
 	}
 	if meta.RuntimeOptions.Reasoning != types.ReasoningHigh {

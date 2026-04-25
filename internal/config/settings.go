@@ -18,7 +18,7 @@ import (
 
 const defaultDaemonAddress = "127.0.0.1:7777"
 const (
-	defaultCodexModel                              = "gpt-5.1-codex"
+	defaultCodexModel                              = "gpt-5.4-codex"
 	defaultClaudeModel                             = "sonnet"
 	defaultGuidedWorkflowsCheckpointStyle          = "confidence_weighted"
 	defaultGuidedWorkflowsMode                     = "guarded_autopilot"
@@ -37,7 +37,7 @@ const (
 
 var defaultCodexModels = []string{
 	"gpt-5.1-codex",
-	"gpt-5.2-codex",
+	"gpt-5.4-codex",
 	"gpt-5.3-codex",
 	"gpt-5.1-codex-max",
 }
@@ -153,6 +153,7 @@ type CoreTitleGenerationOpenRouterConfig struct {
 type CoreProvidersConfig struct {
 	Codex    CoreCodexProviderConfig    `toml:"codex"`
 	Claude   CoreClaudeProviderConfig   `toml:"claude"`
+	Hermes   CoreHermesProviderConfig   `toml:"hermes"`
 	OpenCode CoreOpenCodeProviderConfig `toml:"opencode"`
 	KiloCode CoreOpenCodeProviderConfig `toml:"kilocode"`
 	Gemini   CoreCommandProviderConfig  `toml:"gemini"`
@@ -186,6 +187,14 @@ type CoreClaudeProviderConfig struct {
 	DefaultModel   string   `toml:"default_model"`
 	Models         []string `toml:"models"`
 	IncludePartial bool     `toml:"include_partial"`
+}
+
+type CoreHermesProviderConfig struct {
+	Command      string   `toml:"command"`
+	Args         []string `toml:"args"`
+	DefaultModel string   `toml:"default_model"`
+	Models       []string `toml:"models"`
+	Env          []string `toml:"env"`
 }
 
 type UIConfig struct {
@@ -632,6 +641,8 @@ func (c CoreConfig) ProviderCommand(provider string) string {
 		return strings.TrimSpace(c.Providers.Codex.Command)
 	case "claude":
 		return strings.TrimSpace(c.Providers.Claude.Command)
+	case "hermes":
+		return strings.TrimSpace(c.Providers.Hermes.Command)
 	case "opencode":
 		return strings.TrimSpace(c.Providers.OpenCode.Command)
 	case "kilocode":
@@ -736,6 +747,22 @@ func (c CoreConfig) ClaudeModels() []string {
 
 func (c CoreConfig) ClaudeIncludePartial() bool {
 	return c.Providers.Claude.IncludePartial
+}
+
+func (c CoreConfig) HermesDefaultModel() string {
+	return strings.TrimSpace(c.Providers.Hermes.DefaultModel)
+}
+
+func (c CoreConfig) HermesModels() []string {
+	return normalizedList(c.Providers.Hermes.Models)
+}
+
+func (c CoreConfig) HermesArgs() []string {
+	return normalizedList(c.Providers.Hermes.Args)
+}
+
+func (c CoreConfig) HermesEnv() []string {
+	return normalizedList(c.Providers.Hermes.Env)
 }
 
 func (c CoreConfig) CodexApprovalPolicy() string {

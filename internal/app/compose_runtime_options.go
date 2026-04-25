@@ -42,7 +42,7 @@ func (m *Model) providerOptionCatalog(provider string) *types.ProviderOptionCata
 			Provider: "codex",
 			Models: []string{
 				"gpt-5.1-codex",
-				"gpt-5.2-codex",
+				"gpt-5.4-codex",
 				"gpt-5.3-codex",
 				"gpt-5.1-codex-max",
 			},

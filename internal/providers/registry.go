@@ -17,6 +17,7 @@ type Runtime string
 const (
 	RuntimeCodex          Runtime = "codex"
 	RuntimeClaude         Runtime = "claude"
+	RuntimeACP            Runtime = "acp"
 	RuntimeExec           Runtime = "exec"
 	RuntimeOpenCodeServer Runtime = "opencode_server"
 	RuntimeCustom         Runtime = "custom"
@@ -62,6 +63,22 @@ var registry = []Definition{
 			NoProcess:                      true,
 		},
 		Bootstrap: defaultBootstrapProfile(),
+	},
+	{
+		Name:              "hermes",
+		Label:             "hermes",
+		Runtime:           RuntimeACP,
+		CommandCandidates: []string{"hermes"},
+		Capabilities: Capabilities{
+			SupportsGuidedWorkflowDispatch: true,
+			SupportsEvents:                 true,
+			SupportsApprovals:              true,
+			SupportsInterrupt:              true,
+		},
+		Bootstrap: BootstrapProfile{
+			HistoryConsistency:     HistoryConsistencyEventuallyConsistent,
+			SessionStartTranscript: TranscriptBootstrapModeDeferSnapshot,
+		},
 	},
 	{
 		Name:    "opencode",

@@ -647,7 +647,7 @@ func (s *SessionService) Start(ctx context.Context, req StartSessionRequest) (*t
 	}
 
 	usesLiveManagerSend := hasProviderDef &&
-		(providerDef.Runtime == providers.RuntimeClaude || providerDef.Runtime == providers.RuntimeOpenCodeServer)
+		(providerDef.Runtime == providers.RuntimeClaude || providerDef.Runtime == providers.RuntimeOpenCodeServer || providerDef.Runtime == providers.RuntimeACP)
 	initialTextForStart := initialText
 	if usesLiveManagerSend {
 		initialTextForStart = ""

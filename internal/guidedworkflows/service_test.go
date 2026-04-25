@@ -4873,7 +4873,7 @@ func TestRunLifecyclePromptDispatchCapturesProviderAndModel(t *testing.T) {
 
 func TestRunLifecyclePromptDispatchIncludesStepRuntimeOptions(t *testing.T) {
 	stepRuntimeOptions := &types.SessionRuntimeOptions{
-		Model:     "gpt-5.2-codex",
+		Model:     "gpt-5.4-codex",
 		Reasoning: types.ReasoningHigh,
 		Access:    types.AccessFull,
 	}
@@ -4926,7 +4926,7 @@ func TestRunLifecyclePromptDispatchIncludesStepRuntimeOptions(t *testing.T) {
 	if step.RuntimeOptions == stepRuntimeOptions {
 		t.Fatalf("expected step runtime options to be cloned for run state")
 	}
-	if step.RuntimeOptions.Model != "gpt-5.2-codex" || step.RuntimeOptions.Reasoning != types.ReasoningHigh || step.RuntimeOptions.Access != types.AccessFull {
+	if step.RuntimeOptions.Model != "gpt-5.4-codex" || step.RuntimeOptions.Reasoning != types.ReasoningHigh || step.RuntimeOptions.Access != types.AccessFull {
 		t.Fatalf("unexpected run step runtime options: %#v", step.RuntimeOptions)
 	}
 	if len(dispatcher.calls) != 1 {
@@ -4938,7 +4938,7 @@ func TestRunLifecyclePromptDispatchIncludesStepRuntimeOptions(t *testing.T) {
 	if dispatcher.calls[0].RuntimeOptions == stepRuntimeOptions {
 		t.Fatalf("expected dispatch runtime options to be cloned")
 	}
-	if dispatcher.calls[0].RuntimeOptions.Model != "gpt-5.2-codex" {
+	if dispatcher.calls[0].RuntimeOptions.Model != "gpt-5.4-codex" {
 		t.Fatalf("unexpected dispatch model override: %q", dispatcher.calls[0].RuntimeOptions.Model)
 	}
 	if dispatcher.calls[0].RuntimeOptions.Reasoning != types.ReasoningHigh {
@@ -7170,6 +7170,95 @@ func TestRunMetricsRestoreLegacyProgressedCounterBackfillsAdvance(t *testing.T) 
 	}
 	if metrics.TurnEventsStepDone != 0 {
 		t.Fatalf("expected no step-done count from legacy snapshot, got %#v", metrics)
+	}
+}
+
+func TestRunLifecycleRestoreCreatedRunMarksInterrupted(t *testing.T) {
+	runID := "gwf-restart-created"
+	snapshotStore := &stubRunSnapshotStore{
+		loadSnapshots: []RunStatusSnapshot{
+			{
+				Run: &WorkflowRun{
+					ID:           runID,
+					TemplateID:   TemplateIDSolidPhaseDelivery,
+					TemplateName: "Solid Phase Delivery",
+					WorkspaceID:  "ws-1",
+					WorktreeID:   "wt-1",
+					Status:       WorkflowRunStatusCreated,
+					CreatedAt:    time.Now().UTC().Add(-2 * time.Minute),
+				},
+				Timeline: []RunTimelineEvent{
+					{At: time.Now().UTC().Add(-2 * time.Minute), Type: "run_created", RunID: runID},
+				},
+			},
+		},
+	}
+
+	restarted := NewRunService(Config{Enabled: true}, WithRunSnapshotStore(snapshotStore))
+	loaded, err := restarted.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRun after restart: %v", err)
+	}
+	if loaded.Status != WorkflowRunStatusFailed {
+		t.Fatalf("expected created run to be marked failed after restart, got %q", loaded.Status)
+	}
+	if loaded.CompletedAt == nil {
+		t.Fatalf("expected interrupted created run to set completed_at")
+	}
+	if !strings.Contains(loaded.LastError, "interrupted by daemon restart") {
+		t.Fatalf("expected restart interruption reason, got %q", loaded.LastError)
+	}
+	timeline, err := restarted.GetRunTimeline(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetRunTimeline after restart: %v", err)
+	}
+	if len(timeline) == 0 || timeline[len(timeline)-1].Type != "run_interrupted" {
+		t.Fatalf("expected run_interrupted timeline event, got %#v", timeline)
+	}
+	// Verify the run does NOT silently resume; it stays failed.
+	if loaded.Status == WorkflowRunStatusRunning {
+		t.Fatalf("created run must not silently resume after restart")
+	}
+}
+
+func TestRunLifecycleResetMetricsSnapshotMatchesSubsequentGet(t *testing.T) {
+	service := NewRunService(Config{Enabled: true})
+	// Create and start a run to accumulate some metrics.
+	run, err := service.CreateRun(context.Background(), CreateRunRequest{
+		WorkspaceID: "ws-1",
+		WorktreeID:  "wt-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := service.StartRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+
+	resetSnapshot, err := service.ResetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("ResetRunMetrics: %v", err)
+	}
+	if resetSnapshot.Enabled != true {
+		t.Fatalf("expected reset snapshot enabled=true, got %#v", resetSnapshot)
+	}
+	if resetSnapshot.RunsStarted != 0 || resetSnapshot.PauseCount != 0 {
+		t.Fatalf("expected reset snapshot to be zeroed, got runs_started=%d pause_count=%d",
+			resetSnapshot.RunsStarted, resetSnapshot.PauseCount)
+	}
+
+	// The reset snapshot MUST be the now-active state.
+	getSnapshot, err := service.GetRunMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetRunMetrics: %v", err)
+	}
+	if getSnapshot.RunsStarted != resetSnapshot.RunsStarted {
+		t.Fatalf("expected GET metrics to match reset snapshot: got runs_started=%d want=%d",
+			getSnapshot.RunsStarted, resetSnapshot.RunsStarted)
+	}
+	if getSnapshot.PauseCount != resetSnapshot.PauseCount {
+		t.Fatalf("expected GET metrics to match reset snapshot: got pause_count=%d want=%d",
+			getSnapshot.PauseCount, resetSnapshot.PauseCount)
 	}
 }
 

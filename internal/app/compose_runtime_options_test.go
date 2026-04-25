@@ -79,32 +79,32 @@ func TestApplyComposeOptionSelectionModelAdjustsReasoningByModel(t *testing.T) {
 	m.newSession = &newSessionTarget{
 		provider: "codex",
 		runtimeOptions: &types.SessionRuntimeOptions{
-			Model:     "gpt-5.2-codex",
+			Model:     "gpt-5.4-codex",
 			Reasoning: types.ReasoningExtraHigh,
 		},
 	}
 	m.providerOptions = map[string]*types.ProviderOptionCatalog{
 		"codex": {
 			Provider: "codex",
-			Models:   []string{"gpt-5.2-codex", "gpt-5.3-codex"},
+			Models:   []string{"gpt-5.4-codex", "gpt-5.3-codex"},
 			ModelReasoningLevels: map[string][]types.ReasoningLevel{
-				"gpt-5.2-codex": {types.ReasoningLow},
+				"gpt-5.4-codex": {types.ReasoningLow},
 				"gpt-5.3-codex": {types.ReasoningMedium, types.ReasoningHigh},
 			},
 			ModelDefaultReasoning: map[string]types.ReasoningLevel{
-				"gpt-5.2-codex": types.ReasoningLow,
+				"gpt-5.4-codex": types.ReasoningLow,
 				"gpt-5.3-codex": types.ReasoningMedium,
 			},
 			ReasoningLevels: []types.ReasoningLevel{types.ReasoningLow, types.ReasoningMedium, types.ReasoningHigh},
 			AccessLevels:    []types.AccessLevel{types.AccessOnRequest},
-			Defaults:        types.SessionRuntimeOptions{Model: "gpt-5.2-codex", Reasoning: types.ReasoningLow, Access: types.AccessOnRequest},
+			Defaults:        types.SessionRuntimeOptions{Model: "gpt-5.4-codex", Reasoning: types.ReasoningLow, Access: types.AccessOnRequest},
 		},
 	}
 	if !m.openComposeOptionPicker(composeOptionModel) {
 		t.Fatalf("expected model option picker to open")
 	}
 
-	_ = m.applyComposeOptionSelection("gpt-5.2-codex")
+	_ = m.applyComposeOptionSelection("gpt-5.4-codex")
 	if m.newSession.runtimeOptions == nil {
 		t.Fatalf("expected runtime options to exist")
 	}

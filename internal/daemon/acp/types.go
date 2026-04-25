@@ -121,7 +121,7 @@ type AuthMethod struct {
 
 type NewSessionParams struct {
 	Cwd        string      `json:"cwd"`
-	McpServers []McpServer `json:"mcpServers,omitempty"`
+	McpServers []McpServer `json:"mcpServers"`
 }
 
 type McpServer struct {
@@ -137,8 +137,9 @@ type NewSessionResult struct {
 }
 
 type LoadSessionParams struct {
-	SessionID string `json:"sessionId"`
-	Cwd       string `json:"cwd,omitempty"`
+	SessionID  string      `json:"sessionId"`
+	Cwd        string      `json:"cwd,omitempty"`
+	McpServers []McpServer `json:"mcpServers"`
 }
 
 type LoadSessionResult struct {
