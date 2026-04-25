@@ -10,18 +10,20 @@ Archon is a TUI-based session manager for AI coding agents. It lets you run, mon
 
 Codex is the primary and most thoroughly tested provider. Support for other providers is in progress.
 
-| Feature | Codex | Claude | OpenCode / Kilo Code |
-|---|:---:|:---:|:---:|
-| **Model Selection** | Full | Partial | Full |
-| **Reasoning Levels** | Full | - | - |
-| **Access Levels** | Full | Full | - |
-| **Live Events / Streaming** | Full | Partial | Partial |
-| **Approvals** | Full | Partial | Partial |
-| **Interrupt** | Full | Partial | Full |
-| **Session Resume** | Full | Full | Full |
-| **Compose File Autocomplete (`@...`)** | Full | - | Full |
-| **Guided Workflows** | Full | Full | Partial |
-| **Notifications** | Full | Partial | Partial |
+| Feature | Codex | Claude | OpenCode / Kilo Code | Hermes |
+|---|:---:|:---:|:---:|:---:|
+| **Model Selection** | Full | Partial | Full | - |
+| **Reasoning Levels** | Full | - | - | - |
+| **Access Levels** | Full | Full | - | - |
+| **Live Events / Streaming** | Full | Partial | Partial | Partial |
+| **Approvals** | Full | Partial | Partial | Partial |
+| **Interrupt** | Full | Partial | Full | Partial |
+| **Session Resume** | Full | Full | Full | Process-local only |
+| **Compose File Autocomplete (`@...`)** | Full | - | Full | - |
+| **Guided Workflows** | Full | Full | Partial | Partial |
+| **Notifications** | Full | Partial | Partial | Partial |
+
+Hermes speaks the Agent Client Protocol (ACP) over stdio. Archon launches it as `hermes acp` and streams tokens, tool calls, plans, and approval requests. File search is not supported (ACP has no dedicated verb) and resume is scoped to the live subprocess — once the Hermes process exits, the session is surfaced as ended.
 
 **Full** = well-tested and reliable, **Partial** = works but incomplete or lightly tested, **-** = not supported.
 
@@ -190,7 +192,7 @@ base_url = "https://openrouter.ai/api/v1"
 [providers.codex]
 command = "codex"
 default_model = "gpt-5.1-codex"
-models = ["gpt-5.1-codex", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.1-codex-max"]
+models = ["gpt-5.1-codex", "gpt-5.4-codex", "gpt-5.3-codex", "gpt-5.1-codex-max"]
 approval_policy = "on-request"
 sandbox_policy = "workspace-write"
 network_access = false
@@ -200,6 +202,14 @@ command = "claude"
 default_model = "sonnet"
 models = ["sonnet", "opus"]
 include_partial = false
+
+[providers.hermes]
+command = "hermes"
+# args prepended before the `acp` subcommand, env vars appended to the subprocess environment
+args = []
+env = []
+default_model = ""
+models = []
 
 [providers.opencode]
 base_url = "http://127.0.0.1:4096"
@@ -219,17 +229,179 @@ timeout_seconds = 90
 command = "gemini"
 ```
 
+### Starting Sessions
+
+`archon start` creates a new session. It requires `--provider` and prints only the session id on stdout:
+
+```bash
+# Basic
+archon start --provider codex --cwd /tmp/project
+
+# With all options
+archon start --provider codex --cwd /tmp/project --cmd codex --title "my session" --tag one --tag two --env A=B -- arg1 arg2
+
+# Quick smoke test
+archon start --provider codex --cwd /tmp -- "echo hello"
+```
+
+Flags:
+- `--provider` (required): provider name (e.g. `codex`, `claude`)
+- `--cwd`: working directory for the session
+- `--cmd`: command override (custom provider)
+- `--title`: session title
+- `--tag` (repeatable): tags attached to the session
+- `--env` (repeatable): environment variables in `KEY=VALUE` form
+- Trailing positional arguments after `--` are forwarded as command args
+
+### Listing Sessions
+
+`archon ps` lists every known session. Default output is a human-readable tab-separated table:
+
+```bash
+archon ps
+```
+
+For programmatic consumers (scripts, LLM agents), pass `--json` to get the daemon's full session DTO as a JSON array — one document per invocation:
+
+```bash
+archon ps --json | jq '.[].id'
+```
+
+The JSON shape is the daemon's `types.Session` serialization and is considered part of the CLI contract: fields like `id`, `status`, `provider`, `pid`, and `title` are load-bearing for downstream automation.
+
+### Session Details
+
+`archon session <id>` returns the full `types.Session` for a single session. Default output is pretty-printed JSON — the same shape as each element in `ps --json`:
+
+```bash
+archon session abc123
+archon session abc123 | jq .status
+```
+
+For interactive inspection, `--format human` prints a compact field-per-line view:
+
+```bash
+archon session abc123 --format human
+```
+
+The JSON output matches `types.Session`'s serialization directly, sharing the same CLI contract as `ps --json`. Automation consumers can compose with `jq` for field projection.
+
+### Killing Sessions
+
+`archon kill <id>` terminates a running session. On success it prints `ok`:
+
+```bash
+archon kill <session-id>
+```
+
+- Requires exactly one positional session id
+- Prints `ok\n` on success, exits 0
+- Errors produce a single-line stderr message and non-zero exit
+
+### Interrupting Sessions
+
+`archon interrupt <id>` stops the in-flight turn for a session without killing it. The session remains alive and ready for the next message:
+
+```bash
+archon interrupt <session-id>
+```
+
+- Requires exactly one positional session id
+- Exits 0 with no output on success (silent success)
+- If the session has no in-flight turn, the daemon treats it as a no-op and the CLI still exits 0
+- Errors produce a single-line stderr message and non-zero exit
+- Combine with `archon tail --follow <id>` to observe the interrupt taking effect
+
+### Session Approvals
+
+`archon approvals <id>` lists pending approvals for a session. `archon approve <id>` responds to a specific pending approval:
+
+```bash
+# List pending approvals (human table)
+archon approvals <session-id>
+
+# List pending approvals (machine-readable)
+archon approvals <session-id> --json
+
+# Approve a specific request
+archon approve <session-id> --request-id 1 --decision allow_once
+
+# Approve with responses
+archon approve <session-id> --request-id 1 --decision allow --response "yes" --response "confirmed"
+
+# Approve with accept-settings
+archon approve <session-id> --request-id 1 --decision allow --accept-settings '{"remember":true}'
+```
+
+- `approvals`: exits 0 with a table (default) or JSON array (`--json`); empty list prints header only (or `[]` in JSON)
+- `approve`: requires `--request-id` and `--decision`; optional `--response` (repeatable) and `--accept-settings` (JSON object)
+- Decision strings are provider-specific (e.g. `allow_once`, `allow_always`, `deny`) — the CLI passes them through
+- Compose with `jq`: `archon approvals <id> --json | jq '.[0].request_id'` to extract request ids
+
+### Tail Snapshot
+
+`archon tail <id>` prints a snapshot of recent output as a JSON array. Adding `--follow` (or `-f`) keeps the stream open and emits new events in real time as NDJSON:
+
+```bash
+# Snapshot (existing behaviour, unchanged)
+archon tail <id> --lines 50
+
+# Live stream — stays open until Ctrl-C or the session ends
+archon tail <id> --follow
+
+# Follow with backfill (emit last 20 lines, then stream live, deduplicating the overlap)
+archon tail <id> -f --lines 20
+
+# Follow a specific stream
+archon tail <id> --follow --stream stderr
+```
+
+- `--follow` / `-f`: keep the stream open after the initial snapshot; new events are written as NDJSON lines, flushed immediately.
+- `--stream`: selects which output stream to follow (default: `combined`; providers may expose `stdout`, `stderr`, etc.).
+- When `--lines N` is set alongside `--follow`, the command emits the last N snapshot items first, then transitions to live events. If the first live event duplicates the last snapshot item, it is silently dropped.
+- SIGINT (Ctrl-C) and SIGTERM produce a clean exit (code 0). If the daemon closes the stream, the command also exits cleanly.
+
+### Send Messages
+
+`archon send <id>` delivers a new user message into an existing session. By default it prints the returned `turn_id` on success so scripts can chain follow-up automation.
+
+```bash
+# Send plain text as a positional argument
+archon send <id> "Please continue from the last step"
+
+# Equivalent explicit flag form
+archon send <id> --text "Summarize what you just did"
+
+# Send structured input items from a file
+archon send <id> --input-items items.json
+
+# Send structured input items from stdin
+cat items.json | archon send <id> --input-items -
+
+# Emit the full daemon response as JSON
+archon send <id> "hello" --json
+```
+
+Rules:
+- Provide exactly one input form: positional text, `--text`, or `--input-items`
+- `--input-items` accepts either a file path or `-` for stdin and must contain a JSON array
+- `--json` prints the full `SendSessionResponse`; otherwise only `turn_id` is printed (if present)
+- Flags may appear before or after the session id
+
 ### Cloud Login
 
 Archon supports linking a local daemon to the Archon web app with a device-style login flow:
 
 ```bash
 archon login
+archon login --no-browser
 archon whoami
 archon logout
 ```
 
-- `archon login` opens the browser when possible and always prints a fallback verification URL and user code.
+- `archon login` opens the browser when possible and always prints a fallback verification URL and user code as `Visit: <url>` and `Code: <code>`. On success it prints `Logged in as <email>` when the email is available. Pass `--no-browser` to skip browser open.
+- `archon whoami` prints the current cloud link status. When unlinked it prints `not logged in`. When linked it prints user display name, email, and installation name on separate lines.
+- `archon logout` unlinks cloud credentials and prints the daemon's result message (full or partial success).
 - Cloud auth is stored separately from the local daemon bearer token.
 - `~/.archon/token` remains local CLI <-> local daemon auth only.
 - Cloud link state is stored in `~/.archon/cloud_auth.json`.
@@ -334,7 +506,7 @@ Example `workflow_templates.json` (custom replacement file):
               "name": "Implement hardening",
               "prompt": "Implement the approved hardening items with tests and clear commit messages.",
               "runtime_options": {
-                "model": "gpt-5.2-codex",
+                "model": "gpt-5.4-codex",
                 "reasoning": "high"
               }
             },
@@ -487,6 +659,52 @@ archon config --scope core --scope keybindings --format json
 ```
 
 `archon config --scope workflow_templates --default` returns the built-in default workflow templates.
+
+### Daemon Control
+
+`archon daemon` manages the local daemon process:
+
+```bash
+# Start in foreground (blocks)
+archon daemon
+
+# Start in background (logs to ~/.archon/daemon.log)
+archon daemon --background
+
+# Stop the running daemon
+archon daemon --kill
+
+# Force restart (stop then start in foreground)
+archon daemon --force
+
+# Force restart in background
+archon daemon --force --background
+```
+
+- `--kill` is safe when no daemon is running (no-op, exits 0)
+- `--kill` exits without starting a new daemon
+- `--force` stops any running daemon first, then starts a new one
+- Errors produce a single-line stderr message and non-zero exit
+
+### UI Launch
+
+`archon ui` verifies daemon readiness and launches the terminal UI:
+
+```bash
+# Default: verify daemon version compatibility then launch
+archon ui
+
+# Restart daemon during version check
+archon ui --restart-daemon
+
+# Skip version check (still requires reachable daemon)
+archon ui --ignore-daemon-mismatch
+```
+
+- Logging is configured to `~/.archon/ui.log` before launch
+- Default path checks daemon version against CLI version
+- `--ignore-daemon-mismatch` bypasses version enforcement but still requires a reachable daemon
+- Errors produce a single-line stderr message and non-zero exit
 
 Clipboard copy always tries the system clipboard first, then OSC52 as fallback.
 
