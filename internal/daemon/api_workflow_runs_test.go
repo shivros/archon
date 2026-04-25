@@ -1910,6 +1910,31 @@ func (s *staleListSessionMetaStore) Delete(ctx context.Context, sessionID string
 	return s.base.Delete(ctx, sessionID)
 }
 
+func TestWorkflowTemplateEndpointReturnsBuiltinSolidPhaseDelivery(t *testing.T) {
+	api := &API{
+		Version:      "test",
+		WorkflowRuns: guidedworkflows.NewRunService(guidedworkflows.Config{Enabled: true}),
+	}
+	server := newWorkflowRunTestServer(t, api)
+	defer server.Close()
+
+	templates := getWorkflowTemplates(t, server, http.StatusOK)
+	found := false
+	for _, tpl := range templates {
+		if tpl.ID == guidedworkflows.TemplateIDSolidPhaseDelivery {
+			found = true
+			break
+		}
+	}
+	if !found {
+		ids := make([]string, 0, len(templates))
+		for _, tpl := range templates {
+			ids = append(ids, tpl.ID)
+		}
+		t.Fatalf("expected solid_phase_delivery in built-in template catalog, got %v", ids)
+	}
+}
+
 func TestWorkflowRunPresentationHelpersBranches(t *testing.T) {
 	ctx := context.Background()
 	run := &guidedworkflows.WorkflowRun{ID: "gwf-1", UserPrompt: "prompt from run"}
