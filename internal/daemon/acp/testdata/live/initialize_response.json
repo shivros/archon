@@ -1,0 +1,9 @@
+{
+  "agentCapabilities": {
+    "loadSession": true
+  },
+  "agentInfo": {
+    "name": "hermes-agent",
+    "version": "0.11.0"
+  }
+}
