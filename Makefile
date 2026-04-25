@@ -1,8 +1,10 @@
-.PHONY: run-daemon run-ui build build-legacy clean
+.PHONY: run-daemon run-ui build build-legacy install uninstall clean
 
 BINARY_NAME ?= archon
 BUILD_DIR ?= dist
 BUILD_PATH ?= ./cmd/archon
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -20,6 +22,15 @@ build:
 
 build-legacy:
 	@go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) $(BUILD_PATH)
+
+install: build
+	@install -d $(BINDIR)
+	@install -m 0755 $(BUILD_DIR)/$(BINARY_NAME) $(BINDIR)/$(BINARY_NAME)
+	@echo "installed $(BINDIR)/$(BINARY_NAME)"
+
+uninstall:
+	@rm -f $(BINDIR)/$(BINARY_NAME)
+	@echo "removed $(BINDIR)/$(BINARY_NAME)"
 
 clean:
 	@rm -rf $(BUILD_DIR)
