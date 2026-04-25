@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 )
 
@@ -23,6 +25,7 @@ func NewPSCommand(stdout, stderr io.Writer, newClient sessionClientFactory) *PSC
 func (c *PSCommand) Run(args []string) error {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	fs.SetOutput(c.stderr)
+	emitJSON := fs.Bool("json", false, "emit machine-readable JSON array of sessions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -37,6 +40,22 @@ func (c *PSCommand) Run(args []string) error {
 	}
 	sessions, err := client.ListSessions(ctx)
 	if err != nil {
+		return err
+	}
+
+	if *emitJSON {
+		if len(sessions) == 0 {
+			_, err := fmt.Fprint(c.stdout, "[]\n")
+			return err
+		}
+		encoded, err := json.MarshalIndent(sessions, "", "  ")
+		if err != nil {
+			return err
+		}
+		if _, err := c.stdout.Write(encoded); err != nil {
+			return err
+		}
+		_, err = fmt.Fprint(c.stdout, "\n")
 		return err
 	}
 
