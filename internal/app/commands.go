@@ -865,6 +865,9 @@ func startSessionCmdWithContext(api WorkspaceSessionStartAPI, workspaceID, workt
 		case "opencode", "kilocode":
 			// OpenCode/Kilo cold starts can take longer on first run.
 			timeout = 90 * time.Second
+		case "hermes":
+			// Hermes ACP startup includes MCP server initialization.
+			timeout = 90 * time.Second
 		}
 		ctx, cancel := commandWithTimeout(parent, timeout)
 		defer cancel()

@@ -651,6 +651,8 @@ func providerCallTimeout(provider string) time.Duration {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "opencode", "kilocode":
 		return 3 * time.Minute
+	case "hermes":
+		return 90 * time.Second
 	default:
 		return 0
 	}
