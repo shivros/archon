@@ -107,6 +107,7 @@ func TestMaybeAutoStartOpenCodeServerFallsBackToAlternatePort(t *testing.T) {
 	origFindPID := findOpenCodeServerPID
 	origReadCmdline := readOpenCodeProcessCmdline
 	origTerminate := terminateOpenCodeProcess
+	origResolve := resolveOpenCodeServeCommandFn
 	t.Cleanup(func() {
 		startOpenCodeServeProcess = origStart
 		probeOpenCodeServer = origProbe
@@ -115,7 +116,9 @@ func TestMaybeAutoStartOpenCodeServerFallsBackToAlternatePort(t *testing.T) {
 		findOpenCodeServerPID = origFindPID
 		readOpenCodeProcessCmdline = origReadCmdline
 		terminateOpenCodeProcess = origTerminate
+		resolveOpenCodeServeCommandFn = origResolve
 	})
+	resolveOpenCodeServeCommandFn = func(string) (string, error) { return "/usr/bin/opencode", nil }
 
 	startArgs := make([][]string, 0, 2)
 	startOpenCodeServeProcess = func(_ string, args []string, _ []string, _ ProviderBaseSink) error {
@@ -164,6 +167,7 @@ func TestMaybeAutoStartOpenCodeServerCleansMatchedStaleProcess(t *testing.T) {
 	origFindPID := findOpenCodeServerPID
 	origReadCmdline := readOpenCodeProcessCmdline
 	origTerminate := terminateOpenCodeProcess
+	origResolve := resolveOpenCodeServeCommandFn
 	t.Cleanup(func() {
 		startOpenCodeServeProcess = origStart
 		probeOpenCodeServer = origProbe
@@ -171,7 +175,9 @@ func TestMaybeAutoStartOpenCodeServerCleansMatchedStaleProcess(t *testing.T) {
 		findOpenCodeServerPID = origFindPID
 		readOpenCodeProcessCmdline = origReadCmdline
 		terminateOpenCodeProcess = origTerminate
+		resolveOpenCodeServeCommandFn = origResolve
 	})
+	resolveOpenCodeServeCommandFn = func(string) (string, error) { return "/usr/bin/opencode", nil }
 
 	probeCalls := 0
 	probeOpenCodeServer = func(string) error {
@@ -227,6 +233,7 @@ func TestMaybeAutoStartOpenCodeServerDoesNotTerminateUnmatchedProcess(t *testing
 	origFindPID := findOpenCodeServerPID
 	origReadCmdline := readOpenCodeProcessCmdline
 	origTerminate := terminateOpenCodeProcess
+	origResolve := resolveOpenCodeServeCommandFn
 	t.Cleanup(func() {
 		startOpenCodeServeProcess = origStart
 		probeOpenCodeServer = origProbe
@@ -234,7 +241,9 @@ func TestMaybeAutoStartOpenCodeServerDoesNotTerminateUnmatchedProcess(t *testing
 		findOpenCodeServerPID = origFindPID
 		readOpenCodeProcessCmdline = origReadCmdline
 		terminateOpenCodeProcess = origTerminate
+		resolveOpenCodeServeCommandFn = origResolve
 	})
+	resolveOpenCodeServeCommandFn = func(string) (string, error) { return "/usr/bin/opencode", nil }
 
 	probeOpenCodeServer = func(string) error { return errors.New("timeout") }
 	startCalled := false
