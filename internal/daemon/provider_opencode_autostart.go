@@ -47,6 +47,7 @@ var startOpenCodeServeProcess = func(cmdName string, args []string, env []string
 	return nil
 }
 
+var resolveOpenCodeServeCommandFn = resolveOpenCodeServeCommand
 var probeOpenCodeServer = probeOpenCodeServerImpl
 var waitForOpenCodeServerReady = waitForOpenCodeServerReadyImpl
 var pickOpenCodeFallbackPortFn = pickOpenCodeFallbackPortImpl
@@ -86,7 +87,7 @@ func maybeAutoStartOpenCodeServer(provider, baseURL, token string, sink Provider
 		return baseURL, nil
 	}
 
-	cmdName, err := resolveOpenCodeServeCommand(provider)
+	cmdName, err := resolveOpenCodeServeCommandFn(provider)
 	if err != nil {
 		return "", err
 	}
