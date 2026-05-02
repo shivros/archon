@@ -44,6 +44,36 @@ Implementation details vary by provider:
 - OpenCode and Kilo Code use their server-side file search endpoints.
 - Results are normalized before they reach the app layer so compose behavior stays consistent.
 
+## Installation
+
+### One-liner (Linux / macOS / WSL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shivros/archon/main/install.sh | bash
+```
+
+The script detects your OS and architecture, downloads the latest release from GitHub, verifies the SHA256 checksum, and installs the binary to `~/.local/bin/archon` (or `/usr/local/bin/archon` if run with sudo).
+
+### Download from Releases
+
+Download the appropriate archive for your platform from [GitHub Releases](https://github.com/shivros/archon/releases), extract the `archon` binary, and place it in your `PATH`.
+
+Supported platforms: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`, `windows/amd64`, `windows/arm64`.
+
+### Build from source
+
+```bash
+go build -o archon ./cmd/archon/
+```
+
+Requires Go 1.23+. Build metadata (version, commit, date) is injected via ldflags — see `make build` for the full set.
+
+### Verify
+
+```bash
+archon version
+```
+
 ## Development
 This repo uses `prek` (a Rust pre-commit runner) with a standard `.pre-commit-config.yaml`.
 
