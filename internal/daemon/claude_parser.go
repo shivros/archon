@@ -267,12 +267,12 @@ func parseClaudeErrorItem(payload map[string]any) map[string]any {
 	}
 
 	item := map[string]any{
-		"type":           "providerError",
-		"provider":       "claude",
-		"error_type":     errorType,
-		"error_message":  userMessage,
-		"raw_message":    errorMessage,
-		"is_auth_error":  isAuthError,
+		"type":          "providerError",
+		"provider":      "claude",
+		"error_type":    errorType,
+		"error_message": userMessage,
+		"raw_message":   errorMessage,
+		"is_auth_error": isAuthError,
 	}
 
 	return item
@@ -312,9 +312,9 @@ func parseClaudeNonJSONErrorLine(line string) map[string]any {
 	}
 
 	item := map[string]any{
-		"type":      "providerError",
-		"provider":  "claude",
-		"raw_line":  line,
+		"type":     "providerError",
+		"provider": "claude",
+		"raw_line": line,
 	}
 
 	if isAuthError {
