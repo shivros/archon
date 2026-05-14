@@ -117,7 +117,7 @@ func TestLiveCapture(t *testing.T) {
 		var loadResult LoadSessionResult
 		loadErr := client.Call(ctx, MethodSessionLoad, LoadSessionParams{
 			SessionID:  sessionID,
-			Cwd:       "/tmp",
+			Cwd:        "/tmp",
 			McpServers: []McpServer{},
 		}, &loadResult)
 		if loadErr != nil {
@@ -137,7 +137,7 @@ func TestLiveCapture(t *testing.T) {
 		var badLoadResult LoadSessionResult
 		badLoadErr := client.Call(ctx, MethodSessionLoad, LoadSessionParams{
 			SessionID:  "nonexistent-session-12345",
-			Cwd:       "/tmp",
+			Cwd:        "/tmp",
 			McpServers: []McpServer{},
 		}, &badLoadResult)
 		if badLoadErr != nil {
