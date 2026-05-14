@@ -156,3 +156,132 @@ func TestClaudeParseRateLimitEventLimitedWithoutResetStillEmitsItem(t *testing.T
 		t.Fatalf("expected no retry_unix when reset absent, got %#v", item)
 	}
 }
+
+func TestClaudeParseErrorJSONAuthError(t *testing.T) {
+	line := `{"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}`
+	items, _, err := ParseClaudeLine(line, &ClaudeParseState{})
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d: %#v", len(items), items)
+	}
+	item := items[0]
+	if got, _ := item["type"].(string); got != "providerError" {
+		t.Fatalf("expected providerError item type, got %q", got)
+	}
+	if got, _ := item["provider"].(string); got != "claude" {
+		t.Fatalf("expected provider claude, got %q", got)
+	}
+	if got, _ := item["error_type"].(string); got != "authentication_error" {
+		t.Fatalf("expected error_type authentication_error, got %q", got)
+	}
+	if got, _ := item["is_auth_error"].(bool); !got {
+		t.Fatalf("expected is_auth_error=true, got %#v", item["is_auth_error"])
+	}
+	if got, _ := item["error_message"].(string); got != "Authentication failed. Please run: claude /login" {
+		t.Fatalf("expected actionable error message, got %q", got)
+	}
+}
+
+func TestClaudeParseErrorJSONGenericError(t *testing.T) {
+	line := `{"type":"error","error":{"type":"overloaded_error","message":"Anthropic's API is temporarily overloaded"}}`
+	items, _, err := ParseClaudeLine(line, &ClaudeParseState{})
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	item := items[0]
+	if got, _ := item["type"].(string); got != "providerError" {
+		t.Fatalf("expected providerError item type, got %q", got)
+	}
+	if got, _ := item["error_type"].(string); got != "overloaded_error" {
+		t.Fatalf("expected error_type overloaded_error, got %q", got)
+	}
+	if got, _ := item["is_auth_error"].(bool); got {
+		t.Fatalf("expected is_auth_error=false for non-auth errors, got true")
+	}
+}
+
+func TestClaudeParseErrorJSONNilPayload(t *testing.T) {
+	line := `{"type":"error"}`
+	items, _, err := ParseClaudeLine(line, &ClaudeParseState{})
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one item even without error object, got %d", len(items))
+	}
+	item := items[0]
+	if got, _ := item["type"].(string); got != "providerError" {
+		t.Fatalf("expected providerError item type, got %q", got)
+	}
+}
+
+func TestClaudeNonJSONErrorLineAuth401(t *testing.T) {
+	line := `API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CYwU9ikdNr1Zt3XjuJaiX"} · Please run /login`
+	item := parseClaudeNonJSONErrorLine(line)
+	if item == nil {
+		t.Fatal("expected non-nil item for auth error line")
+	}
+	if got, _ := item["type"].(string); got != "providerError" {
+		t.Fatalf("expected providerError, got %q", got)
+	}
+	if got, _ := item["is_auth_error"].(bool); !got {
+		t.Fatalf("expected is_auth_error=true")
+	}
+	if got, _ := item["error_type"].(string); got != "authentication_error" {
+		t.Fatalf("expected error_type authentication_error, got %q", got)
+	}
+	msg, _ := item["error_message"].(string)
+	if msg != "Authentication failed. Please run: claude /login" {
+		t.Fatalf("expected normalized actionable auth message, got %q", msg)
+	}
+}
+
+func TestClaudeNonJSONErrorLineAPIError(t *testing.T) {
+	line := `API Error: 500 Internal Server Error`
+	item := parseClaudeNonJSONErrorLine(line)
+	if item == nil {
+		t.Fatal("expected non-nil item for API error line")
+	}
+	if got, _ := item["type"].(string); got != "providerError" {
+		t.Fatalf("expected providerError, got %q", got)
+	}
+	if got, _ := item["error_type"].(string); got != "api_error" {
+		t.Fatalf("expected error_type api_error, got %q", got)
+	}
+}
+
+func TestClaudeNonJSONErrorLineNormalOutputIgnored(t *testing.T) {
+	line := `some regular output from claude`
+	item := parseClaudeNonJSONErrorLine(line)
+	if item != nil {
+		t.Fatalf("expected nil for non-error line, got %#v", item)
+	}
+}
+
+func TestClaudeNonJSONErrorLineEmpty(t *testing.T) {
+	item := parseClaudeNonJSONErrorLine("")
+	if item != nil {
+		t.Fatalf("expected nil for empty line, got %#v", item)
+	}
+}
+
+func TestExtractShortErrorWithActionableSuffix(t *testing.T) {
+	line := `API Error: 401 {"type":"error"} · Please run /login`
+	got := extractShortError(line)
+	if got != "Please run /login" {
+		t.Fatalf("expected 'Please run /login', got %q", got)
+	}
+}
+
+func TestExtractShortErrorAPIErrorWithJSON(t *testing.T) {
+	line := `API Error: 403 {"type":"error","message":"forbidden"}`
+	got := extractShortError(line)
+	if got != "403" {
+		t.Fatalf("expected '403', got %q", got)
+	}
+}

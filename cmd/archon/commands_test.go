@@ -1307,8 +1307,8 @@ func TestWhoAmICommandLinkedWithAllFields(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	fake := &fakeCommandClient{
 		cloudStatusResp: &controlclient.CloudAuthStatusResponse{
-			Linked: true,
-			User:   &controlclient.CloudLinkedUser{DisplayName: "Ada Lovelace", Email: "ada@example.com"},
+			Linked:       true,
+			User:         &controlclient.CloudLinkedUser{DisplayName: "Ada Lovelace", Email: "ada@example.com"},
 			Installation: &controlclient.CloudInstallation{Name: "Dev Box"},
 		},
 	}
@@ -2233,7 +2233,7 @@ func TestTailFollowHappyCase(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	cancelCalled := 0
 	fake := &fakeCommandClient{
-		streamTailCh: ch,
+		streamTailCh:     ch,
 		streamTailCancel: func() { cancelCalled++ },
 	}
 	cmd := NewTailCommand(stdout, &bytes.Buffer{}, fixedSessionFactory(fake))
@@ -2266,7 +2266,7 @@ func TestTailFollowStreamSelector(t *testing.T) {
 	close(ch)
 
 	fake := &fakeCommandClient{
-		streamTailCh: ch,
+		streamTailCh:     ch,
 		streamTailCancel: func() {},
 	}
 	stdout := &bytes.Buffer{}
@@ -2286,7 +2286,7 @@ func TestTailFollowShorthandFlag(t *testing.T) {
 	close(ch)
 
 	fake := &fakeCommandClient{
-		streamTailCh: ch,
+		streamTailCh:     ch,
 		streamTailCancel: func() {},
 	}
 	stdout := &bytes.Buffer{}
@@ -2328,8 +2328,8 @@ func TestTailFollowFlagsAfterIDWithLines(t *testing.T) {
 	close(ch)
 
 	fake := &fakeCommandClient{
-		tailItemsResp: &controlclient.TailItemsResponse{Items: backfillItems},
-		streamTailCh:  ch,
+		tailItemsResp:    &controlclient.TailItemsResponse{Items: backfillItems},
+		streamTailCh:     ch,
 		streamTailCancel: func() {},
 	}
 	stdout := &bytes.Buffer{}
@@ -2598,7 +2598,7 @@ func TestTailFollowContextCancelled(t *testing.T) {
 
 	stdout := &bytes.Buffer{}
 	fake := &fakeCommandClient{
-		streamTailCh: ch,
+		streamTailCh:     ch,
 		streamTailCancel: func() {},
 	}
 	cmd := NewTailCommand(stdout, &bytes.Buffer{}, fixedSessionFactory(fake))
@@ -2654,7 +2654,7 @@ func TestTailFollowBackfillThenStream(t *testing.T) {
 				{"type": "log", "stream": "stdout", "chunk": "backfill-line\n", "ts": "t0"},
 			},
 		},
-		streamTailCh: streamCh,
+		streamTailCh:     streamCh,
 		streamTailCancel: func() {},
 	}
 	cmd := NewTailCommand(stdout, &bytes.Buffer{}, fixedSessionFactory(fake))
@@ -2744,11 +2744,11 @@ type fakeCommandClient struct {
 	tailItemsID    string
 	tailItemsLines int
 
-	streamTailErr    error
-	streamTailCh     <-chan types.LogEvent
-	streamTailCancel func()
-	streamTailCalls  int
-	streamTailIDArg  string
+	streamTailErr     error
+	streamTailCh      <-chan types.LogEvent
+	streamTailCancel  func()
+	streamTailCalls   int
+	streamTailIDArg   string
 	streamTailNameArg string
 
 	sendMessageErr   error
