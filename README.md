@@ -87,7 +87,11 @@ Run hooks manually:
 prek run --all-files
 ```
 
-The hook set includes a guard against reintroducing deprecated guided-workflow contract fields in non-test Go code.
+The hook set includes:
+
+- **Secret scanning**: `detect-secrets` (with `.secrets.baseline` allowlist) and `detect-private-key` run on every commit. If a real secret is caught, the commit is blocked. False positives in test fixtures are baseline-allowed.
+  - To update the baseline after adding legitimate test fixtures: `detect-secrets scan --baseline .secrets.baseline`
+- **Deprecated field guard**: prevents reintroducing deprecated guided-workflow contract fields in non-test Go code.
 
 ### Build & Release
 
