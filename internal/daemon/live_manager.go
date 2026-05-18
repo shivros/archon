@@ -22,6 +22,10 @@ type TurnInterrupter interface {
 	Interrupt(ctx context.Context, session *types.Session, meta *types.SessionMeta) error
 }
 
+type TurnSteerer interface {
+	SteerTurn(ctx context.Context, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error)
+}
+
 type NotificationReceiver interface {
 	SetNotificationPublisher(notifier NotificationPublisher)
 }
@@ -31,6 +35,7 @@ type LiveManager interface {
 	EventStreamer
 	ApprovalResponder
 	TurnInterrupter
+	TurnSteerer
 	NotificationReceiver
 }
 

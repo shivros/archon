@@ -26,6 +26,7 @@ type sessionCommandClient interface {
 	TailItems(ctx context.Context, id string, lines int) (*controlclient.TailItemsResponse, error)
 	StreamTail(ctx context.Context, id, stream string) (<-chan types.LogEvent, func(), error)
 	SendMessage(ctx context.Context, sessionID string, req controlclient.SendSessionRequest) (*controlclient.SendSessionResponse, error)
+	SteerSession(ctx context.Context, sessionID string, req controlclient.SteerSessionRequest) (*controlclient.SteerSessionResponse, error)
 	ListApprovals(ctx context.Context, sessionID string) ([]*types.Approval, error)
 	ApproveSession(ctx context.Context, sessionID string, req controlclient.ApproveSessionRequest) error
 }
@@ -128,6 +129,10 @@ func (c *controlClientAdapter) StreamTail(ctx context.Context, id, stream string
 
 func (c *controlClientAdapter) SendMessage(ctx context.Context, sessionID string, req controlclient.SendSessionRequest) (*controlclient.SendSessionResponse, error) {
 	return c.client.SendMessage(ctx, sessionID, req)
+}
+
+func (c *controlClientAdapter) SteerSession(ctx context.Context, sessionID string, req controlclient.SteerSessionRequest) (*controlclient.SteerSessionResponse, error) {
+	return c.client.SteerSession(ctx, sessionID, req)
 }
 
 func (c *controlClientAdapter) ListApprovals(ctx context.Context, sessionID string) ([]*types.Approval, error) {

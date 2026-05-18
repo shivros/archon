@@ -107,6 +107,16 @@ type SendSessionResponse struct {
 	TurnID string `json:"turn_id,omitempty"`
 }
 
+type SteerSessionRequest struct {
+	Text  string           `json:"text,omitempty"`
+	Input []map[string]any `json:"input,omitempty"`
+}
+
+type SteerSessionResponse struct {
+	OK     bool   `json:"ok"`
+	TurnID string `json:"turn_id,omitempty"`
+}
+
 type ApproveSessionRequest struct {
 	RequestID      int            `json:"request_id"`
 	Decision       string         `json:"decision"`

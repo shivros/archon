@@ -60,6 +60,7 @@ func buildCommands(wiring commandWiring) map[string]commandRunner {
 		"kill":      NewKillCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"interrupt": NewInterruptCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"send":      NewSendCommand(wiring.stdout, wiring.stderr, os.Stdin, wiring.newSessionClient),
+		"steer":     NewSteerCommand(wiring.stdout, wiring.stderr, os.Stdin, wiring.newSessionClient),
 		"tail":      NewTailCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"approvals": NewApprovalsCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"approve":   NewApproveCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),

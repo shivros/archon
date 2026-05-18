@@ -887,6 +887,25 @@ func (s *SessionService) InterruptTurn(ctx context.Context, id string) error {
 	return s.interrupter(session.Provider).Interrupt(ctx, s.interruptDeps(), session, meta)
 }
 
+func (s *SessionService) SteerTurn(ctx context.Context, id string, input []map[string]any) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", invalidError("session id is required", nil)
+	}
+	if len(input) == 0 {
+		return "", invalidError("input is required", nil)
+	}
+	session, _, err := s.getSessionRecord(ctx, id)
+	if session == nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return "", notFoundError("session not found", ErrSessionNotFound)
+		}
+		return "", invalidError("session not found", ErrSessionNotFound)
+	}
+	meta := s.getSessionMeta(ctx, session.ID)
+	s.ensureSessionCwd(ctx, session, meta)
+	return s.steerer(session.Provider).SteerTurn(ctx, s.steerDeps(), session, meta, input)
+}
+
 func (s *SessionService) Get(ctx context.Context, id string) (*types.Session, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, invalidError("session id is required", nil)
@@ -1325,6 +1344,19 @@ func (s *SessionService) interruptDeps() interruptDeps {
 	return interruptDeps{
 		liveManager: s.liveManager,
 		manager:     s.manager,
+	}
+}
+
+func (s *SessionService) steerer(provider string) conversationSteerer {
+	if s.adapters == nil {
+		s.adapters = newConversationAdapterRegistry()
+	}
+	return s.adapters.steererFor(provider)
+}
+
+func (s *SessionService) steerDeps() steerDeps {
+	return steerDeps{
+		liveManager: s.liveManager,
 	}
 }
 

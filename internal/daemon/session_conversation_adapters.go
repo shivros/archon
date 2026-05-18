@@ -43,6 +43,10 @@ type interruptDeps struct {
 	manager     *SessionManager
 }
 
+type steerDeps struct {
+	liveManager LiveManager
+}
+
 type conversationSender interface {
 	conversationProvider
 	SendMessage(ctx context.Context, deps sendDeps, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error)
@@ -68,18 +72,25 @@ type conversationInterrupter interface {
 	Interrupt(ctx context.Context, deps interruptDeps, session *types.Session, meta *types.SessionMeta) error
 }
 
+type conversationSteerer interface {
+	conversationProvider
+	SteerTurn(ctx context.Context, deps steerDeps, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error)
+}
+
 type conversationAdapterRegistry struct {
 	fallbackSender      conversationSender
 	fallbackHistory     conversationHistoryReader
 	fallbackSubscriber  conversationEventSubscriber
 	fallbackApprover    conversationApprover
 	fallbackInterrupter conversationInterrupter
+	fallbackSteerer     conversationSteerer
 
 	senders      map[string]conversationSender
 	history      map[string]conversationHistoryReader
 	subscribers  map[string]conversationEventSubscriber
 	approvers    map[string]conversationApprover
 	interrupters map[string]conversationInterrupter
+	steerers     map[string]conversationSteerer
 }
 
 func newConversationAdapterRegistry(extra ...conversationProvider) *conversationAdapterRegistry {
@@ -88,17 +99,20 @@ func newConversationAdapterRegistry(extra ...conversationProvider) *conversation
 	fallbackSubscriber := unsupportedConversationEventSubscriber{}
 	fallbackApprover := unsupportedConversationApprover{}
 	fallbackInterrupter := unsupportedConversationInterrupter{}
+	fallbackSteerer := unsupportedConversationSteerer{}
 	registry := &conversationAdapterRegistry{
 		fallbackSender:      fallbackSender,
 		fallbackHistory:     fallbackHistory,
 		fallbackSubscriber:  fallbackSubscriber,
 		fallbackApprover:    fallbackApprover,
 		fallbackInterrupter: fallbackInterrupter,
+		fallbackSteerer:     fallbackSteerer,
 		senders:             map[string]conversationSender{},
 		history:             map[string]conversationHistoryReader{},
 		subscribers:         map[string]conversationEventSubscriber{},
 		approvers:           map[string]conversationApprover{},
 		interrupters:        map[string]conversationInterrupter{},
+		steerers:            map[string]conversationSteerer{},
 	}
 
 	for _, def := range providers.All() {
@@ -106,7 +120,7 @@ func newConversationAdapterRegistry(extra ...conversationProvider) *conversation
 		if name == "" {
 			continue
 		}
-		sender, historyReader, subscriber, approver, interrupter := defaultConversationPortsFor(def, fallbackHistory)
+		sender, historyReader, subscriber, approver, interrupter, steerer := defaultConversationPortsFor(def, fallbackHistory)
 		if sender != nil {
 			registry.senders[name] = sender
 		}
@@ -121,6 +135,9 @@ func newConversationAdapterRegistry(extra ...conversationProvider) *conversation
 		}
 		if interrupter != nil {
 			registry.interrupters[name] = interrupter
+		}
+		if steerer != nil {
+			registry.steerers[name] = steerer
 		}
 	}
 
@@ -147,6 +164,9 @@ func newConversationAdapterRegistry(extra ...conversationProvider) *conversation
 		if interrupter, ok := provider.(conversationInterrupter); ok {
 			registry.interrupters[name] = interrupter
 		}
+		if steerer, ok := provider.(conversationSteerer); ok {
+			registry.steerers[name] = steerer
+		}
 	}
 
 	return registry
@@ -155,26 +175,26 @@ func newConversationAdapterRegistry(extra ...conversationProvider) *conversation
 func defaultConversationPortsFor(
 	def providers.Definition,
 	fallbackHistory defaultHistoryReader,
-) (conversationSender, conversationHistoryReader, conversationEventSubscriber, conversationApprover, conversationInterrupter) {
+) (conversationSender, conversationHistoryReader, conversationEventSubscriber, conversationApprover, conversationInterrupter, conversationSteerer) {
 	switch def.Runtime {
 	case providers.RuntimeCodex:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
-		return live, codexHistoryReader{providerName: name, fallback: fallbackHistory}, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+		return live, codexHistoryReader{providerName: name, fallback: fallbackHistory}, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}, liveManagerConversationSteerer{providerName: name}
 	case providers.RuntimeACP:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
-		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}, liveManagerConversationSteerer{providerName: name}
 	case providers.RuntimeClaude:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
-		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, claudeConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, claudeConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}, liveManagerConversationSteerer{providerName: name}
 	case providers.RuntimeOpenCodeServer:
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
-		return live, openCodeHistoryReader{providerName: name, fallback: fallbackHistory}, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+		return live, openCodeHistoryReader{providerName: name, fallback: fallbackHistory}, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}, liveManagerConversationSteerer{providerName: name}
 	default:
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 }
 
@@ -243,6 +263,19 @@ func (r *conversationAdapterRegistry) interrupterFor(provider string) conversati
 	return unsupportedConversationInterrupter{}
 }
 
+func (r *conversationAdapterRegistry) steererFor(provider string) conversationSteerer {
+	if r == nil {
+		return unsupportedConversationSteerer{}
+	}
+	if steerer, ok := r.steerers[providers.Normalize(provider)]; ok && steerer != nil {
+		return steerer
+	}
+	if r.fallbackSteerer != nil {
+		return r.fallbackSteerer
+	}
+	return unsupportedConversationSteerer{}
+}
+
 type unsupportedConversationSender struct{}
 
 func (unsupportedConversationSender) Provider() string { return "*" }
@@ -273,6 +306,14 @@ func (unsupportedConversationInterrupter) Provider() string { return "*" }
 
 func (unsupportedConversationInterrupter) Interrupt(context.Context, interruptDeps, *types.Session, *types.SessionMeta) error {
 	return invalidError("provider does not support interrupt", nil)
+}
+
+type unsupportedConversationSteerer struct{}
+
+func (unsupportedConversationSteerer) Provider() string { return "" }
+
+func (unsupportedConversationSteerer) SteerTurn(_ context.Context, _ steerDeps, _ *types.Session, _ *types.SessionMeta, _ []map[string]any) (string, error) {
+	return "", invalidError("provider does not support steering", nil)
 }
 
 type liveManagerConversationSender struct {
@@ -419,6 +460,22 @@ func (a liveManagerConversationInterrupter) Interrupt(ctx context.Context, deps 
 		return invalidError(liveErr.Error(), liveErr)
 	}
 	return nil
+}
+
+type liveManagerConversationSteerer struct {
+	providerName string
+}
+
+func (a liveManagerConversationSteerer) Provider() string { return a.providerName }
+
+func (a liveManagerConversationSteerer) SteerTurn(ctx context.Context, deps steerDeps, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error) {
+	if session == nil {
+		return "", invalidError("session is required", nil)
+	}
+	if deps.liveManager == nil {
+		return "", unavailableError("live manager not available", nil)
+	}
+	return deps.liveManager.SteerTurn(ctx, session, meta, input)
 }
 
 type defaultHistoryReader struct{}

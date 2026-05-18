@@ -1,9 +1,14 @@
 {
   "agentCapabilities": {
-    "loadSession": true
+    "loadSession": true,
+    "promptCapabilities": {
+      "image": true,
+      "audio": false,
+      "embeddedContext": false
+    }
   },
   "agentInfo": {
     "name": "hermes-agent",
-    "version": "0.11.0"
+    "version": "0.14.0"
   }
 }

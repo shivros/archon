@@ -2757,6 +2757,12 @@ type fakeCommandClient struct {
 	sendMessageIDArg string
 	sendMessageReq   controlclient.SendSessionRequest
 
+	steerSessionErr   error
+	steerSessionResp  *controlclient.SteerSessionResponse
+	steerSessionCalls int
+	steerSessionIDArg string
+	steerSessionReq   controlclient.SteerSessionRequest
+
 	listApprovalsErr   error
 	listApprovalsResp  []*types.Approval
 	listApprovalsCalls int
@@ -2907,6 +2913,19 @@ func (f *fakeCommandClient) SendMessage(_ context.Context, sessionID string, req
 		return nil, errors.New("sendMessageResp not configured")
 	}
 	return f.sendMessageResp, nil
+}
+
+func (f *fakeCommandClient) SteerSession(_ context.Context, sessionID string, req controlclient.SteerSessionRequest) (*controlclient.SteerSessionResponse, error) {
+	f.steerSessionCalls++
+	f.steerSessionIDArg = sessionID
+	f.steerSessionReq = req
+	if f.steerSessionErr != nil {
+		return nil, f.steerSessionErr
+	}
+	if f.steerSessionResp == nil {
+		return nil, errors.New("steerSessionResp not configured")
+	}
+	return f.steerSessionResp, nil
 }
 
 func (f *fakeCommandClient) ListApprovals(_ context.Context, sessionID string) ([]*types.Approval, error) {
