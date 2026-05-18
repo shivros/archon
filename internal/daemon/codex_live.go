@@ -208,6 +208,20 @@ func (m *CodexLiveManager) Interrupt(ctx context.Context, session *types.Session
 	return nil
 }
 
+func (m *CodexLiveManager) SteerTurn(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string, input []map[string]any) (string, error) {
+	if session == nil || strings.TrimSpace(session.ID) == "" {
+		return "", errors.New("session is required")
+	}
+	if session.Provider != "codex" {
+		return "", errors.New("provider does not support live events")
+	}
+	ls, err := m.ensure(ctx, session, meta, codexHome, false)
+	if err != nil {
+		return "", err
+	}
+	return ls.SteerTurn(ctx, input)
+}
+
 func (m *CodexLiveManager) ensure(ctx context.Context, session *types.Session, meta *types.SessionMeta, codexHome string, allowBootstrap bool) (*codexLiveSession, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -348,6 +362,17 @@ func (s *codexLiveSession) Interrupt(ctx context.Context) error {
 		return ErrNoActiveTurn
 	}
 	return s.client.InterruptTurn(ctx, threadID, turnID)
+}
+
+func (s *codexLiveSession) SteerTurn(ctx context.Context, input []map[string]any) (string, error) {
+	s.mu.Lock()
+	threadID := s.threadID
+	activeTurn := s.activeTurn
+	s.mu.Unlock()
+	if activeTurn == "" {
+		return "", ErrNoActiveTurn
+	}
+	return s.client.SteerTurn(ctx, threadID, input, activeTurn)
 }
 
 func (s *codexLiveSession) Respond(ctx context.Context, requestID int, result map[string]any) error {

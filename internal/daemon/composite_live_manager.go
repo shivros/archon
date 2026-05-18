@@ -120,6 +120,25 @@ func (m *CompositeLiveManager) Interrupt(ctx context.Context, session *types.Ses
 	return ls.Interrupt(ctx)
 }
 
+func (m *CompositeLiveManager) SteerTurn(ctx context.Context, session *types.Session, meta *types.SessionMeta, input []map[string]any) (string, error) {
+	if session == nil {
+		return "", errors.New("session is required")
+	}
+
+	ls, err := m.ensure(ctx, session, meta)
+	if err != nil {
+		return "", err
+	}
+
+	type steerCapable interface {
+		SteerTurn(ctx context.Context, input []map[string]any) (string, error)
+	}
+	if s, ok := ls.(steerCapable); ok {
+		return s.SteerTurn(ctx, input)
+	}
+	return "", errors.New("provider does not support steering")
+}
+
 func (m *CompositeLiveManager) ensure(ctx context.Context, session *types.Session, meta *types.SessionMeta) (TurnCapableSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -290,6 +309,14 @@ func (s *codexManagedSession) Interrupt(ctx context.Context) error {
 	}
 	meta := s.currentMeta()
 	return s.manager.Interrupt(ctx, s.session, meta, s.codexHome)
+}
+
+func (s *codexManagedSession) SteerTurn(ctx context.Context, input []map[string]any) (string, error) {
+	if s == nil || s.session == nil || s.manager == nil {
+		return "", errors.New("codex session is not initialized")
+	}
+	meta := s.currentMeta()
+	return s.manager.SteerTurn(ctx, s.session, meta, s.codexHome, input)
 }
 
 func (s *codexManagedSession) Respond(ctx context.Context, requestID int, result map[string]any) error {
