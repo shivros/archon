@@ -74,6 +74,15 @@ type SendSessionResponse struct {
 	TurnID string `json:"turn_id,omitempty"`
 }
 
+type SteerSessionRequest struct {
+	Text  string           `json:"text,omitempty"`
+	Input []map[string]any `json:"input,omitempty"`
+	// ExpectedTurnID is not forwarded — the daemon auto-populates this
+	// from the session's internally-tracked activeTurn. Accepted here
+	// for API forward-compatibility only.
+	ExpectedTurnID string `json:"expected_turn_id,omitempty"`
+}
+
 type ApproveSessionRequest struct {
 	RequestID      int            `json:"request_id"`
 	Decision       string         `json:"decision"`

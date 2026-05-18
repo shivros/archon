@@ -23,6 +23,7 @@ Commands:
   kill     kill a session
   interrupt stop the in-flight turn for a session
   send     send a message to a session
+  steer    guide a running turn with additional instructions
   tail     show recent session output (use --follow to stream live)
   approvals list pending approvals for a session
   approve   respond to a pending approval
@@ -53,6 +54,7 @@ Examples:
   archon tail <id> --follow --stream stderr
   archon send <id> "hello"
   archon send <id> --input-items items.json --json
+  archon steer <id> "focus on the error handling"
   archon interrupt <id>
   archon approvals <id>
   archon approve <id> --request-id 1 --decision allow_once

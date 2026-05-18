@@ -12,6 +12,7 @@ cmd/archon/*
 !cmd/archon/command_version.go
 !cmd/archon/build_metadata_test.go
 !cmd/archon/main_test.go
+!cmd/archon/command_steer.go
 
 # Playwright CLI
 .playwright-cli/

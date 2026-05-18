@@ -283,6 +283,46 @@ func (a *API) SessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, SendSessionResponse{OK: true, TurnID: turnID})
 		return
+	case "steer":
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+				"error": "method not allowed",
+			})
+			return
+		}
+		var req SteerSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "invalid json body",
+			})
+			return
+		}
+		input := req.Input
+		if len(input) == 0 {
+			if strings.TrimSpace(req.Text) != "" {
+				input = []map[string]any{{"type": "text", "text": req.Text}}
+			}
+		}
+		if a.Logger != nil {
+			a.Logger.Info("steer_request",
+				logging.F("session_id", id),
+				logging.F("input_items", len(input)),
+				logging.F("text_len", len(req.Text)),
+			)
+		}
+		turnID, err := service.SteerTurn(r.Context(), id, input)
+		if err != nil {
+			if a.Logger != nil {
+				a.Logger.Error("steer_error", logging.F("session_id", id), logging.F("error", err))
+			}
+			writeServiceError(w, err)
+			return
+		}
+		if a.Logger != nil {
+			a.Logger.Info("steer_ok", logging.F("session_id", id), logging.F("turn_id", turnID))
+		}
+		writeJSON(w, http.StatusOK, SendSessionResponse{OK: true, TurnID: turnID})
+		return
 	case "interrupt":
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
