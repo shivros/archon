@@ -49,14 +49,14 @@ func defaultCommandWiring(stdout, stderr io.Writer) commandWiring {
 
 func buildCommands(wiring commandWiring) map[string]commandRunner {
 	return map[string]commandRunner{
-		"daemon":  NewDaemonCommand(wiring.stderr, wiring.runDaemon, wiring.killDaemon),
-		"config":  NewConfigCommand(wiring.stdout, wiring.stderr),
-		"login":   NewLoginCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient, wiring.openBrowser),
-		"whoami":  NewWhoAmICommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
-		"logout":  NewLogoutCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
-		"ps":      NewPSCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
-		"session": newSessionCommand(wiring.newSessionClient, wiring.stdout, wiring.stderr),
-		"start":   NewStartCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"daemon":    NewDaemonCommand(wiring.stderr, wiring.runDaemon, wiring.killDaemon),
+		"config":    NewConfigCommand(wiring.stdout, wiring.stderr),
+		"login":     NewLoginCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient, wiring.openBrowser),
+		"whoami":    NewWhoAmICommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
+		"logout":    NewLogoutCommand(wiring.stdout, wiring.stderr, wiring.newCloudAuthClient),
+		"ps":        NewPSCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
+		"session":   newSessionCommand(wiring.newSessionClient, wiring.stdout, wiring.stderr),
+		"start":     NewStartCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"kill":      NewKillCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"interrupt": NewInterruptCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"send":      NewSendCommand(wiring.stdout, wiring.stderr, os.Stdin, wiring.newSessionClient),
@@ -64,6 +64,6 @@ func buildCommands(wiring commandWiring) map[string]commandRunner {
 		"approvals": NewApprovalsCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"approve":   NewApproveCommand(wiring.stdout, wiring.stderr, wiring.newSessionClient),
 		"ui":        NewUICommand(wiring.stderr, wiring.newUIClient, wiring.configureUILogging, wiring.version),
-		"version": NewVersionCommand(wiring.stdout, wiring.stderr),
+		"version":   NewVersionCommand(wiring.stdout, wiring.stderr),
 	}
 }

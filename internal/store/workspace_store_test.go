@@ -110,8 +110,20 @@ func TestWorkspaceStoreNormalizesPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add workspace: %v", err)
 	}
-	if ws.RepoPath != repoDir {
-		t.Fatalf("expected abs path %q, got %q", repoDir, ws.RepoPath)
+
+	// Normalize both paths through EvalSymlinks so the comparison works
+	// on macOS where /tmp → /private/var/folders/... symlinks cause
+	// filepath.Abs to return a different prefix than the temp dir.
+	gotResolved, err := filepath.EvalSymlinks(ws.RepoPath)
+	if err != nil {
+		t.Fatalf("eval symlinks got: %v", err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		t.Fatalf("eval symlinks want: %v", err)
+	}
+	if gotResolved != wantResolved {
+		t.Fatalf("expected abs path %q, got %q", wantResolved, gotResolved)
 	}
 }
 
@@ -276,8 +288,12 @@ func TestWorkspaceStoreRejectsInvalidSessionSubpath(t *testing.T) {
 	store := NewFileWorkspaceStore(filepath.Join(t.TempDir(), "workspaces.json"))
 
 	repoDir := t.TempDir()
+	// Use a path that is absolute on all platforms (Windows requires volume
+	// prefix; filepath.Join(separator, ...) only produces a root-relative
+	// path like \tmp\abs which filepath.IsAbs does not consider absolute).
+	absPath := filepath.Join(os.TempDir(), "abs")
 	tests := []string{
-		filepath.Join(string(filepath.Separator), "tmp", "abs"),
+		absPath,
 		"..",
 		filepath.Join("..", "outside"),
 	}
