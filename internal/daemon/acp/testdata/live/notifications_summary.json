@@ -9,9 +9,6 @@
     "sessionUpdate": "agent_thought_chunk"
   },
   {
-    "sessionUpdate": "agent_thought_chunk"
-  },
-  {
     "sessionUpdate": "agent_message_chunk"
   },
   {

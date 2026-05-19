@@ -79,7 +79,7 @@ test_github_output_support() {
 }
 
 test_output_key_requires_github_output() {
-	assert_exit_failure "output key should require GITHUB_OUTPUT" bash scripts/release_targets.sh --output-key matrix
+	assert_exit_failure "output key should require GITHUB_OUTPUT" env -u GITHUB_OUTPUT bash scripts/release_targets.sh --output-key matrix
 }
 
 test_help_and_unknown_argument_validation
