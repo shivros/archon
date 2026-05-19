@@ -27,7 +27,7 @@ func requireClaudeIntegration(t *testing.T) {
 		t.Fatalf("claude provider not registered")
 	}
 	if _, err := resolveProviderCommandName(def, ""); err != nil {
-		t.Fatalf("claude command not found: %v (set %s=disabled to skip)", err, claudeIntegrationEnv)
+		t.Skipf("claude command not found: %v (set %s=disabled to skip)", err, claudeIntegrationEnv)
 	}
 }
 

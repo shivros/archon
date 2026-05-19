@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -10,6 +12,13 @@ import (
 
 func TestDefaultFileLinkResolverResolve(t *testing.T) {
 	resolver := defaultFileLinkResolver{}
+
+	// Build a platform-appropriate absolute path for testing.
+	absPath := filepath.Join(t.TempDir(), "main.go")
+	if err := os.WriteFile(absPath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
 	tests := []struct {
 		name       string
 		target     string
@@ -19,18 +28,59 @@ func TestDefaultFileLinkResolverResolve(t *testing.T) {
 		column     int
 		wantErr    bool
 	}{
-		{name: "absolute path", target: "/tmp/main.go", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go"},
-		{name: "path with line and col", target: "/tmp/main.go:12:3", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 12, column: 3},
-		{name: "file url with fragment", target: "file:///tmp/main.go#L9C2", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 9, column: 2},
-		{name: "file url with query and fragment", target: "file:///tmp/main.go?x=1#L5", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 5, column: 0},
-		{name: "path query removed", target: "/tmp/main.go?foo=bar", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go"},
-		{name: "path fragment removed", target: "/tmp/main.go#L10", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 10, column: 0},
-		{name: "zero fragment ignored", target: "file:///tmp/main.go#L0", kind: FileLinkTargetKindFile, openTarget: "/tmp/main.go", line: 0, column: 0},
+		{name: "absolute path", target: absPath, kind: FileLinkTargetKindFile, openTarget: absPath},
+		{name: "path query removed", target: absPath + "?foo=bar", kind: FileLinkTargetKindFile, openTarget: absPath},
+		{name: "path fragment removed", target: absPath + "#L10", kind: FileLinkTargetKindFile, openTarget: absPath, line: 10, column: 0},
 		{name: "https url accepted", target: "https://example.com/docs?q=1#intro", kind: FileLinkTargetKindURL, openTarget: "https://example.com/docs?q=1#intro"},
 		{name: "http url accepted", target: "http://example.com", kind: FileLinkTargetKindURL, openTarget: "http://example.com"},
 		{name: "relative path rejected", target: "main.go", wantErr: true},
 		{name: "unsupported scheme rejected", target: "ftp://example.com/file.txt", wantErr: true},
 		{name: "malformed url rejected", target: "file://%", wantErr: true},
+	}
+	// Unix-specific test cases: path:line:col parsing uses a regex that
+	// requires / prefix, and file:// URLs resolve to /-prefixed paths
+	// that filepath.IsAbs only recognises on Unix.
+	if runtime.GOOS != "windows" {
+		unixPath := "/tmp/main.go"
+		unixFileURL := "file:///tmp/main.go"
+		tests = append(tests,
+			struct {
+				name       string
+				target     string
+				kind       FileLinkTargetKind
+				openTarget string
+				line       int
+				column     int
+				wantErr    bool
+			}{name: "path with line and col", target: unixPath + ":12:3", kind: FileLinkTargetKindFile, openTarget: unixPath, line: 12, column: 3},
+			struct {
+				name       string
+				target     string
+				kind       FileLinkTargetKind
+				openTarget string
+				line       int
+				column     int
+				wantErr    bool
+			}{name: "file url with fragment", target: unixFileURL + "#L9C2", kind: FileLinkTargetKindFile, openTarget: unixPath, line: 9, column: 2},
+			struct {
+				name       string
+				target     string
+				kind       FileLinkTargetKind
+				openTarget string
+				line       int
+				column     int
+				wantErr    bool
+			}{name: "file url with query and fragment", target: unixFileURL + "?x=1#L5", kind: FileLinkTargetKindFile, openTarget: unixPath, line: 5, column: 0},
+			struct {
+				name       string
+				target     string
+				kind       FileLinkTargetKind
+				openTarget string
+				line       int
+				column     int
+				wantErr    bool
+			}{name: "zero fragment ignored", target: unixFileURL + "#L0", kind: FileLinkTargetKindFile, openTarget: unixPath, line: 0, column: 0},
+		)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

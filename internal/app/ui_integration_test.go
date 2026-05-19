@@ -960,7 +960,7 @@ func requireClaudeIntegration(t *testing.T) {
 		cmd = "claude"
 	}
 	if _, err := exec.LookPath(cmd); err != nil {
-		t.Fatalf("claude command not found (%s): %v (set %s=disabled to skip)", cmd, err, claudeIntegrationEnv)
+		t.Skipf("claude command not found (%s): %v (set %s=disabled to skip)", cmd, err, claudeIntegrationEnv)
 	}
 }
 
@@ -974,7 +974,7 @@ func requireCodexIntegration(t *testing.T) {
 		cmd = "codex"
 	}
 	if _, err := exec.LookPath(cmd); err != nil {
-		t.Fatalf("codex command not found (%s): %v (set %s=disabled to skip)", cmd, err, codexIntegrationEnv)
+		t.Skipf("codex command not found (%s): %v (set %s=disabled to skip)", cmd, err, codexIntegrationEnv)
 	}
 }
 

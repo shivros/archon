@@ -7,8 +7,14 @@ import (
 	"testing"
 )
 
+func setTestHomeDir(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestLoadCoreConfigDefaults(t *testing.T) {
-	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	setTestHomeDir(t, filepath.Join(t.TempDir(), "home"))
 	cfg, err := LoadCoreConfig()
 	if err != nil {
 		t.Fatalf("LoadCoreConfig: %v", err)
@@ -35,7 +41,7 @@ func TestLoadCoreConfigDefaults(t *testing.T) {
 
 func TestLoadCoreConfigFromTOML(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -330,7 +336,7 @@ command = "/usr/local/bin/gemini"
 
 func TestUIConfigResolveKeybindingsPath(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 
 	cfg := UIConfig{}
 	path, err := cfg.ResolveKeybindingsPath()
@@ -352,7 +358,7 @@ func TestUIConfigResolveKeybindingsPath(t *testing.T) {
 }
 
 func TestCoreConfigProviderDefaults(t *testing.T) {
-	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	setTestHomeDir(t, filepath.Join(t.TempDir(), "home"))
 	cfg, err := LoadCoreConfig()
 	if err != nil {
 		t.Fatalf("LoadCoreConfig: %v", err)
@@ -474,7 +480,7 @@ func TestCoreConfigProviderDefaults(t *testing.T) {
 }
 
 func TestLoadUIConfigDefaults(t *testing.T) {
-	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	setTestHomeDir(t, filepath.Join(t.TempDir(), "home"))
 	cfg, err := LoadUIConfig()
 	if err != nil {
 		t.Fatalf("LoadUIConfig: %v", err)
@@ -506,7 +512,7 @@ func TestLoadUIConfigDefaults(t *testing.T) {
 
 func TestLoadUIConfigFromTOML(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -547,7 +553,7 @@ func TestLoadUIConfigFromTOML(t *testing.T) {
 
 func TestLoadUIConfigSidebarExpandByDefaultOverride(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -568,7 +574,7 @@ func TestLoadUIConfigSidebarExpandByDefaultOverride(t *testing.T) {
 
 func TestLoadUIConfigSidebarShowRecentsOverride(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -589,7 +595,7 @@ func TestLoadUIConfigSidebarShowRecentsOverride(t *testing.T) {
 
 func TestLoadUIConfigInvalidTOML(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -604,7 +610,7 @@ func TestLoadUIConfigInvalidTOML(t *testing.T) {
 
 func TestUpdateUIThemeAtPathPersistsThemeAndRetainsOtherValues(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -709,7 +715,7 @@ func TestUpdateUIThemeAtPathCreatesFileWhenMissing(t *testing.T) {
 
 func TestUpdateUIThemePersistsUsingResolvedUIPath(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 
 	if err := UpdateUITheme("Gruvbox Light"); err != nil {
 		t.Fatalf("UpdateUITheme: %v", err)
@@ -726,7 +732,7 @@ func TestUpdateUIThemePersistsUsingResolvedUIPath(t *testing.T) {
 
 func TestSaveUIConfigNormalizesThemeName(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	cfg := DefaultUIConfig()
 	cfg.Theme.Name = "  Monokai  "
 	if err := SaveUIConfig(cfg); err != nil {
@@ -743,7 +749,7 @@ func TestSaveUIConfigNormalizesThemeName(t *testing.T) {
 
 func TestLoadCoreConfigInvalidTOML(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
