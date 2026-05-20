@@ -173,6 +173,14 @@ func defaultConversationPortsFor(
 		name := providers.Normalize(def.Name)
 		live := liveManagerConversationSender{providerName: name}
 		return live, openCodeHistoryReader{providerName: name, fallback: fallbackHistory}, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
+	// RuntimeExec providers (currently only gemini) use the same live-manager
+	// session lifecycle as codex/ACP providers. They get fallback history since
+	// the exec provider doesn't emit structured items. If future exec-based
+	// providers need different semantics, this should be narrowed per-provider.
+	case providers.RuntimeExec:
+		name := providers.Normalize(def.Name)
+		live := liveManagerConversationSender{providerName: name}
+		return live, fallbackHistory, liveManagerConversationEventSubscriber{providerName: name}, liveManagerConversationApprover{providerName: name}, liveManagerConversationInterrupter{providerName: name}
 	default:
 		return nil, nil, nil, nil, nil
 	}

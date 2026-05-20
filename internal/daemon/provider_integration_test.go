@@ -125,6 +125,12 @@ func allProviderTestCases() []providerTestCase {
 			},
 			timeout: func() time.Duration { return openCodeIntegrationTimeout("kilocode") },
 		},
+		{
+			name:    "gemini",
+			require: requireGeminiIntegration,
+			setup:   geminiIntegrationSetup,
+			timeout: geminiIntegrationTimeout,
+		},
 	}
 }
 

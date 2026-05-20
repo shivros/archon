@@ -325,7 +325,7 @@ func TestSessionServicePersistRuntimeOptionsAfterSendValidationAndNilContext(t *
 }
 
 func TestConversationAdapterContractSendUnavailableWithoutRuntime(t *testing.T) {
-	for _, provider := range []string{"codex", "claude", "opencode", "kilocode"} {
+	for _, provider := range []string{"codex", "claude", "opencode", "kilocode", "gemini"} {
 		t.Run(provider, func(t *testing.T) {
 			store := &stubSessionIndexStore{
 				records: map[string]*types.SessionRecord{

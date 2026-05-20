@@ -15,6 +15,7 @@ func TestTranscriptSnapshotHistoryParityPreservesUserTurnsAcrossProviders(t *tes
 		{name: "claude", provider: "claude"},
 		{name: "opencode", provider: "opencode"},
 		{name: "kilocode", provider: "kilocode"},
+		{name: "gemini", provider: "gemini"},
 	}
 
 	for _, tc := range testCases {
