@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -185,6 +186,11 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 		interruptClaudeProcess(cmd.Process)
 	}
 
+	// Capture stderr into a buffer so we can construct a descriptive error
+	// when the process exits non-zero. The tee feeds stderr to both the stream
+	// reader (for item extraction) and our capture buffer.
+	var stderrCapture claudeStderrCapture
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -193,7 +199,8 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 	}()
 	go func() {
 		defer wg.Done()
-		_ = readClaudeStream(stderrPipe, "provider_stderr_raw", r.sink, r.items, r.updateSessionID)
+		tee := io.TeeReader(stderrPipe, &stderrCapture)
+		_ = readClaudeStream(tee, "provider_stderr_raw", r.sink, r.items, r.updateSessionID)
 	}()
 
 	err = cmd.Wait()
@@ -201,7 +208,56 @@ func (r *claudeRunner) run(text string, runtimeOptions *types.SessionRuntimeOpti
 	if r.finishActiveExec(execID) {
 		return errClaudeTurnInterrupted
 	}
-	return err
+	if err != nil {
+		return r.classifyProcessError(err, stderrCapture.lastErrorLine())
+	}
+	return nil
+}
+
+// claudeStderrCapture collects stderr text from a Claude process so we can
+// recover the final meaningful line when constructing a descriptive error.
+// It stores the full text because pipe reads are chunked arbitrarily and do not
+// align to line boundaries.
+type claudeStderrCapture struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (c *claudeStderrCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, _ = c.text.Write(p)
+	return len(p), nil
+}
+
+func (c *claudeStderrCapture) lastErrorLine() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	contents := strings.TrimSpace(c.text.String())
+	if contents == "" {
+		return ""
+	}
+	lines := strings.Split(contents, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// classifyProcessError wraps the generic exit error with a descriptive message
+// extracted from stderr output.
+func (r *claudeRunner) classifyProcessError(exitErr error, stderrLine string) error {
+	if exitErr == nil {
+		return nil
+	}
+	stderrLine = strings.TrimSpace(stderrLine)
+	if stderrLine == "" {
+		return exitErr
+	}
+	return fmt.Errorf("claude process failed: %s (%w)", extractShortError(stderrLine), exitErr)
 }
 
 func (r *claudeRunner) appendUserItem(text string, turnID string) {
@@ -320,6 +376,16 @@ func readClaudeStream(r io.Reader, rawStream string, sink ProviderSink, items Pr
 		}
 		parsedItems, sessionID, err := ParseClaudeLine(line, state)
 		if err != nil {
+			// Non-JSON line — check for provider errors before logging as generic
+			if errItem := parseClaudeNonJSONErrorLine(line); errItem != nil {
+				if items != nil {
+					items.Append(errItem)
+				}
+				if sink != nil {
+					sink.Write("stderr", []byte(fmt.Sprintf("claude provider error: %s\n", asString(errItem["error_message"]))))
+				}
+				continue
+			}
 			if items != nil {
 				items.Append(map[string]any{
 					"type": "log",

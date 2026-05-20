@@ -52,6 +52,8 @@ func (a claudeTranscriptAdapter) MapItem(ctx MappingContext, item map[string]any
 			return nil
 		}
 		return []transcriptdomain.TranscriptEvent{event}
+	case "providererror":
+		return a.mapMessageItem(ctx, item, "provider_error", "assistant", "error")
 	case "turncompletion":
 		return mapTurnCompletionItem(a.providerName, ctx, item)
 	default:
@@ -113,6 +115,9 @@ func extractItemText(item map[string]any) string {
 		asString(item["text"]),
 		asString(item["delta"]),
 		asString(item["content"]),
+		asString(item["error_message"]),
+		asString(item["raw_message"]),
+		asString(item["raw_line"]),
 	); strings.TrimSpace(direct) != "" {
 		return strings.TrimSpace(direct)
 	}

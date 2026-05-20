@@ -99,6 +99,42 @@ func TestClaudeAdapterDropsAgentMessageEndWithoutTurnID(t *testing.T) {
 	}
 }
 
+func TestClaudeAdapterMapsProviderErrorItem(t *testing.T) {
+	adapter := NewClaudeTranscriptAdapter("claude")
+	events := adapter.MapItem(MappingContext{
+		SessionID: "s1",
+		Revision:  transcriptdomain.MustParseRevisionToken("5"),
+	}, map[string]any{
+		"type":          "providerError",
+		"provider":      "claude",
+		"error_type":    "authentication_error",
+		"error_message": "Authentication failed. Please run: claude /login",
+	})
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %d: %#v", len(events), events)
+	}
+	got := events[0]
+	if got.Kind != transcriptdomain.TranscriptEventDelta {
+		t.Fatalf("expected delta event, got %q", got.Kind)
+	}
+	if len(got.Delta) != 1 {
+		t.Fatalf("expected one delta block, got %#v", got.Delta)
+	}
+	block := got.Delta[0]
+	if block.Kind != "provider_error" {
+		t.Fatalf("expected provider_error kind, got %q", block.Kind)
+	}
+	if block.Role != "assistant" {
+		t.Fatalf("expected assistant role, got %q", block.Role)
+	}
+	if block.Variant != "error" {
+		t.Fatalf("expected error variant, got %q", block.Variant)
+	}
+	if block.Text != "Authentication failed. Please run: claude /login" {
+		t.Fatalf("unexpected block text: %q", block.Text)
+	}
+}
+
 func TestClaudeAdapterProviderDefaultsToClaude(t *testing.T) {
 	adapter := NewClaudeTranscriptAdapter(" ")
 	if adapter.Provider() != "claude" {
