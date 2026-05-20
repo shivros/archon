@@ -264,6 +264,7 @@ type Model struct {
 	keybindings                                     *Keybindings
 	contextMenu                                     *ContextMenuController
 	confirm                                         *ConfirmController
+	messageActionModal                              *MessageActionModalController
 	recents                                         recentsDomain
 	recentsSelectedSessionID                        string
 	recentsExpandedSessions                         map[string]bool
@@ -642,6 +643,7 @@ func NewModel(client *client.Client, opts ...ModelOption) Model {
 		menu:                                NewMenuController(),
 		contextMenu:                         NewContextMenuController(),
 		confirm:                             NewConfirmController(),
+		messageActionModal:                  NewMessageActionModalController(),
 		guidedWorkflow:                      NewGuidedWorkflowUIController(),
 		recents:                             NewRecentsTracker(),
 		recentsExpandedSessions:             map[string]bool{},
@@ -841,6 +843,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pendingSelectionAction = nil
 				}
 				return m, nil
+			}
+			return m, nil
+		}
+	}
+
+	// Message action modal intercepts input when open.
+	if m.messageActionModal != nil && m.messageActionModal.IsOpen() {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if handled, action := m.messageActionModal.HandleKey(msg); handled {
+				if action != MessageActionNone {
+					return m, m.handleMessageActionModalAction(action)
+				}
+				// Esc or no-op — close the modal.
+				m.messageActionModal.Close()
+				return m, nil
+			}
+			// Unrecognized key — fall through to normal dispatch.
+		case tea.MouseMsg:
+			if _, ok := msg.(tea.MouseClickMsg); !ok {
+				return m, nil
+			}
+			if handled, action := m.messageActionModal.HandleMouse(msg, m.width, m.height-1); handled {
+				if action != MessageActionNone {
+					return m, m.handleMessageActionModalAction(action)
+				}
+				m.messageActionModal.Close()
+				return m, nil
+			}
+			mouse := msg.Mouse()
+			if mouse.Button == tea.MouseLeft {
+				if !m.messageActionModal.Contains(mouse.X, mouse.Y, m.width, m.height-1) {
+					m.messageActionModal.Close()
+					return m, nil
+				}
 			}
 			return m, nil
 		}

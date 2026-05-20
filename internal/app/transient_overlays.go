@@ -41,6 +41,7 @@ func defaultTransientOverlayProviders() []TransientOverlayProvider {
 		menuDropdownOverlayProvider{},
 		contextMenuOverlayProvider{},
 		confirmOverlayProvider{},
+		messageActionModalOverlayProvider{},
 		composeOptionPickerOverlayProvider{},
 		composeFileSearchOverlayProvider{},
 		loadingOverlayProvider{},
@@ -209,4 +210,17 @@ func (loadingOverlayProvider) Build(m *Model, ctx TransientOverlayContext) (Laye
 		return LayerOverlay{}, false
 	}
 	return LayerOverlay{X: x, Y: row, Block: line}, true
+}
+
+type messageActionModalOverlayProvider struct{}
+
+func (messageActionModalOverlayProvider) Build(m *Model, ctx TransientOverlayContext) (LayerOverlay, bool) {
+	if m == nil || m.messageActionModal == nil || !m.messageActionModal.IsOpen() {
+		return LayerOverlay{}, false
+	}
+	block, x, y := m.messageActionModal.ViewBlock(m.width, ctx.BodyHeight)
+	if block == "" {
+		return LayerOverlay{}, false
+	}
+	return LayerOverlay{X: x, Y: y, Block: block}, true
 }

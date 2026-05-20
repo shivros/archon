@@ -2257,11 +2257,12 @@ func TestMouseReducerTranscriptClickSelectsMessage(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected transcript click to be handled")
 	}
-	if !m.messageSelectActive {
-		t.Fatalf("expected message selection to be active")
+	// Click now opens the message action modal instead of persistent highlight.
+	if m.messageActionModal == nil || !m.messageActionModal.IsOpen() {
+		t.Fatalf("expected message action modal to be open")
 	}
-	if m.messageSelectIndex != first.BlockIndex {
-		t.Fatalf("expected selected index %d, got %d", first.BlockIndex, m.messageSelectIndex)
+	if m.messageActionModal.BlockIndex() != first.BlockIndex {
+		t.Fatalf("expected modal block index %d, got %d", first.BlockIndex, m.messageActionModal.BlockIndex())
 	}
 
 	second := m.contentBlockSpans[1]
@@ -2270,8 +2271,8 @@ func TestMouseReducerTranscriptClickSelectsMessage(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected second transcript click to be handled")
 	}
-	if m.messageSelectIndex != second.BlockIndex {
-		t.Fatalf("expected selected index %d, got %d", second.BlockIndex, m.messageSelectIndex)
+	if m.messageActionModal.BlockIndex() != second.BlockIndex {
+		t.Fatalf("expected modal block index %d, got %d", second.BlockIndex, m.messageActionModal.BlockIndex())
 	}
 }
 
@@ -2424,8 +2425,9 @@ func TestMouseReducerReasoningBodyClickSelectsWithoutToggle(t *testing.T) {
 	if !handled {
 		t.Fatalf("expected body click to be handled")
 	}
-	if !m.messageSelectActive || m.messageSelectIndex != span.BlockIndex {
-		t.Fatalf("expected reasoning message to be selected")
+	// Click now opens the message action modal instead of persistent highlight.
+	if m.messageActionModal == nil || !m.messageActionModal.IsOpen() || m.messageActionModal.BlockIndex() != span.BlockIndex {
+		t.Fatalf("expected message action modal to be open with block %d", span.BlockIndex)
 	}
 	if !m.contentBlocks[span.BlockIndex].Collapsed {
 		t.Fatalf("expected reasoning block to remain collapsed")
