@@ -6082,6 +6082,9 @@ func TestRunLifecycleListRunsSortedByRecentActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRun second: %v", err)
 	}
+	// Ensure the sort timestamp for first (StartedAt) is strictly greater
+	// than second.CreatedAt — Windows clock resolution can be ~15ms.
+	time.Sleep(20 * time.Millisecond)
 	if _, err := service.StartRun(context.Background(), first.ID); err != nil {
 		t.Fatalf("StartRun first: %v", err)
 	}

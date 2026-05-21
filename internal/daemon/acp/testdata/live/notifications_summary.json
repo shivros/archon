@@ -3,9 +3,15 @@
     "sessionUpdate": "available_commands_update"
   },
   {
+    "sessionUpdate": "usage_update"
+  },
+  {
     "sessionUpdate": "agent_thought_chunk"
   },
   {
     "sessionUpdate": "agent_message_chunk"
+  },
+  {
+    "sessionUpdate": "usage_update"
   }
 ]

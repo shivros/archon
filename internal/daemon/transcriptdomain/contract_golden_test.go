@@ -1,10 +1,10 @@
 package transcriptdomain
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -90,7 +90,13 @@ func assertGoldenJSON(t *testing.T, name string, value any) {
 	if err != nil {
 		t.Fatalf("read golden %s: %v", goldenPath, err)
 	}
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("golden mismatch for %s\nactual:\n%s\nexpected:\n%s", name, string(actual), string(expected))
+	// Normalize line endings so the comparison works regardless of
+	// whether Git checked out the golden file with \r\n (Windows) or \n.
+	actualStr := string(actual)
+	expectedStr := string(expected)
+	actualStr = strings.ReplaceAll(actualStr, "\r\n", "\n")
+	expectedStr = strings.ReplaceAll(expectedStr, "\r\n", "\n")
+	if actualStr != expectedStr {
+		t.Fatalf("golden mismatch for %s\nactual:\n%s\nexpected:\n%s", name, actualStr, expectedStr)
 	}
 }

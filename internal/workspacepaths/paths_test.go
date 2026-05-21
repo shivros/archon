@@ -17,7 +17,7 @@ func TestNormalizeSubpath(t *testing.T) {
 		{name: "empty", raw: "", want: ""},
 		{name: "dot", raw: ".", want: ""},
 		{name: "relative", raw: "packages/pennies/", want: filepath.Join("packages", "pennies")},
-		{name: "absolute", raw: filepath.Join(string(filepath.Separator), "tmp", "abs"), wantErr: true},
+		{name: "absolute", raw: filepath.Join(os.TempDir(), "abs"), wantErr: true},
 		{name: "parent", raw: "..", wantErr: true},
 		{name: "escape", raw: filepath.Join("..", "outside"), wantErr: true},
 	}

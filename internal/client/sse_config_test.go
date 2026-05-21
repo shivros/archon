@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func setTestHomeDir(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func resetStreamDebugStateForTest() {
 	streamDebug = false
 	streamDebugOnce = sync.Once{}
@@ -16,7 +22,7 @@ func resetStreamDebugStateForTest() {
 
 func TestStreamDebugEnabledDefaultsFalse(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	resetStreamDebugStateForTest()
 	if streamDebugEnabled() {
 		t.Fatalf("expected stream debug disabled by default")
@@ -25,7 +31,7 @@ func TestStreamDebugEnabledDefaultsFalse(t *testing.T) {
 
 func TestStreamDebugEnabledFromCoreConfig(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)

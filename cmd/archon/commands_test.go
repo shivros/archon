@@ -16,6 +16,12 @@ import (
 	"control/internal/types"
 )
 
+func setTestHomeDir(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestDaemonCommandKillFlag(t *testing.T) {
 	var calls []string
 	cmd := NewDaemonCommand(
@@ -1397,7 +1403,7 @@ func TestSleepContextCanceled(t *testing.T) {
 
 func TestConfigCommandPrintsEffectiveConfig(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1587,7 +1593,7 @@ network_access = false
 
 func TestConfigCommandFailsOnInvalidUIConfig(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1604,7 +1610,7 @@ func TestConfigCommandFailsOnInvalidUIConfig(t *testing.T) {
 
 func TestConfigCommandFailsOnInvalidKeybindingsJSON(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1639,7 +1645,7 @@ func TestConfigCommandRejectsInvalidFormat(t *testing.T) {
 
 func TestConfigCommandPrintsTOML(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1662,7 +1668,7 @@ func TestConfigCommandPrintsTOML(t *testing.T) {
 
 func TestConfigCommandDefaultIgnoresInvalidUserFiles(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1694,7 +1700,7 @@ func TestConfigCommandDefaultIgnoresInvalidUserFiles(t *testing.T) {
 
 func TestConfigCommandScopeCoreSkipsInvalidUI(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1722,7 +1728,7 @@ func TestConfigCommandScopeCoreSkipsInvalidUI(t *testing.T) {
 
 func TestConfigCommandScopeUIOnly(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1758,7 +1764,7 @@ func TestConfigCommandScopeUIOnly(t *testing.T) {
 
 func TestConfigCommandScopeKeybindingsDefault(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 
 	stdout := &bytes.Buffer{}
 	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
@@ -1785,7 +1791,7 @@ func TestConfigCommandScopeKeybindingsDefault(t *testing.T) {
 
 func TestConfigCommandScopeWorkflowTemplatesOnly(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1839,7 +1845,7 @@ func TestConfigCommandScopeWorkflowTemplatesOnly(t *testing.T) {
 
 func TestConfigCommandScopeWorkflowTemplatesDefaultUsesRepoDefaults(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 
 	stdout := &bytes.Buffer{}
 	cmd := NewConfigCommand(stdout, &bytes.Buffer{})
@@ -1877,7 +1883,7 @@ func TestConfigCommandRejectsInvalidScope(t *testing.T) {
 
 func TestConfigCommandOmitsUnsetNetworkAccess(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	dataDir := filepath.Join(home, ".archon")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -1915,7 +1921,7 @@ default_model = "gpt-5.2-codex"
 
 func TestConfigCommandPropagatesEncodeError(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", home)
+	setTestHomeDir(t, home)
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}

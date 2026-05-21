@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,11 @@ func requireOpenCodeIntegration(t *testing.T, provider string) {
 	}
 	if _, ok := providers.Lookup(provider); !ok {
 		t.Fatalf("%s provider not registered", provider)
+	}
+	// Verify the binary is available before attempting integration tests.
+	binaryName := provider
+	if _, err := exec.LookPath(binaryName); err != nil {
+		t.Skipf("%s command not found: %v (set %s=disabled to skip)", provider, err, enabledEnv)
 	}
 	cfg := resolveOpenCodeClientConfig(provider, loadCoreConfigOrDefault())
 	if _, err := newOpenCodeClient(cfg); err != nil {
