@@ -1354,8 +1354,7 @@ func (m *Model) reduceStateMessages(msg tea.Msg) (bool, tea.Cmd) {
 		m.applyTranscriptStreamMsg(msg)
 		return true, nil
 	case debugStreamMsg:
-		m.applyDebugStreamMsg(msg)
-		return true, nil
+		return true, m.applyDebugStreamMsg(msg)
 	case metadataStreamMsg:
 		return true, m.applyMetadataStreamMsg(msg)
 	case metadataStreamReconnectMsg:
@@ -1760,19 +1759,20 @@ func (m *Model) applyTranscriptStreamMsg(msg transcriptStreamMsg) {
 	}
 }
 
-func (m *Model) applyDebugStreamMsg(msg debugStreamMsg) {
+func (m *Model) applyDebugStreamMsg(msg debugStreamMsg) tea.Cmd {
 	m.cancelRequestScope(requestScopeDebugStream)
 	if msg.err != nil {
 		m.setBackgroundError("debug stream error: " + msg.err.Error())
-		return
+		return nil
 	}
 	if !m.streamMessageTargetsActiveSession(msg.id, msg.cancel) {
-		return
+		return nil
 	}
 	if m.debugStream != nil {
 		m.debugStream.SetStream(msg.ch, msg.cancel)
 	}
 	m.setBackgroundStatus("streaming debug")
+	return m.refreshDebugPanelContent()
 }
 
 func (m *Model) applyMetadataStreamMsg(msg metadataStreamMsg) tea.Cmd {

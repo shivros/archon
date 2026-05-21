@@ -204,6 +204,7 @@ func (m *Model) reduceNotesModeKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if handled, cmd := m.reduceGlobalKey(msg, globalKeyOptions{
 		AllowToggleNotes:   true,
 		AllowToggleContext: true,
+		AllowToggleDebug:   true,
 	}); handled {
 		return true, cmd
 	}
@@ -236,6 +237,7 @@ func (m *Model) reduceAddNoteMode(msg tea.Msg) (bool, tea.Cmd) {
 		if handled, cmd := m.reduceGlobalKey(keyMsg, globalKeyOptions{
 			AllowToggleNotes:   true,
 			AllowToggleContext: true,
+			AllowToggleDebug:   true,
 		}); handled {
 			return true, cmd
 		}
