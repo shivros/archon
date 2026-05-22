@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"runtime"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -379,15 +380,22 @@ func TestCodexAppServerReadLoopSkipsMalformedJSONAndContinues(t *testing.T) {
 func TestStartCodexAppServerWithOptionsEnablesExperimentalAPI(t *testing.T) {
 	wrapperDir := t.TempDir()
 	logFile := filepath.Join(wrapperDir, "codex-init.json")
-	script := filepath.Join(wrapperDir, "codex")
 	testBin := os.Args[0]
-	shell := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexAppServerHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(script, []byte(shell), 0o755); err != nil {
-		t.Fatalf("write helper wrapper: %v", err)
-	}
-	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GO_WANT_CODEX_APP_SERVER_HELPER_PROCESS", "1")
 	t.Setenv("ARCHON_CODEX_APP_SERVER_HELPER_LOG", logFile)
+
+	if runtime.GOOS == "windows" {
+		batch := "@echo off\n\"" + testBin + "\" -test.run=TestCodexAppServerHelperProcess -- %*\n"
+		if err := os.WriteFile(filepath.Join(wrapperDir, "codex.bat"), []byte(batch), 0o755); err != nil {
+			t.Fatalf("write wrapper batch: %v", err)
+		}
+	} else {
+		shell := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexAppServerHelperProcess -- \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(wrapperDir, "codex"), []byte(shell), 0o755); err != nil {
+			t.Fatalf("write helper wrapper: %v", err)
+		}
+	}
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

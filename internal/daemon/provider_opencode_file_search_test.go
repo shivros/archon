@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"runtime"
 	"context"
 	"errors"
 	"net/http"
@@ -467,9 +468,14 @@ func TestRecoveringOpenCodeFileSearcherRetryPreservesRequest(t *testing.T) {
 	fallbackPort := server.URL[portIdx+1:]
 
 	tmpDir := t.TempDir()
-	cmdPath := filepath.Join(tmpDir, "opencode")
-	if err := os.WriteFile(cmdPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake opencode: %v", err)
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(filepath.Join(tmpDir, "opencode.bat"), []byte("@echo off\nexit /b 0\n"), 0o755); err != nil {
+			t.Fatalf("write fake opencode: %v", err)
+		}
+	} else {
+		if err := os.WriteFile(filepath.Join(tmpDir, "opencode"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write fake opencode: %v", err)
+		}
 	}
 	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 

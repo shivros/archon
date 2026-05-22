@@ -17,7 +17,7 @@ func TestMaybeAutoStartOpenCodeServerLaunchesLocalServer(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	content := []byte("[providers.opencode]\ncommand = \"" + os.Args[0] + "\"\n")
+	content := []byte("[providers.opencode]\ncommand = \"" + filepath.ToSlash(os.Args[0]) + "\"\n")
 	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}

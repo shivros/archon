@@ -18,21 +18,21 @@ func TestResolveProviderUsesRegistryDefinitions(t *testing.T) {
 	}
 	config := []byte(`
 [providers.codex]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 
 [providers.claude]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 
 [providers.opencode]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 base_url = "http://127.0.0.1:4096"
 
 [providers.kilocode]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 base_url = "http://127.0.0.1:4097"
 
 [providers.gemini]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 `)
 	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), config, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -47,7 +47,7 @@ command = "` + os.Args[0] + `"
 		{name: "opencode"},
 		{name: "kilocode"},
 		{name: "gemini"},
-		{name: "custom", customCmd: os.Args[0]},
+		{name: "custom", customCmd: filepath.ToSlash(os.Args[0])},
 	}
 
 	for _, tt := range tests {
@@ -135,7 +135,7 @@ func TestResolveProviderFactoryMissingForRuntime(t *testing.T) {
 	}
 	content := []byte(`
 [providers.gemini]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 `)
 	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -194,7 +194,7 @@ func TestResolveProviderCommandNameUsesConfigOverride(t *testing.T) {
 	}
 	content := []byte(`
 [providers.opencode]
-command = "` + os.Args[0] + `"
+command = "` + filepath.ToSlash(os.Args[0]) + `"
 `)
 	if err := os.WriteFile(filepath.Join(dataDir, "config.toml"), content, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -207,7 +207,7 @@ command = "` + os.Args[0] + `"
 	if err != nil {
 		t.Fatalf("resolveProviderCommandName: %v", err)
 	}
-	if cmd != os.Args[0] {
+	if cmd != filepath.ToSlash(os.Args[0]) {
 		t.Fatalf("expected config override command, got %q", cmd)
 	}
 }

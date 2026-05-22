@@ -116,17 +116,16 @@ func TestExecProviderStartRunsProcessAndStreamsOutput(t *testing.T) {
 }
 
 func TestExecProviderStartGeminiIncludesDirectoryArgs(t *testing.T) {
-	wrapper := filepath.Join(t.TempDir(), "gemini-wrapper.sh")
-	script := `#!/bin/sh
+	tmpDir := t.TempDir()
+	shellScript := `#!/bin/sh
 if [ -n "$ARCHON_EXEC_ARGS_FILE" ]; then
   printf '%s\n' "$@" > "$ARCHON_EXEC_ARGS_FILE"
 fi
 echo hello
 echo oops >&2
 `
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wrapper: %v", err)
-	}
+	batchScript := "@echo off\nif defined ARCHON_EXEC_ARGS_FILE echo %*> \"%ARCHON_EXEC_ARGS_FILE%\"\necho hello\necho oops 1>&2\n"
+	wrapper := writeTestWrapperScript(t, tmpDir, "gemini-wrapper", shellScript, batchScript)
 	argsFile := filepath.Join(t.TempDir(), "gemini-args.txt")
 	backendDir := t.TempDir()
 	sharedDir := t.TempDir()

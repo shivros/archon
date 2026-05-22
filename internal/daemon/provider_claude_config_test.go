@@ -8,12 +8,7 @@ import (
 )
 
 func TestClaudeRunnerRunIncludePartialFromConfig(t *testing.T) {
-	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
-	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
-		t.Fatalf("WriteFile wrapper: %v", err)
-	}
+	wrapper := claudeTestWrapper(t, "TestHelperProcess")
 
 	tests := []struct {
 		name           string

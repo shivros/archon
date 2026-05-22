@@ -90,18 +90,18 @@ func normalizedFileSearchCandidate(rawPath string, root FileSearchRoot) (types.F
 	if !filepath.IsAbs(absolutePath) {
 		absolutePath = filepath.Join(root.Path, rawPath)
 	}
-	absolutePath = filepath.Clean(absolutePath)
+	absolutePath = filepath.ToSlash(filepath.Clean(absolutePath))
 
 	displayPath := absolutePath
 	if root.DisplayBase != "" {
 		if rel, err := filepath.Rel(root.DisplayBase, absolutePath); err == nil && strings.TrimSpace(rel) != "" {
-			displayPath = filepath.Clean(rel)
+			displayPath = filepath.ToSlash(filepath.Clean(rel))
 		}
 	} else if rel, err := filepath.Rel(root.Path, absolutePath); err == nil && strings.TrimSpace(rel) != "" {
-		displayPath = filepath.Clean(rel)
+		displayPath = filepath.ToSlash(filepath.Clean(rel))
 	}
 
-	directory := filepath.Dir(displayPath)
+	directory := filepath.ToSlash(filepath.Dir(displayPath))
 	if directory == "." {
 		directory = ""
 	}

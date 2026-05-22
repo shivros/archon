@@ -46,6 +46,7 @@ func TestDebugSinkBatchesChunksUntilFlushBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newDebugSink: %v", err)
 	}
+	t.Cleanup(func() { sink.Close() })
 
 	sink.Write("stdout", []byte("a"))
 	if got := buffer.Snapshot(0); len(got) != 0 {

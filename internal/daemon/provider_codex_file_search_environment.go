@@ -74,7 +74,7 @@ func (p daemonCodexFileSearchEnvironmentProvider) Environment(ctx context.Contex
 		}
 	}
 
-	cwd := filepath.Clean(strings.TrimSpace(roots[0].Path))
+	cwd := filepath.ToSlash(filepath.Clean(strings.TrimSpace(roots[0].Path)))
 	homeResolver := p.homeResolver
 	if homeResolver == nil {
 		homeResolver = defaultCodexHomeResolver{}
