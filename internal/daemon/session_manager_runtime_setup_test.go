@@ -11,6 +11,14 @@ func TestBuildSessionRuntimeWithoutItemsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSessionRuntime: %v", err)
 	}
+	t.Cleanup(func() {
+		if state.sink != nil {
+			state.sink.Close()
+		}
+		if state.items != nil {
+			state.items.Close()
+		}
+	})
 	if state == nil {
 		t.Fatalf("expected runtime state")
 	}
@@ -34,6 +42,14 @@ func TestBuildSessionRuntimeWithItemsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSessionRuntime: %v", err)
 	}
+	t.Cleanup(func() {
+		if state.sink != nil {
+			state.sink.Close()
+		}
+		if state.items != nil {
+			state.items.Close()
+		}
+	})
 	if state == nil {
 		t.Fatalf("expected runtime state")
 	}

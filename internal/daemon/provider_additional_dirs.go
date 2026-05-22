@@ -116,9 +116,9 @@ func openCodeExternalDirectoryPatterns(directories []string) []string {
 		if cleaned == "." {
 			continue
 		}
-		pattern := cleaned
-		if !strings.HasSuffix(pattern, string(filepath.Separator)) {
-			pattern += string(filepath.Separator)
+		pattern := filepath.ToSlash(cleaned)
+		if !strings.HasSuffix(pattern, "/") {
+			pattern += "/"
 		}
 		pattern += "*"
 		if _, ok := seen[pattern]; ok {
