@@ -102,8 +102,8 @@ func TestFileSearchCandidateNormalizerIgnoresUnknownRootsAndFallsBackWithoutDisp
 	if len(candidates) != 1 {
 		t.Fatalf("expected only known-root candidate, got %#v", candidates)
 	}
-	if candidates[0].DisplayPath != "/repo/app/nested/foo.txt" {
-		t.Fatalf("expected absolute display path fallback without display base, got %#v", candidates[0])
+	if candidates[0].DisplayPath != "nested/foo.txt" {
+		t.Fatalf("expected relative display path fallback without display base, got %#v", candidates[0])
 	}
 }
 

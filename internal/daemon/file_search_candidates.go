@@ -83,6 +83,9 @@ func normalizedFileSearchCandidate(rawPath string, root FileSearchRoot) (types.F
 	rawPath = filepath.ToSlash(strings.TrimSpace(rawPath))
 	root.Path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(root.Path)))
 	root.DisplayBase = filepath.ToSlash(filepath.Clean(strings.TrimSpace(root.DisplayBase)))
+	if root.DisplayBase == "." {
+		root.DisplayBase = ""
+	}
 	if rawPath == "" || root.Path == "" {
 		return types.FileSearchCandidate{}, false
 	}
