@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"runtime"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -9,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"

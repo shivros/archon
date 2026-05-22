@@ -1,12 +1,12 @@
 package daemon
 
 import (
-	"runtime"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"

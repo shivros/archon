@@ -1,13 +1,13 @@
 package daemon
 
 import (
-	"runtime"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
