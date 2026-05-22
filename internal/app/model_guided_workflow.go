@@ -357,6 +357,7 @@ func (m *Model) reduceGuidedWorkflowMode(msg tea.Msg) (bool, tea.Cmd) {
 			AllowToggleSidebar: true,
 			AllowToggleNotes:   true,
 			AllowToggleContext: true,
+			AllowToggleDebug:   true,
 		}); handled {
 			return true, cmd
 		}
@@ -1066,6 +1067,7 @@ func (m *Model) handleGuidedWorkflowSetupInput(msg tea.Msg) (bool, tea.Cmd) {
 				AllowToggleSidebar: true,
 				AllowToggleNotes:   true,
 				AllowToggleContext: true,
+				AllowToggleDebug:   true,
 			}); handled {
 				return true, cmd
 			}
