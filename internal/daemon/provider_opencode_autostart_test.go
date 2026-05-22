@@ -71,7 +71,7 @@ func TestMaybeAutoStartOpenCodeServerLaunchesLocalServer(t *testing.T) {
 	if !called {
 		t.Fatalf("expected startOpenCodeServeProcess to be invoked")
 	}
-	if gotCmd != os.Args[0] {
+	if gotCmd != filepath.ToSlash(os.Args[0]) {
 		t.Fatalf("unexpected command: %q", gotCmd)
 	}
 	if strings.Join(gotArgs, " ") != "serve --hostname 127.0.0.1 --port 49123" {

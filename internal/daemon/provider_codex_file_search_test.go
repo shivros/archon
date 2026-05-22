@@ -490,8 +490,8 @@ func TestDaemonCodexFileSearchEnvironmentResolverUsesWorkspaceRepoForCodexHome(t
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if env.Cwd != filepath.Clean(subdir) {
-		t.Fatalf("expected cwd %q, got %#v", filepath.Clean(subdir), env)
+	if env.Cwd != filepath.ToSlash(filepath.Clean(subdir)) {
+		t.Fatalf("expected cwd %q, got %#v", filepath.ToSlash(filepath.Clean(subdir)), env)
 	}
 	if env.CodexHome != filepath.Clean(codexHome) {
 		t.Fatalf("expected codex home %q, got %#v", filepath.Clean(codexHome), env)
