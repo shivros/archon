@@ -199,12 +199,10 @@ func TestCodexProviderStartIncludesAdditionalDirectoryArgs(t *testing.T) {
 func codexProviderHelperWrapper(t *testing.T) string {
 	t.Helper()
 	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "codex-provider-helper.sh")
-	script := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexProviderHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatalf("write helper wrapper: %v", err)
-	}
-	return wrapper
+	tmpDir := t.TempDir()
+	shellScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexProviderHelperProcess -- \"$@\"\n"
+	batchScript := "@echo off\n\"" + testBin + "\" -test.run=TestCodexProviderHelperProcess -- %*\n"
+	return writeTestWrapperScript(t, tmpDir, "codex-provider-helper", shellScript, batchScript)
 }
 
 func stopProviderProcess(proc *providerProcess) {

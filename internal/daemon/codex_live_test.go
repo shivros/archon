@@ -339,7 +339,7 @@ func TestCodexLiveStartTurnFailsWhenResumeThreadIsMissing(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	configText := "[providers.codex]\ncommand = \"" + wrapper + "\"\n"
+	configText := "[providers.codex]\ncommand = \"" + filepath.ToSlash(wrapper) + "\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".archon", "config.toml"), []byte(configText), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestCodexLiveSubscribeDoesNotBootstrapMissingThread(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	configText := "[providers.codex]\ncommand = \"" + wrapper + "\"\n"
+	configText := "[providers.codex]\ncommand = \"" + filepath.ToSlash(wrapper) + "\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".archon", "config.toml"), []byte(configText), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestCodexLiveStartTurnRecoversMissingThreadForFreshSession(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	configText := "[providers.codex]\ncommand = \"" + wrapper + "\"\n"
+	configText := "[providers.codex]\ncommand = \"" + filepath.ToSlash(wrapper) + "\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".archon", "config.toml"), []byte(configText), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestCodexLiveStartTurnBootstrapsWhenThreadIDUnavailable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".archon"), 0o700); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	configText := "[providers.codex]\ncommand = \"" + wrapper + "\"\n"
+	configText := "[providers.codex]\ncommand = \"" + filepath.ToSlash(wrapper) + "\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".archon", "config.toml"), []byte(configText), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -572,12 +572,10 @@ func TestCodexLiveStartTurnBootstrapsWhenThreadIDUnavailable(t *testing.T) {
 func codexLiveHelperWrapper(t *testing.T) string {
 	t.Helper()
 	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "codex-live-helper.sh")
-	script := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexLiveHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wrapper: %v", err)
-	}
-	return wrapper
+	tmpDir := t.TempDir()
+	shellScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestCodexLiveHelperProcess -- \"$@\"\n"
+	batchScript := "@echo off\n\"" + testBin + "\" -test.run=TestCodexLiveHelperProcess -- %*\n"
+	return writeTestWrapperScript(t, tmpDir, "codex-live-helper", shellScript, batchScript)
 }
 
 func TestCodexLiveHelperProcess(t *testing.T) {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -183,7 +184,8 @@ func TestOpenFileLinkCmdFallsBackToDefaultResolverWhenNil(t *testing.T) {
 	m := NewModel(nil, WithFileLinkOpener(opener))
 	m.fileLinkResolver = nil
 
-	cmd := m.openFileLinkCmd("/tmp/main.go")
+	testPath := filepath.Join(t.TempDir(), "main.go")
+	cmd := m.openFileLinkCmd(testPath)
 	if cmd == nil {
 		t.Fatalf("expected fallback resolver to produce command")
 	}
@@ -195,7 +197,8 @@ func TestOpenFileLinkCmdFallsBackToDefaultResolverWhenNil(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("expected opener success with fallback resolver, got %v", result.err)
 	}
-	if len(opener.opened) != 1 || opener.opened[0].Kind != FileLinkTargetKindFile || opener.opened[0].FilePath != "/tmp/main.go" {
+	cleaned := filepath.Clean(testPath)
+	if len(opener.opened) != 1 || opener.opened[0].Kind != FileLinkTargetKindFile || opener.opened[0].FilePath != cleaned {
 		t.Fatalf("expected fallback resolver to open file target, got %#v", opener.opened)
 	}
 }

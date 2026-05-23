@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -87,6 +88,9 @@ func (p *execProvider) Start(cfg StartSessionConfig, sink ProviderSink, items Pr
 }
 
 func lookupCommand(cmdName string) (string, error) {
+	if filepath.IsAbs(cmdName) {
+		return cmdName, nil
+	}
 	if _, err := exec.LookPath(cmdName); err != nil {
 		return "", fmt.Errorf("command not found: %s", cmdName)
 	}

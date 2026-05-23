@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -79,29 +80,32 @@ func normalizeFileSearchCandidate(rawPath string, root FileSearchRoot, query str
 }
 
 func normalizedFileSearchCandidate(rawPath string, root FileSearchRoot) (types.FileSearchCandidate, bool) {
-	rawPath = strings.TrimSpace(rawPath)
-	root.Path = filepath.Clean(strings.TrimSpace(root.Path))
-	root.DisplayBase = filepath.Clean(strings.TrimSpace(root.DisplayBase))
+	rawPath = filepath.ToSlash(strings.TrimSpace(rawPath))
+	root.Path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(root.Path)))
+	root.DisplayBase = filepath.ToSlash(filepath.Clean(strings.TrimSpace(root.DisplayBase)))
+	if root.DisplayBase == "." {
+		root.DisplayBase = ""
+	}
 	if rawPath == "" || root.Path == "" {
 		return types.FileSearchCandidate{}, false
 	}
 
 	absolutePath := rawPath
-	if !filepath.IsAbs(absolutePath) {
-		absolutePath = filepath.Join(root.Path, rawPath)
+	if !isSlashAbsolutePath(absolutePath) {
+		absolutePath = path.Join(root.Path, rawPath)
 	}
-	absolutePath = filepath.Clean(absolutePath)
+	absolutePath = path.Clean(absolutePath)
 
 	displayPath := absolutePath
 	if root.DisplayBase != "" {
-		if rel, err := filepath.Rel(root.DisplayBase, absolutePath); err == nil && strings.TrimSpace(rel) != "" {
-			displayPath = filepath.Clean(rel)
+		if rel, ok := slashRelativePath(root.DisplayBase, absolutePath); ok && strings.TrimSpace(rel) != "" {
+			displayPath = path.Clean(rel)
 		}
-	} else if rel, err := filepath.Rel(root.Path, absolutePath); err == nil && strings.TrimSpace(rel) != "" {
-		displayPath = filepath.Clean(rel)
+	} else if rel, ok := slashRelativePath(root.Path, absolutePath); ok && strings.TrimSpace(rel) != "" {
+		displayPath = path.Clean(rel)
 	}
 
-	directory := filepath.Dir(displayPath)
+	directory := path.Dir(displayPath)
 	if directory == "." {
 		directory = ""
 	}
@@ -111,6 +115,52 @@ func normalizedFileSearchCandidate(rawPath string, root FileSearchRoot) (types.F
 		Directory:   directory,
 		Kind:        "file",
 	}, true
+}
+
+func isSlashAbsolutePath(value string) bool {
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "/") {
+		return true
+	}
+	return len(value) >= 3 && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) && value[1] == ':' && value[2] == '/'
+}
+
+func slashRelativePath(base, target string) (string, bool) {
+	base = path.Clean(filepath.ToSlash(strings.TrimSpace(base)))
+	target = path.Clean(filepath.ToSlash(strings.TrimSpace(target)))
+	if base == "" || target == "" {
+		return "", false
+	}
+	baseSegs := strings.Split(strings.TrimPrefix(base, "/"), "/")
+	targetSegs := strings.Split(strings.TrimPrefix(target, "/"), "/")
+	if len(base) >= 2 && base[1] == ':' {
+		if len(target) < 2 || !strings.EqualFold(base[:2], target[:2]) {
+			return "", false
+		}
+		baseSegs = strings.Split(strings.TrimPrefix(base[2:], "/"), "/")
+		targetSegs = strings.Split(strings.TrimPrefix(target[2:], "/"), "/")
+	}
+	common := 0
+	for common < len(baseSegs) && common < len(targetSegs) && baseSegs[common] == targetSegs[common] {
+		common++
+	}
+	parts := make([]string, 0, (len(baseSegs)-common)+len(targetSegs)-common)
+	for i := common; i < len(baseSegs); i++ {
+		if baseSegs[i] != "" {
+			parts = append(parts, "..")
+		}
+	}
+	for i := common; i < len(targetSegs); i++ {
+		if targetSegs[i] != "" {
+			parts = append(parts, targetSegs[i])
+		}
+	}
+	if len(parts) == 0 {
+		return ".", true
+	}
+	return strings.Join(parts, "/"), true
 }
 
 func scoreFileSearchCandidate(query, displayPath, absolutePath string) float64 {

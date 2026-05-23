@@ -180,12 +180,7 @@ func TestClaudeProviderStartValidationAndLifecycle(t *testing.T) {
 }
 
 func TestClaudeRunnerInterruptStopsActiveCommand(t *testing.T) {
-	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
-	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
-		t.Fatalf("WriteFile wrapper: %v", err)
-	}
+	wrapper := claudeTestWrapper(t, "TestHelperProcess")
 
 	runner := &claudeRunner{
 		cmdName: wrapper,
@@ -213,12 +208,7 @@ func TestClaudeRunnerInterruptStopsActiveCommand(t *testing.T) {
 }
 
 func TestClaudeRunnerInterruptQueuesForNextCommand(t *testing.T) {
-	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
-	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
-		t.Fatalf("WriteFile wrapper: %v", err)
-	}
+	wrapper := claudeTestWrapper(t, "TestHelperProcess")
 
 	runner := &claudeRunner{
 		cmdName: wrapper,
@@ -234,12 +224,7 @@ func TestClaudeRunnerInterruptQueuesForNextCommand(t *testing.T) {
 }
 
 func TestClaudeRunnerSendUser(t *testing.T) {
-	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
-	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
-		t.Fatalf("WriteFile wrapper: %v", err)
-	}
+	wrapper := claudeTestWrapper(t, "TestHelperProcess")
 	argsFile := filepath.Join(t.TempDir(), "claude-args.txt")
 	runner := &claudeRunner{
 		cmdName: wrapper,
@@ -281,12 +266,7 @@ func TestClaudeCommandEnvClearsRecursiveSessionVars(t *testing.T) {
 }
 
 func TestClaudeRunnerRunIncludesResumeFlag(t *testing.T) {
-	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
-	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
-		t.Fatalf("WriteFile wrapper: %v", err)
-	}
+	wrapper := claudeTestWrapper(t, "TestHelperProcess")
 	argsFile := filepath.Join(t.TempDir(), "claude-args.txt")
 	runner := &claudeRunner{
 		cmdName:   wrapper,
@@ -307,12 +287,7 @@ func TestClaudeRunnerRunIncludesResumeFlag(t *testing.T) {
 }
 
 func TestClaudeRunnerRunIncludesAdditionalDirectoryArgs(t *testing.T) {
-	testBin := os.Args[0]
-	wrapper := filepath.Join(t.TempDir(), "claude-wrapper.sh")
-	wrapperScript := "#!/bin/sh\nexec \"" + testBin + "\" -test.run=TestHelperProcess -- \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(wrapperScript), 0o755); err != nil {
-		t.Fatalf("WriteFile wrapper: %v", err)
-	}
+	wrapper := claudeTestWrapper(t, "TestHelperProcess")
 	argsFile := filepath.Join(t.TempDir(), "claude-args.txt")
 	runner := &claudeRunner{
 		cmdName: wrapper,

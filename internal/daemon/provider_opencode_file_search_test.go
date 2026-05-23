@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -101,8 +102,8 @@ func TestFileSearchCandidateNormalizerIgnoresUnknownRootsAndFallsBackWithoutDisp
 	if len(candidates) != 1 {
 		t.Fatalf("expected only known-root candidate, got %#v", candidates)
 	}
-	if candidates[0].DisplayPath != "/repo/app/nested/foo.txt" {
-		t.Fatalf("expected absolute display path fallback without display base, got %#v", candidates[0])
+	if candidates[0].DisplayPath != "nested/foo.txt" {
+		t.Fatalf("expected relative display path fallback without display base, got %#v", candidates[0])
 	}
 }
 
@@ -467,9 +468,14 @@ func TestRecoveringOpenCodeFileSearcherRetryPreservesRequest(t *testing.T) {
 	fallbackPort := server.URL[portIdx+1:]
 
 	tmpDir := t.TempDir()
-	cmdPath := filepath.Join(tmpDir, "opencode")
-	if err := os.WriteFile(cmdPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake opencode: %v", err)
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(filepath.Join(tmpDir, "opencode.bat"), []byte("@echo off\nexit /b 0\n"), 0o755); err != nil {
+			t.Fatalf("write fake opencode: %v", err)
+		}
+	} else {
+		if err := os.WriteFile(filepath.Join(tmpDir, "opencode"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write fake opencode: %v", err)
+		}
 	}
 	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 

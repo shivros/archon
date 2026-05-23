@@ -341,6 +341,10 @@ func (m *SessionManager) StartSession(cfg StartSessionConfig) (*types.Session, e
 			close(runtimeState.done)
 		}()
 	} else {
+		runtimeState.sink.Close()
+		if runtimeState.items != nil {
+			runtimeState.items.Close()
+		}
 		close(runtimeState.done)
 	}
 

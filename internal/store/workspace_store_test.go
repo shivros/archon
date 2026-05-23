@@ -100,6 +100,14 @@ func TestWorkspaceStoreNormalizesPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rel: %v", err)
 	}
+
+	// Save and restore CWD so Windows doesn't lock the temp dir during cleanup.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer os.Chdir(origDir)
+
 	if err := os.Chdir(tmp); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}

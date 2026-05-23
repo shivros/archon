@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -146,6 +147,9 @@ func TestNotificationPolicyResolverHonorsContextCancellation(t *testing.T) {
 }
 
 func TestNotificationDispatcherRunsScriptWithPayload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix cat command")
+	}
 	tmp := t.TempDir()
 	payloadPath := filepath.Join(tmp, "payload.json")
 	dispatcher := NewNotificationDispatcher(nil, logging.Nop())

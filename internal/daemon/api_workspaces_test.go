@@ -782,18 +782,17 @@ func TestWorkspaceSessionsEndpointUsesAdditionalDirectoriesForGemini(t *testing.
 	if err := os.MkdirAll(filepath.Join(homeDir, ".archon"), 0o700); err != nil {
 		t.Fatalf("mkdir home config dir: %v", err)
 	}
-	wrapper := filepath.Join(t.TempDir(), "gemini-wrapper.sh")
-	argsFile := filepath.Join(t.TempDir(), "gemini-args.txt")
-	script := `#!/bin/sh
+	wrapperDir := t.TempDir()
+	shellGemini := `#!/bin/sh
 if [ -n "$ARCHON_EXEC_ARGS_FILE" ]; then
   printf '%s\n' "$@" > "$ARCHON_EXEC_ARGS_FILE"
 fi
 echo ok
 `
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatalf("write wrapper: %v", err)
-	}
-	cfg := fmt.Sprintf("[providers.gemini]\ncommand = %q\n", wrapper)
+	batchGemini := "@echo off\nif defined ARCHON_EXEC_ARGS_FILE echo %*> \"%ARCHON_EXEC_ARGS_FILE%\"\necho ok\n"
+	wrapper := writeTestWrapperScript(t, wrapperDir, "gemini-wrapper", shellGemini, batchGemini)
+	argsFile := filepath.Join(t.TempDir(), "gemini-args.txt")
+	cfg := fmt.Sprintf("[providers.gemini]\ncommand = %q\n", filepath.ToSlash(wrapper))
 	if err := os.WriteFile(filepath.Join(homeDir, ".archon", "config.toml"), []byte(cfg), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
