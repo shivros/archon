@@ -34,10 +34,10 @@ const (
 // actions like Copy, Pin, and Toggle Reasoning — inspired by Open Code's
 // message interaction pattern.
 type MessageActionModalController struct {
-	active       bool
-	blockIndex   int
-	items        []messageActionItem
-	selected     int
+	active     bool
+	blockIndex int
+	items      []messageActionItem
+	selected   int
 }
 
 func NewMessageActionModalController() *MessageActionModalController {
