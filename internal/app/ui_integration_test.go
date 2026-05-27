@@ -422,7 +422,7 @@ func TestUIClaudeStreamingResumeSession(t *testing.T) {
 func TestUIDismissSessionRemovesFromSidebar(t *testing.T) {
 	requireUIIntegration(t)
 
-	for _, provider := range []string{"codex", "claude"} {
+	for _, provider := range []string{"codex", "claude", "gemini"} {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -642,7 +642,7 @@ func TestUIShowDismissedAndUndismissSession(t *testing.T) {
 func TestUIDismissSessionCancelKeepsSession(t *testing.T) {
 	requireUIIntegration(t)
 
-	for _, provider := range []string{"codex", "claude"} {
+	for _, provider := range []string{"codex", "claude", "gemini"} {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
