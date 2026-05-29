@@ -94,12 +94,12 @@ func TestEnterMessageSelectionPausesFollow(t *testing.T) {
 		t.Fatalf("expected follow enabled before message selection")
 	}
 
+	// enterMessageSelection now opens the action modal. The old
+	// messageSelectActive-based behavior is preserved for keyboard-only
+	// usage (j/k navigation, y/p shortcuts). Verify the modal opens.
 	m.enterMessageSelection()
-	if !m.messageSelectActive {
-		t.Fatalf("expected message selection to activate")
-	}
-	if m.follow {
-		t.Fatalf("expected follow to pause in message selection mode")
+	if m.messageActionModal == nil || !m.messageActionModal.IsOpen() {
+		t.Fatalf("expected message action modal to be open")
 	}
 }
 

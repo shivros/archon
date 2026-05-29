@@ -72,15 +72,12 @@ func (m *Model) enterMessageSelection() {
 		m.setValidationStatus("no messages to select")
 		return
 	}
-	m.messageSelectActive = true
 	idx := m.visibleMessageSelectionIndex()
 	if idx < 0 {
 		idx = len(m.contentBlocks) - 1
 	}
-	m.messageSelectIndex = idx
-	m.focusMessageSelection()
-	m.setMessageSelectionStatus()
-	m.renderViewport()
+	// Open the message action modal instead of entering persistent highlight mode.
+	m.openMessageActionModal(idx)
 }
 
 func (m *Model) exitMessageSelection(status string) {
@@ -225,7 +222,8 @@ func (m *Model) selectMessageByViewportPoint(col, line int) bool {
 	if index < 0 {
 		return false
 	}
-	m.setMessageSelectionIndex(index)
+	// Open the message action modal instead of entering persistent highlight mode.
+	m.openMessageActionModal(index)
 	return true
 }
 
@@ -322,4 +320,54 @@ func (m *Model) copySelectedMessageCmd() tea.Cmd {
 		return nil
 	}
 	return cmd
+}
+
+// openMessageActionModal opens the center-screen action popup for the given
+// block index. It is called when a user clicks a message or presses 'v'.
+func (m *Model) openMessageActionModal(blockIndex int) {
+	if m.messageActionModal == nil {
+		return
+	}
+	if blockIndex < 0 || blockIndex >= len(m.contentBlocks) {
+		return
+	}
+	block := m.contentBlocks[blockIndex]
+	reasoningExpanded := false
+	if block.TurnID != "" {
+		reasoningExpanded = m.reasoningExpanded[block.TurnID]
+	}
+	m.messageActionModal.Open(blockIndex, block.Role, reasoningExpanded)
+}
+
+// handleMessageActionModalAction executes the action chosen by the user in
+// the message action popup, then closes the modal.
+func (m *Model) handleMessageActionModalAction(action MessageActionModalAction) tea.Cmd {
+	if m.messageActionModal == nil || !m.messageActionModal.IsOpen() {
+		return nil
+	}
+	blockIndex := m.messageActionModal.BlockIndex()
+	m.messageActionModal.Close()
+
+	if blockIndex < 0 || blockIndex >= len(m.contentBlocks) {
+		return nil
+	}
+
+	switch action {
+	case MessageActionCopy:
+		handled, cmd := m.copyBlockByIndex(blockIndex)
+		if !handled {
+			return nil
+		}
+		return cmd
+	case MessageActionPin:
+		cmd := m.pinBlockByIndex(blockIndex)
+		return cmd
+	case MessageActionToggleReasoning:
+		if m.toggleReasoningByIndex(blockIndex) {
+			m.setStatusMessage("reasoning toggled")
+		}
+		return nil
+	default:
+		return nil
+	}
 }
