@@ -420,6 +420,24 @@ func (c *codexAppServer) InterruptTurn(ctx context.Context, threadID, turnID str
 	return c.request(ctx, "turn/interrupt", params, nil)
 }
 
+func (c *codexAppServer) SteerTurn(ctx context.Context, threadID string, input []map[string]any, expectedTurnID string) (string, error) {
+	params := map[string]any{
+		"threadId":       threadID,
+		"input":          input,
+		"expectedTurnId": expectedTurnID,
+	}
+	var result struct {
+		TurnID string `json:"turnId"`
+	}
+	if err := c.request(ctx, "turn/steer", params, &result); err != nil {
+		return "", err
+	}
+	if result.TurnID == "" {
+		return "", errors.New("turn id missing in steer response")
+	}
+	return result.TurnID, nil
+}
+
 func (c *codexAppServer) WaitForTurnCompleted(ctx context.Context, turnID string) error {
 	for {
 		select {

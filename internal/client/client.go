@@ -723,6 +723,15 @@ func (c *Client) SendMessage(ctx context.Context, id string, req SendSessionRequ
 	return &resp, nil
 }
 
+func (c *Client) SteerSession(ctx context.Context, id string, req SteerSessionRequest) (*SteerSessionResponse, error) {
+	path := fmt.Sprintf("/v1/sessions/%s/steer", strings.TrimSpace(id))
+	var resp SteerSessionResponse
+	if err := c.doJSONWithTimeout(ctx, http.MethodPost, path, req, true, &resp, 5*time.Minute); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) ListApprovals(ctx context.Context, id string) ([]*types.Approval, error) {
 	path := fmt.Sprintf("/v1/sessions/%s/approvals", strings.TrimSpace(id))
 	var resp ApprovalsResponse

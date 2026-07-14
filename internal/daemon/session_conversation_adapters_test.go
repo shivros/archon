@@ -1537,6 +1537,10 @@ func (s *stubLiveManager) Interrupt(context.Context, *types.Session, *types.Sess
 	return s.interruptErr
 }
 
+func (s *stubLiveManager) SteerTurn(_ context.Context, _ *types.Session, _ *types.SessionMeta, input []map[string]any) (string, error) {
+	return "steer-turn-id", nil
+}
+
 func (s *stubLiveManager) SetNotificationPublisher(NotificationPublisher) {}
 
 func TestLiveManagerConversationInterrupterFallsBackToSessionManagerWhenNoActiveTurn(t *testing.T) {

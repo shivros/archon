@@ -120,4 +120,8 @@ func (s *asyncStubLiveManager) Interrupt(context.Context, *types.Session, *types
 	return nil
 }
 
+func (s *asyncStubLiveManager) SteerTurn(_ context.Context, _ *types.Session, _ *types.SessionMeta, _ []map[string]any) (string, error) {
+	return "", nil
+}
+
 func (s *asyncStubLiveManager) SetNotificationPublisher(NotificationPublisher) {}
